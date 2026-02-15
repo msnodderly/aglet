@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/agenda-core",
+    "crates/agenda-tui",
+    "crates/agenda-cli",
+]
