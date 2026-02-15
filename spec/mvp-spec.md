@@ -129,7 +129,7 @@ Reserved categories can have user-defined conditions and actions like any other 
 enum Condition {
     // Implicit from category name when enable_implicit_string = true.
     // Case-insensitive word boundary match.
-    String,
+    ImplicitString,
 
     // Query evaluated against the item's current assignments.
     // "If assigned to both Urgent AND Project Alpha → assign to Escalated"
