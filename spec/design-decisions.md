@@ -94,3 +94,55 @@ This is critical for:
 `Action::Remove` is the one exception — it can unassign — but remove results
 are deferred until the cascade completes (T018), preventing mid-cascade
 instability.
+
+---
+
+## 4. Remove actions apply regardless of assignment source
+
+**Date**: 2026-02-15
+**Relevant tasks**: T018
+
+`Action::Remove` unassigns an item from a target category regardless of how
+the assignment was created — Manual, AutoMatch, Action, or Subsumption.
+
+This is intentional. Remove actions represent explicit workflow policy
+configured by the user ("when an item is marked Done, remove it from active
+project categories"). The user configured the rule knowing what it does; the
+engine should honor it uniformly.
+
+If Remove actions respected assignment source (e.g., "don't remove manual
+assignments"), it would create confusing behavior: marking an item Done would
+clean up auto-assigned categories but leave manually-assigned ones untouched,
+even though the user set up a rule that says otherwise.
+
+**Example**: Item is manually assigned to "Active Projects." Category "Done"
+has a Remove action targeting "Active Projects." User marks item Done →
+engine fires Remove → item is unassigned from "Active Projects" even though
+it was manually assigned. This is correct — the user configured that
+workflow.
+
+---
+
+## 5. Pass cap returns an error
+
+**Date**: 2026-02-15
+**Relevant tasks**: T018
+
+If the fixed-point loop exceeds 10 passes, the engine returns an error
+rather than silently stopping.
+
+**Rationale**: A 10-pass cascade is a rule configuration bug (likely a cycle
+or unbounded chain). Silently accepting partial results would hide the
+problem — the user would see incomplete assignments with no indication that
+anything went wrong. An error makes misconfigured rules fail loudly so the
+user can fix them.
+
+The error should be descriptive (e.g., "rule processing exceeded 10 passes
+for item <id>; possible cycle"). If atomicity is feasible (DB transaction
+around the processing run), the error should also roll back partial
+assignments so the item isn't left in an inconsistent state.
+
+**Atomicity guidance**: Attempt transaction wrapping if the Store API makes
+it straightforward. If it requires substantial infrastructure changes, skip
+it — document that partial writes may exist on cap-exceeded errors and
+defer transactional execution to a later task.
