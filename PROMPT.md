@@ -40,19 +40,20 @@ Select ONE task. Complete it. Stop.
 ## Session End
 
 1. Build: `cargo build --workspace && cargo test --workspace`
-2. Close task: `br close <id> --reason "Completed"`
-3. Merge branch directly to main (no pull requests — local-only project):
+2. Merge branch directly to main (no pull requests — local-only project):
    ```bash
    git checkout main
    git merge task/<branch> -m "Merge <branch>: <summary>"
    git worktree remove <worktree-path> --force
    git branch -d task/<branch>
    ```
-4. Sync beads:
+3. Close task and sync beads **after** worktree is removed (worktree removal clobbers `.beads/`):
    ```bash
+   br close <id> --reason "Completed"
    br sync --flush-only
-   git add .beads/ && git commit -m "br sync: Update issues"
+   git add .beads/ && git commit -m "br sync: Close <id>"
    ```
+4. Verify: `br show <id>` should show CLOSED
 5. **STOP** — Do not pick another task
 
 **No remote:** Skip `git pull/push` — no remote configured. Always merge to main directly, never use PR workflow.
