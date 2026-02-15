@@ -51,23 +51,88 @@ Direction: `br dep add bd-abc bd-xyz` = "bd-abc depends on bd-xyz"
 
 - `br <cmd> --help` for authoritative syntax
 - `br ready` is scheduling truth; if it shows ready but `br show` lists blockers, check each dep's status directly
-- **Beads + worktree close ordering**: Worktree removal can clobber `.beads/` state. The safe sequence is: merge branch → remove worktree → *then* `br close` + `br sync --flush-only` + commit `.beads/`. Always verify with `br show <id>` after.
 
-### Clean Worktree Gate (Mandatory)
+## Branching Workflow
 
-- Never stop, hand off, or switch tasks with a dirty worktree.
-- `git status --short` must be empty before ending a session.
-- If there is in-progress code, create a checkpoint commit before pausing.
-- If `.beads/` changed, finish the issue flow (`br close` → `br sync --flush-only` → commit) before stopping.
-- Run the cleanliness check in both the issue worktree and the main worktree.
+### Why this workflow exists
 
-## Session Learnings
+`.beads/beads.db` is tracked in git. Each worktree gets an **independent copy**
+checked out from the branch's committed state. `br` commands modify only the
+local worktree's copy. This means beads state diverges between worktrees and
+must be reconciled at merge time.
+
+**The simplest solution: all `br` write operations happen on main only.**
+Worktrees are for code changes. This eliminates reconciliation entirely.
+
+### Single-agent workflow (branches, no worktrees)
+
+```bash
+# 1. Claim (from main)
+br update <id> --status in_progress
+br sync --flush-only
+git add .beads/ && git commit -m "br sync: Claim <id>"
+
+# 2. Branch and work
+git checkout -b task/<id>-short-description
+# ... write code, commit ...
+
+# 3. Merge and close (back on main)
+git checkout main
+git merge task/<id>-short-description
+br close <id>
+br sync --flush-only
+git add .beads/ && git commit -m "br sync: Close <id>"
+
+# 4. Clean up
+git branch -d task/<id>-short-description
+```
+
+### Multi-agent workflow (worktrees for parallel work)
+
+Use worktrees for code isolation. **Never run `br` write commands from a worktree.**
+
+```bash
+# 1. Claim (from main worktree)
+br update <id> --status in_progress
+br sync --flush-only
+git add .beads/ && git commit -m "br sync: Claim <id>"
+
+# 2. Create worktree
+git worktree add ../aglet-<id> -b task/<id>-short-description
+
+# 3. Work in worktree (code only — no br commands)
+cd ../aglet-<id>
+# ... write code, commit, test ...
+# All commits go on the task branch.
+
+# 4. Merge (from main worktree)
+cd /path/to/main
+git merge task/<id>-short-description
+
+# 5. Remove worktree, close issue (from main worktree)
+git worktree remove ../aglet-<id> --force
+br close <id>
+br sync --flush-only
+git add .beads/ && git commit -m "br sync: Close <id>"
+git branch -d task/<id>-short-description
+```
+
+### Rules
+
+- **`br` writes only on main**: `br update`, `br close`, `br create`, `br sync`
+  must run from the main worktree. This keeps `.beads/` in sync with main.
+- **Worktrees are code-only**: Read commands (`br show`, `br ready`, `br list`)
+  are fine anywhere, but their output may be stale in a worktree.
+- **Commit `.beads/` changes immediately**: Every `br` mutation should be
+  followed by `br sync --flush-only && git add .beads/ && git commit`.
+- **Never leave dirty `.beads/`**: If `git status` shows `.beads/` modified,
+  commit it before switching tasks or ending a session.
+- **`br sync --full` unsupported**: use `--flush-only` or `--import-only`.
+- **Worktree removal needs `--force`**: beads files trigger git's modified-files guard.
+
+## Project Reference
 
 - Product spec: `spec/mvp-spec.md`
 - Product tasks: `spec/mvp-tasks.md`
-- `br sync --full` unsupported; use `--flush-only` or `--import-only`
-- Git worktree: `git worktree add <path> -b <branch>` (not `create`)
-- Worktree shares parent's `.beads/` — `br` commands work from any worktree
-- Worktree removal needs `--force` (beads files trigger modified-files guard)
-- `.gitignore` should be created early (target/, IDE files) — prevents accidental commits
-- Local-only project: no pull requests, merge branch directly to main
+- Deferred findings: `spec/deferred-findings.md`
+- Local-only project: no pull requests, merge branches directly to main
