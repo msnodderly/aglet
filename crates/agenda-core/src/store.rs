@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, ItemId,
+    Action, Assignment, AssignmentSource, Category, CategoryId, Column, Condition, Item, ItemId,
+    Query, Section, View,
 };
 
 const SCHEMA_VERSION: i32 = 1;
@@ -436,6 +437,137 @@ impl Store {
         Ok(ordered)
     }
 
+    // ── View CRUD ───────────────────────────────────────────────
+
+    pub fn create_view(&self, view: &View) -> Result<()> {
+        let criteria_json =
+            serde_json::to_string(&view.criteria).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let sections_json =
+            serde_json::to_string(&view.sections).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let columns_json =
+            serde_json::to_string(&view.columns).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let remove_from_view_unassign_json = serde_json::to_string(&view.remove_from_view_unassign)
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+
+        self.conn
+            .execute(
+                "INSERT INTO views (
+                    id, name, criteria_json, sections_json, columns_json,
+                    show_unmatched, unmatched_label, remove_from_view_unassign_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    view.id.to_string(),
+                    view.name,
+                    criteria_json,
+                    sections_json,
+                    columns_json,
+                    view.show_unmatched as i32,
+                    view.unmatched_label,
+                    remove_from_view_unassign_json,
+                ],
+            )
+            .map_err(|err| Self::map_view_write_error(err, &view.name))?;
+
+        Ok(())
+    }
+
+    pub fn get_view(&self, id: Uuid) -> Result<View> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, criteria_json, sections_json, columns_json,
+                    show_unmatched, unmatched_label, remove_from_view_unassign_json
+             FROM views WHERE id = ?1",
+        )?;
+        stmt.query_row(params![id.to_string()], |row| Self::row_to_view(row))
+            .map_err(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AgendaError::NotFound { entity: "View", id }
+                }
+                other => AgendaError::from(other),
+            })
+    }
+
+    pub fn update_view(&self, view: &View) -> Result<()> {
+        let criteria_json =
+            serde_json::to_string(&view.criteria).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let sections_json =
+            serde_json::to_string(&view.sections).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let columns_json =
+            serde_json::to_string(&view.columns).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let remove_from_view_unassign_json = serde_json::to_string(&view.remove_from_view_unassign)
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE views
+                 SET name = ?1,
+                     criteria_json = ?2,
+                     sections_json = ?3,
+                     columns_json = ?4,
+                     show_unmatched = ?5,
+                     unmatched_label = ?6,
+                     remove_from_view_unassign_json = ?7
+                 WHERE id = ?8",
+                params![
+                    view.name,
+                    criteria_json,
+                    sections_json,
+                    columns_json,
+                    view.show_unmatched as i32,
+                    view.unmatched_label,
+                    remove_from_view_unassign_json,
+                    view.id.to_string(),
+                ],
+            )
+            .map_err(|err| Self::map_view_write_error(err, &view.name))?;
+        if rows == 0 {
+            return Err(AgendaError::NotFound {
+                entity: "View",
+                id: view.id,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn list_views(&self) -> Result<Vec<View>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, criteria_json, sections_json, columns_json,
+                    show_unmatched, unmatched_label, remove_from_view_unassign_json
+             FROM views
+             ORDER BY name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Self::row_to_view(row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn delete_view(&self, id: Uuid) -> Result<()> {
+        let rows = self
+            .conn
+            .execute("DELETE FROM views WHERE id = ?1", params![id.to_string()])?;
+        if rows == 0 {
+            return Err(AgendaError::NotFound { entity: "View", id });
+        }
+        Ok(())
+    }
+
     // ── Item helpers ───────────────────────────────────────────
 
     fn row_to_item(row: &Row<'_>) -> rusqlite::Result<Item> {
@@ -505,6 +637,32 @@ impl Store {
             );
         }
         Ok(item)
+    }
+
+    fn row_to_view(row: &Row<'_>) -> rusqlite::Result<View> {
+        let id_str: String = row.get(0)?;
+        let criteria_json: String = row.get(2)?;
+        let sections_json: String = row.get(3)?;
+        let columns_json: String = row.get(4)?;
+        let show_unmatched: i32 = row.get(5)?;
+        let remove_from_view_unassign_json: String = row.get(7)?;
+
+        let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
+        let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
+        let columns: Vec<Column> = serde_json::from_str(&columns_json).unwrap_or_default();
+        let remove_from_view_unassign: HashSet<CategoryId> =
+            serde_json::from_str(&remove_from_view_unassign_json).unwrap_or_default();
+
+        Ok(View {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            name: row.get(1)?,
+            criteria,
+            sections,
+            columns,
+            show_unmatched: show_unmatched != 0,
+            unmatched_label: row.get(6)?,
+            remove_from_view_unassign,
+        })
     }
 
     // ── Assignment persistence ──────────────────────────────────
@@ -686,6 +844,28 @@ impl Store {
         }
     }
 
+    fn map_view_write_error(err: rusqlite::Error, view_name: &str) -> AgendaError {
+        match err {
+            rusqlite::Error::SqliteFailure(sqlite_err, _)
+                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
+                    && sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                AgendaError::DuplicateName {
+                    name: view_name.to_string(),
+                }
+            }
+            rusqlite::Error::SqliteFailure(sqlite_err, Some(message))
+                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
+                    && message.contains("views.name") =>
+            {
+                AgendaError::DuplicateName {
+                    name: view_name.to_string(),
+                }
+            }
+            other => AgendaError::from(other),
+        }
+    }
+
     fn is_reserved_category_name(name: &str) -> bool {
         RESERVED_CATEGORY_NAMES
             .iter()
@@ -720,13 +900,18 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssignmentSource, Category, Item};
+    use crate::model::{AssignmentSource, Category, Column, Item, Query, Section, View};
     use chrono::{Duration, Utc};
     use rusqlite::params;
+    use std::collections::HashSet;
     use uuid::Uuid;
 
     fn new_category(name: &str) -> Category {
         Category::new(name.to_string())
+    }
+
+    fn new_view(name: &str) -> View {
+        View::new(name.to_string())
     }
 
     #[test]
@@ -1231,6 +1416,164 @@ mod tests {
         assert_eq!(loaded.name, "When");
         assert_eq!(loaded.note.as_deref(), Some("allowed"));
         assert!(!loaded.enable_implicit_string);
+    }
+
+    #[test]
+    fn test_create_and_get_view() {
+        let store = Store::open_memory().unwrap();
+        let when_category = make_category(&store, "WhenColumn");
+
+        let mut view = new_view("Inbox");
+        view.criteria.include.insert(when_category);
+
+        let mut section_criteria = Query::default();
+        section_criteria.include.insert(when_category);
+        view.sections.push(Section {
+            title: "Due Soon".to_string(),
+            criteria: section_criteria,
+            on_insert_assign: HashSet::from([when_category]),
+            on_remove_unassign: HashSet::new(),
+            show_children: true,
+        });
+        view.columns.push(Column {
+            heading: when_category,
+            width: 24,
+        });
+        view.show_unmatched = false;
+        view.unmatched_label = "Other".to_string();
+        view.remove_from_view_unassign.insert(when_category);
+
+        store.create_view(&view).unwrap();
+
+        let loaded = store.get_view(view.id).unwrap();
+        assert_eq!(loaded.id, view.id);
+        assert_eq!(loaded.name, "Inbox");
+        assert_eq!(loaded.criteria.include, view.criteria.include);
+        assert_eq!(loaded.sections.len(), 1);
+        assert_eq!(loaded.sections[0].title, "Due Soon");
+        assert!(loaded.sections[0].show_children);
+        assert_eq!(loaded.columns.len(), 1);
+        assert_eq!(loaded.columns[0].heading, when_category);
+        assert_eq!(loaded.columns[0].width, 24);
+        assert!(!loaded.show_unmatched);
+        assert_eq!(loaded.unmatched_label, "Other");
+        assert_eq!(
+            loaded.remove_from_view_unassign,
+            view.remove_from_view_unassign
+        );
+    }
+
+    #[test]
+    fn test_get_view_not_found() {
+        let store = Store::open_memory().unwrap();
+        let result = store.get_view(Uuid::new_v4());
+        assert!(matches!(
+            result,
+            Err(AgendaError::NotFound { entity: "View", .. })
+        ));
+    }
+
+    #[test]
+    fn test_create_view_duplicate_name_rejected() {
+        let store = Store::open_memory().unwrap();
+        let one = new_view("Planning");
+        let two = new_view("Planning");
+        store.create_view(&one).unwrap();
+
+        let result = store.create_view(&two);
+        assert!(matches!(
+            result,
+            Err(AgendaError::DuplicateName { name }) if name == "Planning"
+        ));
+    }
+
+    #[test]
+    fn test_update_view() {
+        let store = Store::open_memory().unwrap();
+        let mut view = new_view("Daily");
+        store.create_view(&view).unwrap();
+
+        let category_id = make_category(&store, "Schedule");
+        view.name = "Daily Agenda".to_string();
+        view.criteria.include.insert(category_id);
+        view.sections.push(Section {
+            title: "Today".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: HashSet::from([category_id]),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+        });
+        view.columns.push(Column {
+            heading: category_id,
+            width: 32,
+        });
+        view.show_unmatched = false;
+        view.unmatched_label = "Unsectioned".to_string();
+        view.remove_from_view_unassign.insert(category_id);
+
+        store.update_view(&view).unwrap();
+
+        let loaded = store.get_view(view.id).unwrap();
+        assert_eq!(loaded.name, "Daily Agenda");
+        assert_eq!(loaded.criteria.include, HashSet::from([category_id]));
+        assert_eq!(loaded.sections.len(), 1);
+        assert_eq!(loaded.columns.len(), 1);
+        assert!(!loaded.show_unmatched);
+        assert_eq!(loaded.unmatched_label, "Unsectioned");
+        assert_eq!(
+            loaded.remove_from_view_unassign,
+            HashSet::from([category_id])
+        );
+    }
+
+    #[test]
+    fn test_update_view_not_found() {
+        let store = Store::open_memory().unwrap();
+        let missing = new_view("Missing");
+        let result = store.update_view(&missing);
+        assert!(matches!(
+            result,
+            Err(AgendaError::NotFound {
+                entity: "View",
+                id
+            }) if id == missing.id
+        ));
+    }
+
+    #[test]
+    fn test_list_views_ordered_by_name_case_insensitive() {
+        let store = Store::open_memory().unwrap();
+        store.create_view(&new_view("zeta")).unwrap();
+        store.create_view(&new_view("Alpha")).unwrap();
+        store.create_view(&new_view("beta")).unwrap();
+
+        let views = store.list_views().unwrap();
+        let names: Vec<String> = views.into_iter().map(|v| v.name).collect();
+        assert_eq!(names, vec!["Alpha", "beta", "zeta"]);
+    }
+
+    #[test]
+    fn test_delete_view() {
+        let store = Store::open_memory().unwrap();
+        let view = new_view("Temp");
+        let id = view.id;
+        store.create_view(&view).unwrap();
+
+        store.delete_view(id).unwrap();
+        assert!(matches!(
+            store.get_view(id),
+            Err(AgendaError::NotFound { entity: "View", .. })
+        ));
+    }
+
+    #[test]
+    fn test_delete_view_not_found() {
+        let store = Store::open_memory().unwrap();
+        let result = store.delete_view(Uuid::new_v4());
+        assert!(matches!(
+            result,
+            Err(AgendaError::NotFound { entity: "View", .. })
+        ));
     }
 
     #[test]
