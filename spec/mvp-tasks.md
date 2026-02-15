@@ -51,7 +51,7 @@
 
 - [ ] T015 [US1] Define Classifier trait in `agenda-core/src/matcher.rs` with `fn classify(&self, text: &str, category_name: &str) -> Option<f32>`
 - [ ] T016 [US1] Implement SubstringClassifier in `agenda-core/src/matcher.rs`: case-insensitive word-boundary match, returns Some(1.0) or None. Respects `enable_implicit_string` flag.
-- [ ] T017 [US1] Implement rule engine in `agenda-core/src/engine.rs`: process_item() — depth-first walk of category hierarchy, evaluate conditions (String + Profile), fire actions (Assign + Remove)
+- [ ] T017 [US1] Implement rule engine in `agenda-core/src/engine.rs`: process_item() — depth-first walk of category hierarchy, evaluate conditions (ImplicitString + Profile), fire actions (Assign + Remove)
 - [ ] T018 [US1] Implement fixed-point loop in engine: re-queue on action side-effects, max 10 passes, cycle detection via (ItemId, CategoryId) set, deferred RemoveAction
 - [ ] T019 [US1] Implement subsumption in engine: when assigning to child, create implicit assignments for all ancestors (source: Subsumption)
 - [ ] T020 [US1] Implement mutual exclusion in engine: when assigning to child of exclusive parent, unassign from sibling children
