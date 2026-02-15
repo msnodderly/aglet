@@ -7,7 +7,7 @@ use serde_json;
 use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
-use crate::model::{Assignment, AssignmentSource, Item, ItemId};
+use crate::model::{Assignment, AssignmentSource, CategoryId, Item, ItemId};
 
 const SCHEMA_VERSION: i32 = 1;
 
@@ -280,6 +280,57 @@ impl Store {
         Ok(item)
     }
 
+    // ── Assignment persistence ──────────────────────────────────
+
+    /// Assign an item to a category. If the assignment already exists, it is
+    /// replaced (upsert).
+    pub fn assign_item(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        assignment: &Assignment,
+    ) -> Result<()> {
+        let source_str = match assignment.source {
+            AssignmentSource::Manual => "Manual",
+            AssignmentSource::AutoMatch => "AutoMatch",
+            AssignmentSource::Action => "Action",
+            AssignmentSource::Subsumption => "Subsumption",
+        };
+        self.conn.execute(
+            "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                item_id.to_string(),
+                category_id.to_string(),
+                source_str,
+                assignment.assigned_at.to_rfc3339(),
+                assignment.sticky as i32,
+                assignment.origin,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Remove an assignment. Returns Ok even if the assignment didn't exist.
+    pub fn unassign_item(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM assignments WHERE item_id = ?1 AND category_id = ?2",
+            params![item_id.to_string(), category_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Get all assignments for an item as a HashMap.
+    pub fn get_assignments_for_item(
+        &self,
+        item_id: ItemId,
+    ) -> Result<HashMap<CategoryId, Assignment>> {
+        let mut item = Item::new(String::new());
+        item.id = item_id;
+        let item = self.load_assignments(item)?;
+        Ok(item.assignments)
+    }
+
     fn init(&self) -> Result<()> {
         // WAL mode for crash safety and concurrent reads.
         self.conn.pragma_update(None, "journal_mode", "wal")?;
@@ -488,6 +539,132 @@ mod tests {
         assert_eq!(loaded.assignments.len(), 1);
         assert!(loaded.assignments.contains_key(&cat_id));
         assert_eq!(loaded.assignments[&cat_id].source, AssignmentSource::Manual);
+    }
+
+    fn make_category(store: &Store, name: &str) -> Uuid {
+        let id = Uuid::new_v4();
+        store
+            .conn
+            .execute(
+                "INSERT INTO categories (id, name, created_at, modified_at) VALUES (?1, ?2, ?3, ?3)",
+                params![id.to_string(), name, Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn test_assign_and_get_assignments() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Test item".to_string());
+        let item_id = item.id;
+        store.create_item(&item).unwrap();
+
+        let cat_id = make_category(&store, "Project");
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some("manual".to_string()),
+        };
+        store.assign_item(item_id, cat_id, &assignment).unwrap();
+
+        let assignments = store.get_assignments_for_item(item_id).unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert!(assignments.contains_key(&cat_id));
+        assert_eq!(assignments[&cat_id].source, AssignmentSource::Manual);
+        assert_eq!(assignments[&cat_id].origin.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn test_assign_upsert_replaces() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Test item".to_string());
+        let item_id = item.id;
+        store.create_item(&item).unwrap();
+
+        let cat_id = make_category(&store, "Status");
+        let a1 = Assignment {
+            source: AssignmentSource::AutoMatch,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some("cat:Status".to_string()),
+        };
+        store.assign_item(item_id, cat_id, &a1).unwrap();
+
+        // Re-assign with different source — should replace.
+        let a2 = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: false,
+            origin: Some("manual".to_string()),
+        };
+        store.assign_item(item_id, cat_id, &a2).unwrap();
+
+        let assignments = store.get_assignments_for_item(item_id).unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[&cat_id].source, AssignmentSource::Manual);
+        assert!(!assignments[&cat_id].sticky);
+    }
+
+    #[test]
+    fn test_unassign_item() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Test item".to_string());
+        let item_id = item.id;
+        store.create_item(&item).unwrap();
+
+        let cat_id = make_category(&store, "Remove");
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: None,
+        };
+        store.assign_item(item_id, cat_id, &assignment).unwrap();
+        assert_eq!(store.get_assignments_for_item(item_id).unwrap().len(), 1);
+
+        store.unassign_item(item_id, cat_id).unwrap();
+        assert_eq!(store.get_assignments_for_item(item_id).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_unassign_nonexistent_is_ok() {
+        let store = Store::open_memory().unwrap();
+        // Unassigning something that doesn't exist should not error.
+        store.unassign_item(Uuid::new_v4(), Uuid::new_v4()).unwrap();
+    }
+
+    #[test]
+    fn test_multiple_assignments() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Multi-assign".to_string());
+        let item_id = item.id;
+        store.create_item(&item).unwrap();
+
+        let cat1 = make_category(&store, "Cat1");
+        let cat2 = make_category(&store, "Cat2");
+        let cat3 = make_category(&store, "Cat3");
+
+        for (cat_id, src) in [
+            (cat1, AssignmentSource::Manual),
+            (cat2, AssignmentSource::AutoMatch),
+            (cat3, AssignmentSource::Subsumption),
+        ] {
+            let a = Assignment {
+                source: src,
+                assigned_at: Utc::now(),
+                sticky: true,
+                origin: None,
+            };
+            store.assign_item(item_id, cat_id, &a).unwrap();
+        }
+
+        let assignments = store.get_assignments_for_item(item_id).unwrap();
+        assert_eq!(assignments.len(), 3);
+        assert_eq!(assignments[&cat1].source, AssignmentSource::Manual);
+        assert_eq!(assignments[&cat2].source, AssignmentSource::AutoMatch);
+        assert_eq!(assignments[&cat3].source, AssignmentSource::Subsumption);
     }
 
     #[test]
