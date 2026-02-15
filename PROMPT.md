@@ -53,7 +53,13 @@ Select ONE task. Complete it. Stop.
    br sync --flush-only
    git add .beads/ && git commit -m "br sync: Close <id>"
    ```
-4. Verify: `br show <id>` should show CLOSED
-5. **STOP** — Do not pick another task
+4. Clean Worktree Gate (mandatory):
+   ```bash
+   git -C <issue-worktree> status --short
+   git -C <main-worktree> status --short
+   ```
+   Both must be empty before you stop. If not empty, commit a checkpoint or complete the close/sync commit flow.
+5. Verify: `br show <id>` should show CLOSED
+6. **STOP** — Do not pick another task
 
 **No remote:** Skip `git pull/push` — no remote configured. Always merge to main directly, never use PR workflow.
