@@ -8,15 +8,27 @@ walks the category hierarchy and decides which categories the item belongs to.
 This is the heart of the system: without it, categories are just labels that
 users assign manually.
 
-The engine evaluates two kinds of conditions:
-- **ImplicitString**: Does the item's text contain the category's name?
-  (Already implemented — you'll call the `Classifier` trait from `matcher.rs`.)
-- **Profile**: Is the item already assigned to a specific set of categories?
-  (e.g., "if assigned to both Urgent AND Project Alpha → also assign to Escalated")
+The engine evaluates two kinds of conditions, each serving a different
+level of automation:
+
+- **ImplicitString** (name-based, zero-config): Does the item's text contain
+  the category's name? Already implemented — you'll call the `Classifier`
+  trait from `matcher.rs`. This is the entry-level "aha moment" — create a
+  category named "Sarah" and items containing "Sarah" auto-assign.
+
+- **Profile** (assignment-based, user-configured): Is the item already
+  assigned to a specific combination of categories? This lets users build
+  cascading rules like "if assigned to both Urgent AND Project Alpha, also
+  assign to Escalated." The input is the item's current assignment set, not
+  its text. Profile conditions are what make the category tree a declarative
+  rule engine — users express organizational logic without writing code.
 
 When a condition matches, the engine assigns the item to that category and
 fires the category's actions, which may assign to (or remove from) other
-categories.
+categories. Actions can trigger further condition matches, creating cascades
+that the fixed-point loop (T018) resolves.
+
+See `spec/design-decisions.md` §1 for the full design rationale.
 
 ## What to read
 

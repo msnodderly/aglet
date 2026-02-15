@@ -175,6 +175,7 @@ starting work. If no prompt exists, flag it — don't start without one.
 
 - Product spec: `spec/mvp-spec.md`
 - Product tasks: `spec/mvp-tasks.md`
+- Design decisions: `spec/design-decisions.md`
 - Deferred findings: `spec/deferred-findings.md`
 - Implementer prompts: `spec/prompts/`
 - Specify-on-ready procedure: `spec/specify-on-ready.md`
