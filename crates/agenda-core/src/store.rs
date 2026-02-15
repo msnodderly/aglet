@@ -310,9 +310,7 @@ impl Store {
                 message: "category cannot be its own parent".to_string(),
             });
         }
-        if let Some(parent_id) = category.parent {
-            self.get_category(parent_id)?;
-        }
+        self.validate_category_parent(category.id, category.parent)?;
 
         let conditions_json = serde_json::to_string(&category.conditions).map_err(|err| {
             AgendaError::StorageError {
@@ -629,6 +627,24 @@ impl Store {
             let next = self.conn.query_row(sql_for_root, [], |row| row.get(0))?;
             Ok(next)
         }
+    }
+
+    fn validate_category_parent(
+        &self,
+        category_id: CategoryId,
+        parent_id: Option<CategoryId>,
+    ) -> Result<()> {
+        let mut cursor = parent_id;
+        while let Some(current_parent_id) = cursor {
+            if current_parent_id == category_id {
+                return Err(AgendaError::InvalidOperation {
+                    message: "category reparent would create a cycle".to_string(),
+                });
+            }
+            let parent = self.get_category(current_parent_id)?;
+            cursor = parent.parent;
+        }
+        Ok(())
     }
 
     fn flatten_hierarchy(
@@ -1067,6 +1083,22 @@ mod tests {
     }
 
     #[test]
+    fn test_create_category_with_invalid_parent_rejected() {
+        let store = Store::open_memory().unwrap();
+        let mut category = new_category("Orphan");
+        category.parent = Some(Uuid::new_v4());
+
+        let result = store.create_category(&category);
+        assert!(matches!(
+            result,
+            Err(AgendaError::NotFound {
+                entity: "Category",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn test_update_category_touches_modified_at() {
         let store = Store::open_memory().unwrap();
         let mut category = new_category("Draft");
@@ -1092,6 +1124,39 @@ mod tests {
         let missing = new_category("Missing");
         let result = store.update_category(&missing);
         assert!(matches!(result, Err(AgendaError::NotFound { .. })));
+    }
+
+    #[test]
+    fn test_update_category_rename_to_duplicate_rejected() {
+        let store = Store::open_memory().unwrap();
+        let mut one = new_category("One");
+        let two = new_category("Two");
+        store.create_category(&one).unwrap();
+        store.create_category(&two).unwrap();
+
+        one.name = "Two".to_string();
+        let result = store.update_category(&one);
+        assert!(matches!(
+            result,
+            Err(AgendaError::DuplicateName { name }) if name == "Two"
+        ));
+    }
+
+    #[test]
+    fn test_update_category_reparent_cycle_rejected() {
+        let store = Store::open_memory().unwrap();
+        let root = new_category("Root");
+        store.create_category(&root).unwrap();
+
+        let mut child = new_category("Child");
+        child.parent = Some(root.id);
+        store.create_category(&child).unwrap();
+
+        let mut updated_root = store.get_category(root.id).unwrap();
+        updated_root.parent = Some(child.id);
+
+        let result = store.update_category(&updated_root);
+        assert!(matches!(result, Err(AgendaError::InvalidOperation { .. })));
     }
 
     #[test]
