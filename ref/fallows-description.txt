@@ -1,0 +1,128 @@
+
+Now I face the problem that has apparently buffaloed Lotus’s advertising staff:
+describing just what Agenda does. The possibilities are easy to demonstrate on
+a computer screen but a little trickier to explain.
+
+To start with the big picture, Agenda has three operating components: items,
+categories, and views. Items are the basic units of information. If you are
+using Agenda to keep a schedule, each item will be an appointment or a task. If
+you are using Agenda for accounting, each item will be a transaction. If you
+are using Agenda for what is, in my view, its most revolutionary and valuable
+purpose—manipulating very large amounts of research or reference data—each item
+will be a quotation, a piece of data, a chart, or anything else you want to
+find later on.
+
+Categories are the attributes you ascribe to each item. Time can be a category,
+and in a scheduling system, events that happen today will be in the “today,”
+“this week,” “this month,” and “this year" categories. Categories can be
+priorities—high, medium, never. They can be the people in charge of various
+tasks. If you were cataloguing baseball cards, the categories could include
+team, position, and year. Categories can include zip codes for addresses, or
+yes/no listings about whether something has been done. They can be substantive
+themes—“Meiji restoration,” “Mississippi politics during Reconstruction”—for
+research material.
+
+There is no built-in limit on the categories you can define.
+
+Finally, views are presentations of the information in your items, selected and
+arrayed according to the categories you specify. This may sound similar to what
+a normal data-base program does. With Paradox, dBase IV, R:BASE, and so on, you
+can retrieve pieces of information through a query, according to the criteria
+you choose. (“Show me the last name, first names, and phone number for all
+families whose addresses have a zip code from 10001 to 10292.”) The difference
+is that Agenda eliminates the need for queries. Most data-base programs have
+one bedrock chunk of data, the mother lode, from which you request samplings
+from time to time. In its fundamental technology Agenda also has one mother
+lode of data, but—in ways that are, again, easier to appreciate on the
+screen—it creates the illusion that the information exists in small,
+pre-customized chunks. You can create an Agenda view called “New York City,”
+comparable to the zip-code query above. Whenever you flip there, with one key,
+it can show you all the dealings you’ve had with anyone in New York.
+
+The artificial-intelligence part of the system comes from the interaction of
+items, categories, and views. The simplest illustration involves dates. If you
+type in an item saying “Have lunch at noon next Tuesday,” Agenda will
+automatically schedule it for the proper date and time. If you type “Lunch
+meeting at noon every Tuesday,” it will generate Tuesday bookings on into
+forever.
+
+The rules for converting “next Tuesday” into “May 26, 1992” are built into
+Agenda, as they are into a number of scheduling programs. What makes Agenda
+unusual is that you can develop unlimited numbers of other rules. Any item
+including the words “Call Mom” can automatically be sent to the “high priority”
+category. Anything including the words “file estimated taxes” can come up on
+the appropriate quarterly dates. Some obligations become more important the
+longer you delay them—paying bills, for example. Others become less
+important—say, buying tickets for a concert that’s already occurred. You can
+arrange for Agenda to move events of the first type up the priority list and
+discreetly eliminate the second from your file. If you type in “See Sue next
+Wednesday about Hmong families in Fresno,” the item can automatically appear in
+views displaying “topics to discuss with Sue,” “events next week, ” “
+immigration from Asia,” “California sociology,” or any other grouping you
+choose.
+
+Most of the examples I’ve given involve one of Agenda 2.0’s built-in sample
+applications: Planner, which is an appointment and to-do system. This is where
+most people start with Agenda, because its functions look familiar.
+Unfortunately, this very familiarity undersells Agenda’s potential. Everyone
+has seen scheduling programs before, and initially this looks like just one
+more of them. Indeed, if your only goal were to keep track of appointments and
+business contacts, programs designed for that purpose and no other, such as one
+called Act!, would prove faster and more efficient. I use my own version of
+Planner, with “Call Mom ”—type rules built in, and after many years of using
+Paradox to keep track of accounting information, I’ve switched to an Agenda
+application I developed.
+
+What I value most in Agenda is a function that I didn’t know it had when I
+bought it. I use it every day to organize and keep track of large quantities of
+research information. I don’t know of any other program that can do this as
+flexibly as Agenda can.
+
+Suppose you had collected information on your computer in dribs and drabs,
+knowing that eventually you would need to put it together in some organized
+way. Perhaps you had been copying out notes and citations for a thesis, or
+collecting information from an on-line data base, or in any other way storing
+facts for later use. (Obviously the information has to be on your computer
+disk, rather than on a printed page, before Agenda can deal with it. This is a
+fundamental barrier for most computer programs, which will be breached when
+optical character-recognition systems become reliable and you can “scan” a
+passage from a book or a report into your computer.) Agenda can then sort the
+information into usable categories, according to rules you specify. If your
+project concerned the history of China, you could specify that any paragraph
+containing the words “John King Fairbank” could be assigned to categories such
+as “Harvard scholars,” “long-term impact of American missionary families,” and
+“Who Lost China controversy.” If you were researching world leaders, you could
+assign all names including “King” to the “royalty” category, except those also
+including the words “John Fairbank,” “Martin Luther,” or “Kong.”
+
+Thinking up appropriate rules is time-consuming, but no more so than with any
+other cataloguing system, computerized or manual. Once you have laid out the
+rules, Agenda can retroactively apply them to information already in your
+computer and automatically categorize each new bit of data you add.
+
+Then you have the payoff: being able to switch from view to view and see
+exactly the information you are looking for. If I want to see all items
+concerning relations between America and China, I bring up one view. If I want
+to see all citations I’ve collected from the writings of John King Fairbank,
+including some that were also in the “America and China ” view, I can switch
+there. Then, if I want to see notes on the influence that the children of
+American missionaries in Asia have had, I can switch to another view and see
+comments from Fairbank, Edwin Reischauer, and Henry Luce.
+
+Through a process that I would love to describe but that would seem
+incomprehensible to the civilian reader, I have used views and categories to
+make Agenda into an extremely powerful outlining system. Agenda’s categories
+can be arrayed in hierarchies, like a normal outline. Chapter 1 can be a
+category, with subcategories like 1-A and 1-B, each of which can have several
+generations of subcategories of its own. If I know that one of Fairbank’s
+comments should show up in Chapter 7, section B, subsection 3, I can assign it
+to that category. I can use another set of categories to classify items as used
+or not used. When I am finished quoting from Fairbank, Agenda can remove the
+item from the screen and put it in a different view, showing when and how I
+used it. Neither Agenda nor anything else in computing can make up for bad
+organization or sloppy thought. But, like a word processor compared with the
+old typewriter-and-correction-fluid approach, it reduces the practical barriers
+to writing and thinking.
+
+
+
