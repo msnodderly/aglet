@@ -156,9 +156,27 @@ to understand what's done and what remains.
 - **`br sync --full` unsupported**: use `--flush-only` or `--import-only`.
 - **Worktree removal needs `--force`**: beads files trigger git's modified-files guard.
 
+## Specify-on-Ready
+
+When an issue becomes unblocked, a reviewer writes a detailed implementer
+prompt before any agent claims it. See `spec/specify-on-ready.md` for the
+full procedure.
+
+**The flywheel:**
+1. Agent closes an issue → `br close` + commit
+2. `br ready` reveals newly unblocked issues
+3. Reviewer writes `spec/prompts/<task-id>-<name>.md` for each
+4. Agent claims and implements using the prompt as context
+
+Implementer agents: check `spec/prompts/` for your task's prompt before
+starting work. If no prompt exists, flag it — don't start without one.
+
 ## Project Reference
 
 - Product spec: `spec/mvp-spec.md`
 - Product tasks: `spec/mvp-tasks.md`
 - Deferred findings: `spec/deferred-findings.md`
+- Implementer prompts: `spec/prompts/`
+- Specify-on-ready procedure: `spec/specify-on-ready.md`
+- Issue creation procedure: `spec/issue-creation-procedure.md`
 - Local-only project: no pull requests, merge branches directly to main
