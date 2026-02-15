@@ -53,6 +53,14 @@ Direction: `br dep add bd-abc bd-xyz` = "bd-abc depends on bd-xyz"
 - `br ready` is scheduling truth; if it shows ready but `br show` lists blockers, check each dep's status directly
 - **Beads + worktree close ordering**: Worktree removal can clobber `.beads/` state. The safe sequence is: merge branch → remove worktree → *then* `br close` + `br sync --flush-only` + commit `.beads/`. Always verify with `br show <id>` after.
 
+### Clean Worktree Gate (Mandatory)
+
+- Never stop, hand off, or switch tasks with a dirty worktree.
+- `git status --short` must be empty before ending a session.
+- If there is in-progress code, create a checkpoint commit before pausing.
+- If `.beads/` changed, finish the issue flow (`br close` → `br sync --flush-only` → commit) before stopping.
+- Run the cleanliness check in both the issue worktree and the main worktree.
+
 ## Session Learnings
 
 - Product spec: `spec/mvp-spec.md`
