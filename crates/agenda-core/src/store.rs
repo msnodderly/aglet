@@ -140,7 +140,7 @@ impl Store {
              FROM items WHERE id = ?1",
         )?;
         let item = stmt
-            .query_row(params![id.to_string()], |row| Self::row_to_item(row))
+            .query_row(params![id.to_string()], Self::row_to_item)
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => {
                     AgendaError::NotFound { entity: "Item", id }
@@ -209,7 +209,7 @@ impl Store {
              FROM items ORDER BY created_at DESC",
         )?;
         let rows = stmt
-            .query_map([], |row| Self::row_to_item(row))?
+            .query_map([], Self::row_to_item)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         rows.into_iter()
@@ -275,7 +275,7 @@ impl Store {
              FROM categories WHERE id = ?1",
         )?;
         let (mut category, _) = stmt
-            .query_row(params![id.to_string()], |row| Self::row_to_category(row))
+            .query_row(params![id.to_string()], Self::row_to_category)
             .map_err(|err| match err {
                 rusqlite::Error::QueryReturnedNoRows => AgendaError::NotFound {
                     entity: "Category",
@@ -392,7 +392,7 @@ impl Store {
         )?;
 
         let category_rows = stmt
-            .query_map([], |row| Self::row_to_category(row))?
+            .query_map([], Self::row_to_category)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let mut categories_by_id = HashMap::new();
@@ -486,7 +486,7 @@ impl Store {
                     show_unmatched, unmatched_label, remove_from_view_unassign_json
              FROM views WHERE id = ?1",
         )?;
-        stmt.query_row(params![id.to_string()], |row| Self::row_to_view(row))
+        stmt.query_row(params![id.to_string()], Self::row_to_view)
             .map_err(|err| match err {
                 rusqlite::Error::QueryReturnedNoRows => {
                     AgendaError::NotFound { entity: "View", id }
@@ -554,7 +554,7 @@ impl Store {
              ORDER BY name COLLATE NOCASE ASC",
         )?;
         let rows = stmt
-            .query_map([], |row| Self::row_to_view(row))?
+            .query_map([], Self::row_to_view)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }
@@ -884,12 +884,15 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let sort_order = self.next_category_sort_order(None)?;
 
+        // Reserved categories have implicit string matching disabled by default.
+        // "Done", "When", "Entry" should not auto-match item text containing
+        // those common words.
         self.conn
             .execute(
                 "INSERT INTO categories (
                     id, name, parent_id, is_exclusive, enable_implicit_string, note,
                     created_at, modified_at, sort_order, conditions_json, actions_json
-                 ) VALUES (?1, ?2, NULL, 0, 1, NULL, ?3, ?3, ?4, '[]', '[]')",
+                 ) VALUES (?1, ?2, NULL, 0, 0, NULL, ?3, ?3, ?4, '[]', '[]')",
                 params![id.to_string(), name, now, sort_order],
             )
             .map_err(|err| Self::map_category_write_error(err, name))?;
@@ -1116,6 +1119,18 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(categories, vec!["When", "Entry", "Done"]);
+
+        // Reserved categories should have implicit string matching disabled
+        // so common words like "done" or "when" don't trigger auto-assignment.
+        for name in ["When", "Entry", "Done"] {
+            let cat = store
+                .get_category(category_id_by_name(&store, name))
+                .unwrap();
+            assert!(
+                !cat.enable_implicit_string,
+                "{name} should have enable_implicit_string = false"
+            );
+        }
 
         let when_id = category_id_by_name(&store, "When");
         let all_items_view: String = store
