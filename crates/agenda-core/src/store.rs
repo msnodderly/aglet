@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde_json;
 use uuid::Uuid;
 
@@ -14,6 +14,7 @@ use crate::model::{
 
 const SCHEMA_VERSION: i32 = 1;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
+const DEFAULT_VIEW_NAME: &str = "All Items";
 
 const SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS items (
@@ -866,6 +867,80 @@ impl Store {
         }
     }
 
+    fn get_category_id_by_name(&self, name: &str) -> Result<Option<CategoryId>> {
+        let id_str: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 COLLATE NOCASE LIMIT 1",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(id_str.and_then(|s| Uuid::parse_str(&s).ok()))
+    }
+
+    fn insert_reserved_category(&self, name: &str) -> Result<CategoryId> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        let sort_order = self.next_category_sort_order(None)?;
+
+        self.conn
+            .execute(
+                "INSERT INTO categories (
+                    id, name, parent_id, is_exclusive, enable_implicit_string, note,
+                    created_at, modified_at, sort_order, conditions_json, actions_json
+                 ) VALUES (?1, ?2, NULL, 0, 1, NULL, ?3, ?3, ?4, '[]', '[]')",
+                params![id.to_string(), name, now, sort_order],
+            )
+            .map_err(|err| Self::map_category_write_error(err, name))?;
+
+        Ok(id)
+    }
+
+    fn ensure_reserved_categories(&self) -> Result<CategoryId> {
+        let mut when_category_id = None;
+
+        for reserved_name in RESERVED_CATEGORY_NAMES {
+            let category_id = match self.get_category_id_by_name(reserved_name)? {
+                Some(existing_id) => existing_id,
+                None => self.insert_reserved_category(reserved_name)?,
+            };
+            if reserved_name.eq_ignore_ascii_case("When") {
+                when_category_id = Some(category_id);
+            }
+        }
+
+        when_category_id.ok_or_else(|| AgendaError::StorageError {
+            source: Box::new(std::io::Error::other("missing reserved When category")),
+        })
+    }
+
+    fn has_view_named(&self, name: &str) -> Result<bool> {
+        let exists: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM views WHERE name = ?1 COLLATE NOCASE LIMIT 1",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(exists.is_some())
+    }
+
+    fn ensure_default_view(&self, when_category_id: CategoryId) -> Result<()> {
+        if self.has_view_named(DEFAULT_VIEW_NAME)? {
+            return Ok(());
+        }
+
+        let mut view = View::new(DEFAULT_VIEW_NAME.to_string());
+        view.columns.push(Column {
+            heading: when_category_id,
+            width: 16,
+        });
+        self.create_view(&view)?;
+        Ok(())
+    }
+
     fn is_reserved_category_name(name: &str) -> bool {
         RESERVED_CATEGORY_NAMES
             .iter()
@@ -893,6 +968,9 @@ impl Store {
                 .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
 
+        let when_category_id = self.ensure_reserved_categories()?;
+        self.ensure_default_view(when_category_id)?;
+
         Ok(())
     }
 }
@@ -912,6 +990,18 @@ mod tests {
 
     fn new_view(name: &str) -> View {
         View::new(name.to_string())
+    }
+
+    fn category_id_by_name(store: &Store, name: &str) -> Uuid {
+        let id: String = store
+            .conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 COLLATE NOCASE",
+                params![name],
+                |row| row.get(0),
+            )
+            .unwrap();
+        Uuid::parse_str(&id).unwrap()
     }
 
     #[test]
@@ -970,8 +1060,80 @@ mod tests {
     #[test]
     fn test_idempotent_init() {
         let store = Store::open_memory().expect("failed to open in-memory store");
-        // Calling init again should not fail.
+        let reserved_before: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM categories WHERE name IN ('When', 'Entry', 'Done')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let default_view_before: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM views WHERE name = 'All Items'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // Calling init again should be idempotent.
         store.init().expect("second init should be idempotent");
+
+        let reserved_after: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM categories WHERE name IN ('When', 'Entry', 'Done')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let default_view_after: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM views WHERE name = 'All Items'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(reserved_before, 3);
+        assert_eq!(reserved_after, 3);
+        assert_eq!(default_view_before, 1);
+        assert_eq!(default_view_after, 1);
+    }
+
+    #[test]
+    fn test_first_launch_creates_reserved_categories_and_default_view() {
+        let store = Store::open_memory().expect("failed to open in-memory store");
+
+        let categories: Vec<String> = store
+            .conn
+            .prepare("SELECT name FROM categories ORDER BY sort_order ASC")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(categories, vec!["When", "Entry", "Done"]);
+
+        let when_id = category_id_by_name(&store, "When");
+        let all_items_view: String = store
+            .conn
+            .query_row("SELECT id FROM views WHERE name = 'All Items'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let view = store
+            .get_view(Uuid::parse_str(&all_items_view).unwrap())
+            .unwrap();
+
+        assert_eq!(view.name, "All Items");
+        assert!(view.criteria.include.is_empty());
+        assert!(view.sections.is_empty());
+        assert_eq!(view.columns.len(), 1);
+        assert_eq!(view.columns[0].heading, when_id);
+        assert_eq!(view.columns[0].width, 16);
     }
 
     #[test]
@@ -1375,16 +1537,7 @@ mod tests {
     #[test]
     fn test_delete_reserved_category_rejected() {
         let store = Store::open_memory().unwrap();
-        let now = Utc::now().to_rfc3339();
-        let reserved_id = Uuid::new_v4();
-        store
-            .conn
-            .execute(
-                "INSERT INTO categories (id, name, created_at, modified_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![reserved_id.to_string(), "Done", now, now],
-            )
-            .unwrap();
+        let reserved_id = category_id_by_name(&store, "Done");
 
         let result = store.delete_category(reserved_id);
         assert!(matches!(
@@ -1396,16 +1549,7 @@ mod tests {
     #[test]
     fn test_update_reserved_category_allowed_without_rename() {
         let store = Store::open_memory().unwrap();
-        let now = Utc::now().to_rfc3339();
-        let reserved_id = Uuid::new_v4();
-        store
-            .conn
-            .execute(
-                "INSERT INTO categories (id, name, created_at, modified_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![reserved_id.to_string(), "When", now, now],
-            )
-            .unwrap();
+        let reserved_id = category_id_by_name(&store, "When");
 
         let mut category = store.get_category(reserved_id).unwrap();
         category.note = Some("allowed".to_string());
@@ -1549,7 +1693,7 @@ mod tests {
 
         let views = store.list_views().unwrap();
         let names: Vec<String> = views.into_iter().map(|v| v.name).collect();
-        assert_eq!(names, vec!["Alpha", "beta", "zeta"]);
+        assert_eq!(names, vec!["All Items", "Alpha", "beta", "zeta"]);
     }
 
     #[test]
