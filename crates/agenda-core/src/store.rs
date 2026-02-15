@@ -2,14 +2,17 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
-use rusqlite::{Connection, Row, params};
+use rusqlite::{params, Connection, Row};
 use serde_json;
 use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
-use crate::model::{Assignment, AssignmentSource, CategoryId, Item, ItemId};
+use crate::model::{
+    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, ItemId,
+};
 
 const SCHEMA_VERSION: i32 = 1;
+const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 
 const SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS items (
@@ -137,10 +140,9 @@ impl Store {
         let item = stmt
             .query_row(params![id.to_string()], |row| Self::row_to_item(row))
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => AgendaError::NotFound {
-                    entity: "Item",
-                    id,
-                },
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AgendaError::NotFound { entity: "Item", id }
+                }
                 other => AgendaError::from(other),
             })?;
         self.load_assignments(item)
@@ -208,7 +210,232 @@ impl Store {
             .query_map([], |row| Self::row_to_item(row))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        rows.into_iter().map(|item| self.load_assignments(item)).collect()
+        rows.into_iter()
+            .map(|item| self.load_assignments(item))
+            .collect()
+    }
+
+    // ── Category CRUD ───────────────────────────────────────────
+
+    pub fn create_category(&self, category: &Category) -> Result<()> {
+        if Self::is_reserved_category_name(&category.name) {
+            return Err(AgendaError::ReservedName {
+                name: category.name.clone(),
+            });
+        }
+
+        if let Some(parent_id) = category.parent {
+            // Ensure parent exists so callers get a deterministic NotFound error.
+            self.get_category(parent_id)?;
+        }
+
+        let conditions_json = serde_json::to_string(&category.conditions).map_err(|err| {
+            AgendaError::StorageError {
+                source: Box::new(err),
+            }
+        })?;
+        let actions_json =
+            serde_json::to_string(&category.actions).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+
+        let sort_order = self.next_category_sort_order(category.parent)?;
+
+        self.conn
+            .execute(
+                "INSERT INTO categories (
+                    id, name, parent_id, is_exclusive, enable_implicit_string, note,
+                    created_at, modified_at, sort_order, conditions_json, actions_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    category.id.to_string(),
+                    category.name,
+                    category.parent.map(|id| id.to_string()),
+                    category.is_exclusive as i32,
+                    category.enable_implicit_string as i32,
+                    category.note,
+                    category.created_at.to_rfc3339(),
+                    category.modified_at.to_rfc3339(),
+                    sort_order,
+                    conditions_json,
+                    actions_json,
+                ],
+            )
+            .map_err(|err| Self::map_category_write_error(err, &category.name))?;
+
+        Ok(())
+    }
+
+    pub fn get_category(&self, id: CategoryId) -> Result<Category> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, parent_id, is_exclusive, enable_implicit_string, note,
+                    created_at, modified_at, conditions_json, actions_json, sort_order
+             FROM categories WHERE id = ?1",
+        )?;
+        let (mut category, _) = stmt
+            .query_row(params![id.to_string()], |row| Self::row_to_category(row))
+            .map_err(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => AgendaError::NotFound {
+                    entity: "Category",
+                    id,
+                },
+                other => AgendaError::from(other),
+            })?;
+
+        category.children = self.get_child_category_ids(category.id)?;
+        Ok(category)
+    }
+
+    pub fn update_category(&self, category: &Category) -> Result<()> {
+        let existing = self.get_category(category.id)?;
+
+        // Reserved categories can be updated, but they cannot be renamed or
+        // impersonated by non-reserved categories.
+        if Self::is_reserved_category_name(&category.name)
+            && !existing.name.eq_ignore_ascii_case(&category.name)
+        {
+            return Err(AgendaError::ReservedName {
+                name: category.name.clone(),
+            });
+        }
+        if Self::is_reserved_category_name(&existing.name)
+            && !existing.name.eq_ignore_ascii_case(&category.name)
+        {
+            return Err(AgendaError::ReservedName {
+                name: existing.name,
+            });
+        }
+        if category.parent == Some(category.id) {
+            return Err(AgendaError::InvalidOperation {
+                message: "category cannot be its own parent".to_string(),
+            });
+        }
+        if let Some(parent_id) = category.parent {
+            self.get_category(parent_id)?;
+        }
+
+        let conditions_json = serde_json::to_string(&category.conditions).map_err(|err| {
+            AgendaError::StorageError {
+                source: Box::new(err),
+            }
+        })?;
+        let actions_json =
+            serde_json::to_string(&category.actions).map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let modified_at = Utc::now();
+
+        self.conn
+            .execute(
+                "UPDATE categories
+                 SET name = ?1,
+                     parent_id = ?2,
+                     is_exclusive = ?3,
+                     enable_implicit_string = ?4,
+                     note = ?5,
+                     modified_at = ?6,
+                     conditions_json = ?7,
+                     actions_json = ?8
+                 WHERE id = ?9",
+                params![
+                    category.name,
+                    category.parent.map(|id| id.to_string()),
+                    category.is_exclusive as i32,
+                    category.enable_implicit_string as i32,
+                    category.note,
+                    modified_at.to_rfc3339(),
+                    conditions_json,
+                    actions_json,
+                    category.id.to_string(),
+                ],
+            )
+            .map_err(|err| Self::map_category_write_error(err, &category.name))?;
+
+        Ok(())
+    }
+
+    pub fn delete_category(&self, id: CategoryId) -> Result<()> {
+        let category = self.get_category(id)?;
+        if Self::is_reserved_category_name(&category.name) {
+            return Err(AgendaError::ReservedName {
+                name: category.name,
+            });
+        }
+        if !category.children.is_empty() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "cannot delete category {} while it still has children",
+                    category.name
+                ),
+            });
+        }
+
+        let rows = self.conn.execute(
+            "DELETE FROM categories WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        if rows == 0 {
+            return Err(AgendaError::NotFound {
+                entity: "Category",
+                id,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn get_hierarchy(&self) -> Result<Vec<Category>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, parent_id, is_exclusive, enable_implicit_string, note,
+                    created_at, modified_at, conditions_json, actions_json, sort_order
+             FROM categories
+             ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
+        )?;
+
+        let category_rows = stmt
+            .query_map([], |row| Self::row_to_category(row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut categories_by_id = HashMap::new();
+        let mut child_ids_by_parent: HashMap<Option<CategoryId>, Vec<(i64, CategoryId)>> =
+            HashMap::new();
+
+        for (category, sort_order) in category_rows {
+            child_ids_by_parent
+                .entry(category.parent)
+                .or_default()
+                .push((sort_order, category.id));
+            categories_by_id.insert(category.id, category);
+        }
+
+        for child_ids in child_ids_by_parent.values_mut() {
+            child_ids.sort_by_key(|(sort_order, child_id)| (*sort_order, *child_id));
+        }
+
+        let category_ids: Vec<CategoryId> = categories_by_id.keys().copied().collect();
+        for category_id in category_ids {
+            let children = child_ids_by_parent
+                .get(&Some(category_id))
+                .map(|child_ids| child_ids.iter().map(|(_, child_id)| *child_id).collect())
+                .unwrap_or_default();
+
+            if let Some(category) = categories_by_id.get_mut(&category_id) {
+                category.children = children;
+            }
+        }
+
+        let mut ordered = Vec::new();
+        if let Some(root_ids) = child_ids_by_parent.get(&None) {
+            for (_, root_id) in root_ids {
+                Self::flatten_hierarchy(
+                    *root_id,
+                    &categories_by_id,
+                    &child_ids_by_parent,
+                    &mut ordered,
+                );
+            }
+        }
+
+        Ok(ordered)
     }
 
     // ── Item helpers ───────────────────────────────────────────
@@ -233,8 +460,10 @@ impl Store {
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_default(),
             entry_date: NaiveDate::parse_from_str(&entry_str, "%Y-%m-%d").unwrap_or_default(),
-            when_date: when_str.and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
-            done_date: done_str.and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            when_date: when_str
+                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            done_date: done_str
+                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
             is_done: is_done_int != 0,
             assignments: HashMap::new(),
         })
@@ -331,6 +560,122 @@ impl Store {
         Ok(item.assignments)
     }
 
+    fn row_to_category(row: &Row<'_>) -> rusqlite::Result<(Category, i64)> {
+        let id_str: String = row.get(0)?;
+        let parent_id_str: Option<String> = row.get(2)?;
+        let is_exclusive: i32 = row.get(3)?;
+        let enable_implicit_string: i32 = row.get(4)?;
+        let created_str: String = row.get(6)?;
+        let modified_str: String = row.get(7)?;
+        let conditions_json: String = row.get(8)?;
+        let actions_json: String = row.get(9)?;
+        let sort_order: i64 = row.get(10)?;
+
+        let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
+        let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
+
+        Ok((
+            Category {
+                id: Uuid::parse_str(&id_str).unwrap_or_default(),
+                name: row.get(1)?,
+                parent: parent_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+                children: Vec::new(),
+                is_exclusive: is_exclusive != 0,
+                enable_implicit_string: enable_implicit_string != 0,
+                note: row.get(5)?,
+                created_at: DateTime::parse_from_rfc3339(&created_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_default(),
+                modified_at: DateTime::parse_from_rfc3339(&modified_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_default(),
+                conditions,
+                actions,
+            },
+            sort_order,
+        ))
+    }
+
+    fn get_child_category_ids(&self, parent_id: CategoryId) -> Result<Vec<CategoryId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id
+             FROM categories
+             WHERE parent_id = ?1
+             ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![parent_id.to_string()], |row| {
+                let id_str: String = row.get(0)?;
+                Ok(Uuid::parse_str(&id_str).unwrap_or_default())
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn next_category_sort_order(&self, parent_id: Option<CategoryId>) -> Result<i64> {
+        let sql_for_root =
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM categories WHERE parent_id IS NULL";
+        let sql_for_child =
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM categories WHERE parent_id = ?1";
+
+        if let Some(parent_id) = parent_id {
+            let next =
+                self.conn
+                    .query_row(sql_for_child, params![parent_id.to_string()], |row| {
+                        row.get(0)
+                    })?;
+            Ok(next)
+        } else {
+            let next = self.conn.query_row(sql_for_root, [], |row| row.get(0))?;
+            Ok(next)
+        }
+    }
+
+    fn flatten_hierarchy(
+        category_id: CategoryId,
+        categories_by_id: &HashMap<CategoryId, Category>,
+        child_ids_by_parent: &HashMap<Option<CategoryId>, Vec<(i64, CategoryId)>>,
+        output: &mut Vec<Category>,
+    ) {
+        if let Some(category) = categories_by_id.get(&category_id) {
+            output.push(category.clone());
+        }
+
+        if let Some(child_ids) = child_ids_by_parent.get(&Some(category_id)) {
+            for (_, child_id) in child_ids {
+                Self::flatten_hierarchy(*child_id, categories_by_id, child_ids_by_parent, output);
+            }
+        }
+    }
+
+    fn map_category_write_error(err: rusqlite::Error, category_name: &str) -> AgendaError {
+        match err {
+            rusqlite::Error::SqliteFailure(sqlite_err, _)
+                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
+                    && sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                AgendaError::DuplicateName {
+                    name: category_name.to_string(),
+                }
+            }
+            rusqlite::Error::SqliteFailure(sqlite_err, Some(message))
+                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
+                    && message.contains("categories.name") =>
+            {
+                AgendaError::DuplicateName {
+                    name: category_name.to_string(),
+                }
+            }
+            other => AgendaError::from(other),
+        }
+    }
+
+    fn is_reserved_category_name(name: &str) -> bool {
+        RESERVED_CATEGORY_NAMES
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    }
+
     fn init(&self) -> Result<()> {
         // WAL mode for crash safety and concurrent reads.
         self.conn.pragma_update(None, "journal_mode", "wal")?;
@@ -343,11 +688,11 @@ impl Store {
             .unwrap_or(0);
 
         if version < SCHEMA_VERSION {
-            self.conn.execute_batch(SCHEMA_SQL).map_err(|e| {
-                AgendaError::StorageError {
+            self.conn
+                .execute_batch(SCHEMA_SQL)
+                .map_err(|e| AgendaError::StorageError {
                     source: Box::new(e),
-                }
-            })?;
+                })?;
             self.conn
                 .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
@@ -359,10 +704,14 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssignmentSource, Item};
-    use chrono::Utc;
+    use crate::model::{AssignmentSource, Category, Item};
+    use chrono::{Duration, Utc};
     use rusqlite::params;
     use uuid::Uuid;
+
+    fn new_category(name: &str) -> Category {
+        Category::new(name.to_string())
+    }
 
     #[test]
     fn test_open_memory_creates_schema() {
@@ -479,7 +828,10 @@ mod tests {
         store.delete_item(id, "user").unwrap();
 
         // Item should be gone.
-        assert!(matches!(store.get_item(id), Err(AgendaError::NotFound { .. })));
+        assert!(matches!(
+            store.get_item(id),
+            Err(AgendaError::NotFound { .. })
+        ));
 
         // Deletion log should have an entry.
         let count: i32 = store
@@ -670,18 +1022,185 @@ mod tests {
     #[test]
     fn test_category_name_unique_case_insensitive() {
         let store = Store::open_memory().expect("failed to open in-memory store");
+        let category = new_category("TestCat");
+        store.create_category(&category).unwrap();
+
+        let duplicate = new_category("testcat");
+        let result = store.create_category(&duplicate);
+        assert!(matches!(
+            result,
+            Err(AgendaError::DuplicateName { name }) if name == "testcat"
+        ));
+    }
+
+    #[test]
+    fn test_create_and_get_category() {
+        let store = Store::open_memory().unwrap();
+        let mut root = new_category("Projects");
+        root.is_exclusive = true;
+        root.note = Some("top-level".to_string());
+        store.create_category(&root).unwrap();
+
+        let mut child = new_category("Aglet");
+        child.parent = Some(root.id);
+        store.create_category(&child).unwrap();
+
+        let loaded_root = store.get_category(root.id).unwrap();
+        assert_eq!(loaded_root.name, "Projects");
+        assert!(loaded_root.children.contains(&child.id));
+        assert!(loaded_root.is_exclusive);
+        assert_eq!(loaded_root.note.as_deref(), Some("top-level"));
+
+        let loaded_child = store.get_category(child.id).unwrap();
+        assert_eq!(loaded_child.parent, Some(root.id));
+    }
+
+    #[test]
+    fn test_create_category_rejects_reserved_names() {
+        let store = Store::open_memory().unwrap();
+        let reserved = new_category("wHeN");
+        let result = store.create_category(&reserved);
+        assert!(matches!(
+            result,
+            Err(AgendaError::ReservedName { name }) if name == "wHeN"
+        ));
+    }
+
+    #[test]
+    fn test_update_category_touches_modified_at() {
+        let store = Store::open_memory().unwrap();
+        let mut category = new_category("Draft");
+        category.modified_at = Utc::now() - Duration::minutes(10);
+        store.create_category(&category).unwrap();
+
+        let original_modified_at = category.modified_at;
+        category.name = "Published".to_string();
+        category.enable_implicit_string = false;
+        category.note = Some("updated".to_string());
+        store.update_category(&category).unwrap();
+
+        let loaded = store.get_category(category.id).unwrap();
+        assert_eq!(loaded.name, "Published");
+        assert!(!loaded.enable_implicit_string);
+        assert_eq!(loaded.note.as_deref(), Some("updated"));
+        assert!(loaded.modified_at > original_modified_at);
+    }
+
+    #[test]
+    fn test_update_category_not_found() {
+        let store = Store::open_memory().unwrap();
+        let missing = new_category("Missing");
+        let result = store.update_category(&missing);
+        assert!(matches!(result, Err(AgendaError::NotFound { .. })));
+    }
+
+    #[test]
+    fn test_delete_category() {
+        let store = Store::open_memory().unwrap();
+        let category = new_category("Temp");
+        let id = category.id;
+        store.create_category(&category).unwrap();
+
+        store.delete_category(id).unwrap();
+        assert!(matches!(
+            store.get_category(id),
+            Err(AgendaError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn test_delete_category_with_children_rejected() {
+        let store = Store::open_memory().unwrap();
+        let parent = new_category("Parent");
+        store.create_category(&parent).unwrap();
+
+        let mut child = new_category("Child");
+        child.parent = Some(parent.id);
+        store.create_category(&child).unwrap();
+
+        let result = store.delete_category(parent.id);
+        assert!(matches!(result, Err(AgendaError::InvalidOperation { .. })));
+    }
+
+    #[test]
+    fn test_delete_reserved_category_rejected() {
+        let store = Store::open_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let reserved_id = Uuid::new_v4();
         store
             .conn
             .execute(
-                "INSERT INTO categories (id, name, created_at, modified_at) VALUES (?1, ?2, ?3, ?3)",
-                params!["id1", "TestCat", "2026-01-01T00:00:00Z"],
+                "INSERT INTO categories (id, name, created_at, modified_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![reserved_id.to_string(), "Done", now, now],
             )
             .unwrap();
 
-        let result = store.conn.execute(
-            "INSERT INTO categories (id, name, created_at, modified_at) VALUES (?1, ?2, ?3, ?3)",
-            params!["id2", "testcat", "2026-01-01T00:00:00Z"],
-        );
-        assert!(result.is_err(), "duplicate case-insensitive name should fail");
+        let result = store.delete_category(reserved_id);
+        assert!(matches!(
+            result,
+            Err(AgendaError::ReservedName { name }) if name == "Done"
+        ));
+    }
+
+    #[test]
+    fn test_update_reserved_category_allowed_without_rename() {
+        let store = Store::open_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let reserved_id = Uuid::new_v4();
+        store
+            .conn
+            .execute(
+                "INSERT INTO categories (id, name, created_at, modified_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![reserved_id.to_string(), "When", now, now],
+            )
+            .unwrap();
+
+        let mut category = store.get_category(reserved_id).unwrap();
+        category.note = Some("allowed".to_string());
+        category.enable_implicit_string = false;
+        store.update_category(&category).unwrap();
+
+        let loaded = store.get_category(reserved_id).unwrap();
+        assert_eq!(loaded.name, "When");
+        assert_eq!(loaded.note.as_deref(), Some("allowed"));
+        assert!(!loaded.enable_implicit_string);
+    }
+
+    #[test]
+    fn test_get_hierarchy_returns_depth_first_with_children() {
+        let store = Store::open_memory().unwrap();
+        let root_a = new_category("RootA");
+        let root_b = new_category("RootB");
+        store.create_category(&root_a).unwrap();
+        store.create_category(&root_b).unwrap();
+
+        let mut child_a = new_category("ChildA");
+        child_a.parent = Some(root_a.id);
+        store.create_category(&child_a).unwrap();
+
+        let mut grandchild = new_category("Grandchild");
+        grandchild.parent = Some(child_a.id);
+        store.create_category(&grandchild).unwrap();
+
+        let hierarchy = store.get_hierarchy().unwrap();
+        let root_a_pos = hierarchy.iter().position(|c| c.id == root_a.id).unwrap();
+        let child_a_pos = hierarchy.iter().position(|c| c.id == child_a.id).unwrap();
+        let grandchild_pos = hierarchy
+            .iter()
+            .position(|c| c.id == grandchild.id)
+            .unwrap();
+        let root_b_pos = hierarchy.iter().position(|c| c.id == root_b.id).unwrap();
+
+        assert!(root_a_pos < child_a_pos);
+        assert!(child_a_pos < grandchild_pos);
+        assert!(grandchild_pos < root_b_pos);
+
+        let loaded_root_a = hierarchy.iter().find(|c| c.id == root_a.id).unwrap();
+        assert_eq!(loaded_root_a.children, vec![child_a.id]);
+
+        let loaded_child_a = hierarchy.iter().find(|c| c.id == child_a.id).unwrap();
+        assert_eq!(loaded_child_a.children, vec![grandchild.id]);
     }
 }
