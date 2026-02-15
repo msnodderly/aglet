@@ -1,7 +1,7 @@
-# Deferred Findings from Phase 2 Review
+# Deferred Findings
 
-Items identified during the Phase 1-2 code review that are not blockers
-for Phase 3 but should be addressed in later phases.
+Items identified during code reviews that are not blockers for the current
+phase but should be addressed later.
 
 ---
 
@@ -43,3 +43,21 @@ The store always sets `modified_at = Utc::now()` regardless of the value on the
 incoming `Category` struct. This is correct (the store is the timestamp authority),
 but means tests cannot control the exact timestamp. If this becomes a testing
 pain point, consider accepting an optional override parameter.
+
+---
+
+## 4. SubstringClassifier: underscore is not a word character
+
+**Phase**: 2+ (Unicode / advanced matching)
+**File**: `crates/agenda-core/src/matcher.rs:57`
+
+`is_ascii_word_char` checks `is_ascii_alphanumeric()` only — underscore is
+not treated as a word character. Standard regex `\b` treats `_` as a word
+char, so the behaviors differ: `"Sarah_Jones"` would match category `"Sarah"`
+because the underscore acts as a word boundary.
+
+This is arguably correct for natural-language text (underscores are rare in
+free-form items), but worth revisiting if matching behavior feels surprising.
+
+**Fix**: Add `|| byte == b'_'` to `is_ascii_word_char` if regex-compatible
+`\b` semantics are desired.
