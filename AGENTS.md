@@ -69,6 +69,7 @@ Worktrees are for code changes. This eliminates reconciliation entirely.
 ```bash
 # 1. Claim (from main)
 br update <id> --status in_progress
+br comments add <id> "Claimed $(date '+%Y-%m-%d %H:%M'). Plan: <brief approach>"
 br sync --flush-only
 git add .beads/ && git commit -m "br sync: Claim <id>"
 
@@ -79,6 +80,7 @@ git checkout -b task/<id>-short-description
 # 3. Merge and close (back on main)
 git checkout main
 git merge task/<id>-short-description
+br comments add <id> "Done. <summary of what was implemented/changed>"
 br close <id>
 br sync --flush-only
 git add .beads/ && git commit -m "br sync: Close <id>"
@@ -94,6 +96,7 @@ Use worktrees for code isolation. **Never run `br` write commands from a worktre
 ```bash
 # 1. Claim (from main worktree)
 br update <id> --status in_progress
+br comments add <id> "Claimed $(date '+%Y-%m-%d %H:%M'). Plan: <brief approach>"
 br sync --flush-only
 git add .beads/ && git commit -m "br sync: Claim <id>"
 
@@ -111,11 +114,34 @@ git merge task/<id>-short-description
 
 # 5. Remove worktree, close issue (from main worktree)
 git worktree remove ../aglet-<id> --force
+br comments add <id> "Done. <summary of what was implemented/changed>"
 br close <id>
 br sync --flush-only
 git add .beads/ && git commit -m "br sync: Close <id>"
 git branch -d task/<id>-short-description
 ```
+
+### Issue comments
+
+Comments create a breadcrumb trail so other agents can understand and resume work.
+
+**When claiming** — include date/time and your planned approach:
+```bash
+br comments add <id> "Claimed 2026-02-15 14:30. Plan: implement SubstringClassifier with word-boundary matching"
+```
+
+**When closing** — summarize what was done:
+```bash
+br comments add <id> "Done. Added SubstringClassifier in matcher.rs (120 lines, 8 tests). Uses regex word boundaries, respects enable_implicit_string flag."
+```
+
+**If interrupted** — leave a checkpoint comment before stopping:
+```bash
+br comments add <id> "Paused 2026-02-15 16:00. Progress: trait defined, basic matching works. TODO: word-boundary edge cases, tests for Unicode. Branch: task/t016-substring-classifier (3 commits)."
+```
+
+This lets another agent pick up an `in_progress` issue by reading the comments
+to understand what's done and what remains.
 
 ### Rules
 
