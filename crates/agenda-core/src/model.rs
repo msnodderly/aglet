@@ -53,7 +53,7 @@ pub struct Category {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
-    String,
+    ImplicitString,
     Profile { criteria: Query },
 }
 
