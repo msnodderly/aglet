@@ -41,6 +41,12 @@ Direction: `br dep add bd-abc bd-xyz` = "bd-abc depends on bd-xyz"
 
 `open` | `in_progress` | `blocked` | `deferred` | `closed` (use underscores)
 
+### Claiming Issues
+
+- Only claim issues with status `open`. **Never commandeer `in_progress` issues** — another agent may be working on them.
+- If an `in_progress` issue looks stale, flag it for the user to coordinate rather than taking it over.
+- Use `br ready` to find unblocked `open` issues, then check status before claiming.
+
 ### Troubleshooting
 
 - `br <cmd> --help` for authoritative syntax
