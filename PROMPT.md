@@ -10,56 +10,85 @@ Select ONE task. Complete it. Stop.
 
 ## Session Start
 
-1. **Read context**: `AGENTS.md` (workflow), `spec/mvp-spec.md` (product), `spec/mvp-tasks.md` (tasks)
-2. **Pick task**: `br ready` — select highest priority NOT already `in_progress`
-3. **Claim task**: `br update <id> --status in_progress`
-4. **Create worktree**: `git worktree add -b task/<id>-short-desc <name> main`
-
-**Note:** Worktrees share parent's `.beads/` — `br` commands work from any worktree.
+1. **Read context**: `AGENTS.md` (full workflow reference), then `br ready`
+2. **Pick task**: Select highest priority `open` issue — never claim `in_progress`
+3. **Read prompt**: Check `spec/prompts/` for your task's implementer prompt.
+   If no prompt exists, flag it — don't start without one.
+4. **Claim on main**:
+   ```bash
+   br update <id> --status in_progress
+   br comments add <id> "Claimed $(date '+%Y-%m-%d %H:%M'). Plan: <brief approach>"
+   br sync --flush-only
+   git add .beads/ && git commit -m "br sync: Claim <id>"
+   ```
+5. **Branch**: `git checkout -b task/<id>-short-description`
 
 ---
 
 ## Implementation
 
 ### Before Coding
-- `br show <id>` for full task description
-- Read `spec/mvp-spec.md` for context
-- Complex features: create design doc in `docs/plans/`
+- Read the implementer prompt in `spec/prompts/<task>.md`
+- Read the files listed in its "What to read" section
+- Understand how your code will be consumed downstream
 
 ### While Coding
-- Only work on selected task—no drive-by refactors
+- Only work on the selected task — no drive-by refactors
 - Commit frequently with clear messages
-- Build regularly: `cargo build --workspace`
+- Build regularly: `cargo build -p agenda-core`
+- Run tests: `cargo test -p agenda-core`
+- Run clippy: `cargo clippy -p agenda-core`
 
 ### After Coding
-- Update `AGENTS.md` with new patterns/gotchas
 - Do NOT modify product spec unless instructed
+- Do NOT modify `AGENTS.md` unless you discovered a workflow issue
 
 ---
 
 ## Session End
 
-1. Build: `cargo build --workspace && cargo test --workspace`
-2. Merge branch directly to main (no pull requests — local-only project):
+1. **Verify on branch**:
+   ```bash
+   cargo test -p agenda-core
+   cargo clippy -p agenda-core
+   ```
+
+2. **Merge to main**:
    ```bash
    git checkout main
-   git merge task/<branch> -m "Merge <branch>: <summary>"
-   git worktree remove <worktree-path> --force
-   git branch -d task/<branch>
+   git merge task/<id>-short-description
    ```
-3. Close task and sync beads **after** worktree is removed (worktree removal clobbers `.beads/`):
+
+3. **Close issue** (on main — all `br` writes happen on main):
    ```bash
-   br close <id> --reason "Completed"
+   br comments add <id> "Done. <summary of what was implemented/changed>"
+   br close <id>
    br sync --flush-only
    git add .beads/ && git commit -m "br sync: Close <id>"
    ```
-4. Clean Worktree Gate (mandatory):
-   ```bash
-   git -C <issue-worktree> status --short
-   git -C <main-worktree> status --short
-   ```
-   Both must be empty before you stop. If not empty, commit a checkpoint or complete the close/sync commit flow.
-5. Verify: `br show <id>` should show CLOSED
-6. **STOP** — Do not pick another task
 
-**No remote:** Skip `git pull/push` — no remote configured. Always merge to main directly, never use PR workflow.
+4. **Clean up**:
+   ```bash
+   git branch -d task/<id>-short-description
+   ```
+
+5. **Clean gate** (mandatory):
+   ```bash
+   git status --short
+   ```
+   Must be empty. If `.beads/` is dirty, commit it.
+
+6. **Verify**: `br show <id>` should show CLOSED
+
+7. **STOP** — Do not pick another task.
+
+---
+
+## Rules
+
+- **`br` writes only on main**: `br update`, `br close`, `br sync` must run
+  from main. See `AGENTS.md` for why.
+- **No remote**: Skip `git pull/push`. Merge to main directly, no PRs.
+- **Sticky assignments**: The rule engine never revokes existing assignments.
+  Only the user can remove them.
+- **Scope**: Only touch files listed in your task prompt's definition of done.
