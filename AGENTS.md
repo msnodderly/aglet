@@ -45,8 +45,7 @@ Direction: `br dep add bd-abc bd-xyz` = "bd-abc depends on bd-xyz"
 
 - `br <cmd> --help` for authoritative syntax
 - `br ready` is scheduling truth; if it shows ready but `br show` lists blockers, check each dep's status directly
-- **Beads + worktree ordering**: `br close` then `br sync --flush-only` and commit *before* `git worktree remove`. Removing the worktree first can clobber the close. Always verify with `br show <id>` after the full cycle.
-- **Never `git stash` with `.beads/`**: Stash/pop restores old `.beads/` state, overwriting closes. Close and sync beads *before* any git stash operations.
+- **Beads + worktree close ordering**: Worktree removal can clobber `.beads/` state. The safe sequence is: merge branch → remove worktree → *then* `br close` + `br sync --flush-only` + commit `.beads/`. Always verify with `br show <id>` after.
 
 ## Session Learnings
 
