@@ -77,6 +77,12 @@ Completed:
 - Added global-priority reuse demo:
   - `spec/literate-cli-demo-global-priority-reuse.md`
   - demonstrates one global `Priority` reused across `Project X` and `Project Y` items.
+- Added CLI reference doc in man-page style:
+  - `spec/cli-manpage.md`
+  - documents command surface and behavior as currently implemented.
+- Added new scenario test script (not executed in this step):
+  - `spec/scenario-script-work-personal.md`
+  - covers multi-project work/personal workflow with staged category creation.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
