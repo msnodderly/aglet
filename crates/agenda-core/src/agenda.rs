@@ -23,7 +23,7 @@ impl<'a> Agenda<'a> {
         Self {
             store,
             classifier,
-            date_parser: BasicDateParser,
+            date_parser: BasicDateParser::default(),
         }
     }
 
@@ -254,7 +254,7 @@ impl<'a> Agenda<'a> {
             .get(&category_id)
             .and_then(|category| category.parent);
         while let Some(parent_id) = cursor {
-            if !existing.contains_key(&parent_id) {
+            if let std::collections::hash_map::Entry::Vacant(entry) = existing.entry(parent_id) {
                 let parent_name = categories_by_id
                     .get(&parent_id)
                     .map(|category| category.name.clone())
@@ -266,7 +266,7 @@ impl<'a> Agenda<'a> {
                     origin: Some(format!("subsumption:{parent_name}")),
                 };
                 self.store.assign_item(item_id, parent_id, &assignment)?;
-                existing.insert(parent_id, assignment);
+                entry.insert(assignment);
             }
 
             cursor = categories_by_id
