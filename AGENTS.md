@@ -155,6 +155,7 @@ to understand what's done and what remains.
   commit it before switching tasks or ending a session.
 - **`br sync --full` unsupported**: use `--flush-only` or `--import-only`.
 - **Worktree removal needs `--force`**: beads files trigger git's modified-files guard.
+- Keep commits atomic: commit only the files you touched and list each path explicitly. For tracked files run git commit -m "<scoped message>" -- path/to/file1 path/to/file2. For brand-new files, use the one-liner git restore --staged :/ && git add "path/to/file1" "path/to/file2" && git commit -m "<scoped message>" -- path/to/file1 path/to/file2.
 
 ## Specify-on-Ready
 
