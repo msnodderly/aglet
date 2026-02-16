@@ -41,10 +41,23 @@ Completed:
   - `store::test_list_deleted_items_returns_latest_first`
 - Full test suite passing (`cargo test`).
 - Manual CLI smoke-tested against a temp DB (`/tmp/aglet-slc-test.ag`).
+- Implemented first usable TUI in `agenda-tui`:
+  - view-based sections/items display
+  - keyboard navigation (sections + items)
+  - add item flow
+  - move item between sections (`[`/`]`) using edit-through semantics
+  - remove from view (`r`)
+  - mark done (`d`)
+  - delete with confirmation (`x`, `y/n`)
+  - view picker (`F8`)
+  - in-view filter (`/`)
+  - inspect panel with assignment provenance (`i`)
+- Added `agenda-tui` executable entrypoint (`crates/agenda-tui/src/main.rs`) with `--db` and `AGENDA_DB` support.
+- Manual TUI startup/exit smoke test performed in PTY (`cargo run -p agenda-tui -- --db /tmp/aglet-slc-test.ag`).
 
 In progress:
 
-- TUI implementation (currently placeholder).
+- SLC hardening and completeness gap-closing.
 
 Remaining (high-level):
 
@@ -71,9 +84,16 @@ Remaining (high-level):
    - Current implementation: read-only deletion-log listing.
 3. How much category management UX must be in TUI for SLC v1 given CLI-first configuration.
    - Current approach: keep TUI focused on daily flow first; category CRUD is already available from CLI.
+4. Whether `agenda` (CLI without subcommand) should eventually launch TUI by default after one more stabilization pass.
+   - Current behavior: defaults to list.
+5. Whether to add a lightweight restore command for deletion log in SLC v1.
+   - Current behavior: deletion log is inspectable from CLI (`deleted`) but not restorable yet.
 
 ## Next Immediate Steps
 
-1. Commit CLI milestone with updated log.
-2. Implement TUI app shell and read-only view navigation (prototype UI baseline).
-3. Add TUI input flow for item creation through `Agenda`.
+1. Commit TUI milestone with updated log.
+2. Add targeted UX polish and stabilization:
+   - section headers and empty states
+   - safer item move semantics across generated sections
+   - keybinding/help consistency across CLI/TUI docs
+3. Evaluate final SLC gaps (category manager UX, restore path, undo-ready boundaries) and implement highest-value remaining pieces.
