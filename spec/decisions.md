@@ -677,3 +677,34 @@ Selection behavior after save:
 - The TUI attempts to restore selection to the edited item ID after refresh.
 - If the item moved/filtered out due to re-evaluation, status feedback remains
   and the current cursor position is preserved.
+
+---
+
+## 27. Inspect-panel unassign uses explicit picker mode
+
+**Date**: 2026-02-16
+**Relevant tasks**: T014
+
+Unassign from inspect is implemented as a dedicated picker mode triggered from
+normal mode with `u` (while inspect panel is open with `i`), rather than
+one-key "remove first assignment" behavior.
+
+Interaction contract:
+
+- `i` toggles inspect panel visibility.
+- `u` enters unassign picker when assignments exist.
+- `j/k` selects assignment.
+- `Enter` unassigns selected category from selected item.
+- `Esc` cancels picker.
+
+Why explicit picker:
+
+- Inspect entries are sorted and can include many assignments; picker mode keeps
+  the action deterministic and avoids accidental removal.
+- It preserves existing item/section navigation keys in normal mode.
+
+Current mutation path:
+
+- Unassign uses `Store::unassign_item(item_id, category_id)` directly, followed
+  by full UI refresh.
+- TUI restores selection to edited item ID where possible after refresh.
