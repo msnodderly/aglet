@@ -732,3 +732,33 @@ No-view fallback policy:
 - The app remains navigable and can still perform non-view-dependent actions.
 - View picker shows `(no views configured)` and Enter returns a status message
   instead of failing.
+
+---
+
+## 29. TUI category structural edits are modal operations in manager context
+
+**Date**: 2026-02-16
+**Relevant tasks**: T011
+
+Structural category edits are handled directly in the category manager modal:
+
+- `r` rename selected category.
+- `p` reparent selected category.
+- `t` toggle `is_exclusive`.
+- `i` toggle `enable_implicit_string`.
+
+All four operations route through `Agenda::update_category(...)` so
+retroactive evaluation behavior remains consistent with existing core rules.
+
+Reparent UX details:
+
+- Reparent enters a dedicated picker mode (`j/k` select, `Enter` apply, `Esc`
+  cancel).
+- Picker includes `(root)` and excludes invalid targets (selected category
+  itself and its descendants) to avoid obvious cycle attempts.
+
+Error and constraint handling:
+
+- Store/core invariants remain authoritative (reserved-name restrictions,
+  parent-cycle checks, duplicate-name checks).
+- TUI surfaces failures as status messages without exiting the session.
