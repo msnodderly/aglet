@@ -500,6 +500,7 @@ fn print_items_for_view(
 ) {
     let reference_date = Local::now().date_naive();
     let result = resolve_view(view, items, categories, reference_date);
+    let has_sections = !result.sections.is_empty();
 
     println!("# {}", view.name);
 
@@ -518,12 +519,20 @@ fn print_items_for_view(
 
     if let Some(unmatched) = result.unmatched {
         if !unmatched.is_empty() {
-            println!(
-                "\n## {}",
-                result
-                    .unmatched_label
-                    .unwrap_or_else(|| "Unassigned".to_string())
-            );
+            if !has_sections {
+                print_item_table(&unmatched, category_names);
+                return;
+            }
+
+            let heading = result
+                .unmatched_label
+                .unwrap_or_else(|| "Unassigned".to_string());
+            let heading = if heading == "Unassigned" {
+                "Other".to_string()
+            } else {
+                heading
+            };
+            println!("\n## {}", heading);
             print_item_table(&unmatched, category_names);
         }
     }
