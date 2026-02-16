@@ -6,7 +6,7 @@ use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View};
 use agenda_core::query::resolve_view;
 use agenda_core::store::Store;
-use chrono::Local;
+use chrono::{Local, NaiveDateTime};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -221,8 +221,8 @@ impl App {
             KeyCode::Enter => {
                 let text = self.input.trim();
                 if !text.is_empty() {
-                    self.create_item_in_current_context(agenda, text.to_string())?;
-                    self.status = "Item added".to_string();
+                    let parsed_when = self.create_item_in_current_context(agenda, text.to_string())?;
+                    self.status = add_capture_status_message(parsed_when);
                 }
                 self.mode = Mode::Normal;
                 self.input.clear();
@@ -659,9 +659,12 @@ impl App {
         &mut self,
         agenda: &Agenda<'_>,
         text: String,
-    ) -> Result<(), String> {
+    ) -> Result<Option<NaiveDateTime>, String> {
         let item = Item::new(text);
-        agenda.create_item(&item).map_err(|e| e.to_string())?;
+        let reference_date = Local::now().date_naive();
+        agenda
+            .create_item_with_reference_date(&item, reference_date)
+            .map_err(|e| e.to_string())?;
 
         if let Some(view) = self.current_view().cloned() {
             if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
@@ -669,8 +672,9 @@ impl App {
             }
         }
 
+        let created = agenda.store().get_item(item.id).map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
-        Ok(())
+        Ok(created.when_date)
     }
 
     fn remove_from_context(
@@ -821,4 +825,35 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1]);
 
     horizontal[1]
+}
+
+fn add_capture_status_message(parsed_when: Option<NaiveDateTime>) -> String {
+    match parsed_when {
+        Some(when) => format!("Item added (parsed when: {when})"),
+        None => "Item added".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::add_capture_status_message;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn add_capture_status_message_includes_parsed_datetime_when_present() {
+        let when = NaiveDate::from_ymd_opt(2026, 2, 24)
+            .expect("valid date")
+            .and_hms_opt(15, 0, 0)
+            .expect("valid time");
+
+        assert_eq!(
+            add_capture_status_message(Some(when)),
+            "Item added (parsed when: 2026-02-24 15:00:00)"
+        );
+    }
+
+    #[test]
+    fn add_capture_status_message_defaults_when_no_datetime() {
+        assert_eq!(add_capture_status_message(None), "Item added");
+    }
 }
