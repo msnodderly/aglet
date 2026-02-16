@@ -22,7 +22,7 @@ Current state:
 
 Needed domain work:
 
-- First-class domain operations for category rename, reparent, reorder children, toggle exclusivity, toggle implicit matching.
+- First-class domain operations for category rename (I think rename is just delete+recreate?), reparent, reorder children, toggle exclusivity, toggle implicit matching.
 - Stronger invariant-oriented error model for these operations (cycle, duplicate name, reserved behavior, and hierarchy integrity).
 
 Why this is domain work:
@@ -69,6 +69,7 @@ Why this is domain work:
 Current state:
 
 - Manual assign is first-class.
+- Manual assign now enforces exclusive sibling cleanup for exclusive parents.
 - Unassignment exists in lower-level store/edit-through paths but not as a clear top-level manual domain operation mirrored to assign.
 
 Needed domain work:
@@ -79,11 +80,6 @@ Needed domain work:
 Why this is domain work:
 
 - Subsumption and exclusivity interactions require engine/store correctness, not just CLI wiring.
-
-### Confirmed symptom from current demo
-
-- With `Priority` marked exclusive and children `High`/`Medium`/`Low`, assigning `High` and then `Medium` through manual CLI assign currently leaves both child assignments on the item.
-- This indicates mutual exclusion is not fully enforced across all manual assignment paths yet.
 
 ## 5. Undo-Ready Mutation Ledger (Without Shipping Undo Yet)
 
