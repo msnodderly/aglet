@@ -45,7 +45,7 @@ Notes:
 - Parsed date/time text can auto-assign the reserved `When` category.
 - When a capture resolves to `when_date`, `add` prints `parsed_when=<datetime>`.
 - Hashtag text like `#high` can match an existing category name (`High`) via implicit string matching.
-- Unknown hashtags do not auto-create categories. Policy is to emit a non-blocking warning while keeping capture successful (implementation tracked in `bd-1b5`).
+- Unknown hashtags do not auto-create categories. `add` emits a non-blocking warning line (`warning: unknown_hashtags=...`) while keeping capture successful.
 - Date parsing for capture uses the local calendar date as reference (`Local::now().date_naive()`).
   Weekday/date phrase resolution is therefore based on local date (not UTC date).
 

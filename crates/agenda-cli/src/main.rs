@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
-use agenda_core::matcher::SubstringClassifier;
+use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, View};
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -174,6 +174,15 @@ fn run() -> Result<(), String> {
 }
 
 fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<(), String> {
+    let category_names: Vec<String> = agenda
+        .store()
+        .get_hierarchy()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|category| category.name)
+        .collect();
+    let unknown_hashtags = unknown_hashtag_tokens(&text, &category_names);
+
     let mut item = Item::new(text);
     item.note = note;
 
@@ -193,11 +202,24 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
     if !result.new_assignments.is_empty() {
         println!("new_assignments={}", result.new_assignments.len());
     }
+    if let Some(line) = unknown_hashtag_feedback_line(&unknown_hashtags) {
+        println!("{line}");
+    }
     Ok(())
 }
 
 fn parsed_when_feedback_line(when_date: Option<NaiveDateTime>) -> Option<String> {
     when_date.map(|when| format!("parsed_when={when}"))
+}
+
+fn unknown_hashtag_feedback_line(unknown_hashtags: &[String]) -> Option<String> {
+    if unknown_hashtags.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "warning: unknown_hashtags={}",
+        unknown_hashtags.join(",")
+    ))
 }
 
 fn cmd_list(
@@ -557,7 +579,9 @@ fn print_items_for_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{duplicate_category_create_error, parsed_when_feedback_line};
+    use super::{
+        duplicate_category_create_error, parsed_when_feedback_line, unknown_hashtag_feedback_line,
+    };
     use chrono::NaiveDate;
     use uuid::Uuid;
 
@@ -586,6 +610,21 @@ mod tests {
     #[test]
     fn parsed_when_feedback_line_omits_output_when_absent() {
         assert_eq!(parsed_when_feedback_line(None), None);
+    }
+
+    #[test]
+    fn unknown_hashtag_feedback_line_includes_unknown_tokens() {
+        let line =
+            unknown_hashtag_feedback_line(&["office".to_string(), "someday".to_string()]);
+        assert_eq!(
+            line.as_deref(),
+            Some("warning: unknown_hashtags=office,someday")
+        );
+    }
+
+    #[test]
+    fn unknown_hashtag_feedback_line_omits_when_no_unknown_tokens() {
+        assert_eq!(unknown_hashtag_feedback_line(&[]), None);
     }
 }
 
