@@ -4,6 +4,8 @@ Date: 2026-02-16
 
 ## Branch Progress Update (Not Merged Yet)
 
+- `T011` implemented on branch `codex/bd-s5q-tui-category-structural`:
+  category manager structural edits (`r` rename, `p` reparent, `t` exclusive toggle, `i` implicit toggle).
 - `T012` implemented on branch `codex/bd-2ji-tui-inline-text-edit`:
   inline text edit (`e`) with save/cancel and re-evaluation refresh.
 - `T013` implemented on branch `codex/bd-2ji-tui-inline-text-edit`:
