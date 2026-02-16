@@ -90,6 +90,9 @@ Completed:
     - `scenario-02-investigative-journalism.md`
     - `scenario-03-legal-matter-intelligence.md`
     - `scenario-04-security-incident-intel.md`
+- Executed cross-domain scenario batch and recorded results matrix:
+  - `spec/cross-domain-scenarios-run-results.md`
+  - all expected outcomes passed in this run.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
