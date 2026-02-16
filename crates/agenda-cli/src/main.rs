@@ -61,6 +61,9 @@ enum Command {
     /// Restore an item from deletion log by log entry id
     Restore { log_id: String },
 
+    /// Launch the interactive TUI
+    Tui,
+
     /// Category commands
     Category {
         #[command(subcommand)]
@@ -124,15 +127,21 @@ fn main() {
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db)?;
+    let command = cli.command.unwrap_or(Command::List {
+        view: None,
+        category: None,
+        include_done: false,
+    });
+
+    if matches!(&command, Command::Tui) {
+        return agenda_tui::run(&db_path);
+    }
+
     let store = Store::open(&db_path).map_err(|e| e.to_string())?;
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
 
-    match cli.command.unwrap_or(Command::List {
-        view: None,
-        category: None,
-        include_done: false,
-    }) {
+    match command {
         Command::Add { text, note } => cmd_add(&agenda, text, note),
         Command::List {
             view,
@@ -149,6 +158,7 @@ fn run() -> Result<(), String> {
         Command::Restore { log_id } => cmd_restore(&store, log_id),
         Command::Category { command } => cmd_category(&agenda, &store, command),
         Command::View { command } => cmd_view(&store, command),
+        Command::Tui => Ok(()),
     }
 }
 

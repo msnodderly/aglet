@@ -57,19 +57,20 @@ Completed:
   - in-view filter (`/`)
   - inspect panel with assignment provenance (`i`)
 - Added `agenda-tui` executable entrypoint (`crates/agenda-tui/src/main.rs`) with `--db` and `AGENDA_DB` support.
-- Manual TUI startup/exit smoke test performed in PTY (`cargo run -p agenda-tui -- --db /tmp/aglet-slc-test.ag`).
+- Added `agenda tui` subcommand to launch TUI from the CLI.
+- Manual TUI startup/exit smoke tests performed in PTY:
+  - `cargo run -p agenda-tui -- --db /tmp/aglet-slc-test.ag`
+  - `cargo run -p agenda-cli -- --db /tmp/aglet-slc-test.ag tui`
 
 In progress:
 
-- SLC hardening and completeness gap-closing.
+- final SLC gap assessment and polish.
 
 Remaining (high-level):
 
-1. Stabilize and test CLI milestone.
-2. Build TUI prototype (read-only + navigation + view switch).
-3. Build TUI daily-use edit-through loop (create/move/remove/delete/done).
-4. Add enough category/view management to be complete for SLC.
-5. Implement inspect/search safety baseline and hardening pass.
+1. Decide whether default `agenda` should switch from `list` to launching TUI.
+2. Perform UI polish/hardening sweep for edge cases (empty sections, dense datasets).
+3. Optional: add TUI-native category manager if we decide CLI management is insufficient for SLC v1.
 
 ## Design Decisions Taken During Implementation
 
@@ -84,8 +85,6 @@ Remaining (high-level):
 
 1. Whether SLC v1 should treat default command (`agenda`) as list or immediately launch TUI once TUI is available.
    - Current implementation: defaults to list for reliability during transition.
-2. Whether to add restore-from-deletion-log command in CLI for SLC v1.
-   - Current implementation: read-only deletion-log listing.
 3. How much category management UX must be in TUI for SLC v1 given CLI-first configuration.
    - Current approach: keep TUI focused on daily flow first; category CRUD is already available from CLI.
 4. Whether `agenda` (CLI without subcommand) should eventually launch TUI by default after one more stabilization pass.
@@ -95,9 +94,6 @@ Remaining (high-level):
 
 ## Next Immediate Steps
 
-1. Commit safety/recovery milestone with updated log.
-2. Add targeted UX polish and stabilization:
-   - section headers and empty states
-   - safer item move semantics across generated sections
-   - keybinding/help consistency across CLI/TUI docs
-3. Evaluate final SLC gaps (category manager UX, default launcher behavior, undo-ready boundaries) and implement highest-value remaining pieces.
+1. Complete one polish pass focused on UX consistency and edge-case behavior in TUI.
+2. Decide and lock default launcher behavior (`agenda` default list vs TUI).
+3. If no blockers emerge, declare SLC implementation complete for this branch and prepare merge.
