@@ -25,6 +25,14 @@ pub struct ProcessItemResult {
 }
 
 #[derive(Debug, Default)]
+pub struct EvaluateAllItemsResult {
+    pub processed_items: usize,
+    pub affected_items: usize,
+    pub total_new_assignments: usize,
+    pub total_deferred_removals: usize,
+}
+
+#[derive(Debug, Default)]
 struct PassResult {
     new_assignments: HashSet<CategoryId>,
     deferred_removals: Vec<DeferredRemoval>,
@@ -47,6 +55,38 @@ pub fn process_item(
     item_id: ItemId,
 ) -> Result<ProcessItemResult> {
     run_in_savepoint(store, || process_item_inner(store, classifier, item_id))
+}
+
+/// Evaluate all items in the store against the current hierarchy.
+///
+/// Error strategy for MVP: fail fast. If one item processing run fails,
+/// return that error immediately rather than skipping it and continuing.
+pub fn evaluate_all_items(
+    store: &Store,
+    classifier: &dyn Classifier,
+    category_id: CategoryId,
+) -> Result<EvaluateAllItemsResult> {
+    // Validate the target category exists before beginning retroactive work.
+    store.get_category(category_id)?;
+
+    let mut result = EvaluateAllItemsResult::default();
+    let items = store.list_items()?;
+
+    for item in items {
+        let process_result = process_item(store, classifier, item.id)?;
+
+        result.processed_items += 1;
+        result.total_new_assignments += process_result.new_assignments.len();
+        result.total_deferred_removals += process_result.deferred_removals.len();
+
+        if !process_result.new_assignments.is_empty()
+            || !process_result.deferred_removals.is_empty()
+        {
+            result.affected_items += 1;
+        }
+    }
+
+    Ok(result)
 }
 
 fn process_item_inner(
@@ -444,7 +484,7 @@ mod tests {
 
     use chrono::Utc;
 
-    use super::{process_item, run_hierarchy_pass};
+    use super::{evaluate_all_items, process_item, run_hierarchy_pass};
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
@@ -937,6 +977,182 @@ mod tests {
         assert!(!assignments.contains_key(&low.id));
         assert!(!assignments.contains_key(&medium.id));
         assert!(assignments.contains_key(&high.id));
+    }
+
+    #[test]
+    fn evaluate_all_items_basic_retroactive_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let sarah = category("Sarah", true);
+        create_category(&store, &sarah);
+
+        let contains = create_item(&store, "Lunch with Sarah");
+        let not_contains = create_item(&store, "Lunch with Alex");
+
+        let result = evaluate_all_items(&store, &classifier, sarah.id).unwrap();
+        assert_eq!(result.processed_items, 2);
+        assert_eq!(result.affected_items, 1);
+
+        let contains_assignments = store.get_assignments_for_item(contains.id).unwrap();
+        let not_contains_assignments = store.get_assignments_for_item(not_contains.id).unwrap();
+
+        assert!(contains_assignments.contains_key(&sarah.id));
+        assert!(!not_contains_assignments.contains_key(&sarah.id));
+    }
+
+    #[test]
+    fn evaluate_all_items_no_double_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let sarah = category("Sarah", true);
+        create_category(&store, &sarah);
+
+        let item = create_item(&store, "Sarah meeting");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let result = evaluate_all_items(&store, &classifier, sarah.id).unwrap();
+        assert_eq!(result.processed_items, 1);
+        assert_eq!(result.total_new_assignments, 0);
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert!(assignments.contains_key(&sarah.id));
+    }
+
+    #[test]
+    fn evaluate_all_items_with_actions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let calendar = category("Calendar", false);
+        create_category(&store, &calendar);
+
+        let mut meetings = category("Meetings", true);
+        meetings.actions.push(Action::Assign {
+            targets: HashSet::from([calendar.id]),
+        });
+        create_category(&store, &meetings);
+
+        let first = create_item(&store, "Meetings with team");
+        let second = create_item(&store, "Plan meetings agenda");
+        let third = create_item(&store, "Buy groceries");
+
+        let result = evaluate_all_items(&store, &classifier, meetings.id).unwrap();
+        assert_eq!(result.processed_items, 3);
+        assert_eq!(result.affected_items, 2);
+
+        let first_assignments = store.get_assignments_for_item(first.id).unwrap();
+        let second_assignments = store.get_assignments_for_item(second.id).unwrap();
+        let third_assignments = store.get_assignments_for_item(third.id).unwrap();
+
+        assert!(first_assignments.contains_key(&meetings.id));
+        assert!(first_assignments.contains_key(&calendar.id));
+        assert!(second_assignments.contains_key(&meetings.id));
+        assert!(second_assignments.contains_key(&calendar.id));
+        assert!(!third_assignments.contains_key(&meetings.id));
+        assert!(!third_assignments.contains_key(&calendar.id));
+    }
+
+    #[test]
+    fn evaluate_all_items_with_subsumption() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let projects = category("Projects", false);
+        create_category(&store, &projects);
+
+        let alpha = child_category("Project Alpha", projects.id, true);
+        create_category(&store, &alpha);
+
+        let first = create_item(&store, "Project Alpha kickoff");
+        let second = create_item(&store, "General note");
+
+        let result = evaluate_all_items(&store, &classifier, alpha.id).unwrap();
+        assert_eq!(result.processed_items, 2);
+        assert_eq!(result.affected_items, 1);
+
+        let first_assignments = store.get_assignments_for_item(first.id).unwrap();
+        let second_assignments = store.get_assignments_for_item(second.id).unwrap();
+
+        assert!(first_assignments.contains_key(&alpha.id));
+        assert!(first_assignments.contains_key(&projects.id));
+        assert!(!second_assignments.contains_key(&alpha.id));
+        assert!(!second_assignments.contains_key(&projects.id));
+    }
+
+    #[test]
+    fn evaluate_all_items_with_mutual_exclusion() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        create_category(&store, &status);
+
+        let todo = child_category("Todo", status.id, false);
+        create_category(&store, &todo);
+
+        let in_progress = child_category("InProgress", status.id, false);
+        create_category(&store, &in_progress);
+
+        let mut workflow = category("Workflow", true);
+        workflow.actions.push(Action::Assign {
+            targets: HashSet::from([in_progress.id]),
+        });
+        create_category(&store, &workflow);
+
+        let item = create_item(&store, "Workflow item");
+        store
+            .assign_item(item.id, todo.id, &manual_assignment())
+            .unwrap();
+
+        let result = evaluate_all_items(&store, &classifier, workflow.id).unwrap();
+        assert_eq!(result.processed_items, 1);
+        assert_eq!(result.affected_items, 1);
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&todo.id));
+        assert!(assignments.contains_key(&in_progress.id));
+    }
+
+    #[test]
+    fn evaluate_all_items_empty_store() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let category = category("Anything", true);
+        create_category(&store, &category);
+
+        let result = evaluate_all_items(&store, &classifier, category.id).unwrap();
+        assert_eq!(result.processed_items, 0);
+        assert_eq!(result.affected_items, 0);
+        assert_eq!(result.total_new_assignments, 0);
+        assert_eq!(result.total_deferred_removals, 0);
+    }
+
+    #[test]
+    fn evaluate_all_items_idempotent_re_run() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let sarah = category("Sarah", true);
+        create_category(&store, &sarah);
+
+        create_item(&store, "Sarah ping");
+        create_item(&store, "No match here");
+
+        let first = evaluate_all_items(&store, &classifier, sarah.id).unwrap();
+        assert_eq!(first.processed_items, 2);
+        assert_eq!(first.affected_items, 1);
+        assert!(first.total_new_assignments > 0);
+
+        let second = evaluate_all_items(&store, &classifier, sarah.id).unwrap();
+        assert_eq!(second.processed_items, 2);
+        assert_eq!(second.affected_items, 0);
+        assert_eq!(second.total_new_assignments, 0);
+        assert_eq!(second.total_deferred_removals, 0);
     }
 
     #[test]
