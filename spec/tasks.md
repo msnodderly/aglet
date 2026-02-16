@@ -31,7 +31,7 @@ Goal: users can stay in TUI for daily operation and basic management/editing.
 - [~] T012 Add inline item text editing in TUI.
 - [~] T013 Add note create/edit flow in TUI.
 - [~] T014 Add unassign action from inspect panel.
-- [ ] T015 Harden TUI empty/error states (no views, empty sections, failed mutations).
+- [~] T015 Harden TUI empty/error states (no views, empty sections, failed mutations).
 - [ ] T016 Add TUI smoke test script for add/move/remove/done/delete/edit/category flows.
 
 Checkpoint:

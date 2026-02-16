@@ -708,3 +708,27 @@ Current mutation path:
 - Unassign uses `Store::unassign_item(item_id, category_id)` directly, followed
   by full UI refresh.
 - TUI restores selection to edited item ID where possible after refresh.
+
+---
+
+## 28. TUI mutation failures are non-fatal and reported via status line
+
+**Date**: 2026-02-16
+**Relevant tasks**: T015
+
+The main event loop treats action-level handler errors as recoverable:
+
+- `handle_key(...)` errors no longer terminate the TUI process.
+- On error, TUI returns to `Normal` mode, clears transient input, and writes
+  `Error: <message>` in the footer/status line.
+
+This prevents one failed mutation (for example stale item IDs, invalid edits,
+or transient store failures) from killing the session.
+
+No-view fallback policy:
+
+- If the store has zero views, refresh falls back to one slot:
+  `All Items (no views configured)`.
+- The app remains navigable and can still perform non-view-dependent actions.
+- View picker shows `(no views configured)` and Enter returns a status message
+  instead of failing.
