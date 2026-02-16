@@ -313,3 +313,93 @@ Profile — the engine should fire and assign to "Escalated."
 Without this, manual assignments would be "dead ends" that never trigger
 cascading rules. The whole point of Profile conditions is that any assignment
 — regardless of source — can trigger further classification.
+
+---
+
+## 12. WhenBuckets are date-only, computed at query time
+
+**Date**: 2026-02-15
+**Relevant tasks**: T023
+
+WhenBucket resolution uses only the date portion of `when_date`, not the
+time. An item scheduled for "today at 9am" is still in the Today bucket at
+5pm — it doesn't become Overdue until tomorrow. This is intentional:
+WhenBuckets represent calendar days, not moments.
+
+Buckets are computed at query time, never stored. An item that was "Tomorrow"
+yesterday is "Today" today and "Overdue" tomorrow. This means View results
+are always fresh — no stale bucket assignments to clean up.
+
+The resolution function takes a `NaiveDate` reference date rather than
+reading the clock. The caller converts "now" to the user's local date before
+calling. This keeps the function pure, deterministic, and testable.
+
+**Bucket priority**: Today > Tomorrow > ThisWeek. If today is Monday,
+tomorrow (Tuesday) is "Tomorrow", not "ThisWeek." ThisWeek only covers
+the remainder of the week after tomorrow. There is no special-casing for
+weekends — if today is Saturday, Sunday is Tomorrow.
+
+---
+
+## 13. Query criteria are ANDed, empty fields are permissive
+
+**Date**: 2026-02-15
+**Relevant tasks**: T024
+
+All five Query fields (`include`, `exclude`, `virtual_include`,
+`virtual_exclude`, `text_search`) are ANDed together. An item must satisfy
+every non-empty criterion to match.
+
+Empty fields are permissive — they match everything. An empty `include`
+means "no category requirement." An empty `virtual_include` means "no
+date bucket requirement." A `None` text_search means "no text filter."
+This means `Query::default()` (all empty) matches every item.
+
+This is the standard filter conjunction pattern. It composes well: a View
+with `include: {Work}` and a Section with `virtual_include: {Today}`
+effectively AND together to show "Work items due today."
+
+**virtual_include is intersection, not union**: If `virtual_include`
+contains `{Today, Tomorrow}`, an item must be in ALL listed buckets
+simultaneously. Since an item can only be in one bucket, this matches
+nothing. This is technically correct (intersection semantics) but
+unlikely to be useful. If users need "Today OR Tomorrow," they should
+use two sections. This may warrant revisiting if it becomes confusing,
+but changing it to union semantics would break the consistency of "all
+criteria are ANDed."
+
+---
+
+## 14. Query evaluator takes items as input, not a Store
+
+**Date**: 2026-02-15
+**Relevant tasks**: T024, T025
+
+`evaluate_query` takes `&[Item]` rather than `&Store`. The caller fetches
+items from the store and passes them in.
+
+**Rationale**: This keeps the query evaluator as a pure function over data.
+It's easier to test (construct items in memory, no database setup), easier
+to compose (the View resolver can pass pre-filtered subsets), and has a
+clearer contract (input → output, no side effects).
+
+The downside is that the caller must load all items into memory. This is
+acceptable for MVP scale. If the item set grows large enough to be a
+problem, the optimization is to push filters into SQL queries — but that's
+a different architecture (query planning) that doesn't belong in MVP.
+
+---
+
+## 15. View section membership is non-exclusive
+
+**Date**: 2026-02-15
+**Relevant tasks**: T025
+
+An item can appear in multiple sections within the same View. If an item
+matches the criteria of two sections, it appears in both. This follows
+directly from the multifiling principle — one item, many homes.
+
+The one exception is the unmatched bucket: an item appears in explicit
+sections OR in unmatched, never both. If an item matches at least one
+section, it is excluded from unmatched regardless of how many sections
+it matches.
