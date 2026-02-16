@@ -213,3 +213,103 @@ opposite — it *stabilizes* the state by enforcing a constraint.
 subsumption assignments created for that sibling's ancestors may become
 stale. For MVP, these are left in place — they're harmless bookkeeping.
 Cleaning them up is deferred to hardening (Phase 11).
+
+---
+
+## 8. Retroactive assignment is unfiltered
+
+**Date**: 2026-02-15
+**Relevant tasks**: T021
+
+When a category is created or modified, `evaluate_all_items` runs
+`process_item` on **every item in the store** — not just items whose text
+might match the category name.
+
+This is intentionally unoptimized. Filtering items (e.g., text-searching for
+the category name first) would miss:
+- **Profile conditions**: A category with a Profile condition matches based on
+  existing assignments, not text. No text filter would catch these.
+- **Action cascades**: The new category's actions might assign to other
+  categories, which have their own conditions and actions. The ripple effects
+  are unpredictable from text alone.
+
+The cost is O(items × categories) per `evaluate_all_items` call. This is
+acceptable for MVP — personal information managers rarely exceed thousands of
+items. If performance becomes a bottleneck, the optimization path is:
+1. Text-index items for ImplicitString-only categories (no Profile, no actions).
+2. Track "dirty" items that need re-evaluation.
+3. Batch processing with change sets.
+
+None of these are needed yet. Premature optimization here would add complexity
+for a problem that doesn't exist at MVP scale.
+
+---
+
+## 9. Engine runs synchronously inline
+
+**Date**: 2026-02-15
+**Relevant tasks**: T022
+
+The engine runs synchronously within the store operation that triggers it.
+Creating an item blocks until classification completes. Creating a category
+blocks until all items are retroactively evaluated.
+
+There is no async queue, background worker, or eventual consistency. The
+caller gets the fully classified result back from the same function call.
+
+**Rationale**: Synchronous execution is simpler and guarantees consistency.
+When `create_item` returns, the item is fully classified — the UI can
+immediately show it in the right categories. An async model would require
+the UI to poll or subscribe for classification completion, adding complexity
+for negligible benefit at MVP scale.
+
+**When to revisit**: If `evaluate_all_items` becomes noticeably slow (hundreds
+of milliseconds) with large item counts, consider moving it to a background
+task. But `process_item` (single item) should always remain synchronous — the
+latency of classifying one item against the hierarchy is negligible.
+
+---
+
+## 10. Store mutation succeeds even if engine fails
+
+**Date**: 2026-02-15
+**Relevant tasks**: T022
+
+When the integration layer creates an item and then runs the engine, a
+classification failure (e.g., pass cap exceeded) does **not** roll back the
+item creation. The item exists in the store; the engine error is propagated
+to the caller separately.
+
+**Rationale**: The user typed something and pressed enter. That data should
+be saved regardless of whether the rule engine had trouble classifying it.
+Losing user input because of a misconfigured rule would be a worse failure
+than having an unclassified item.
+
+The engine already has its own atomicity via SAVEPOINTs — if a `process_item`
+run fails mid-cascade, the engine's partial assignments are rolled back. But
+the store-level mutation (insert/update of the item or category itself) is
+committed independently.
+
+**Implication**: After an engine error, the item/category exists but may
+have incomplete classification. The error should be surfaced to the user so
+they know something went wrong with their rules, not with their data.
+
+---
+
+## 11. Manual assignment triggers the engine
+
+**Date**: 2026-02-15
+**Relevant tasks**: T022
+
+When a user manually assigns an item to a category, the engine runs
+`process_item` on that item afterward. This is necessary because the manual
+assignment might satisfy a Profile condition on another category.
+
+**Example**: User manually marks an item as "Urgent." Category "Escalated"
+has a Profile condition: `include: {Urgent, Project Alpha}`. If the item is
+already in "Project Alpha," the manual "Urgent" assignment completes the
+Profile — the engine should fire and assign to "Escalated."
+
+Without this, manual assignments would be "dead ends" that never trigger
+cascading rules. The whole point of Profile conditions is that any assignment
+— regardless of source — can trigger further classification.
