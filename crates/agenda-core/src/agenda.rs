@@ -1,9 +1,13 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
 
 use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, ProcessItemResult};
 use crate::error::Result;
 use crate::matcher::Classifier;
-use crate::model::{Assignment, AssignmentSource, Category, CategoryId, Item, ItemId};
+use crate::model::{
+    Assignment, AssignmentSource, Category, CategoryId, Item, ItemId, Section, View,
+};
 use crate::store::Store;
 
 /// Synchronous integration layer that wires Store mutations to engine execution.
@@ -57,6 +61,86 @@ impl<'a> Agenda<'a> {
         self.store.assign_item(item_id, category_id, &assignment)?;
         process_item(self.store, self.classifier, item_id)
     }
+
+    pub fn insert_item_in_section(
+        &self,
+        item_id: ItemId,
+        view: &View,
+        section: &Section,
+    ) -> Result<ProcessItemResult> {
+        let mut targets = section.on_insert_assign.clone();
+        targets.extend(view.criteria.include.iter().copied());
+
+        self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn insert_item_in_unmatched(
+        &self,
+        item_id: ItemId,
+        view: &View,
+    ) -> Result<ProcessItemResult> {
+        self.assign_manual_categories(item_id, &view.criteria.include, "edit:view.insert")?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn remove_item_from_section(
+        &self,
+        item_id: ItemId,
+        section: &Section,
+    ) -> Result<ProcessItemResult> {
+        self.unassign_categories(item_id, &section.on_remove_unassign)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn remove_item_from_view(&self, item_id: ItemId, view: &View) -> Result<ProcessItemResult> {
+        self.unassign_categories(item_id, &view.remove_from_view_unassign)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn remove_item_from_unmatched(
+        &self,
+        item_id: ItemId,
+        view: &View,
+    ) -> Result<ProcessItemResult> {
+        self.unassign_categories(item_id, &view.remove_from_view_unassign)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    fn assign_manual_categories(
+        &self,
+        item_id: ItemId,
+        targets: &HashSet<CategoryId>,
+        origin: &str,
+    ) -> Result<()> {
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        let existing = self.store.get_assignments_for_item(item_id)?;
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some(origin.to_string()),
+        };
+
+        for category_id in targets {
+            if existing.contains_key(category_id) {
+                continue;
+            }
+            self.store.assign_item(item_id, *category_id, &assignment)?;
+        }
+
+        Ok(())
+    }
+
+    fn unassign_categories(&self, item_id: ItemId, targets: &HashSet<CategoryId>) -> Result<()> {
+        for category_id in targets {
+            self.store.unassign_item(item_id, *category_id)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -68,7 +152,10 @@ mod tests {
     use super::Agenda;
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
-    use crate::model::{Action, AssignmentSource, Category, CategoryId, Condition, Item, Query};
+    use crate::model::{
+        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, Query,
+        Section, View,
+    };
     use crate::store::Store;
 
     fn category(name: &str, implicit: bool) -> Category {
@@ -81,6 +168,29 @@ mod tests {
         let mut category = category(name, implicit);
         category.parent = Some(parent);
         category
+    }
+
+    fn section(title: &str) -> Section {
+        Section {
+            title: title.to_string(),
+            criteria: Query::default(),
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+        }
+    }
+
+    fn view(name: &str) -> View {
+        View::new(name.to_string())
+    }
+
+    fn manual_assignment(origin: &str) -> Assignment {
+        Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some(origin.to_string()),
+        }
     }
 
     #[test]
@@ -285,5 +395,260 @@ mod tests {
             assignments.get(&events.id).unwrap().source,
             AssignmentSource::Subsumption
         );
+    }
+
+    #[test]
+    fn insert_item_in_section_assigns_section_and_view_categories() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let urgent = category("Urgent", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&urgent).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+
+        let mut current_view = view("My Work");
+        current_view.criteria.include.insert(work.id);
+        let mut current_section = section("Urgent");
+        current_section.on_insert_assign.insert(urgent.id);
+
+        agenda
+            .insert_item_in_section(item.id, &current_view, &current_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        assert!(assignments.contains_key(&urgent.id));
+        assert_eq!(
+            assignments.get(&work.id).and_then(|a| a.origin.as_deref()),
+            Some("edit:section.insert")
+        );
+        assert_eq!(
+            assignments
+                .get(&urgent.id)
+                .and_then(|a| a.origin.as_deref()),
+            Some("edit:section.insert")
+        );
+    }
+
+    #[test]
+    fn insert_item_in_section_triggers_engine_cascade() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let urgent = category("Urgent", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&urgent).unwrap();
+
+        let mut escalated = category("Escalated", false);
+        let mut criteria = Query::default();
+        criteria.include.insert(work.id);
+        criteria.include.insert(urgent.id);
+        escalated.conditions.push(Condition::Profile { criteria });
+        store.create_category(&escalated).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+
+        let mut current_view = view("My Work");
+        current_view.criteria.include.insert(work.id);
+        let mut current_section = section("Urgent");
+        current_section.on_insert_assign.insert(urgent.id);
+
+        let result = agenda
+            .insert_item_in_section(item.id, &current_view, &current_section)
+            .unwrap();
+
+        assert!(result.new_assignments.contains(&escalated.id));
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&escalated.id));
+    }
+
+    #[test]
+    fn remove_from_section_unassigns_targets_and_preserves_others() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let urgent = category("Urgent", false);
+        let personal = category("Personal", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&urgent).unwrap();
+        store.create_category(&personal).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        store
+            .assign_item(item.id, work.id, &manual_assignment("manual:user"))
+            .unwrap();
+        store
+            .assign_item(item.id, urgent.id, &manual_assignment("manual:user"))
+            .unwrap();
+        store
+            .assign_item(item.id, personal.id, &manual_assignment("manual:user"))
+            .unwrap();
+
+        let mut current_section = section("Urgent");
+        current_section.on_remove_unassign.insert(urgent.id);
+
+        agenda
+            .remove_item_from_section(item.id, &current_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        assert!(!assignments.contains_key(&urgent.id));
+        assert!(assignments.contains_key(&personal.id));
+    }
+
+    #[test]
+    fn remove_from_view_unassigns_view_targets() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let personal = category("Personal", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&personal).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        store
+            .assign_item(item.id, work.id, &manual_assignment("manual:user"))
+            .unwrap();
+        store
+            .assign_item(item.id, personal.id, &manual_assignment("manual:user"))
+            .unwrap();
+
+        let mut current_view = view("My Work");
+        current_view.remove_from_view_unassign.insert(work.id);
+
+        agenda
+            .remove_item_from_view(item.id, &current_view)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&work.id));
+        assert!(assignments.contains_key(&personal.id));
+    }
+
+    #[test]
+    fn unmatched_insert_uses_view_criteria_include() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+
+        let mut current_view = view("My Work");
+        current_view.criteria.include.insert(work.id);
+
+        agenda
+            .insert_item_in_unmatched(item.id, &current_view)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        assert_eq!(
+            assignments.get(&work.id).and_then(|a| a.origin.as_deref()),
+            Some("edit:view.insert")
+        );
+    }
+
+    #[test]
+    fn unmatched_remove_uses_view_remove_targets() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let personal = category("Personal", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&personal).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        store
+            .assign_item(item.id, work.id, &manual_assignment("manual:user"))
+            .unwrap();
+        store
+            .assign_item(item.id, personal.id, &manual_assignment("manual:user"))
+            .unwrap();
+
+        let mut current_view = view("My Work");
+        current_view.remove_from_view_unassign.insert(work.id);
+
+        agenda
+            .remove_item_from_unmatched(item.id, &current_view)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&work.id));
+        assert!(assignments.contains_key(&personal.id));
+    }
+
+    #[test]
+    fn insert_item_in_section_is_idempotent_for_existing_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let mut current_view = view("My Work");
+        current_view.criteria.include.insert(work.id);
+        let mut current_section = section("Work");
+        current_section.on_insert_assign.insert(work.id);
+
+        agenda
+            .insert_item_in_section(item.id, &current_view, &current_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(
+            assignments.get(&work.id).and_then(|a| a.origin.as_deref()),
+            Some("manual:user")
+        );
+    }
+
+    #[test]
+    fn remove_from_view_triggers_engine_even_with_no_unassign_targets() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let trigger = category("Trigger", true);
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("trigger task".to_string());
+        store.create_item(&item).unwrap();
+
+        let current_view = view("Any");
+        agenda
+            .remove_item_from_view(item.id, &current_view)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&trigger.id));
     }
 }
