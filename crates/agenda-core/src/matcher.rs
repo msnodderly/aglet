@@ -99,6 +99,12 @@ mod tests {
     }
 
     #[test]
+    fn test_word_boundary_hashtag_prefix() {
+        let classifier = SubstringClassifier;
+        assert_eq!(classifier.classify("#high priority", "High"), Some(1.0));
+    }
+
+    #[test]
     fn test_word_boundary_start_of_string() {
         let classifier = SubstringClassifier;
         assert_eq!(classifier.classify("Sarah called", "Sarah"), Some(1.0));

@@ -119,6 +119,10 @@ Completed:
   - created researcher-focused follow-up views (including high-priority disease/resistance slices)
   - added bibliography categories (`External links`, `Further reading`, source-type and domain slices)
   - created bibliography views, including a drug-resistance bibliography slice
+- Added hashtag parsing regression coverage and CLI docs clarification:
+  - tests verify `#high`/`#follow-up` match existing categories and do not create `#`-prefixed categories
+  - tests verify unknown hashtags (for example `#office`) are not auto-created today
+  - man page documents current behavior and references pending policy issue for unknown hashtags
 
 In progress:
 
