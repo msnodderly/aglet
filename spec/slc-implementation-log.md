@@ -45,6 +45,8 @@ Completed:
 - Full test suite passing (`cargo test`).
 - Manual CLI smoke-tested against a temp DB (`/tmp/aglet-slc-test.ag`).
 - Manual delete/restore recovery flow smoke-tested (`/tmp/aglet-slc-restore.ag`).
+- End-to-end CLI workflow tested on fresh DB (`/tmp/aglet-slc-e2e.ag`):
+  - add -> retroactive category assignment -> view create/list -> done -> delete -> deleted -> restore.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
@@ -64,7 +66,7 @@ Completed:
 
 In progress:
 
-- final SLC gap assessment and polish.
+- final SLC gap assessment and polish (documentation + default launcher decision).
 
 Remaining (high-level):
 
