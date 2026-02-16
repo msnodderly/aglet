@@ -1,0 +1,116 @@
+# TUI Smoke Test Script (E2E Daily Loop)
+
+Date: 2026-02-16
+Task: T016 (`bd-pmr`)
+
+This script validates the TUI daily loop across:
+- add
+- move (`[` / `]`) between sections
+- remove from view (`r`)
+- done (`d`)
+- delete (`x`)
+- inline text edit (`e`)
+- note create/edit (`m`)
+- inspect unassign (`i` + `u`)
+- category manager create/rename/reparent/toggle/delete (`F9`)
+
+## 1) Setup
+
+```bash
+cd /Users/mds/src/aglet-bd-pmr
+DB="/tmp/aglet-tui-smoke-$(date +%s).ag"
+echo "$DB"
+```
+
+Create categories and views used in the smoke run:
+
+```bash
+cargo run -q -p agenda-cli -- --db "$DB" category create SlotA
+cargo run -q -p agenda-cli -- --db "$DB" category create SlotB
+cargo run -q -p agenda-cli -- --db "$DB" view create "Smoke Board"
+```
+
+Configure `Smoke Board` with two explicit sections and remove-from-view behavior.
+This is needed so `[` / `]` and `r` are meaningfully testable in TUI.
+
+```bash
+A=$(sqlite3 "$DB" "select id from categories where lower(name)='slota';")
+B=$(sqlite3 "$DB" "select id from categories where lower(name)='slotb';")
+SECTIONS=$(cat <<JSON
+[{"title":"Slot A","criteria":{"include":["$A"],"exclude":[],"virtual_include":[],"virtual_exclude":[],"text_search":null},"on_insert_assign":["$A"],"on_remove_unassign":["$A"],"show_children":false},{"title":"Slot B","criteria":{"include":["$B"],"exclude":[],"virtual_include":[],"virtual_exclude":[],"text_search":null},"on_insert_assign":["$B"],"on_remove_unassign":["$B"],"show_children":false}]
+JSON
+)
+CRITERIA=$(cat <<JSON
+{"include":["$A","$B"],"exclude":[],"virtual_include":[],"virtual_exclude":[],"text_search":null}
+JSON
+)
+REMOVE=$(cat <<JSON
+["$A","$B"]
+JSON
+)
+sqlite3 "$DB" "update views set criteria_json='$CRITERIA', sections_json='$SECTIONS', remove_from_view_unassign_json='$REMOVE' where name='Smoke Board';"
+```
+
+## 2) Run TUI Smoke Flow
+
+Launch:
+
+```bash
+cargo run -q -p agenda-tui -- --db "$DB"
+```
+
+Inside TUI, run the following checklist.
+
+1. Category manager and structural edits (`F9`):
+- Press `F9`.
+- Press `N`, create `Work`.
+- Select `Work`, press `n`, create `Project X`.
+- Select `Project X`, press `r`, rename to `Project X2`.
+- With `Project X2` selected, press `t` (toggle exclusive) and `i` (toggle implicit).
+- Press `p`, choose `(root)`, Enter (reparent).
+- Press `F9` to close manager.
+
+2. Sectioned move/remove flow:
+- Press `F8`, switch to `Smoke Board`.
+- Ensure `Slot A` section is selected, press `n`, add: `smoke flow item`.
+- Press `]` to move to `Slot B`.
+- Press `r` to remove from view.
+  - Expected: item disappears from `Smoke Board`.
+
+3. Edit/note/inspect-unassign flow:
+- Press `F8`, switch to `All Items`.
+- Select any non-done item.
+- Press `e`, append ` Foo`, Enter.
+- Press `m`, type `smoke note`, Enter.
+- Press `i` to open inspect panel.
+- Press `u`, choose assignment, Enter to unassign one category.
+
+4. Done/delete flow:
+- With selected item, press `d`.
+- Press `x`, then `y` to confirm delete.
+- Press `q` to exit.
+
+## 3) Verification Commands
+
+```bash
+# Category structure/toggles changed by TUI manager
+cargo run -q -p agenda-cli -- --db "$DB" category list
+
+# Note edit visible via search
+cargo run -q -p agenda-cli -- --db "$DB" search "smoke note"
+
+# Smoke board should not include removed item anymore
+cargo run -q -p agenda-cli -- --db "$DB" view show "Smoke Board"
+
+# Deleted log contains the deleted item
+cargo run -q -p agenda-cli -- --db "$DB" deleted
+```
+
+## 4) Pass Criteria
+
+- TUI remains stable through the full sequence (no crash/forced exit).
+- Category create/rename/reparent/toggle operations succeed and persist.
+- Item can be moved between `Slot A`/`Slot B` and removed from `Smoke Board`.
+- Inline text edit and note edit persist.
+- Inspect unassign removes selected assignment.
+- Done + delete flow succeeds and appears in deletion log.

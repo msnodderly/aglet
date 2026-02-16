@@ -762,3 +762,23 @@ Error and constraint handling:
 - Store/core invariants remain authoritative (reserved-name restrictions,
   parent-cycle checks, duplicate-name checks).
 - TUI surfaces failures as status messages without exiting the session.
+
+---
+
+## 30. TUI smoke script uses deterministic sectioned-view seed for move/remove validation
+
+**Date**: 2026-02-16
+**Relevant tasks**: T016
+
+`T016` requires validating `[`/`]` move and `r` remove-from-view behavior.
+Those operations are only meaningful when a view has multiple slots/sections
+and explicit remove-from-view unassign targets.
+
+The smoke script therefore seeds a dedicated `Smoke Board` view with:
+
+- criteria including `SlotA` and `SlotB`
+- two explicit sections (`Slot A`, `Slot B`)
+- `remove_from_view_unassign` set to both section categories
+
+This is done deterministically with `sqlite3` JSON updates in the script so
+the same TUI keystroke flow can be replayed without manual preconfiguration.
