@@ -1,6 +1,7 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
+use std::collections::HashSet;
 
-use crate::model::{Item, Query, WhenBucket};
+use crate::model::{Item, Query, View, WhenBucket};
 
 /// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
 pub fn resolve_when_bucket(
@@ -60,12 +61,73 @@ pub fn evaluate_query<'a>(
     items: &'a [Item],
     reference_date: NaiveDate,
 ) -> Vec<&'a Item> {
-    let normalized_search = query.text_search.as_ref().map(|term| term.to_ascii_lowercase());
+    let normalized_search = query
+        .text_search
+        .as_ref()
+        .map(|term| term.to_ascii_lowercase());
 
     items
         .iter()
-        .filter(|item| item_matches_query(query, item, reference_date, normalized_search.as_deref()))
+        .filter(|item| {
+            item_matches_query(query, item, reference_date, normalized_search.as_deref())
+        })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct ViewSectionResult {
+    pub section_index: usize,
+    pub title: String,
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ViewResult {
+    pub sections: Vec<ViewSectionResult>,
+    pub unmatched: Option<Vec<Item>>,
+    pub unmatched_label: Option<String>,
+}
+
+/// Resolve a view into ordered section groups and an optional unmatched group.
+pub fn resolve_view(view: &View, items: &[Item], reference_date: NaiveDate) -> ViewResult {
+    let view_items: Vec<Item> = evaluate_query(&view.criteria, items, reference_date)
+        .into_iter()
+        .cloned()
+        .collect();
+
+    let mut matched_in_sections = HashSet::new();
+    let sections = view
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(section_index, section)| {
+            let section_items = evaluate_query(&section.criteria, &view_items, reference_date);
+            matched_in_sections.extend(section_items.iter().map(|item| item.id));
+
+            ViewSectionResult {
+                section_index,
+                title: section.title.clone(),
+                items: section_items.into_iter().cloned().collect(),
+            }
+        })
+        .collect();
+
+    let (unmatched, unmatched_label) = if view.show_unmatched {
+        let unmatched_items = view_items
+            .iter()
+            .filter(|item| !matched_in_sections.contains(&item.id))
+            .cloned()
+            .collect();
+        (Some(unmatched_items), Some(view.unmatched_label.clone()))
+    } else {
+        (None, None)
+    };
+
+    ViewResult {
+        sections,
+        unmatched,
+        unmatched_label,
+    }
 }
 
 fn item_matches_query(
@@ -142,13 +204,15 @@ fn start_of_iso_week(date: NaiveDate) -> NaiveDate {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use chrono::{NaiveDate, NaiveDateTime, Utc};
     use uuid::Uuid;
 
-    use super::{evaluate_query, resolve_when_bucket};
-    use crate::model::{Assignment, AssignmentSource, CategoryId, Item, Query, WhenBucket};
+    use super::{evaluate_query, resolve_view, resolve_when_bucket};
+    use crate::model::{
+        Assignment, AssignmentSource, CategoryId, Item, Query, Section, View, WhenBucket,
+    };
 
     fn day(year: i32, month: u32, date: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, date).unwrap()
@@ -189,6 +253,40 @@ mod tests {
         items.iter().map(|item| item.id).collect()
     }
 
+    fn item_ids(items: &[Item]) -> Vec<Uuid> {
+        items.iter().map(|item| item.id).collect()
+    }
+
+    fn include_query(category_id: CategoryId) -> Query {
+        let mut query = Query::default();
+        query.include.insert(category_id);
+        query
+    }
+
+    fn section(title: &str, criteria: Query) -> Section {
+        Section {
+            title: title.to_string(),
+            criteria,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+        }
+    }
+
+    fn view(
+        criteria: Query,
+        sections: Vec<Section>,
+        show_unmatched: bool,
+        unmatched_label: &str,
+    ) -> View {
+        let mut view = View::new("Test View".to_string());
+        view.criteria = criteria;
+        view.sections = sections;
+        view.show_unmatched = show_unmatched;
+        view.unmatched_label = unmatched_label.to_string();
+        view
+    }
+
     #[test]
     fn evaluate_query_empty_query_matches_everything() {
         let reference = day(2026, 2, 11);
@@ -200,7 +298,10 @@ mod tests {
 
         let query = Query::default();
         let result = evaluate_query(&query, &items, reference);
-        assert_eq!(ids(&result), items.iter().map(|item| item.id).collect::<Vec<_>>());
+        assert_eq!(
+            ids(&result),
+            items.iter().map(|item| item.id).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -328,8 +429,10 @@ mod tests {
             item_with_assignments("Buy groceries", None, None, &[]),
         ];
 
-        let mut query = Query::default();
-        query.text_search = Some("meeting".to_string());
+        let query = Query {
+            text_search: Some("meeting".to_string()),
+            ..Query::default()
+        };
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id]);
@@ -343,8 +446,10 @@ mod tests {
             item_with_assignments("Other", Some("Random"), None, &[]),
         ];
 
-        let mut query = Query::default();
-        query.text_search = Some("roadmap".to_string());
+        let query = Query {
+            text_search: Some("roadmap".to_string()),
+            ..Query::default()
+        };
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id]);
@@ -358,8 +463,10 @@ mod tests {
             item_with_assignments("normal task", None, None, &[]),
         ];
 
-        let mut query = Query::default();
-        query.text_search = Some("URGENT".to_string());
+        let query = Query {
+            text_search: Some("URGENT".to_string()),
+            ..Query::default()
+        };
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id]);
@@ -391,11 +498,13 @@ mod tests {
             ),
         ];
 
-        let mut query = Query::default();
+        let mut query = Query {
+            text_search: Some("meeting".to_string()),
+            ..Query::default()
+        };
         query.include.insert(category_a);
         query.exclude.insert(category_b);
         query.virtual_include.insert(WhenBucket::Today);
-        query.text_search = Some("meeting".to_string());
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id]);
@@ -435,6 +544,301 @@ mod tests {
     }
 
     #[test]
+    fn resolve_view_basic_sections_and_unmatched() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let urgent = Uuid::new_v4();
+        let normal = Uuid::new_v4();
+
+        let items = vec![
+            item_with_assignments("work urgent", None, None, &[work, urgent]),
+            item_with_assignments("work normal", None, None, &[work, normal]),
+            item_with_assignments("work only", None, None, &[work]),
+            item_with_assignments("urgent only", None, None, &[urgent]),
+        ];
+
+        let view = view(
+            include_query(work),
+            vec![
+                section("Urgent", include_query(urgent)),
+                section("Normal", include_query(normal)),
+            ],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(result.sections.len(), 2);
+        assert_eq!(result.sections[0].section_index, 0);
+        assert_eq!(result.sections[0].title, "Urgent");
+        assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
+        assert_eq!(result.sections[1].section_index, 1);
+        assert_eq!(result.sections[1].title, "Normal");
+        assert_eq!(item_ids(&result.sections[1].items), vec![items[1].id]);
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched")),
+            vec![items[2].id]
+        );
+        assert_eq!(result.unmatched_label.as_deref(), Some("Unassigned"));
+    }
+
+    #[test]
+    fn resolve_view_empty_criteria_matches_all_items() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let items = vec![
+            item_with_assignments("work", None, None, &[work]),
+            item_with_assignments("personal", None, None, &[]),
+        ];
+
+        let view = view(
+            Query::default(),
+            vec![section("Work", include_query(work))],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched")),
+            vec![items[1].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_item_can_appear_in_multiple_sections() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let urgent = Uuid::new_v4();
+        let important = Uuid::new_v4();
+
+        let items = vec![item_with_assignments(
+            "work urgent important",
+            None,
+            None,
+            &[work, urgent, important],
+        )];
+
+        let view = view(
+            include_query(work),
+            vec![
+                section("Urgent", include_query(urgent)),
+                section("Important", include_query(important)),
+            ],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
+        assert_eq!(item_ids(&result.sections[1].items), vec![items[0].id]);
+    }
+
+    #[test]
+    fn resolve_view_collects_unmatched_with_custom_label() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let urgent = Uuid::new_v4();
+        let items = vec![item_with_assignments("work only", None, None, &[work])];
+
+        let view = view(
+            include_query(work),
+            vec![section("Urgent", include_query(urgent))],
+            true,
+            "Other",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched")),
+            vec![items[0].id]
+        );
+        assert_eq!(result.unmatched_label.as_deref(), Some("Other"));
+    }
+
+    #[test]
+    fn resolve_view_omits_unmatched_when_disabled() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let urgent = Uuid::new_v4();
+        let items = vec![item_with_assignments("work only", None, None, &[work])];
+
+        let view = view(
+            include_query(work),
+            vec![section("Urgent", include_query(urgent))],
+            false,
+            "Unused",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert!(result.unmatched.is_none());
+        assert!(result.unmatched_label.is_none());
+    }
+
+    #[test]
+    fn resolve_view_items_in_sections_do_not_appear_in_unmatched() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let urgent = Uuid::new_v4();
+        let items = vec![item_with_assignments(
+            "work urgent",
+            None,
+            None,
+            &[work, urgent],
+        )];
+
+        let view = view(
+            include_query(work),
+            vec![section("Urgent", include_query(urgent))],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
+        assert!(item_ids(result.unmatched.as_ref().expect("unmatched")).is_empty());
+    }
+
+    #[test]
+    fn resolve_view_preserves_section_order_and_indexes() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let alpha = Uuid::new_v4();
+        let beta = Uuid::new_v4();
+        let items = vec![item_with_assignments(
+            "work",
+            None,
+            None,
+            &[work, alpha, beta],
+        )];
+
+        let view = view(
+            include_query(work),
+            vec![
+                section("Beta First", include_query(beta)),
+                section("Alpha Second", include_query(alpha)),
+            ],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(result.sections[0].title, "Beta First");
+        assert_eq!(result.sections[0].section_index, 0);
+        assert_eq!(result.sections[1].title, "Alpha Second");
+        assert_eq!(result.sections[1].section_index, 1);
+    }
+
+    #[test]
+    fn resolve_view_empty_view_results_in_empty_groups() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let urgent = Uuid::new_v4();
+        let items = vec![item_with_assignments("personal", None, None, &[urgent])];
+
+        let view = view(
+            include_query(work),
+            vec![
+                section("Urgent", include_query(urgent)),
+                section("Normal", Query::default()),
+            ],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert!(item_ids(&result.sections[0].items).is_empty());
+        assert!(item_ids(&result.sections[1].items).is_empty());
+        assert!(item_ids(result.unmatched.as_ref().expect("unmatched")).is_empty());
+    }
+
+    #[test]
+    fn resolve_view_supports_text_search_in_view_criteria() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let personal = Uuid::new_v4();
+        let items = vec![
+            item_with_assignments("Write report", None, None, &[work]),
+            item_with_assignments("Plan trip", None, None, &[work]),
+            item_with_assignments("Report receipts", None, None, &[personal]),
+        ];
+
+        let criteria = Query {
+            text_search: Some("report".to_string()),
+            ..Query::default()
+        };
+
+        let view = view(
+            criteria,
+            vec![section("Work", include_query(work))],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched")),
+            vec![items[2].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_supports_virtual_include_in_view_criteria() {
+        let reference = day(2026, 2, 11);
+        let work = Uuid::new_v4();
+        let personal = Uuid::new_v4();
+        let items = vec![
+            item_with_assignments(
+                "work today",
+                None,
+                Some(datetime(2026, 2, 11, 9, 0)),
+                &[work],
+            ),
+            item_with_assignments(
+                "personal today",
+                None,
+                Some(datetime(2026, 2, 11, 10, 0)),
+                &[personal],
+            ),
+            item_with_assignments(
+                "work tomorrow",
+                None,
+                Some(datetime(2026, 2, 12, 9, 0)),
+                &[work],
+            ),
+        ];
+
+        let mut criteria = Query::default();
+        criteria.virtual_include.insert(WhenBucket::Today);
+
+        let view = view(
+            criteria,
+            vec![section("Work", include_query(work))],
+            true,
+            "Unassigned",
+        );
+
+        let result = resolve_view(&view, &items, reference);
+
+        assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched")),
+            vec![items[1].id]
+        );
+    }
+
+    #[test]
     fn resolve_no_date_bucket() {
         let reference = day(2026, 2, 11);
         assert_eq!(resolve_when_bucket(None, reference), WhenBucket::NoDate);
@@ -461,35 +865,50 @@ mod tests {
     fn resolve_tomorrow_bucket() {
         let reference = day(2026, 2, 11);
         let when_date = Some(datetime(2026, 2, 12, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::Tomorrow);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::Tomorrow
+        );
     }
 
     #[test]
     fn resolve_this_week_bucket() {
         let reference = day(2026, 2, 11);
         let when_date = Some(datetime(2026, 2, 14, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::ThisWeek);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::ThisWeek
+        );
     }
 
     #[test]
     fn resolve_next_week_bucket() {
         let reference = day(2026, 2, 11);
         let when_date = Some(datetime(2026, 2, 16, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::NextWeek);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::NextWeek
+        );
     }
 
     #[test]
     fn resolve_this_month_bucket() {
         let reference = day(2026, 2, 11);
         let when_date = Some(datetime(2026, 2, 27, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::ThisMonth);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::ThisMonth
+        );
     }
 
     #[test]
     fn resolve_future_bucket() {
         let reference = day(2026, 2, 11);
         let when_date = Some(datetime(2026, 3, 15, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::Future);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::Future
+        );
     }
 
     #[test]
@@ -503,7 +922,10 @@ mod tests {
     fn tomorrow_priority_over_this_week() {
         let reference = day(2026, 2, 9); // Monday
         let when_date = Some(datetime(2026, 2, 10, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::Tomorrow);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::Tomorrow
+        );
     }
 
     #[test]
@@ -517,7 +939,10 @@ mod tests {
     fn far_future_is_future_bucket() {
         let reference = day(2026, 2, 11);
         let when_date = Some(datetime(2027, 2, 11, 9, 0));
-        assert_eq!(resolve_when_bucket(when_date, reference), WhenBucket::Future);
+        assert_eq!(
+            resolve_when_bucket(when_date, reference),
+            WhenBucket::Future
+        );
     }
 
     #[test]
