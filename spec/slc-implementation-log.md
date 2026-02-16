@@ -39,6 +39,7 @@ Completed:
   - `category list/create/delete`
   - `category assign`
   - `view list/create/delete`
+  - `view show`
 - Added core tests for new APIs:
   - `agenda::mark_item_done_sets_done_fields_and_assigns_done_category`
   - `store::test_list_deleted_items_returns_latest_first`
@@ -53,6 +54,12 @@ Completed:
   - created `Work -> Project Y -> Frabulator`
   - assigned `Frabulator` to item via CLI
   - verified item shows `Frabulator`, `Project Y`, and `Work` via subsumption.
+- CLI/UI wording and discoverability pass completed:
+  - clearer assignment output wording (`assigned item <id> to category <name>`)
+  - `view show <name>` added as direct way to inspect view contents
+  - `view list` prints a usage hint for viewing contents
+  - restore ID parsing now uses explicit UUID type
+- Domain-gap planning doc added: `spec/domain-gaps-main-iterations.md`.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)

@@ -10,6 +10,7 @@ dependencies = [
  "agenda-tui",
  "chrono",
  "clap",
+ "uuid",
 ]
 
 [[package]]
