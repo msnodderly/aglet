@@ -10,6 +10,7 @@ use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use chrono::Local;
 use clap::{Parser, Subcommand};
+use uuid::Uuid;
 
 #[derive(Parser, Debug)]
 #[command(name = "agenda")]
@@ -64,13 +65,13 @@ enum Command {
     /// Launch the interactive TUI
     Tui,
 
-    /// Category commands
+    /// Category commands (list, create, delete, assign)
     Category {
         #[command(subcommand)]
         command: CategoryCommand,
     },
 
-    /// View commands
+    /// View commands (list, show, create, delete)
     View {
         #[command(subcommand)]
         command: ViewCommand,
@@ -96,7 +97,7 @@ enum CategoryCommand {
     /// Delete a category by name
     Delete { name: String },
 
-    /// Assign a category to an item by id
+    /// Assign an item to a category by id/name
     Assign {
         item_id: String,
         category_name: String,
@@ -107,6 +108,9 @@ enum CategoryCommand {
 enum ViewCommand {
     /// List views
     List,
+
+    /// Show the contents of a view
+    Show { name: String },
 
     /// Create a basic view from include/exclude categories
     Create {
@@ -268,8 +272,7 @@ fn cmd_deleted(store: &Store) -> Result<(), String> {
 }
 
 fn cmd_restore(store: &Store, log_id_str: String) -> Result<(), String> {
-    let log_id =
-        CategoryId::parse_str(&log_id_str).map_err(|e| format!("invalid log id: {e}"))?;
+    let log_id = Uuid::parse_str(&log_id_str).map_err(|e| format!("invalid log id: {e}"))?;
     let item_id = store
         .restore_deleted_item(log_id)
         .map_err(|e| e.to_string())?;
@@ -325,14 +328,17 @@ fn cmd_category(agenda: &Agenda<'_>, store: &Store, command: CategoryCommand) ->
 
             if category_name.eq_ignore_ascii_case("Done") {
                 agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
-                println!("assigned Done to {} (is_done and done_date updated)", item_id);
+                println!(
+                    "assigned item {} to category Done (is_done and done_date updated)",
+                    item_id
+                );
                 return Ok(());
             }
 
             let result = agenda
                 .assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))
                 .map_err(|e| e.to_string())?;
-            println!("assigned {} to {}", category_name, item_id);
+            println!("assigned item {} to category {}", item_id, category_name);
             if !result.new_assignments.is_empty() {
                 println!("new_assignments={}", result.new_assignments.len());
             }
@@ -358,6 +364,15 @@ fn cmd_view(store: &Store, command: ViewCommand) -> Result<(), String> {
                     view.criteria.exclude.len()
                 );
             }
+            println!("hint: use `agenda view show \"<name>\"` to see view contents");
+            Ok(())
+        }
+        ViewCommand::Show { name } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_names = category_name_map(&categories);
+            let items = store.list_items().map_err(|e| e.to_string())?;
+            let view = view_by_name(store, &name)?;
+            print_items_for_view(&view, &items, &categories, &category_names);
             Ok(())
         }
         ViewCommand::Create {
