@@ -14,8 +14,8 @@ Date: 2026-02-16
   inspect-panel unassign picker (`u`) with explicit select/confirm flow.
 - `T015` implemented on branch `codex/bd-2ji-tui-inline-text-edit`:
   non-fatal action errors + no-view fallback handling in refresh/view picker.
-- Both features have local manual smoke validation; merge is intentionally
-  pending user manual test confirmation.
+- `T016` implemented on branch `codex/bd-pmr-tui-smoke-script`:
+  deterministic end-to-end TUI smoke script in `docs/test-script-tui-smoke-e2e.md`.
 
 This note references:
 - `spec/product-current.md`
