@@ -403,3 +403,95 @@ The one exception is the unmatched bucket: an item appears in explicit
 sections OR in unmatched, never both. If an item matches at least one
 section, it is excluded from unmatched regardless of how many sections
 it matches.
+
+---
+
+## 16. show_children only expands simple criteria
+
+**Date**: 2026-02-15
+**Relevant tasks**: T026
+
+`show_children = true` on a Section only triggers expansion when the
+section's criteria is a single category in `include` and everything else
+is empty (no exclude, no virtual fields, no text_search).
+
+**Rationale**: show_children means "break this category down by its
+children." That only makes sense when the section IS a single category.
+A section with `include: {A, B}` or `text_search: "meeting"` isn't
+representing a single category — there's no meaningful way to "expand
+its children."
+
+Treating complex criteria as a normal flat section (ignoring show_children)
+is the least surprising behavior. No error, no silent partial expansion.
+
+**One level only**: Even if a child has its own children, subsections are
+always leaf groups. Recursive expansion would produce deeply nested views
+that are hard to navigate. If users want deeper structure, they can create
+explicit sections for grandchildren.
+
+---
+
+## 17. Edit-through is assignment, not move
+
+**Date**: 2026-02-15
+**Relevant tasks**: T027
+
+Edit-through operations are primitive assignment/unassignment operations,
+not composite "move" operations. The library provides:
+
+- `insert_in_section`: assigns categories
+- `remove_from_section`: unassigns categories
+- `remove_from_view`: unassigns categories
+
+"Moving" an item between sections is a TUI-level composition: remove from
+the old section, insert into the new one. The library doesn't need to know
+about moves — it only knows about individual assignment changes.
+
+**Why not a move primitive?** Because a "move" implies exclusivity — the
+item leaves one section and enters another. But sections aren't exclusive
+(§15). An item can be in multiple sections simultaneously. A "move" would
+need to decide which sections to remove from, which depends on UI context
+(which section the cursor is in) rather than data model rules. That logic
+belongs in the TUI, not the core library.
+
+---
+
+## 18. Edit-through triggers the engine
+
+**Date**: 2026-02-15
+**Relevant tasks**: T027
+
+Every edit-through operation runs `process_item` after applying its
+assignment changes. This is necessary for the same reason as §11 (manual
+assignment triggers the engine) — any assignment change might satisfy
+a Profile condition or trigger an action cascade.
+
+Insert is the obvious case: assigning to a section's categories might
+complete a Profile. But remove also triggers the engine because, while
+the engine won't auto-remove assignments (sticky, §3), the changed
+assignment set is the new baseline for future evaluation. Running the
+engine ensures any cascading from other concurrent changes is resolved.
+
+---
+
+## 19. View resolution is read-only, edit-through is write
+
+**Date**: 2026-02-15
+**Relevant tasks**: T025, T027
+
+`resolve_view` is a pure read operation — it takes items and returns a
+grouped result. It never modifies the store. Edit-through operations are
+write operations — they modify assignments in the store and trigger the
+engine.
+
+These are deliberately separate code paths. The resolver answers "what
+does the user see?" The edit-through functions answer "what happens when
+the user acts?" Keeping them separate means the resolver can be called
+freely without side effects (e.g., to refresh the display), and
+edit-through operations are explicit, auditable mutations.
+
+**Implication for the TUI**: The render loop calls `resolve_view`
+repeatedly (on refresh, on view switch, on engine completion). User
+actions call edit-through functions, which mutate the store, then the
+TUI re-resolves to show the updated state. The TUI never caches
+resolved results across mutations.
