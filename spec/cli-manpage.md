@@ -43,6 +43,8 @@ Notes:
 
 - Natural-language date/time in `<TEXT>` may be parsed into `when_date`.
 - Parsed date/time text can auto-assign the reserved `When` category.
+- Hashtag text like `#high` can match an existing category name (`High`) via implicit string matching.
+- Unknown hashtags do not currently auto-create categories and do not currently emit a warning.
 
 ### list
 
@@ -200,4 +202,3 @@ View-specific listing:
 `agenda-cli view create "Work View" --include Work`
 
 `agenda-cli list --view "Work View"`
-

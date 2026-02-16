@@ -393,6 +393,15 @@ mod tests {
             .id
     }
 
+    fn category_id_by_name(store: &Store, name: &str) -> Option<CategoryId> {
+        store
+            .get_hierarchy()
+            .expect("hierarchy available")
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case(name))
+            .map(|category| category.id)
+    }
+
     #[test]
     fn create_item_triggers_classification() {
         let store = Store::open_memory().unwrap();
@@ -408,6 +417,48 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&sarah.id));
+    }
+
+    #[test]
+    fn create_item_hashtag_matches_existing_categories_without_creating_hash_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        store.create_category(&priority).unwrap();
+        let high = child_category("High", priority.id, true);
+        store.create_category(&high).unwrap();
+        let follow_up = category("Follow-up", true);
+        store.create_category(&follow_up).unwrap();
+
+        let item = Item::new("Hashtag parsing test #high #FOLLOW-UP".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&high.id));
+        assert!(assignments.contains_key(&priority.id));
+        assert!(assignments.contains_key(&follow_up.id));
+
+        assert!(category_id_by_name(&store, "#high").is_none());
+        assert!(category_id_by_name(&store, "#follow-up").is_none());
+    }
+
+    #[test]
+    fn create_item_unknown_hashtag_does_not_auto_create_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Unknown hashtag behavior test #office".to_string());
+        let _ = agenda.create_item(&item).unwrap();
+
+        assert!(category_id_by_name(&store, "Office").is_none());
+        assert!(category_id_by_name(&store, "#office").is_none());
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.is_empty());
     }
 
     #[test]
