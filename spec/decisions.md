@@ -641,3 +641,39 @@ Delete behavior intentionally uses existing core/store invariants:
 
 The TUI surfaces these as operation errors in status text instead of adding
 UI-side duplicate validation logic in MVP.
+
+---
+
+## 26. TUI inline item editing uses modal text/note editors with explicit save/cancel
+
+**Date**: 2026-02-16
+**Relevant tasks**: T012, T013
+
+Item editing in TUI is modeled as explicit input modes, not immediate
+in-place mutation:
+
+- `e` opens selected item text editor.
+- `m` opens selected item note editor.
+- `Enter` saves.
+- `Esc` cancels.
+
+Text edit behavior:
+
+- Empty text is rejected (`text cannot be empty`).
+- Save path updates the item through
+  `Agenda::update_item_with_reference_date(...)`, using local reference date.
+- This intentionally re-runs classification/date parsing so category/view
+  placement stays consistent after text changes.
+
+Note edit behavior:
+
+- Empty note input clears the note (`None`).
+- Non-empty note input stores the exact typed note value.
+- Save path also routes through
+  `Agenda::update_item_with_reference_date(...)` for one canonical update path.
+
+Selection behavior after save:
+
+- The TUI attempts to restore selection to the edited item ID after refresh.
+- If the item moved/filtered out due to re-evaluation, status feedback remains
+  and the current cursor position is preserved.
