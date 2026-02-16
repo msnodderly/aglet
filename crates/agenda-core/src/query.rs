@@ -1,7 +1,7 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::model::{Item, Query, View, WhenBucket};
+use crate::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
 
 /// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
 pub fn resolve_when_bucket(
@@ -79,6 +79,16 @@ pub struct ViewSectionResult {
     pub section_index: usize,
     pub title: String,
     pub items: Vec<Item>,
+    pub subsections: Vec<ViewSubsectionResult>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ViewSubsectionResult {
+    pub subsection_index: usize,
+    pub title: String,
+    pub items: Vec<Item>,
+    pub on_insert_assign: HashSet<CategoryId>,
+    pub on_remove_unassign: HashSet<CategoryId>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +99,16 @@ pub struct ViewResult {
 }
 
 /// Resolve a view into ordered section groups and an optional unmatched group.
-pub fn resolve_view(view: &View, items: &[Item], reference_date: NaiveDate) -> ViewResult {
+pub fn resolve_view(
+    view: &View,
+    items: &[Item],
+    categories: &[Category],
+    reference_date: NaiveDate,
+) -> ViewResult {
+    let categories_by_id: HashMap<CategoryId, &Category> = categories
+        .iter()
+        .map(|category| (category.id, category))
+        .collect();
     let view_items: Vec<Item> = evaluate_query(&view.criteria, items, reference_date)
         .into_iter()
         .cloned()
@@ -104,10 +123,22 @@ pub fn resolve_view(view: &View, items: &[Item], reference_date: NaiveDate) -> V
             let section_items = evaluate_query(&section.criteria, &view_items, reference_date);
             matched_in_sections.extend(section_items.iter().map(|item| item.id));
 
+            if let Some(subsections) =
+                expand_show_children_subsections(section, &section_items, &categories_by_id)
+            {
+                return ViewSectionResult {
+                    section_index,
+                    title: section.title.clone(),
+                    items: Vec::new(),
+                    subsections,
+                };
+            }
+
             ViewSectionResult {
                 section_index,
                 title: section.title.clone(),
                 items: section_items.into_iter().cloned().collect(),
+                subsections: Vec::new(),
             }
         })
         .collect();
@@ -128,6 +159,82 @@ pub fn resolve_view(view: &View, items: &[Item], reference_date: NaiveDate) -> V
         unmatched,
         unmatched_label,
     }
+}
+
+fn expand_show_children_subsections(
+    section: &Section,
+    section_items: &[&Item],
+    categories_by_id: &HashMap<CategoryId, &Category>,
+) -> Option<Vec<ViewSubsectionResult>> {
+    let parent_id = show_children_parent_category_id(section)?;
+    let parent = categories_by_id.get(&parent_id)?;
+
+    let mut child_entries = Vec::new();
+    for child_id in &parent.children {
+        if let Some(child) = categories_by_id.get(child_id) {
+            child_entries.push((*child_id, child.name.clone()));
+        }
+    }
+
+    let mut child_ids_in_result = HashSet::new();
+    let mut subsections = Vec::with_capacity(child_entries.len() + 1);
+    for (subsection_index, (child_id, child_name)) in child_entries.iter().enumerate() {
+        child_ids_in_result.insert(*child_id);
+        let items = section_items
+            .iter()
+            .filter(|item| item.assignments.contains_key(child_id))
+            .cloned()
+            .cloned()
+            .collect();
+        let mut on_insert_assign = section.on_insert_assign.clone();
+        on_insert_assign.insert(*child_id);
+
+        subsections.push(ViewSubsectionResult {
+            subsection_index,
+            title: child_name.clone(),
+            items,
+            on_insert_assign,
+            on_remove_unassign: section.on_remove_unassign.clone(),
+        });
+    }
+
+    let unmatched_items = section_items
+        .iter()
+        .filter(|item| {
+            !item
+                .assignments
+                .keys()
+                .any(|assigned_id| child_ids_in_result.contains(assigned_id))
+        })
+        .cloned()
+        .cloned()
+        .collect();
+    subsections.push(ViewSubsectionResult {
+        subsection_index: subsections.len(),
+        title: format!("{} (Other)", parent.name),
+        items: unmatched_items,
+        on_insert_assign: section.on_insert_assign.clone(),
+        on_remove_unassign: section.on_remove_unassign.clone(),
+    });
+
+    Some(subsections)
+}
+
+fn show_children_parent_category_id(section: &Section) -> Option<CategoryId> {
+    if !section.show_children {
+        return None;
+    }
+
+    if !section.criteria.exclude.is_empty()
+        || !section.criteria.virtual_include.is_empty()
+        || !section.criteria.virtual_exclude.is_empty()
+        || section.criteria.text_search.is_some()
+        || section.criteria.include.len() != 1
+    {
+        return None;
+    }
+
+    section.criteria.include.iter().next().copied()
 }
 
 fn item_matches_query(
@@ -211,7 +318,7 @@ mod tests {
 
     use super::{evaluate_query, resolve_view, resolve_when_bucket};
     use crate::model::{
-        Assignment, AssignmentSource, CategoryId, Item, Query, Section, View, WhenBucket,
+        Assignment, AssignmentSource, Category, CategoryId, Item, Query, Section, View, WhenBucket,
     };
 
     fn day(year: i32, month: u32, date: u32) -> NaiveDate {
@@ -285,6 +392,19 @@ mod tests {
         view.show_unmatched = show_unmatched;
         view.unmatched_label = unmatched_label.to_string();
         view
+    }
+
+    fn category(
+        id: CategoryId,
+        name: &str,
+        parent: Option<CategoryId>,
+        children: &[CategoryId],
+    ) -> Category {
+        let mut category = Category::new(name.to_string());
+        category.id = id;
+        category.parent = parent;
+        category.children = children.to_vec();
+        category
     }
 
     #[test]
@@ -567,7 +687,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(result.sections.len(), 2);
         assert_eq!(result.sections[0].section_index, 0);
@@ -599,7 +719,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
         assert_eq!(
@@ -632,7 +752,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
         assert_eq!(item_ids(&result.sections[1].items), vec![items[0].id]);
@@ -652,7 +772,7 @@ mod tests {
             "Other",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(
             item_ids(result.unmatched.as_ref().expect("unmatched")),
@@ -675,7 +795,7 @@ mod tests {
             "Unused",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert!(result.unmatched.is_none());
         assert!(result.unmatched_label.is_none());
@@ -700,7 +820,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
         assert!(item_ids(result.unmatched.as_ref().expect("unmatched")).is_empty());
@@ -729,7 +849,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(result.sections[0].title, "Beta First");
         assert_eq!(result.sections[0].section_index, 0);
@@ -754,7 +874,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert!(item_ids(&result.sections[0].items).is_empty());
         assert!(item_ids(&result.sections[1].items).is_empty());
@@ -784,7 +904,7 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
         assert_eq!(
@@ -829,12 +949,255 @@ mod tests {
             "Unassigned",
         );
 
-        let result = resolve_view(&view, &items, reference);
+        let result = resolve_view(&view, &items, &[], reference);
 
         assert_eq!(item_ids(&result.sections[0].items), vec![items[0].id]);
         assert_eq!(
             item_ids(result.unmatched.as_ref().expect("unmatched")),
             vec![items[1].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_expands_show_children_with_ordered_child_subsections_and_parent_other() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let child_alpha = Uuid::new_v4();
+        let child_beta = Uuid::new_v4();
+
+        let categories = vec![
+            category(parent, "Projects", None, &[child_alpha, child_beta]),
+            category(child_alpha, "Project Alpha", Some(parent), &[]),
+            category(child_beta, "Project Beta", Some(parent), &[]),
+        ];
+        let items = vec![
+            item_with_assignments("alpha task", None, None, &[parent, child_alpha]),
+            item_with_assignments("beta task", None, None, &[parent, child_beta]),
+            item_with_assignments("parent only", None, None, &[parent]),
+        ];
+
+        let mut projects = section("Projects", include_query(parent));
+        projects.show_children = true;
+        let view = view(Query::default(), vec![projects], true, "View Unmatched");
+
+        let result = resolve_view(&view, &items, &categories, reference);
+        let section_result = &result.sections[0];
+
+        assert!(section_result.items.is_empty());
+        assert_eq!(section_result.subsections.len(), 3);
+        assert_eq!(section_result.subsections[0].title, "Project Alpha");
+        assert_eq!(
+            item_ids(&section_result.subsections[0].items),
+            vec![items[0].id]
+        );
+        assert_eq!(section_result.subsections[1].title, "Project Beta");
+        assert_eq!(
+            item_ids(&section_result.subsections[1].items),
+            vec![items[1].id]
+        );
+        assert_eq!(section_result.subsections[2].title, "Projects (Other)");
+        assert_eq!(
+            item_ids(&section_result.subsections[2].items),
+            vec![items[2].id]
+        );
+
+        assert!(item_ids(result.unmatched.as_ref().expect("unmatched")).is_empty());
+    }
+
+    #[test]
+    fn resolve_view_show_children_preserves_child_order() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let child_alpha = Uuid::new_v4();
+        let child_beta = Uuid::new_v4();
+
+        let categories = vec![
+            category(parent, "Projects", None, &[child_beta, child_alpha]),
+            category(child_alpha, "Project Alpha", Some(parent), &[]),
+            category(child_beta, "Project Beta", Some(parent), &[]),
+        ];
+        let items = vec![item_with_assignments(
+            "shared task",
+            None,
+            None,
+            &[parent, child_alpha, child_beta],
+        )];
+
+        let mut projects = section("Projects", include_query(parent));
+        projects.show_children = true;
+        let view = view(Query::default(), vec![projects], true, "View Unmatched");
+
+        let result = resolve_view(&view, &items, &categories, reference);
+        let subsections = &result.sections[0].subsections;
+        assert_eq!(subsections[0].title, "Project Beta");
+        assert_eq!(subsections[1].title, "Project Alpha");
+        assert_eq!(subsections[2].title, "Projects (Other)");
+    }
+
+    #[test]
+    fn resolve_view_show_children_does_not_expand_when_disabled_or_complex() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let child_alpha = Uuid::new_v4();
+        let child_beta = Uuid::new_v4();
+        let categories = vec![
+            category(parent, "Projects", None, &[child_alpha, child_beta]),
+            category(child_alpha, "Project Alpha", Some(parent), &[]),
+            category(child_beta, "Project Beta", Some(parent), &[]),
+        ];
+        let items = vec![item_with_assignments(
+            "task",
+            None,
+            None,
+            &[parent, child_alpha],
+        )];
+
+        let mut disabled = section("Disabled", include_query(parent));
+        disabled.show_children = false;
+        let disabled_view = view(Query::default(), vec![disabled], true, "View Unmatched");
+        let disabled_result = resolve_view(&disabled_view, &items, &categories, reference);
+        assert!(disabled_result.sections[0].subsections.is_empty());
+        assert_eq!(
+            item_ids(&disabled_result.sections[0].items),
+            vec![items[0].id]
+        );
+
+        let mut complex_query = Query::default();
+        complex_query.include.extend([parent, child_alpha]);
+        let mut complex = section("Complex", complex_query);
+        complex.show_children = true;
+        let complex_view = view(Query::default(), vec![complex], true, "View Unmatched");
+        let complex_result = resolve_view(&complex_view, &items, &categories, reference);
+        assert!(complex_result.sections[0].subsections.is_empty());
+        assert_eq!(
+            item_ids(&complex_result.sections[0].items),
+            vec![items[0].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_show_children_one_level_only_no_grandchild_subsections() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let child = Uuid::new_v4();
+        let grandchild = Uuid::new_v4();
+
+        let categories = vec![
+            category(parent, "Projects", None, &[child]),
+            category(child, "Project Alpha", Some(parent), &[grandchild]),
+            category(grandchild, "Alpha Backend", Some(child), &[]),
+        ];
+        let items = vec![item_with_assignments(
+            "grandchild task",
+            None,
+            None,
+            &[parent, child, grandchild],
+        )];
+
+        let mut projects = section("Projects", include_query(parent));
+        projects.show_children = true;
+        let view = view(Query::default(), vec![projects], true, "View Unmatched");
+
+        let result = resolve_view(&view, &items, &categories, reference);
+        let subsections = &result.sections[0].subsections;
+        assert_eq!(subsections.len(), 2);
+        assert_eq!(subsections[0].title, "Project Alpha");
+        assert_eq!(subsections[1].title, "Projects (Other)");
+    }
+
+    #[test]
+    fn resolve_view_show_children_empty_children_has_only_parent_other() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let categories = vec![category(parent, "Projects", None, &[])];
+        let items = vec![
+            item_with_assignments("project one", None, None, &[parent]),
+            item_with_assignments("project two", None, None, &[parent]),
+        ];
+
+        let mut projects = section("Projects", include_query(parent));
+        projects.show_children = true;
+        let view = view(Query::default(), vec![projects], true, "View Unmatched");
+
+        let result = resolve_view(&view, &items, &categories, reference);
+        let section_result = &result.sections[0];
+        assert!(section_result.items.is_empty());
+        assert_eq!(section_result.subsections.len(), 1);
+        assert_eq!(section_result.subsections[0].title, "Projects (Other)");
+        assert_eq!(
+            item_ids(&section_result.subsections[0].items),
+            vec![items[0].id, items[1].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_show_children_item_can_appear_in_multiple_child_subsections() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let child_alpha = Uuid::new_v4();
+        let child_beta = Uuid::new_v4();
+        let categories = vec![
+            category(parent, "Projects", None, &[child_alpha, child_beta]),
+            category(child_alpha, "Project Alpha", Some(parent), &[]),
+            category(child_beta, "Project Beta", Some(parent), &[]),
+        ];
+        let items = vec![item_with_assignments(
+            "cross-cutting task",
+            None,
+            None,
+            &[parent, child_alpha, child_beta],
+        )];
+
+        let mut projects = section("Projects", include_query(parent));
+        projects.show_children = true;
+        let view = view(Query::default(), vec![projects], true, "View Unmatched");
+
+        let result = resolve_view(&view, &items, &categories, reference);
+        let subsections = &result.sections[0].subsections;
+        assert_eq!(item_ids(&subsections[0].items), vec![items[0].id]);
+        assert_eq!(item_ids(&subsections[1].items), vec![items[0].id]);
+    }
+
+    #[test]
+    fn resolve_view_show_children_subsections_include_effective_edit_through_sets() {
+        let reference = day(2026, 2, 11);
+        let parent = Uuid::new_v4();
+        let child_alpha = Uuid::new_v4();
+        let categories = vec![
+            category(parent, "Projects", None, &[child_alpha]),
+            category(child_alpha, "Project Alpha", Some(parent), &[]),
+        ];
+        let items = vec![
+            item_with_assignments("alpha task", None, None, &[parent, child_alpha]),
+            item_with_assignments("other task", None, None, &[parent]),
+        ];
+        let marker_insert = Uuid::new_v4();
+        let marker_remove = Uuid::new_v4();
+
+        let mut projects = section("Projects", include_query(parent));
+        projects.show_children = true;
+        projects.on_insert_assign.insert(marker_insert);
+        projects.on_remove_unassign.insert(marker_remove);
+        let view = view(Query::default(), vec![projects], true, "View Unmatched");
+
+        let result = resolve_view(&view, &items, &categories, reference);
+        let child_subsection = &result.sections[0].subsections[0];
+        let other_subsection = &result.sections[0].subsections[1];
+
+        assert!(child_subsection.on_insert_assign.contains(&marker_insert));
+        assert!(child_subsection.on_insert_assign.contains(&child_alpha));
+        assert_eq!(
+            child_subsection.on_remove_unassign,
+            HashSet::from([marker_remove])
+        );
+        assert_eq!(other_subsection.title, "Projects (Other)");
+        assert_eq!(
+            other_subsection.on_insert_assign,
+            HashSet::from([marker_insert])
+        );
+        assert_eq!(
+            other_subsection.on_remove_unassign,
+            HashSet::from([marker_remove])
         );
     }
 
