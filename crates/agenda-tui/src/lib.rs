@@ -69,12 +69,21 @@ struct CategoryListRow {
     enable_implicit_string: bool,
 }
 
+#[derive(Clone)]
+struct InspectAssignmentRow {
+    category_id: CategoryId,
+    category_name: String,
+    source_label: String,
+    origin_label: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
     AddInput,
     ItemEditInput,
     NoteEditInput,
+    InspectUnassignPicker,
     FilterInput,
     ViewPicker,
     ConfirmDelete,
@@ -98,6 +107,7 @@ struct App {
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
     category_create_parent: Option<CategoryId>,
+    inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
     item_index: usize,
@@ -118,6 +128,7 @@ impl Default for App {
             category_rows: Vec::new(),
             category_index: 0,
             category_create_parent: None,
+            inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
             item_index: 0,
@@ -163,6 +174,7 @@ impl App {
             Mode::AddInput => self.handle_add_key(code, agenda),
             Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
             Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
+            Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
@@ -228,6 +240,23 @@ impl App {
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
+            }
+            KeyCode::Char('u') => {
+                if !self.show_inspect {
+                    self.status = "Open inspect panel (i) to unassign".to_string();
+                } else if let Some(item) = self.selected_item() {
+                    let rows = self.inspect_assignment_rows_for_item(item);
+                    if rows.is_empty() {
+                        self.status = "Selected item has no assignments".to_string();
+                    } else {
+                        self.mode = Mode::InspectUnassignPicker;
+                        self.inspect_assignment_index = 0;
+                        self.status = "Unassign: j/k select assignment, Enter confirm, Esc cancel"
+                            .to_string();
+                    }
+                } else {
+                    self.status = "No selected item to unassign".to_string();
+                }
             }
             KeyCode::Char('r') => {
                 if let Some(item_id) = self.selected_item_id() {
@@ -400,6 +429,60 @@ impl App {
             KeyCode::Char(c) => self.input.push(c),
             _ => {}
         }
+        Ok(false)
+    }
+
+    fn handle_inspect_unassign_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        let rows = self
+            .selected_item()
+            .map(|item| self.inspect_assignment_rows_for_item(item))
+            .unwrap_or_default();
+
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Unassign canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !rows.is_empty() {
+                    self.inspect_assignment_index =
+                        next_index(self.inspect_assignment_index, rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !rows.is_empty() {
+                    self.inspect_assignment_index =
+                        next_index(self.inspect_assignment_index, rows.len(), -1);
+                }
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.status = "Unassign failed: no selected item".to_string();
+                    return Ok(false);
+                };
+                let Some(row) = rows.get(self.inspect_assignment_index).cloned() else {
+                    self.mode = Mode::Normal;
+                    self.status = "Unassign failed: no assignment selected".to_string();
+                    return Ok(false);
+                };
+
+                agenda
+                    .store()
+                    .unassign_item(item_id, row.category_id)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.status = format!("Unassigned {}", row.category_name);
+            }
+            _ => {}
+        }
+
         Ok(false)
     }
 
@@ -695,6 +778,13 @@ impl App {
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
+        let inspect_len = self
+            .selected_item()
+            .map(|item| self.inspect_assignment_rows_for_item(item).len())
+            .unwrap_or(0);
+        self.inspect_assignment_index = self
+            .inspect_assignment_index
+            .min(inspect_len.saturating_sub(1));
 
         Ok(())
     }
@@ -822,29 +912,23 @@ impl App {
 
     fn render_inspect_panel(&self) -> Paragraph<'_> {
         let mut lines = vec![Line::from("Assignment provenance")];
-
-        let category_names = category_name_map(&self.categories);
         if let Some(item) = self.selected_item() {
-            if item.assignments.is_empty() {
+            let rows = self.inspect_assignment_rows_for_item(item);
+            if rows.is_empty() {
                 lines.push(Line::from("(no assignments)"));
             } else {
-                let mut entries: Vec<String> = item
-                    .assignments
-                    .iter()
-                    .map(|(category_id, assignment)| {
-                        let category_name = category_names
-                            .get(category_id)
-                            .cloned()
-                            .unwrap_or_else(|| category_id.to_string());
-                        let origin = assignment.origin.clone().unwrap_or_else(|| "-".to_string());
-                        format!(
-                            "{} | source={:?} | origin={}",
-                            category_name, assignment.source, origin
-                        )
-                    })
-                    .collect();
-                entries.sort_by_key(|entry| entry.to_ascii_lowercase());
-                lines.extend(entries.into_iter().map(Line::from));
+                let is_picker_mode = self.mode == Mode::InspectUnassignPicker;
+                for (index, row) in rows.iter().enumerate() {
+                    let marker = if is_picker_mode && index == self.inspect_assignment_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    lines.push(Line::from(format!(
+                        "{marker}{} | source={} | origin={}",
+                        row.category_name, row.source_label, row.origin_label
+                    )));
+                }
             }
         } else {
             lines.push(Line::from("(no selected item)"));
@@ -869,6 +953,7 @@ impl App {
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
+            Mode::InspectUnassignPicker => "Select assignment to unassign".to_string(),
             _ => self.status.clone(),
         };
         let footer_title = match self.mode {
@@ -880,8 +965,9 @@ impl App {
             Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
+            Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  e:edit  m:note  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -1150,6 +1236,25 @@ impl App {
     fn selected_item(&self) -> Option<&Item> {
         self.current_slot()
             .and_then(|slot| slot.items.get(self.item_index))
+    }
+
+    fn inspect_assignment_rows_for_item(&self, item: &Item) -> Vec<InspectAssignmentRow> {
+        let category_names = category_name_map(&self.categories);
+        let mut rows: Vec<InspectAssignmentRow> = item
+            .assignments
+            .iter()
+            .map(|(category_id, assignment)| InspectAssignmentRow {
+                category_id: *category_id,
+                category_name: category_names
+                    .get(category_id)
+                    .cloned()
+                    .unwrap_or_else(|| category_id.to_string()),
+                source_label: format!("{:?}", assignment.source),
+                origin_label: assignment.origin.clone().unwrap_or_else(|| "-".to_string()),
+            })
+            .collect();
+        rows.sort_by_key(|row| row.category_name.to_ascii_lowercase());
+        rows
     }
 
     fn selected_item_id(&self) -> Option<ItemId> {
