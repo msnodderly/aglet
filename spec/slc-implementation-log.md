@@ -112,6 +112,13 @@ Completed:
 - Manual TUI startup/exit smoke tests performed in PTY:
   - `cargo run -p agenda-tui -- --db /tmp/aglet-slc-test.ag`
   - `cargo run -p agenda-cli -- --db /tmp/aglet-slc-test.ag tui`
+- Extended EGFR real-world workflow with follow-up planning + bibliography pass:
+  - `spec/literate-cli-demo-egfr-followup-bibliography.md`
+  - added follow-up categories and priority taxonomy (`High/Medium/Low` under exclusive `Priority`)
+  - added disease and drug-resistance follow-up items with due dates and priority tags
+  - created researcher-focused follow-up views (including high-priority disease/resistance slices)
+  - added bibliography categories (`External links`, `Further reading`, source-type and domain slices)
+  - created bibliography views, including a drug-resistance bibliography slice
 
 In progress:
 
