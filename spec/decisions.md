@@ -782,3 +782,39 @@ The smoke script therefore seeds a dedicated `Smoke Board` view with:
 
 This is done deterministically with `sqlite3` JSON updates in the script so
 the same TUI keystroke flow can be replayed without manual preconfiguration.
+
+---
+
+## 31. Unknown hashtag policy: no auto-create, non-blocking warning
+
+**Date**: 2026-02-16
+**Relevant tasks**: bd-3qv, bd-1b5
+
+When capture text includes hashtags (`#token`), behavior is split into two
+cases:
+
+1. If `token` matches an existing category name (case-insensitive),
+   assign that category as today.
+2. If `token` does not match an existing category, do **not** auto-create a
+   category and do **not** fail capture.
+
+Chosen user feedback behavior for unknown hashtags:
+
+- Capture remains successful.
+- Surface a non-blocking warning listing unknown hashtags (normalized token
+  names) in capture output/status.
+
+Rationale:
+
+- Auto-creating categories from every unknown hashtag creates taxonomy drift
+  and accidental category proliferation.
+- Silent ignore is low-friction but too opaque; users lose intent without
+  noticing.
+- Warning-without-failure preserves capture speed while making missed tagging
+  explicit.
+
+Scope guard for bd-1b5 implementation:
+
+- Keep existing known-hashtag behavior unchanged (`#High` -> `High`,
+  `#Follow-up` -> `Follow-up` when categories exist).
+- Keep current rule that `#`-prefixed category names are not created.
