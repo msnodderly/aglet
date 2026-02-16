@@ -108,6 +108,10 @@ fn run_hierarchy_pass(
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
 ) -> Result<PassResult> {
     let mut pass_result = PassResult::default();
+    let categories_by_id: HashMap<CategoryId, &Category> = categories
+        .iter()
+        .map(|category| (category.id, category))
+        .collect();
 
     for category in categories {
         let Some(reason) = evaluate_category_match(category, item_text, assignments, classifier)
@@ -129,12 +133,21 @@ fn run_hierarchy_pass(
         if !assigned {
             continue;
         }
+        assign_subsumption_ancestors(
+            store,
+            item_id,
+            category.id,
+            &categories_by_id,
+            assignments,
+            seen_pairs,
+        )?;
         pass_result.new_assignments.insert(category.id);
 
         fire_actions(
             store,
             item_id,
             category,
+            &categories_by_id,
             assignments,
             seen_pairs,
             &mut pass_result,
@@ -185,6 +198,7 @@ fn fire_actions(
     store: &Store,
     item_id: ItemId,
     category: &Category,
+    categories_by_id: &HashMap<CategoryId, &Category>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
     pass_result: &mut PassResult,
@@ -203,6 +217,14 @@ fn fire_actions(
                         seen_pairs,
                     )?;
                     if assigned {
+                        assign_subsumption_ancestors(
+                            store,
+                            item_id,
+                            *target_id,
+                            categories_by_id,
+                            assignments,
+                            seen_pairs,
+                        )?;
                         pass_result.new_assignments.insert(*target_id);
                     }
                 }
@@ -253,6 +275,52 @@ fn assign_if_unassigned(
     seen_pairs.insert(pair);
 
     Ok(true)
+}
+
+fn assign_subsumption_ancestors(
+    store: &Store,
+    item_id: ItemId,
+    category_id: CategoryId,
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    assignments: &mut HashMap<CategoryId, Assignment>,
+    seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+) -> Result<()> {
+    let Some(category) = categories_by_id.get(&category_id) else {
+        return Ok(());
+    };
+
+    let subsumption_origin = Some(format!("subsumption:{}", category.name));
+    let mut current_parent = category.parent;
+    let mut visited = HashSet::new();
+
+    while let Some(ancestor_id) = current_parent {
+        if !visited.insert(ancestor_id) {
+            break;
+        }
+
+        let pair = (item_id, ancestor_id);
+        if let std::collections::hash_map::Entry::Vacant(entry) = assignments.entry(ancestor_id) {
+            if !seen_pairs.contains(&pair) {
+                let assignment = Assignment {
+                    source: AssignmentSource::Subsumption,
+                    assigned_at: Utc::now(),
+                    sticky: true,
+                    origin: subsumption_origin.clone(),
+                };
+                store.assign_item(item_id, ancestor_id, &assignment)?;
+                entry.insert(assignment);
+                seen_pairs.insert(pair);
+            }
+        } else {
+            seen_pairs.insert(pair);
+        }
+
+        current_parent = categories_by_id
+            .get(&ancestor_id)
+            .and_then(|ancestor| ancestor.parent);
+    }
+
+    Ok(())
 }
 
 fn apply_deferred_removals(
@@ -311,11 +379,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use chrono::Utc;
 
-    use super::process_item;
+    use super::{process_item, run_hierarchy_pass};
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
@@ -358,6 +426,12 @@ mod tests {
         criteria.include.extend(include.iter().copied());
         criteria.exclude.extend(exclude.iter().copied());
         category.conditions.push(Condition::Profile { criteria });
+        category
+    }
+
+    fn child_category(name: &str, parent: CategoryId, implicit: bool) -> Category {
+        let mut category = category(name, implicit);
+        category.parent = Some(parent);
         category
     }
 
@@ -435,6 +509,201 @@ mod tests {
         assert!(assignments.contains_key(&meetings.id));
         assert!(assignments.contains_key(&calendar.id));
         assert!(assignments.contains_key(&reminders.id));
+    }
+
+    #[test]
+    fn process_item_subsumption_assigns_ancestors() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let projects = category("Projects", false);
+        create_category(&store, &projects);
+
+        let alpha = child_category("Project Alpha", projects.id, true);
+        create_category(&store, &alpha);
+
+        let item = create_item(&store, "Project Alpha kickoff");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&alpha.id));
+        assert!(!result.new_assignments.contains(&projects.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&alpha.id).unwrap().source,
+            AssignmentSource::AutoMatch
+        );
+        assert_eq!(
+            assignments.get(&projects.id).unwrap().source,
+            AssignmentSource::Subsumption
+        );
+        assert_eq!(
+            assignments.get(&projects.id).unwrap().origin.as_deref(),
+            Some("subsumption:Project Alpha")
+        );
+    }
+
+    #[test]
+    fn process_item_subsumption_walks_multi_level_parent_chain() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let work = category("Work", false);
+        create_category(&store, &work);
+
+        let projects = child_category("Projects", work.id, false);
+        create_category(&store, &projects);
+
+        let alpha = child_category("Project Alpha", projects.id, true);
+        create_category(&store, &alpha);
+
+        let item = create_item(&store, "Project Alpha sync");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&projects.id).unwrap().source,
+            AssignmentSource::Subsumption
+        );
+        assert_eq!(
+            assignments.get(&work.id).unwrap().source,
+            AssignmentSource::Subsumption
+        );
+    }
+
+    #[test]
+    fn process_item_subsumption_does_not_overwrite_existing_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let projects = category("Projects", false);
+        create_category(&store, &projects);
+
+        let alpha = child_category("Project Alpha", projects.id, true);
+        create_category(&store, &alpha);
+
+        let item = create_item(&store, "Project Alpha backlog");
+        store
+            .assign_item(item.id, projects.id, &manual_assignment())
+            .unwrap();
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&projects.id).unwrap().source,
+            AssignmentSource::Manual
+        );
+        assert_eq!(
+            assignments.get(&projects.id).unwrap().origin.as_deref(),
+            Some("manual:test")
+        );
+        assert_eq!(
+            assignments.get(&alpha.id).unwrap().source,
+            AssignmentSource::AutoMatch
+        );
+    }
+
+    #[test]
+    fn process_item_subsumption_does_not_fire_ancestor_actions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let dashboard = category("Dashboard", false);
+        create_category(&store, &dashboard);
+
+        let mut projects = category("Projects", false);
+        projects.actions.push(Action::Assign {
+            targets: HashSet::from([dashboard.id]),
+        });
+        create_category(&store, &projects);
+
+        let alpha = child_category("Project Alpha", projects.id, true);
+        create_category(&store, &alpha);
+
+        let item = create_item(&store, "Project Alpha review");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(!result.new_assignments.contains(&dashboard.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&alpha.id));
+        assert!(assignments.contains_key(&projects.id));
+        assert!(!assignments.contains_key(&dashboard.id));
+    }
+
+    #[test]
+    fn hierarchy_pass_subsumption_not_counted_as_new_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let projects = category("Projects", false);
+        create_category(&store, &projects);
+
+        let alpha = child_category("Project Alpha", projects.id, true);
+        create_category(&store, &alpha);
+
+        let item = create_item(&store, "Project Alpha planning");
+        let categories = store.get_hierarchy().unwrap();
+        let mut assignments = HashMap::new();
+        let mut seen_pairs = HashSet::new();
+
+        let pass_result = run_hierarchy_pass(
+            &store,
+            &classifier,
+            item.id,
+            &item.text,
+            &categories,
+            &mut assignments,
+            &mut seen_pairs,
+        )
+        .unwrap();
+
+        assert!(pass_result.new_assignments.contains(&alpha.id));
+        assert!(!pass_result.new_assignments.contains(&projects.id));
+        assert_eq!(
+            assignments.get(&projects.id).unwrap().source,
+            AssignmentSource::Subsumption
+        );
+    }
+
+    #[test]
+    fn process_item_action_assignment_triggers_subsumption() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let events = category("Events", false);
+        create_category(&store, &events);
+
+        let calendar = child_category("Calendar", events.id, false);
+        create_category(&store, &calendar);
+
+        let mut meetings = category("Meetings", true);
+        meetings.actions.push(Action::Assign {
+            targets: HashSet::from([calendar.id]),
+        });
+        create_category(&store, &meetings);
+
+        let item = create_item(&store, "Meetings tomorrow");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&meetings.id));
+        assert!(result.new_assignments.contains(&calendar.id));
+        assert!(!result.new_assignments.contains(&events.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&meetings.id).unwrap().source,
+            AssignmentSource::AutoMatch
+        );
+        assert_eq!(
+            assignments.get(&calendar.id).unwrap().source,
+            AssignmentSource::Action
+        );
+        assert_eq!(
+            assignments.get(&events.id).unwrap().source,
+            AssignmentSource::Subsumption
+        );
     }
 
     #[test]
