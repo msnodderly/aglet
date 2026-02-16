@@ -121,4 +121,4 @@ Why this is domain work:
 ## Notes
 
 - CLI/UI ergonomics can continue in parallel, but should consume these domain operations rather than reimplement behavior in frontends.
-- This list aligns with SLC goals in `spec/slc-spec.md`: complete daily use now, deeper semantic hardening in planned main-branch iterations.
+- This list aligns with SLC goals in `spec/product-current.md`: complete daily use now, deeper semantic hardening in planned main-branch iterations.

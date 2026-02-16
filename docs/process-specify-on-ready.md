@@ -30,13 +30,13 @@ claims it.
    the files they'll depend on. Understand the current state, not just what
    the spec says should exist.
 
-3. **Read the spec** — Find the relevant sections of `mvp-spec.md`. Note any
+3. **Read the spec** — Find the relevant sections of `archive/spec-legacy/mvp-spec.md`. Note any
    gaps between spec intent and current code.
 
-4. **Write the prompt** — Create `spec/prompts/<task-id>-<short-name>.md`
+4. **Write the prompt** — Create `docs/process-prompt-<task-id>-<short-name>.md`
    with the sections below.
 
-5. **Commit** — `git add spec/prompts/ && git commit -m "spec: Add prompt for <task-id>"`
+5. **Commit** — `git add docs/process-prompt-*.md && git commit -m "docs: Add prompt for <task-id>"`
 
 ## Prompt structure
 
@@ -99,14 +99,12 @@ Checklist: tests pass, clippy clean, files touched are within scope.
 
 ## Naming convention
 
-```
-spec/prompts/<task-ids>-<short-name>.md
-```
+`docs/process-prompt-<task-ids>-<short-name>.md`
 
 Examples:
-- `spec/prompts/t015-t016-classifier.md` (merged tasks)
-- `spec/prompts/t017-rule-engine.md`
-- `spec/prompts/t018-t019-t020-engine-features.md` (parallel tasks sharing context)
+- `docs/process-prompt-t015-t016-classifier.md` (merged tasks)
+- `docs/process-prompt-t017-rule-engine.md`
+- `docs/process-prompt-t018-t019-t020-engine-features.md` (parallel tasks sharing context)
 
 Tasks that can be specified together (same file, tight coupling) can share a
 prompt. Tasks that are independent get separate prompts.

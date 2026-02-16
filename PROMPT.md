@@ -12,7 +12,7 @@ Select ONE task. Complete it. Stop.
 
 1. **Read context**: `AGENTS.md` (full workflow reference), then `br ready`
 2. **Pick task**: Select highest priority `open` issue — never claim `in_progress`
-3. **Read prompt**: Check `spec/prompts/` for your task's implementer prompt.
+3. **Read prompt**: Check `docs/process-prompt-*.md` for your task's implementer prompt.
    If no prompt exists, flag it — don't start without one.
 4. **Claim on main**:
    ```bash
@@ -28,7 +28,7 @@ Select ONE task. Complete it. Stop.
 ## Implementation
 
 ### Before Coding
-- Read the implementer prompt in `spec/prompts/<task>.md`
+- Read the implementer prompt in `docs/process-prompt-<task>.md`
 - Read the files listed in its "What to read" section
 - Understand how your code will be consumed downstream
 
