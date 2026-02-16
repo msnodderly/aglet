@@ -69,6 +69,11 @@ enum AssignmentSource {
 - Notes are searchable — text search covers both `text` and `note`.
 - Notes are indicated in the grid by a `+` marker so the user sees which items have them.
 - Items exist independently in the database. Views and categories reference them.
+- **Manual assignment**: Users can assign items to any category at any time
+  (`a` in TUI, or programmatically via the Agenda API). Manual assignments
+  are first-class — they trigger the engine for cascading (a manual "Urgent"
+  assignment can fire a Profile condition on "Escalated"), and they are never
+  silently removed by the engine.
 - All assignments are **sticky** — the rule engine never revokes existing assignments.
   Re-evaluation only adds new assignments. Only the user can remove them.
 

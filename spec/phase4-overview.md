@@ -3,8 +3,9 @@
 ## The big picture
 
 Phase 3 built the engine — items get classified into categories automatically.
-But categories are invisible plumbing. The user never interacts with raw
-category assignments. They interact with **Views**.
+But categories alone are just labels. Users can manually assign items to
+categories at any time — and often will — but the primary *surface* for
+seeing and organizing items is **Views**.
 
 A View is a saved, dynamic, editable window into the data. It answers
 questions like "show me all items assigned to Project Alpha, grouped by
