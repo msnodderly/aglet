@@ -74,6 +74,7 @@ enum Mode {
     Normal,
     AddInput,
     ItemEditInput,
+    NoteEditInput,
     FilterInput,
     ViewPicker,
     ConfirmDelete,
@@ -161,6 +162,7 @@ impl App {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::AddInput => self.handle_add_key(code, agenda),
             Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
+            Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
@@ -190,6 +192,17 @@ impl App {
                     self.status = "Edit item text: Enter to save, Esc to cancel".to_string();
                 } else {
                     self.status = "No selected item to edit".to_string();
+                }
+            }
+            KeyCode::Char('m') => {
+                if let Some(item) = self.selected_item() {
+                    let existing_note = item.note.clone().unwrap_or_default();
+                    self.mode = Mode::NoteEditInput;
+                    self.input = existing_note;
+                    self.status =
+                        "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
+                } else {
+                    self.status = "No selected item to add/edit note".to_string();
                 }
             }
             KeyCode::Char('/') => {
@@ -323,6 +336,63 @@ impl App {
                 self.mode = Mode::Normal;
                 self.input.clear();
                 self.status = "Item text updated".to_string();
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_note_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = "Note edit canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Note edit failed: no selected item".to_string();
+                    return Ok(false);
+                };
+
+                let new_note = if self.input.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.input.clone())
+                };
+
+                let mut item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
+                if item.note == new_note {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Note edit canceled: no note change".to_string();
+                    return Ok(false);
+                }
+
+                item.note = new_note;
+                item.modified_at = Utc::now();
+                let reference_date = Local::now().date_naive();
+                agenda
+                    .update_item_with_reference_date(&item, reference_date)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = if item.note.is_some() {
+                    "Note updated".to_string()
+                } else {
+                    "Note cleared".to_string()
+                };
             }
             KeyCode::Backspace => {
                 self.input.pop();
@@ -794,6 +864,7 @@ impl App {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input),
             Mode::ItemEditInput => format!("Edit> {}", self.input),
+            Mode::NoteEditInput => format!("Note> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
@@ -808,8 +879,9 @@ impl App {
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
             Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
+            Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             _ => {
-                "n:add  e:edit  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  e:edit  m:note  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
