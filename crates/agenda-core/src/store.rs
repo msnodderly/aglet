@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, Category, CategoryId, Column, Condition, Item, ItemId,
-    Query, Section, View,
+    DeletionLogEntry, Query, Section, View,
 };
 
 const SCHEMA_VERSION: i32 = 1;
@@ -215,6 +215,19 @@ impl Store {
         rows.into_iter()
             .map(|item| self.load_assignments(item))
             .collect()
+    }
+
+    pub fn list_deleted_items(&self) -> Result<Vec<DeletionLogEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, text, note, entry_date, when_date, done_date, is_done,
+                    assignments_json, deleted_at, deleted_by
+             FROM deletion_log
+             ORDER BY deleted_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::row_to_deleted_item)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // ── Category CRUD ───────────────────────────────────────────
@@ -597,6 +610,34 @@ impl Store {
                 .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
             is_done: is_done_int != 0,
             assignments: HashMap::new(),
+        })
+    }
+
+    fn row_to_deleted_item(row: &Row<'_>) -> rusqlite::Result<DeletionLogEntry> {
+        let id_str: String = row.get(0)?;
+        let item_id_str: String = row.get(1)?;
+        let entry_str: String = row.get(4)?;
+        let when_str: Option<String> = row.get(5)?;
+        let done_str: Option<String> = row.get(6)?;
+        let is_done_int: i32 = row.get(7)?;
+        let deleted_at_str: String = row.get(9)?;
+
+        Ok(DeletionLogEntry {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            item_id: Uuid::parse_str(&item_id_str).unwrap_or_default(),
+            text: row.get(2)?,
+            note: row.get(3)?,
+            entry_date: NaiveDate::parse_from_str(&entry_str, "%Y-%m-%d").unwrap_or_default(),
+            when_date: when_str
+                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            done_date: done_str
+                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            is_done: is_done_int != 0,
+            assignments_json: row.get(8)?,
+            deleted_at: DateTime::parse_from_rfc3339(&deleted_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_default(),
+            deleted_by: row.get(10)?,
         })
     }
 
@@ -1218,9 +1259,27 @@ mod tests {
                 "SELECT COUNT(*) FROM deletion_log WHERE item_id = ?1",
                 params![id.to_string()],
                 |row| row.get(0),
-            )
+        )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_list_deleted_items_returns_latest_first() {
+        let store = Store::open_memory().unwrap();
+
+        let first = Item::new("First deleted".to_string());
+        let second = Item::new("Second deleted".to_string());
+        store.create_item(&first).unwrap();
+        store.create_item(&second).unwrap();
+
+        store.delete_item(first.id, "user").unwrap();
+        store.delete_item(second.id, "user").unwrap();
+
+        let deleted = store.list_deleted_items().unwrap();
+        assert_eq!(deleted.len(), 2);
+        assert_eq!(deleted[0].item_id, second.id);
+        assert_eq!(deleted[1].item_id, first.id);
     }
 
     #[test]

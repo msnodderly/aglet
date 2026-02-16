@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use chrono::{NaiveDate, NaiveDateTime, Utc};
+use chrono::{NaiveDate, NaiveDateTime, Timelike, Utc};
 
 use crate::dates::{BasicDateParser, DateParser};
 use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, ProcessItemResult};
@@ -151,6 +151,30 @@ impl<'a> Agenda<'a> {
         process_item(self.store, self.classifier, item_id)
     }
 
+    pub fn mark_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let mut item = self.store.get_item(item_id)?;
+        let now = Utc::now();
+        let done_at = now.naive_utc().with_nanosecond(0).unwrap_or(now.naive_utc());
+        item.is_done = true;
+        item.done_date = Some(done_at);
+        item.modified_at = now;
+        self.store.update_item(&item)?;
+
+        let done_category_id = self.done_category_id()?;
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: now,
+            sticky: true,
+            origin: Some("manual:done".to_string()),
+        };
+        self.store.assign_item(item_id, done_category_id, &assignment)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn delete_item(&self, item_id: ItemId, deleted_by: &str) -> Result<()> {
+        self.store.delete_item(item_id, deleted_by)
+    }
+
     fn assign_manual_categories(
         &self,
         item_id: ItemId,
@@ -197,7 +221,7 @@ impl<'a> Agenda<'a> {
     }
 
     fn assign_when_provenance(&self, item_id: ItemId) -> Result<()> {
-        let when_category_id = self.when_category_id()?;
+        let when_category_id = self.category_id_by_name("When")?;
         let assignment = Assignment {
             source: AssignmentSource::AutoMatch,
             assigned_at: Utc::now(),
@@ -208,14 +232,20 @@ impl<'a> Agenda<'a> {
             .assign_item(item_id, when_category_id, &assignment)
     }
 
-    fn when_category_id(&self) -> Result<CategoryId> {
+    fn done_category_id(&self) -> Result<CategoryId> {
+        self.category_id_by_name("Done")
+    }
+
+    fn category_id_by_name(&self, category_name: &str) -> Result<CategoryId> {
         self.store
             .get_hierarchy()?
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .find(|category| category.name.eq_ignore_ascii_case(category_name))
             .map(|category| category.id)
             .ok_or_else(|| AgendaError::StorageError {
-                source: Box::new(std::io::Error::other("missing reserved When category")),
+                source: Box::new(std::io::Error::other(format!(
+                    "missing category: {category_name}"
+                ))),
             })
     }
 }
@@ -836,5 +866,36 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&trigger.id));
+    }
+
+    #[test]
+    fn mark_item_done_sets_done_fields_and_assigns_done_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Ship SLC".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let _result = agenda.mark_item_done(item.id).unwrap();
+        let loaded = store.get_item(item.id).unwrap();
+        assert!(loaded.is_done);
+        assert!(loaded.done_date.is_some());
+
+        let done_category_id = store
+            .get_hierarchy()
+            .unwrap()
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category exists")
+            .id;
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&done_category_id));
+        assert_eq!(
+            assignments
+                .get(&done_category_id)
+                .and_then(|assignment| assignment.origin.as_deref()),
+            Some("manual:done")
+        );
     }
 }
