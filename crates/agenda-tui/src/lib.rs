@@ -160,7 +160,16 @@ impl App {
                 continue;
             }
 
-            if self.handle_key(key.code, agenda)? {
+            let should_quit = match self.handle_key(key.code, agenda) {
+                Ok(value) => value,
+                Err(err) => {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = format!("Error: {err}");
+                    false
+                }
+            };
+            if should_quit {
                 break;
             }
         }
@@ -537,6 +546,8 @@ impl App {
                         .map(|view| view.name.clone())
                         .unwrap_or_else(|| "(none)".to_string());
                     self.status = format!("Switched to view: {view_name}");
+                } else {
+                    self.status = "No views available".to_string();
                 }
                 self.mode = Mode::Normal;
             }
@@ -702,11 +713,6 @@ impl App {
 
     fn refresh(&mut self, store: &Store) -> Result<(), String> {
         self.views = store.list_views().map_err(|e| e.to_string())?;
-        if self.views.is_empty() {
-            return Err("No views found".to_string());
-        }
-
-        self.view_index = self.view_index.min(self.views.len().saturating_sub(1));
         self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
         self.category_rows = build_category_rows(&self.categories);
         self.category_index = self
@@ -714,54 +720,68 @@ impl App {
             .min(self.category_rows.len().saturating_sub(1));
         let items = store.list_items().map_err(|e| e.to_string())?;
 
-        let view = self
-            .current_view()
-            .cloned()
-            .ok_or("No active view".to_string())?;
-        let reference_date = Local::now().date_naive();
-        let result = resolve_view(&view, &items, &self.categories, reference_date);
-
         let mut slots = Vec::new();
-        for section in result.sections {
-            if section.subsections.is_empty() {
-                slots.push(Slot {
-                    title: section.title,
-                    items: section.items,
-                    context: SlotContext::Section {
-                        section_index: section.section_index,
-                    },
-                });
-                continue;
-            }
-
-            for subsection in section.subsections {
-                slots.push(Slot {
-                    title: format!("{} / {}", section.title, subsection.title),
-                    items: subsection.items,
-                    context: SlotContext::GeneratedSection {
-                        on_insert_assign: subsection.on_insert_assign,
-                        on_remove_unassign: subsection.on_remove_unassign,
-                    },
-                });
-            }
-        }
-
-        if let Some(unmatched_items) = result.unmatched {
+        if self.views.is_empty() {
             slots.push(Slot {
-                title: result
-                    .unmatched_label
-                    .unwrap_or_else(|| "Unassigned".to_string()),
-                items: unmatched_items,
-                context: SlotContext::Unmatched,
-            });
-        }
-
-        if slots.is_empty() {
-            slots.push(Slot {
-                title: "All Items".to_string(),
+                title: "All Items (no views configured)".to_string(),
                 items,
                 context: SlotContext::Unmatched,
             });
+            if self.mode == Mode::Normal {
+                self.status = "No views configured; showing fallback item list".to_string();
+            }
+            self.view_index = 0;
+            self.picker_index = 0;
+        } else {
+            self.view_index = self.view_index.min(self.views.len().saturating_sub(1));
+            let view = self
+                .current_view()
+                .cloned()
+                .ok_or("No active view".to_string())?;
+            let reference_date = Local::now().date_naive();
+            let result = resolve_view(&view, &items, &self.categories, reference_date);
+
+            for section in result.sections {
+                if section.subsections.is_empty() {
+                    slots.push(Slot {
+                        title: section.title,
+                        items: section.items,
+                        context: SlotContext::Section {
+                            section_index: section.section_index,
+                        },
+                    });
+                    continue;
+                }
+
+                for subsection in section.subsections {
+                    slots.push(Slot {
+                        title: format!("{} / {}", section.title, subsection.title),
+                        items: subsection.items,
+                        context: SlotContext::GeneratedSection {
+                            on_insert_assign: subsection.on_insert_assign,
+                            on_remove_unassign: subsection.on_remove_unassign,
+                        },
+                    });
+                }
+            }
+
+            if let Some(unmatched_items) = result.unmatched {
+                slots.push(Slot {
+                    title: result
+                        .unmatched_label
+                        .unwrap_or_else(|| "Unassigned".to_string()),
+                    items: unmatched_items,
+                    context: SlotContext::Unmatched,
+                });
+            }
+
+            if slots.is_empty() {
+                slots.push(Slot {
+                    title: "All Items".to_string(),
+                    items,
+                    context: SlotContext::Unmatched,
+                });
+            }
         }
 
         if let Some(filter) = &self.filter {
@@ -977,19 +997,22 @@ impl App {
     fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let lines: Vec<Line<'_>> = self
-            .views
-            .iter()
-            .enumerate()
-            .map(|(index, view)| {
-                let marker = if index == self.picker_index {
-                    "> "
-                } else {
-                    "  "
-                };
-                Line::from(format!("{marker}{}", view.name))
-            })
-            .collect();
+        let lines: Vec<Line<'_>> = if self.views.is_empty() {
+            vec![Line::from("(no views configured)")]
+        } else {
+            self.views
+                .iter()
+                .enumerate()
+                .map(|(index, view)| {
+                    let marker = if index == self.picker_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    Line::from(format!("{marker}{}", view.name))
+                })
+                .collect()
+        };
 
         frame.render_widget(
             Paragraph::new(lines).block(
