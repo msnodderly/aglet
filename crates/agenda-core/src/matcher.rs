@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 /// Classifier interface for category matching.
 ///
 /// `None` means no match; `Some(confidence)` means match.
@@ -57,9 +59,57 @@ fn is_ascii_word_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
 }
 
+/// Extract unique hashtag tokens from text, normalized to lowercase and without `#`.
+pub fn extract_hashtag_tokens(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut tokens = Vec::new();
+    let mut seen = HashSet::new();
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        if bytes[index] != b'#' {
+            index += 1;
+            continue;
+        }
+
+        let mut cursor = index + 1;
+        while cursor < bytes.len() && is_hashtag_token_char(bytes[cursor]) {
+            cursor += 1;
+        }
+
+        if cursor > index + 1 {
+            let token = String::from_utf8_lossy(&bytes[index + 1..cursor]).to_ascii_lowercase();
+            if seen.insert(token.clone()) {
+                tokens.push(token);
+            }
+        }
+
+        index = cursor;
+    }
+
+    tokens
+}
+
+/// Return hashtag tokens that do not match existing category names.
+pub fn unknown_hashtag_tokens(text: &str, category_names: &[String]) -> Vec<String> {
+    let known_categories: HashSet<String> = category_names
+        .iter()
+        .map(|name| name.trim().to_ascii_lowercase())
+        .collect();
+
+    extract_hashtag_tokens(text)
+        .into_iter()
+        .filter(|token| !known_categories.contains(token))
+        .collect()
+}
+
+fn is_hashtag_token_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Classifier, SubstringClassifier};
+    use super::{extract_hashtag_tokens, unknown_hashtag_tokens, Classifier, SubstringClassifier};
 
     #[test]
     fn test_basic_match() {
@@ -129,5 +179,29 @@ mod tests {
     fn test_no_match_unrelated_text() {
         let classifier = SubstringClassifier;
         assert_eq!(classifier.classify("Buy groceries", "Sarah"), None);
+    }
+
+    #[test]
+    fn extract_hashtag_tokens_normalizes_and_deduplicates() {
+        let tokens = extract_hashtag_tokens("Plan #High #FOLLOW-UP and #high #work_item");
+        assert_eq!(tokens, vec!["high", "follow-up", "work_item"]);
+    }
+
+    #[test]
+    fn extract_hashtag_tokens_ignores_bare_hash() {
+        let tokens = extract_hashtag_tokens("foo # bar ## #? #_");
+        assert_eq!(tokens, vec!["_"]);
+    }
+
+    #[test]
+    fn unknown_hashtag_tokens_filters_known_categories() {
+        let category_names = vec![
+            "High".to_string(),
+            "Follow-up".to_string(),
+            "Work_Item".to_string(),
+        ];
+        let unknown =
+            unknown_hashtag_tokens("review #high #FOLLOW-UP #work_item #office", &category_names);
+        assert_eq!(unknown, vec!["office"]);
     }
 }

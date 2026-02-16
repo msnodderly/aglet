@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 
 use agenda_core::agenda::Agenda;
-use agenda_core::matcher::SubstringClassifier;
+use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View};
 use agenda_core::query::resolve_view;
 use agenda_core::store::Store;
@@ -327,9 +327,17 @@ impl App {
             KeyCode::Enter => {
                 let text = self.input.trim();
                 if !text.is_empty() {
-                    let parsed_when =
-                        self.create_item_in_current_context(agenda, text.to_string())?;
-                    self.status = add_capture_status_message(parsed_when);
+                    let text_value = text.to_string();
+                    let category_names: Vec<String> = agenda
+                        .store()
+                        .get_hierarchy()
+                        .map_err(|e| e.to_string())?
+                        .into_iter()
+                        .map(|category| category.name)
+                        .collect();
+                    let unknown_hashtags = unknown_hashtag_tokens(&text_value, &category_names);
+                    let parsed_when = self.create_item_in_current_context(agenda, text_value)?;
+                    self.status = add_capture_status_message(parsed_when, &unknown_hashtags);
                 }
                 self.mode = Mode::Normal;
                 self.input.clear();
@@ -1756,10 +1764,15 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
-fn add_capture_status_message(parsed_when: Option<NaiveDateTime>) -> String {
+fn add_capture_status_message(parsed_when: Option<NaiveDateTime>, unknown_hashtags: &[String]) -> String {
+    let warning = if unknown_hashtags.is_empty() {
+        String::new()
+    } else {
+        format!(" | warning unknown_hashtags={}", unknown_hashtags.join(","))
+    };
     match parsed_when {
-        Some(when) => format!("Item added (parsed when: {when})"),
-        None => "Item added".to_string(),
+        Some(when) => format!("Item added (parsed when: {when}{warning})"),
+        None => format!("Item added{warning}"),
     }
 }
 
@@ -1783,14 +1796,22 @@ mod tests {
             .expect("valid time");
 
         assert_eq!(
-            add_capture_status_message(Some(when)),
+            add_capture_status_message(Some(when), &[]),
             "Item added (parsed when: 2026-02-24 15:00:00)"
         );
     }
 
     #[test]
     fn add_capture_status_message_defaults_when_no_datetime() {
-        assert_eq!(add_capture_status_message(None), "Item added");
+        assert_eq!(add_capture_status_message(None, &[]), "Item added");
+    }
+
+    #[test]
+    fn add_capture_status_message_includes_unknown_hashtag_warning() {
+        assert_eq!(
+            add_capture_status_message(None, &["office".to_string(), "someday".to_string()]),
+            "Item added | warning unknown_hashtags=office,someday"
+        );
     }
 
     #[test]
