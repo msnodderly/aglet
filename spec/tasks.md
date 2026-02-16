@@ -28,10 +28,10 @@ Goal: users can stay in TUI for daily operation and basic management/editing.
 
 - [x] T010 Add TUI category manager MVP (list/create/delete).
 - [ ] T011 Add TUI category structural edits (rename/reparent + exclusivity/implicit-string toggles).
-- [ ] T012 Add inline item text editing in TUI.
-- [ ] T013 Add note create/edit flow in TUI.
-- [ ] T014 Add unassign action from inspect panel.
-- [ ] T015 Harden TUI empty/error states (no views, empty sections, failed mutations).
+- [x] T012 Add inline item text editing in TUI.
+- [x] T013 Add note create/edit flow in TUI.
+- [x] T014 Add unassign action from inspect panel.
+- [x] T015 Harden TUI empty/error states (no views, empty sections, failed mutations).
 - [ ] T016 Add TUI smoke test script for add/move/remove/done/delete/edit/category flows.
 
 Checkpoint:

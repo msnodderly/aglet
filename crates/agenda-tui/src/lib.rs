@@ -6,7 +6,7 @@ use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View};
 use agenda_core::query::resolve_view;
 use agenda_core::store::Store;
-use chrono::{Local, NaiveDateTime};
+use chrono::{Local, NaiveDateTime, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -69,10 +69,21 @@ struct CategoryListRow {
     enable_implicit_string: bool,
 }
 
+#[derive(Clone)]
+struct InspectAssignmentRow {
+    category_id: CategoryId,
+    category_name: String,
+    source_label: String,
+    origin_label: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
     AddInput,
+    ItemEditInput,
+    NoteEditInput,
+    InspectUnassignPicker,
     FilterInput,
     ViewPicker,
     ConfirmDelete,
@@ -96,6 +107,7 @@ struct App {
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
     category_create_parent: Option<CategoryId>,
+    inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
     item_index: usize,
@@ -116,6 +128,7 @@ impl Default for App {
             category_rows: Vec::new(),
             category_index: 0,
             category_create_parent: None,
+            inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
             item_index: 0,
@@ -147,7 +160,16 @@ impl App {
                 continue;
             }
 
-            if self.handle_key(key.code, agenda)? {
+            let should_quit = match self.handle_key(key.code, agenda) {
+                Ok(value) => value,
+                Err(err) => {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = format!("Error: {err}");
+                    false
+                }
+            };
+            if should_quit {
                 break;
             }
         }
@@ -159,6 +181,9 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::AddInput => self.handle_add_key(code, agenda),
+            Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
+            Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
+            Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
@@ -179,6 +204,27 @@ impl App {
                 self.mode = Mode::AddInput;
                 self.input.clear();
                 self.status = "Add item: type text and press Enter".to_string();
+            }
+            KeyCode::Char('e') => {
+                if let Some(item) = self.selected_item() {
+                    let existing_text = item.text.clone();
+                    self.mode = Mode::ItemEditInput;
+                    self.input = existing_text;
+                    self.status = "Edit item text: Enter to save, Esc to cancel".to_string();
+                } else {
+                    self.status = "No selected item to edit".to_string();
+                }
+            }
+            KeyCode::Char('m') => {
+                if let Some(item) = self.selected_item() {
+                    let existing_note = item.note.clone().unwrap_or_default();
+                    self.mode = Mode::NoteEditInput;
+                    self.input = existing_note;
+                    self.status =
+                        "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
+                } else {
+                    self.status = "No selected item to add/edit note".to_string();
+                }
             }
             KeyCode::Char('/') => {
                 self.mode = Mode::FilterInput;
@@ -203,6 +249,23 @@ impl App {
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
+            }
+            KeyCode::Char('u') => {
+                if !self.show_inspect {
+                    self.status = "Open inspect panel (i) to unassign".to_string();
+                } else if let Some(item) = self.selected_item() {
+                    let rows = self.inspect_assignment_rows_for_item(item);
+                    if rows.is_empty() {
+                        self.status = "Selected item has no assignments".to_string();
+                    } else {
+                        self.mode = Mode::InspectUnassignPicker;
+                        self.inspect_assignment_index = 0;
+                        self.status = "Unassign: j/k select assignment, Enter confirm, Esc cancel"
+                            .to_string();
+                    }
+                } else {
+                    self.status = "No selected item to unassign".to_string();
+                }
             }
             KeyCode::Char('r') => {
                 if let Some(item_id) = self.selected_item_id() {
@@ -266,6 +329,172 @@ impl App {
         Ok(false)
     }
 
+    fn handle_item_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = "Edit canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Edit failed: no selected item".to_string();
+                    return Ok(false);
+                };
+
+                let updated_text = self.input.trim().to_string();
+                if updated_text.is_empty() {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Edit canceled: text cannot be empty".to_string();
+                    return Ok(false);
+                }
+
+                let mut item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
+                if item.text == updated_text {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Edit canceled: no text change".to_string();
+                    return Ok(false);
+                }
+
+                item.text = updated_text;
+                item.modified_at = Utc::now();
+                let reference_date = Local::now().date_naive();
+                agenda
+                    .update_item_with_reference_date(&item, reference_date)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = "Item text updated".to_string();
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_note_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = "Note edit canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Note edit failed: no selected item".to_string();
+                    return Ok(false);
+                };
+
+                let new_note = if self.input.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.input.clone())
+                };
+
+                let mut item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
+                if item.note == new_note {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Note edit canceled: no note change".to_string();
+                    return Ok(false);
+                }
+
+                item.note = new_note;
+                item.modified_at = Utc::now();
+                let reference_date = Local::now().date_naive();
+                agenda
+                    .update_item_with_reference_date(&item, reference_date)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = if item.note.is_some() {
+                    "Note updated".to_string()
+                } else {
+                    "Note cleared".to_string()
+                };
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_inspect_unassign_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        let rows = self
+            .selected_item()
+            .map(|item| self.inspect_assignment_rows_for_item(item))
+            .unwrap_or_default();
+
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Unassign canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !rows.is_empty() {
+                    self.inspect_assignment_index =
+                        next_index(self.inspect_assignment_index, rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !rows.is_empty() {
+                    self.inspect_assignment_index =
+                        next_index(self.inspect_assignment_index, rows.len(), -1);
+                }
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.status = "Unassign failed: no selected item".to_string();
+                    return Ok(false);
+                };
+                let Some(row) = rows.get(self.inspect_assignment_index).cloned() else {
+                    self.mode = Mode::Normal;
+                    self.status = "Unassign failed: no assignment selected".to_string();
+                    return Ok(false);
+                };
+
+                agenda
+                    .store()
+                    .unassign_item(item_id, row.category_id)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.status = format!("Unassigned {}", row.category_name);
+            }
+            _ => {}
+        }
+
+        Ok(false)
+    }
+
     fn handle_filter_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
@@ -317,6 +546,8 @@ impl App {
                         .map(|view| view.name.clone())
                         .unwrap_or_else(|| "(none)".to_string());
                     self.status = format!("Switched to view: {view_name}");
+                } else {
+                    self.status = "No views available".to_string();
                 }
                 self.mode = Mode::Normal;
             }
@@ -482,11 +713,6 @@ impl App {
 
     fn refresh(&mut self, store: &Store) -> Result<(), String> {
         self.views = store.list_views().map_err(|e| e.to_string())?;
-        if self.views.is_empty() {
-            return Err("No views found".to_string());
-        }
-
-        self.view_index = self.view_index.min(self.views.len().saturating_sub(1));
         self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
         self.category_rows = build_category_rows(&self.categories);
         self.category_index = self
@@ -494,54 +720,68 @@ impl App {
             .min(self.category_rows.len().saturating_sub(1));
         let items = store.list_items().map_err(|e| e.to_string())?;
 
-        let view = self
-            .current_view()
-            .cloned()
-            .ok_or("No active view".to_string())?;
-        let reference_date = Local::now().date_naive();
-        let result = resolve_view(&view, &items, &self.categories, reference_date);
-
         let mut slots = Vec::new();
-        for section in result.sections {
-            if section.subsections.is_empty() {
-                slots.push(Slot {
-                    title: section.title,
-                    items: section.items,
-                    context: SlotContext::Section {
-                        section_index: section.section_index,
-                    },
-                });
-                continue;
-            }
-
-            for subsection in section.subsections {
-                slots.push(Slot {
-                    title: format!("{} / {}", section.title, subsection.title),
-                    items: subsection.items,
-                    context: SlotContext::GeneratedSection {
-                        on_insert_assign: subsection.on_insert_assign,
-                        on_remove_unassign: subsection.on_remove_unassign,
-                    },
-                });
-            }
-        }
-
-        if let Some(unmatched_items) = result.unmatched {
+        if self.views.is_empty() {
             slots.push(Slot {
-                title: result
-                    .unmatched_label
-                    .unwrap_or_else(|| "Unassigned".to_string()),
-                items: unmatched_items,
-                context: SlotContext::Unmatched,
-            });
-        }
-
-        if slots.is_empty() {
-            slots.push(Slot {
-                title: "All Items".to_string(),
+                title: "All Items (no views configured)".to_string(),
                 items,
                 context: SlotContext::Unmatched,
             });
+            if self.mode == Mode::Normal {
+                self.status = "No views configured; showing fallback item list".to_string();
+            }
+            self.view_index = 0;
+            self.picker_index = 0;
+        } else {
+            self.view_index = self.view_index.min(self.views.len().saturating_sub(1));
+            let view = self
+                .current_view()
+                .cloned()
+                .ok_or("No active view".to_string())?;
+            let reference_date = Local::now().date_naive();
+            let result = resolve_view(&view, &items, &self.categories, reference_date);
+
+            for section in result.sections {
+                if section.subsections.is_empty() {
+                    slots.push(Slot {
+                        title: section.title,
+                        items: section.items,
+                        context: SlotContext::Section {
+                            section_index: section.section_index,
+                        },
+                    });
+                    continue;
+                }
+
+                for subsection in section.subsections {
+                    slots.push(Slot {
+                        title: format!("{} / {}", section.title, subsection.title),
+                        items: subsection.items,
+                        context: SlotContext::GeneratedSection {
+                            on_insert_assign: subsection.on_insert_assign,
+                            on_remove_unassign: subsection.on_remove_unassign,
+                        },
+                    });
+                }
+            }
+
+            if let Some(unmatched_items) = result.unmatched {
+                slots.push(Slot {
+                    title: result
+                        .unmatched_label
+                        .unwrap_or_else(|| "Unassigned".to_string()),
+                    items: unmatched_items,
+                    context: SlotContext::Unmatched,
+                });
+            }
+
+            if slots.is_empty() {
+                slots.push(Slot {
+                    title: "All Items".to_string(),
+                    items,
+                    context: SlotContext::Unmatched,
+                });
+            }
         }
 
         if let Some(filter) = &self.filter {
@@ -558,6 +798,13 @@ impl App {
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
+        let inspect_len = self
+            .selected_item()
+            .map(|item| self.inspect_assignment_rows_for_item(item).len())
+            .unwrap_or(0);
+        self.inspect_assignment_index = self
+            .inspect_assignment_index
+            .min(inspect_len.saturating_sub(1));
 
         Ok(())
     }
@@ -685,29 +932,23 @@ impl App {
 
     fn render_inspect_panel(&self) -> Paragraph<'_> {
         let mut lines = vec![Line::from("Assignment provenance")];
-
-        let category_names = category_name_map(&self.categories);
         if let Some(item) = self.selected_item() {
-            if item.assignments.is_empty() {
+            let rows = self.inspect_assignment_rows_for_item(item);
+            if rows.is_empty() {
                 lines.push(Line::from("(no assignments)"));
             } else {
-                let mut entries: Vec<String> = item
-                    .assignments
-                    .iter()
-                    .map(|(category_id, assignment)| {
-                        let category_name = category_names
-                            .get(category_id)
-                            .cloned()
-                            .unwrap_or_else(|| category_id.to_string());
-                        let origin = assignment.origin.clone().unwrap_or_else(|| "-".to_string());
-                        format!(
-                            "{} | source={:?} | origin={}",
-                            category_name, assignment.source, origin
-                        )
-                    })
-                    .collect();
-                entries.sort_by_key(|entry| entry.to_ascii_lowercase());
-                lines.extend(entries.into_iter().map(Line::from));
+                let is_picker_mode = self.mode == Mode::InspectUnassignPicker;
+                for (index, row) in rows.iter().enumerate() {
+                    let marker = if is_picker_mode && index == self.inspect_assignment_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    lines.push(Line::from(format!(
+                        "{marker}{} | source={} | origin={}",
+                        row.category_name, row.source_label, row.origin_label
+                    )));
+                }
             }
         } else {
             lines.push(Line::from("(no selected item)"));
@@ -726,10 +967,13 @@ impl App {
     fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input),
+            Mode::ItemEditInput => format!("Edit> {}", self.input),
+            Mode::NoteEditInput => format!("Note> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
+            Mode::InspectUnassignPicker => "Select assignment to unassign".to_string(),
             _ => self.status.clone(),
         };
         let footer_title = match self.mode {
@@ -739,8 +983,11 @@ impl App {
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
             Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
+            Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
+            Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
+            Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -750,19 +997,22 @@ impl App {
     fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let lines: Vec<Line<'_>> = self
-            .views
-            .iter()
-            .enumerate()
-            .map(|(index, view)| {
-                let marker = if index == self.picker_index {
-                    "> "
-                } else {
-                    "  "
-                };
-                Line::from(format!("{marker}{}", view.name))
-            })
-            .collect();
+        let lines: Vec<Line<'_>> = if self.views.is_empty() {
+            vec![Line::from("(no views configured)")]
+        } else {
+            self.views
+                .iter()
+                .enumerate()
+                .map(|(index, view)| {
+                    let marker = if index == self.picker_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    Line::from(format!("{marker}{}", view.name))
+                })
+                .collect()
+        };
 
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -1011,6 +1261,25 @@ impl App {
             .and_then(|slot| slot.items.get(self.item_index))
     }
 
+    fn inspect_assignment_rows_for_item(&self, item: &Item) -> Vec<InspectAssignmentRow> {
+        let category_names = category_name_map(&self.categories);
+        let mut rows: Vec<InspectAssignmentRow> = item
+            .assignments
+            .iter()
+            .map(|(category_id, assignment)| InspectAssignmentRow {
+                category_id: *category_id,
+                category_name: category_names
+                    .get(category_id)
+                    .cloned()
+                    .unwrap_or_else(|| category_id.to_string()),
+                source_label: format!("{:?}", assignment.source),
+                origin_label: assignment.origin.clone().unwrap_or_else(|| "-".to_string()),
+            })
+            .collect();
+        rows.sort_by_key(|row| row.category_name.to_ascii_lowercase());
+        rows
+    }
+
     fn selected_item_id(&self) -> Option<ItemId> {
         self.selected_item().map(|item| item.id)
     }
@@ -1042,6 +1311,16 @@ impl App {
             .position(|row| row.id == category_id)
         {
             self.category_index = index;
+        }
+    }
+
+    fn set_item_selection_by_id(&mut self, item_id: ItemId) {
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            if let Some(item_index) = slot.items.iter().position(|item| item.id == item_id) {
+                self.slot_index = slot_index;
+                self.item_index = item_index;
+                return;
+            }
         }
     }
 }

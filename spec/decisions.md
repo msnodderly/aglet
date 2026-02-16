@@ -641,3 +641,94 @@ Delete behavior intentionally uses existing core/store invariants:
 
 The TUI surfaces these as operation errors in status text instead of adding
 UI-side duplicate validation logic in MVP.
+
+---
+
+## 26. TUI inline item editing uses modal text/note editors with explicit save/cancel
+
+**Date**: 2026-02-16
+**Relevant tasks**: T012, T013
+
+Item editing in TUI is modeled as explicit input modes, not immediate
+in-place mutation:
+
+- `e` opens selected item text editor.
+- `m` opens selected item note editor.
+- `Enter` saves.
+- `Esc` cancels.
+
+Text edit behavior:
+
+- Empty text is rejected (`text cannot be empty`).
+- Save path updates the item through
+  `Agenda::update_item_with_reference_date(...)`, using local reference date.
+- This intentionally re-runs classification/date parsing so category/view
+  placement stays consistent after text changes.
+
+Note edit behavior:
+
+- Empty note input clears the note (`None`).
+- Non-empty note input stores the exact typed note value.
+- Save path also routes through
+  `Agenda::update_item_with_reference_date(...)` for one canonical update path.
+
+Selection behavior after save:
+
+- The TUI attempts to restore selection to the edited item ID after refresh.
+- If the item moved/filtered out due to re-evaluation, status feedback remains
+  and the current cursor position is preserved.
+
+---
+
+## 27. Inspect-panel unassign uses explicit picker mode
+
+**Date**: 2026-02-16
+**Relevant tasks**: T014
+
+Unassign from inspect is implemented as a dedicated picker mode triggered from
+normal mode with `u` (while inspect panel is open with `i`), rather than
+one-key "remove first assignment" behavior.
+
+Interaction contract:
+
+- `i` toggles inspect panel visibility.
+- `u` enters unassign picker when assignments exist.
+- `j/k` selects assignment.
+- `Enter` unassigns selected category from selected item.
+- `Esc` cancels picker.
+
+Why explicit picker:
+
+- Inspect entries are sorted and can include many assignments; picker mode keeps
+  the action deterministic and avoids accidental removal.
+- It preserves existing item/section navigation keys in normal mode.
+
+Current mutation path:
+
+- Unassign uses `Store::unassign_item(item_id, category_id)` directly, followed
+  by full UI refresh.
+- TUI restores selection to edited item ID where possible after refresh.
+
+---
+
+## 28. TUI mutation failures are non-fatal and reported via status line
+
+**Date**: 2026-02-16
+**Relevant tasks**: T015
+
+The main event loop treats action-level handler errors as recoverable:
+
+- `handle_key(...)` errors no longer terminate the TUI process.
+- On error, TUI returns to `Normal` mode, clears transient input, and writes
+  `Error: <message>` in the footer/status line.
+
+This prevents one failed mutation (for example stale item IDs, invalid edits,
+or transient store failures) from killing the session.
+
+No-view fallback policy:
+
+- If the store has zero views, refresh falls back to one slot:
+  `All Items (no views configured)`.
+- The app remains navigable and can still perform non-view-dependent actions.
+- View picker shows `(no views configured)` and Enter returns a status message
+  instead of failing.
