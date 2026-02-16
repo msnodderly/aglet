@@ -119,6 +119,12 @@ fn run_hierarchy_pass(
             continue;
         };
 
+        if !can_assign(item_id, category.id, assignments, seen_pairs) {
+            continue;
+        }
+
+        enforce_mutual_exclusion(store, item_id, category.id, &categories_by_id, assignments)?;
+
         let assigned = assign_if_unassigned(
             store,
             item_id,
@@ -207,6 +213,18 @@ fn fire_actions(
         match action {
             Action::Assign { targets } => {
                 for target_id in targets {
+                    if !can_assign(item_id, *target_id, assignments, seen_pairs) {
+                        continue;
+                    }
+
+                    enforce_mutual_exclusion(
+                        store,
+                        item_id,
+                        *target_id,
+                        categories_by_id,
+                        assignments,
+                    )?;
+
                     let assigned = assign_if_unassigned(
                         store,
                         item_id,
@@ -243,6 +261,22 @@ fn fire_actions(
     Ok(())
 }
 
+fn can_assign(
+    item_id: ItemId,
+    category_id: CategoryId,
+    assignments: &HashMap<CategoryId, Assignment>,
+    seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+) -> bool {
+    let pair = (item_id, category_id);
+
+    if assignments.contains_key(&category_id) {
+        seen_pairs.insert(pair);
+        return false;
+    }
+
+    !seen_pairs.contains(&pair)
+}
+
 fn assign_if_unassigned(
     store: &Store,
     item_id: ItemId,
@@ -252,17 +286,11 @@ fn assign_if_unassigned(
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
 ) -> Result<bool> {
+    if !can_assign(item_id, category_id, assignments, seen_pairs) {
+        return Ok(false);
+    }
+
     let pair = (item_id, category_id);
-
-    if assignments.contains_key(&category_id) {
-        seen_pairs.insert(pair);
-        return Ok(false);
-    }
-
-    if seen_pairs.contains(&pair) {
-        return Ok(false);
-    }
-
     let assignment = Assignment {
         source,
         assigned_at: Utc::now(),
@@ -275,6 +303,39 @@ fn assign_if_unassigned(
     seen_pairs.insert(pair);
 
     Ok(true)
+}
+
+fn enforce_mutual_exclusion(
+    store: &Store,
+    item_id: ItemId,
+    category_id: CategoryId,
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    assignments: &mut HashMap<CategoryId, Assignment>,
+) -> Result<()> {
+    let Some(category) = categories_by_id.get(&category_id) else {
+        return Ok(());
+    };
+    let Some(parent_id) = category.parent else {
+        return Ok(());
+    };
+    let Some(parent) = categories_by_id.get(&parent_id) else {
+        return Ok(());
+    };
+    if !parent.is_exclusive {
+        return Ok(());
+    }
+
+    for sibling_id in &parent.children {
+        if *sibling_id == category_id {
+            continue;
+        }
+
+        if assignments.remove(sibling_id).is_some() {
+            store.unassign_item(item_id, *sibling_id)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn assign_subsumption_ancestors(
@@ -387,7 +448,7 @@ mod tests {
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
-        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, Query,
+        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, ItemId, Query,
     };
     use crate::store::Store;
 
@@ -399,6 +460,13 @@ mod tests {
         let item = Item::new(text.to_string());
         store.create_item(&item).unwrap();
         item
+    }
+
+    fn set_item_text(store: &Store, item_id: ItemId, text: &str) {
+        let mut item = store.get_item(item_id).unwrap();
+        item.text = text.to_string();
+        item.modified_at = Utc::now();
+        store.update_item(&item).unwrap();
     }
 
     fn manual_assignment() -> Assignment {
@@ -704,6 +772,171 @@ mod tests {
             assignments.get(&events.id).unwrap().source,
             AssignmentSource::Subsumption
         );
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_basic_switch_between_siblings() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        create_category(&store, &status);
+
+        let todo = child_category("Todo", status.id, true);
+        create_category(&store, &todo);
+
+        let in_progress = child_category("InProgress", status.id, true);
+        create_category(&store, &in_progress);
+
+        let item = create_item(&store, "Todo");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        set_item_text(&store, item.id, "InProgress");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&in_progress.id));
+        assert!(!assignments.contains_key(&todo.id));
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_non_exclusive_parent_keeps_siblings() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let tags = category("Tags", false);
+        create_category(&store, &tags);
+
+        let urgent = child_category("Urgent", tags.id, true);
+        create_category(&store, &urgent);
+
+        let important = child_category("Important", tags.id, true);
+        create_category(&store, &important);
+
+        let item = create_item(&store, "Urgent and Important");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&urgent.id));
+        assert!(assignments.contains_key(&important.id));
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_engine_match_leaves_one_child() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        create_category(&store, &priority);
+
+        let high = child_category("High", priority.id, true);
+        create_category(&store, &high);
+
+        let low = child_category("Low", priority.id, true);
+        create_category(&store, &low);
+
+        let item = create_item(&store, "High priority and Low cost");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let high_assigned = assignments.contains_key(&high.id);
+        let low_assigned = assignments.contains_key(&low.id);
+        assert_ne!(high_assigned, low_assigned);
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_applies_to_action_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        create_category(&store, &status);
+
+        let todo = child_category("Todo", status.id, true);
+        create_category(&store, &todo);
+
+        let in_progress = child_category("InProgress", status.id, false);
+        create_category(&store, &in_progress);
+
+        let mut workflow = category("Workflow", true);
+        workflow.actions.push(Action::Assign {
+            targets: HashSet::from([in_progress.id]),
+        });
+        create_category(&store, &workflow);
+
+        let item = create_item(&store, "Todo Workflow");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&in_progress.id));
+        assert!(!assignments.contains_key(&todo.id));
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_unassigns_manual_source() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        create_category(&store, &status);
+
+        let todo = child_category("Todo", status.id, false);
+        create_category(&store, &todo);
+
+        let in_progress = child_category("InProgress", status.id, false);
+        create_category(&store, &in_progress);
+
+        let mut workflow = category("Workflow", true);
+        workflow.actions.push(Action::Assign {
+            targets: HashSet::from([in_progress.id]),
+        });
+        create_category(&store, &workflow);
+
+        let item = create_item(&store, "Workflow item");
+        store
+            .assign_item(item.id, todo.id, &manual_assignment())
+            .unwrap();
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&todo.id));
+        assert!(assignments.contains_key(&in_progress.id));
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_three_children_removes_only_assigned_sibling() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        create_category(&store, &priority);
+
+        let low = child_category("Low", priority.id, false);
+        create_category(&store, &low);
+
+        let medium = child_category("Medium", priority.id, false);
+        create_category(&store, &medium);
+
+        let high = child_category("High", priority.id, true);
+        create_category(&store, &high);
+
+        let item = create_item(&store, "High impact");
+        store
+            .assign_item(item.id, low.id, &manual_assignment())
+            .unwrap();
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&low.id));
+        assert!(!assignments.contains_key(&medium.id));
+        assert!(assignments.contains_key(&high.id));
     }
 
     #[test]
