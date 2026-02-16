@@ -89,6 +89,7 @@ enum Mode {
     AddInput,
     ItemEditInput,
     NoteEditInput,
+    ItemAssignCategoryPicker,
     InspectUnassignPicker,
     FilterInput,
     ViewPicker,
@@ -124,6 +125,7 @@ struct App {
     category_create_parent: Option<CategoryId>,
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
+    item_assign_category_index: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
@@ -134,7 +136,9 @@ impl Default for App {
     fn default() -> Self {
         Self {
             mode: Mode::Normal,
-            status: "Press n to add, F8 to switch views, F9 for categories, q to quit".to_string(),
+            status:
+                "Press n to add, a to assign item to category, F8 to switch views, F9 for categories, q to quit"
+                    .to_string(),
             input: String::new(),
             filter: None,
             show_inspect: false,
@@ -150,6 +154,7 @@ impl Default for App {
             category_create_parent: None,
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
+            item_assign_category_index: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
@@ -205,6 +210,7 @@ impl App {
             Mode::AddInput => self.handle_add_key(code, agenda),
             Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
             Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
+            Mode::ItemAssignCategoryPicker => self.handle_item_assign_category_key(code, agenda),
             Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
@@ -276,6 +282,20 @@ impl App {
                 self.mode = Mode::CategoryManager;
                 self.status =
                     "Category manager: n child, N root, x delete, Esc to close".to_string();
+            }
+            KeyCode::Char('a') => {
+                if self.selected_item_id().is_none() {
+                    self.status = "No selected item to assign".to_string();
+                } else if self.category_rows.is_empty() {
+                    self.status = "No categories available".to_string();
+                } else {
+                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.item_assign_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.status =
+                        "Assign item to category: j/k select category, Enter assign, Esc cancel"
+                            .to_string();
+                }
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
@@ -476,6 +496,74 @@ impl App {
             KeyCode::Char(c) => self.input.push(c),
             _ => {}
         }
+        Ok(false)
+    }
+
+    fn handle_item_assign_category_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Assign canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.category_rows.is_empty() {
+                    self.item_assign_category_index =
+                        next_index(self.item_assign_category_index, self.category_rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.category_rows.is_empty() {
+                    self.item_assign_category_index = next_index(
+                        self.item_assign_category_index,
+                        self.category_rows.len(),
+                        -1,
+                    );
+                }
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.status = "Assign failed: no selected item".to_string();
+                    return Ok(false);
+                };
+                let Some(row) = self
+                    .category_rows
+                    .get(self.item_assign_category_index)
+                    .cloned()
+                else {
+                    self.mode = Mode::Normal;
+                    self.status = "Assign failed: no category selected".to_string();
+                    return Ok(false);
+                };
+
+                if row.name.eq_ignore_ascii_case("Done") {
+                    agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                    self.refresh(agenda.store())?;
+                    self.set_item_selection_by_id(item_id);
+                    self.mode = Mode::Normal;
+                    self.status = "Assigned item to category Done (marked done)".to_string();
+                    return Ok(false);
+                }
+
+                let result = agenda
+                    .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.status = format!(
+                    "Assigned item to category {} (new_assignments={})",
+                    row.name,
+                    result.new_assignments.len()
+                );
+            }
+            _ => {}
+        }
+
         Ok(false)
     }
 
@@ -1350,6 +1438,9 @@ impl App {
         ) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
+        if self.mode == Mode::ItemAssignCategoryPicker {
+            self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
+        }
         if matches!(
             self.mode,
             Mode::ViewCreateCategoryPicker | Mode::ViewEditCategoryPicker
@@ -1509,6 +1600,7 @@ impl App {
             Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
+            Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
             Mode::InspectUnassignPicker => "Select assignment to unassign".to_string(),
             _ => self.status.clone(),
         };
@@ -1525,11 +1617,12 @@ impl App {
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewCreateCategoryPicker => "j/k:select category  Enter:create view  Esc:cancel",
             Mode::ViewEditCategoryPicker => "j/k:select category  Enter:update view  Esc:cancel",
+            Mode::ItemAssignCategoryPicker => "j/k:select category  Enter:assign item to category  Esc:cancel",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a:assign-item  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -1612,6 +1705,51 @@ impl App {
                     .title(title)
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Magenta)),
+            ),
+            area,
+        );
+    }
+
+    fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+
+        let mut lines = vec![Line::from("Assign selected item to category")];
+        if self.category_rows.is_empty() {
+            lines.push(Line::from("(no categories)"));
+        } else {
+            for (index, row) in self.category_rows.iter().enumerate() {
+                let marker = if index == self.item_assign_category_index {
+                    "> "
+                } else {
+                    "  "
+                };
+                let mut flags = Vec::new();
+                if row.is_reserved {
+                    flags.push("reserved");
+                }
+                if row.is_exclusive {
+                    flags.push("exclusive");
+                }
+                let suffix = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(","))
+                };
+                lines.push(Line::from(format!(
+                    "{marker}{}{}{}",
+                    "  ".repeat(row.depth),
+                    row.name,
+                    suffix
+                )));
+            }
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title("Assign Item")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
             ),
             area,
         );
@@ -2264,7 +2402,7 @@ mod tests {
 
     #[test]
     fn first_non_reserved_category_index_prefers_non_reserved_row() {
-        let done = CategoryListRow {
+        let reserved = CategoryListRow {
             id: CategoryId::new_v4(),
             name: "Done".to_string(),
             depth: 0,
@@ -2272,7 +2410,7 @@ mod tests {
             is_exclusive: false,
             enable_implicit_string: false,
         };
-        let work = CategoryListRow {
+        let user = CategoryListRow {
             id: CategoryId::new_v4(),
             name: "Work".to_string(),
             depth: 0,
@@ -2282,13 +2420,13 @@ mod tests {
         };
 
         assert_eq!(
-            first_non_reserved_category_index(&[done.clone(), work.clone()]),
+            first_non_reserved_category_index(&[reserved.clone(), user.clone()]),
             1
         );
     }
 
     #[test]
-    fn first_non_reserved_category_index_falls_back_to_zero() {
+    fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
         let done = CategoryListRow {
             id: CategoryId::new_v4(),
             name: "Done".to_string(),
