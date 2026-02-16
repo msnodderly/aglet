@@ -77,6 +77,12 @@ struct InspectAssignmentRow {
     origin_label: String,
 }
 
+#[derive(Clone)]
+struct ReparentOptionRow {
+    parent_id: Option<CategoryId>,
+    label: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
@@ -89,6 +95,8 @@ enum Mode {
     ConfirmDelete,
     CategoryManager,
     CategoryCreateInput,
+    CategoryRenameInput,
+    CategoryReparentPicker,
     CategoryDeleteConfirm,
 }
 
@@ -107,6 +115,8 @@ struct App {
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
     category_create_parent: Option<CategoryId>,
+    category_reparent_options: Vec<ReparentOptionRow>,
+    category_reparent_index: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
@@ -128,6 +138,8 @@ impl Default for App {
             category_rows: Vec::new(),
             category_index: 0,
             category_create_parent: None,
+            category_reparent_options: Vec::new(),
+            category_reparent_index: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
@@ -187,8 +199,10 @@ impl App {
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
-            Mode::CategoryManager => self.handle_category_manager_key(code),
+            Mode::CategoryManager => self.handle_category_manager_key(code, agenda),
             Mode::CategoryCreateInput => self.handle_category_create_key(code, agenda),
+            Mode::CategoryRenameInput => self.handle_category_rename_key(code, agenda),
+            Mode::CategoryReparentPicker => self.handle_category_reparent_key(code, agenda),
             Mode::CategoryDeleteConfirm => self.handle_category_delete_key(code, agenda),
         }
     }
@@ -595,12 +609,18 @@ impl App {
         Ok(false)
     }
 
-    fn handle_category_manager_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_category_manager_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
         match code {
             KeyCode::Esc | KeyCode::F(9) => {
                 self.mode = Mode::Normal;
                 self.input.clear();
                 self.category_create_parent = None;
+                self.category_reparent_options.clear();
+                self.category_reparent_index = 0;
                 self.status = "Category manager closed".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
@@ -619,6 +639,70 @@ impl App {
                 self.input.clear();
                 self.category_create_parent = None;
                 self.status = "Create top-level category: type name and Enter".to_string();
+            }
+            KeyCode::Char('r') => {
+                if let Some(row) = self.selected_category_row() {
+                    let row_name = row.name.clone();
+                    self.mode = Mode::CategoryRenameInput;
+                    self.input = row_name.clone();
+                    self.status = format!("Rename category {}: type name and Enter", row_name);
+                }
+            }
+            KeyCode::Char('p') => {
+                if let Some(category_id) = self.selected_category_id() {
+                    self.category_reparent_options =
+                        build_reparent_options(&self.category_rows, &self.categories, category_id);
+                    self.category_reparent_index = self
+                        .selected_category_parent_index(category_id)
+                        .unwrap_or(0)
+                        .min(self.category_reparent_options.len().saturating_sub(1));
+                    self.mode = Mode::CategoryReparentPicker;
+                    self.status = "Reparent category: j/k select parent, Enter apply".to_string();
+                }
+            }
+            KeyCode::Char('t') => {
+                if let Some(category_id) = self.selected_category_id() {
+                    let mut category = agenda
+                        .store()
+                        .get_category(category_id)
+                        .map_err(|e| e.to_string())?;
+                    category.is_exclusive = !category.is_exclusive;
+                    let updated = category.clone();
+                    let result = agenda
+                        .update_category(&category)
+                        .map_err(|e| e.to_string())?;
+                    self.refresh(agenda.store())?;
+                    self.set_category_selection_by_id(updated.id);
+                    self.status = format!(
+                        "{} exclusive={} (processed_items={}, affected_items={})",
+                        updated.name,
+                        updated.is_exclusive,
+                        result.processed_items,
+                        result.affected_items
+                    );
+                }
+            }
+            KeyCode::Char('i') => {
+                if let Some(category_id) = self.selected_category_id() {
+                    let mut category = agenda
+                        .store()
+                        .get_category(category_id)
+                        .map_err(|e| e.to_string())?;
+                    category.enable_implicit_string = !category.enable_implicit_string;
+                    let updated = category.clone();
+                    let result = agenda
+                        .update_category(&category)
+                        .map_err(|e| e.to_string())?;
+                    self.refresh(agenda.store())?;
+                    self.set_category_selection_by_id(updated.id);
+                    self.status = format!(
+                        "{} implicit-string={} (processed_items={}, affected_items={})",
+                        updated.name,
+                        updated.enable_implicit_string,
+                        result.processed_items,
+                        result.affected_items
+                    );
+                }
             }
             KeyCode::Char('x') => {
                 if let Some(row) = self.selected_category_row() {
@@ -679,6 +763,149 @@ impl App {
             KeyCode::Char(c) => self.input.push(c),
             _ => {}
         }
+        Ok(false)
+    }
+
+    fn handle_category_rename_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::CategoryManager;
+                self.input.clear();
+                self.status = "Category rename canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(category_id) = self.selected_category_id() else {
+                    self.mode = Mode::CategoryManager;
+                    self.input.clear();
+                    self.status = "Category rename failed: no selection".to_string();
+                    return Ok(false);
+                };
+
+                let new_name = self.input.trim().to_string();
+                if new_name.is_empty() {
+                    self.mode = Mode::CategoryManager;
+                    self.input.clear();
+                    self.status = "Category rename canceled (empty name)".to_string();
+                    return Ok(false);
+                }
+
+                let mut category = agenda
+                    .store()
+                    .get_category(category_id)
+                    .map_err(|e| e.to_string())?;
+                if category.name == new_name {
+                    self.mode = Mode::CategoryManager;
+                    self.input.clear();
+                    self.status = "Category rename canceled (unchanged)".to_string();
+                    return Ok(false);
+                }
+
+                category.name = new_name.clone();
+                let result = agenda
+                    .update_category(&category)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_category_selection_by_id(category_id);
+                self.mode = Mode::CategoryManager;
+                self.input.clear();
+                self.status = format!(
+                    "Renamed category to {} (processed_items={}, affected_items={})",
+                    new_name, result.processed_items, result.affected_items
+                );
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_category_reparent_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::CategoryManager;
+                self.category_reparent_options.clear();
+                self.category_reparent_index = 0;
+                self.status = "Category reparent canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.category_reparent_options.is_empty() {
+                    self.category_reparent_index = next_index(
+                        self.category_reparent_index,
+                        self.category_reparent_options.len(),
+                        1,
+                    );
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.category_reparent_options.is_empty() {
+                    self.category_reparent_index = next_index(
+                        self.category_reparent_index,
+                        self.category_reparent_options.len(),
+                        -1,
+                    );
+                }
+            }
+            KeyCode::Enter => {
+                let Some(category_id) = self.selected_category_id() else {
+                    self.mode = Mode::CategoryManager;
+                    self.status = "Category reparent failed: no selection".to_string();
+                    self.category_reparent_options.clear();
+                    self.category_reparent_index = 0;
+                    return Ok(false);
+                };
+
+                let Some(option) = self
+                    .category_reparent_options
+                    .get(self.category_reparent_index)
+                    .cloned()
+                else {
+                    self.mode = Mode::CategoryManager;
+                    self.status = "Category reparent failed: no parent selected".to_string();
+                    self.category_reparent_options.clear();
+                    self.category_reparent_index = 0;
+                    return Ok(false);
+                };
+
+                let mut category = agenda
+                    .store()
+                    .get_category(category_id)
+                    .map_err(|e| e.to_string())?;
+                if category.parent == option.parent_id {
+                    self.mode = Mode::CategoryManager;
+                    self.status = "Category reparent canceled (unchanged)".to_string();
+                    self.category_reparent_options.clear();
+                    self.category_reparent_index = 0;
+                    return Ok(false);
+                }
+
+                category.parent = option.parent_id;
+                let result = agenda
+                    .update_category(&category)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_category_selection_by_id(category_id);
+                self.mode = Mode::CategoryManager;
+                self.status = format!(
+                    "Reparented {} (processed_items={}, affected_items={})",
+                    category.name, result.processed_items, result.affected_items
+                );
+                self.category_reparent_options.clear();
+                self.category_reparent_index = 0;
+            }
+            _ => {}
+        }
+
         Ok(false)
     }
 
@@ -832,7 +1059,11 @@ impl App {
         }
         if matches!(
             self.mode,
-            Mode::CategoryManager | Mode::CategoryCreateInput | Mode::CategoryDeleteConfirm
+            Mode::CategoryManager
+                | Mode::CategoryCreateInput
+                | Mode::CategoryRenameInput
+                | Mode::CategoryReparentPicker
+                | Mode::CategoryDeleteConfirm
         ) {
             self.render_category_manager(frame, centered_rect(72, 72, frame.area()));
         }
@@ -972,15 +1203,19 @@ impl App {
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
+            Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
+            Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
             Mode::InspectUnassignPicker => "Select assignment to unassign".to_string(),
             _ => self.status.clone(),
         };
         let footer_title = match self.mode {
             Mode::CategoryManager => {
-                "j/k:select  n:new-child  N:new-root  x:delete  Esc/F9:close"
+                "j/k:select  n/N:create  r:rename  p:reparent  t:toggle-exclusive  i:toggle-implicit  x:delete  Esc/F9:close"
             }
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
+            Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
+            Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
             Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
@@ -1029,7 +1264,7 @@ impl App {
         frame.render_widget(Clear, area);
 
         let mut lines = vec![Line::from(
-            "Categories are global; create under selection with n or at root with N.",
+            "Categories are global. n/N create, r rename, p reparent, t/i toggle, x delete.",
         )];
 
         if self.category_rows.is_empty() {
@@ -1070,6 +1305,30 @@ impl App {
                 .unwrap_or_else(|| "(root)".to_string());
             lines.push(Line::from(""));
             lines.push(Line::from(format!("Create parent: {parent}")));
+        }
+        if self.mode == Mode::CategoryRenameInput {
+            let target = self
+                .selected_category_row()
+                .map(|row| row.name.clone())
+                .unwrap_or_else(|| "(none)".to_string());
+            lines.push(Line::from(""));
+            lines.push(Line::from(format!("Rename target: {target}")));
+        }
+        if self.mode == Mode::CategoryReparentPicker {
+            lines.push(Line::from(""));
+            lines.push(Line::from("Select new parent:"));
+            if self.category_reparent_options.is_empty() {
+                lines.push(Line::from("(no valid parent options)"));
+            } else {
+                for (index, option) in self.category_reparent_options.iter().enumerate() {
+                    let marker = if index == self.category_reparent_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    lines.push(Line::from(format!("{marker}{}", option.label)));
+                }
+            }
         }
 
         frame.render_widget(
@@ -1304,6 +1563,17 @@ impl App {
             .map(|row| row.name.clone())
     }
 
+    fn selected_category_parent_index(&self, category_id: CategoryId) -> Option<usize> {
+        let parent_id = self
+            .categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .and_then(|category| category.parent);
+        self.category_reparent_options
+            .iter()
+            .position(|option| option.parent_id == parent_id)
+    }
+
     fn set_category_selection_by_id(&mut self, category_id: CategoryId) {
         if let Some(index) = self
             .category_rows
@@ -1387,6 +1657,58 @@ fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
         .collect()
 }
 
+fn build_reparent_options(
+    category_rows: &[CategoryListRow],
+    categories: &[Category],
+    selected_category_id: CategoryId,
+) -> Vec<ReparentOptionRow> {
+    let descendants = descendant_category_ids(categories, selected_category_id);
+    let mut options = vec![ReparentOptionRow {
+        parent_id: None,
+        label: "(root)".to_string(),
+    }];
+
+    for row in category_rows {
+        if row.id == selected_category_id {
+            continue;
+        }
+        if descendants.contains(&row.id) {
+            continue;
+        }
+        options.push(ReparentOptionRow {
+            parent_id: Some(row.id),
+            label: format!("{}{}", "  ".repeat(row.depth), row.name),
+        });
+    }
+
+    options
+}
+
+fn descendant_category_ids(categories: &[Category], root_id: CategoryId) -> HashSet<CategoryId> {
+    let children_by_parent: HashMap<CategoryId, Vec<CategoryId>> = categories
+        .iter()
+        .filter_map(|category| category.parent.map(|parent| (parent, category.id)))
+        .fold(HashMap::new(), |mut acc, (parent, child)| {
+            acc.entry(parent).or_default().push(child);
+            acc
+        });
+
+    let mut seen = HashSet::new();
+    let mut stack = vec![root_id];
+    while let Some(current) = stack.pop() {
+        let Some(children) = children_by_parent.get(&current) else {
+            continue;
+        };
+        for child in children {
+            if seen.insert(*child) {
+                stack.push(*child);
+            }
+        }
+    }
+
+    seen
+}
+
 fn category_depth(
     category_id: CategoryId,
     parent_by_id: &HashMap<CategoryId, Option<CategoryId>>,
@@ -1445,7 +1767,7 @@ fn add_capture_status_message(parsed_when: Option<NaiveDateTime>) -> String {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{add_capture_status_message, build_category_rows};
+    use super::{add_capture_status_message, build_category_rows, build_reparent_options};
     use agenda_core::model::{Category, CategoryId};
     use chrono::NaiveDate;
 
@@ -1511,5 +1833,38 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].depth, 1);
         assert!(!rows[0].is_reserved);
+    }
+
+    #[test]
+    fn build_reparent_options_excludes_self_and_descendants() {
+        let work = Category::new("Work".to_string());
+        let mut project = Category::new("Project Y".to_string());
+        project.parent = Some(work.id);
+        let mut subproject = Category::new("Frabulator".to_string());
+        subproject.parent = Some(project.id);
+        let personal = Category::new("Personal".to_string());
+
+        let categories = vec![
+            work.clone(),
+            project.clone(),
+            subproject.clone(),
+            personal.clone(),
+        ];
+        let rows = build_category_rows(&categories);
+
+        let options = build_reparent_options(&rows, &categories, project.id);
+        assert!(options.iter().any(|option| option.parent_id.is_none()));
+        assert!(options
+            .iter()
+            .any(|option| option.parent_id == Some(work.id)));
+        assert!(options
+            .iter()
+            .any(|option| option.parent_id == Some(personal.id)));
+        assert!(!options
+            .iter()
+            .any(|option| option.parent_id == Some(project.id)));
+        assert!(!options
+            .iter()
+            .any(|option| option.parent_id == Some(subproject.id)));
     }
 }
