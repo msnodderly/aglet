@@ -60,18 +60,21 @@ updated, the View reflects the current state.
 ### Edit-through: the Agenda magic
 
 The original Lotus Agenda's breakthrough was that Views aren't read-only
-projections. They're *editable surfaces* where moving an item changes its
-category assignments as a side effect.
+projections. They're *editable surfaces* where interacting with items in
+context implicitly changes their category assignments.
 
-Inserting an item into the "Today" section doesn't just display it there —
-it assigns the item to the categories that define that section. Moving an
-item from "In Progress" to "Done" doesn't require finding the item, opening
-a detail panel, and changing assignments. You just move it. The View does
-the assignment work behind the scenes.
+The key insight is bidirectionality. Views are *derived from* assignments
+(an item appears in a section because of its categories), but the
+relationship works in reverse too: inserting an item into a section assigns
+it to that section's categories. Removing it from a section unassigns.
+The user doesn't need to think about category assignments at all — they
+just organize items where they make sense, and the data model updates
+to match.
 
-This is what makes Agenda feel like a living organizational tool rather than
-a database query interface. The user thinks in terms of "move this task to
-Done" — not "unassign from In Progress, assign to Done."
+This works alongside direct manual assignment (the `a` key, or any API
+call). Edit-through is one workflow for changing assignments — the one
+that feels most natural when you're already looking at a View. But users
+can always assign categories directly, and the engine cascades either way.
 
 Phase 4 builds the core library functions for this. The TUI (Phase 7-8)
 will provide the visual surface, but the edit-through *logic* lives here
