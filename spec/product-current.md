@@ -11,6 +11,7 @@ This snapshot is based on current repository reality, not planned scope:
 - `crates/agenda-cli/src/main.rs`
 - `crates/agenda-tui/src/lib.rs`
 - `cargo test` (workspace passes)
+- `spec/scenario-capability-matrix.md`
 - CLI/TUI demo logs under `docs/`, especially:
   - `docs/demo-complete-cli-e2e-demo-log.md`
   - `docs/demo-view-logic-demo-run.md`
@@ -80,7 +81,7 @@ Behavior validated by e2e demos:
 
 ## 2.3 TUI (`agenda-tui`)
 
-TUI is functional for daily loop basics and no longer placeholder.
+TUI is functional for day-to-day workflow and no longer placeholder.
 
 Implemented:
 
@@ -94,40 +95,34 @@ Implemented:
 - View picker (`F8`).
 - In-view text filter (`/`).
 - Inspect panel for assignment provenance (`i`).
+- Inspect unassign action (`u` from inspect panel).
+- Category manager (`F9`) with create/rename/reparent/toggle/delete.
+- Inline text edit (`e`) and note edit (`m`).
+- Non-fatal mutation error handling and no-view fallback behavior.
 
 Not yet implemented in TUI:
 
-- Category manager/editor (`F9`-style full management).
-- Inline text/note editing workflows.
 - Undo (`Ctrl-Z`).
 - Suggestion review UX.
 
 ## 3. Conformance Against `product-spec-complete.md`
 
-High-conformance areas:
+Scenario-mapped conformance status is maintained in:
 
-- Schema-last capture and multifiling semantics.
-- Retroactive category assignment.
-- Hierarchical subsumption.
-- Exclusive sibling behavior.
-- View include/exclude logic and unmatched grouping.
-- Edit-through assignment side effects.
-- Deletion log and restore path.
+- `spec/scenario-capability-matrix.md`
 
-Partial-conformance areas:
+Current tally from the scenario matrix:
 
-- Date parsing: good MVP subset, not full NL coverage from spec examples.
-- Inspect/provenance: present in TUI panel, but not full assign/unassign tooling from inspect workflow.
-- TUI interaction model: usable, but still below full manager/editor ambitions in v0.6 text.
+- Implemented: 10/23
+- Partial: 9/23
+- Deferred: 4/23
 
-Non-conformance (deferred/not built):
+Largest remaining non-conformance clusters:
 
-- Recurrence generation on done.
-- Suggestion queue and rejected suggestion memory model.
-- Typed column-values model (`values`, `value_type`, numeric/date fields).
-- Advanced condition/action types (date/delete/validation conditions).
-- Undo stack behavior.
-- `Entry When Done` reserved trigger category.
+- Recurrence generation and series semantics.
+- Suggestion queue/review and classification mode controls.
+- Undo/safety contract for accidental move/remove/edit mistakes.
+- Missing `Entry When Done` reserved trigger category from the v0.6 narrative.
 
 ## 4. Updated Product Position
 
@@ -135,13 +130,13 @@ The current product is best described as:
 
 - **Core engine complete enough for real usage**.
 - **CLI complete enough for real control-plane operation**.
-- **TUI usable for primary day-to-day navigation and triage loops, but not yet complete for full in-app configuration/editing workflows**.
+- **TUI complete for primary day-to-day navigation, triage, category management, and item editing workflows**.
 
 This is beyond "prototype core only" and should be treated as an **implemented SLC baseline with targeted completion gaps**, not an unstarted UI phase.
 
 ## 5. Immediate Product Priorities
 
-1. Close remaining SLC usability gaps in TUI (category management, item/note editing, stronger empty-state UX).
-2. Decide and implement undo/safety stance for v1 (either true undo or explicit non-undo safety UX + restore workflows).
-3. Align data model/spec language with shipped model so docs stop implying already-shipped recurrence/suggestions/value-columns.
-4. Harden store decode strictness and restore fidelity policy.
+1. Decide and implement undo/safety stance for v1 (either true undo or explicit non-undo safety UX + restore workflows).
+2. Align data model/spec language with shipped model so docs stop implying already-shipped recurrence/suggestions/value-columns.
+3. Harden store decode strictness and restore fidelity policy.
+4. Continue deferred advanced features (recurrence/suggestions/typed value columns) behind clear phase gates.

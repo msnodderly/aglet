@@ -46,21 +46,24 @@ Why it matters:
 
 - Safety/trust expectations are only partially covered by deletion log + restore.
 
-## 2.3 TUI Completeness Gap
+## 2.3 TUI Safety/Advanced Workflow Gap (Post-Completion)
 
 Current state:
 
 - TUI supports navigation/add/move/remove/done/delete/filter/inspect/view switching.
+- TUI supports category manager flows (create/rename/reparent/toggle/delete).
+- TUI supports inline text and note edits.
+- TUI supports inspect-driven unassign.
 
 Gap:
 
-- Missing in-TUI category management (create/rename/reparent/delete/toggles).
-- Missing in-TUI item text/note editing.
-- Missing inspect-driven unassign actions.
+- No undo/revert path in TUI for accidental move/remove/edit operations.
+- No suggestion review UX for assisted classification mode.
+- No equivalent of v0.6 advanced workflow tooling (recurrence controls, suggestion acceptance loop).
 
 Why it matters:
 
-- Daily triage works, but full in-app management/edit workflows still require CLI.
+- Core daily workflow is covered in TUI, but safety and advanced intelligence loops are still incomplete.
 
 ## 2.4 Date Parsing Coverage Gap
 
@@ -120,9 +123,9 @@ Gap:
 ## 5. Gap Closure Order (Recommended)
 
 1. Lock spec language to shipped model (eliminate doc drift first).
-2. TUI completion for in-app management/editing.
-3. Undo/safety decision and implementation path.
-4. Store decode strictness + restore policy hardening.
+2. Undo/safety decision and implementation path.
+3. Domain API maturity for category/view evolution invariants.
+4. Persistence/data integrity hardening (decode strictness + restore policy).
 5. Advanced v0.6 deferred features (recurrence/suggestions/typed values).
 
 ## 6. Notes From Demo Evidence
@@ -134,3 +137,7 @@ CLI status is confirmed as operational by:
 - `docs/test-cross-domain-scenarios-run-results.md`
 
 These logs show real execution of create/list/search/view/category/done/delete/deleted/restore paths and include/exclude query behavior across multiple domains.
+
+TUI completion evidence is captured in:
+
+- `docs/test-script-tui-smoke-e2e.md`
