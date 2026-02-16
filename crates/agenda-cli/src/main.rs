@@ -52,8 +52,14 @@ enum Command {
     /// Mark an item done
     Done { item_id: String },
 
+    /// Delete an item (writes deletion log)
+    Delete { item_id: String },
+
     /// List deletion log entries
     Deleted,
+
+    /// Restore an item from deletion log by log entry id
+    Restore { log_id: String },
 
     /// Category commands
     Category {
@@ -138,7 +144,9 @@ fn run() -> Result<(), String> {
             include_done,
         } => cmd_search(&store, query, include_done),
         Command::Done { item_id } => cmd_done(&agenda, item_id),
+        Command::Delete { item_id } => cmd_delete(&agenda, item_id),
         Command::Deleted => cmd_deleted(&store),
+        Command::Restore { log_id } => cmd_restore(&store, log_id),
         Command::Category { command } => cmd_category(&agenda, &store, command),
         Command::View { command } => cmd_view(&store, command),
     }
@@ -214,6 +222,15 @@ fn cmd_done(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_delete(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
+    let item_id = parse_item_id(&item_id_str)?;
+    agenda
+        .delete_item(item_id, "user:cli")
+        .map_err(|e| e.to_string())?;
+    println!("deleted {}", item_id);
+    Ok(())
+}
+
 fn cmd_deleted(store: &Store) -> Result<(), String> {
     let deleted = store.list_deleted_items().map_err(|e| e.to_string())?;
     if deleted.is_empty() {
@@ -223,13 +240,24 @@ fn cmd_deleted(store: &Store) -> Result<(), String> {
 
     for entry in deleted {
         println!(
-            "{} | item={} | by={} | {}",
-            entry.deleted_at.to_rfc3339(),
+            "{} | item={} | deleted_at={} | by={} | {}",
+            entry.id,
             entry.item_id,
+            entry.deleted_at.to_rfc3339(),
             entry.deleted_by,
             entry.text
         );
     }
+    Ok(())
+}
+
+fn cmd_restore(store: &Store, log_id_str: String) -> Result<(), String> {
+    let log_id =
+        CategoryId::parse_str(&log_id_str).map_err(|e| format!("invalid log id: {e}"))?;
+    let item_id = store
+        .restore_deleted_item(log_id)
+        .map_err(|e| e.to_string())?;
+    println!("restored item {}", item_id);
     Ok(())
 }
 
