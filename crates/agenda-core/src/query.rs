@@ -639,8 +639,10 @@ mod tests {
             item_with_assignments("meeting", None, None, &[]),
         ];
 
-        let mut query = Query::default();
-        query.text_search = Some("meeting".to_string());
+        let query = Query {
+            text_search: Some("meeting".to_string()),
+            ..Query::default()
+        };
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id, items[1].id]);

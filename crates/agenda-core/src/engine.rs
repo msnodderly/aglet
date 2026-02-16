@@ -533,7 +533,7 @@ mod tests {
         let mut criteria = Query::default();
         criteria.include.extend(include.iter().copied());
         criteria.exclude.extend(exclude.iter().copied());
-        category.conditions.push(Condition::Profile { criteria });
+        category.conditions.push(Condition::Profile { criteria: Box::new(criteria) });
         category
     }
 
@@ -1171,7 +1171,7 @@ mod tests {
             let mut stage = store.get_category(stages[index].id).unwrap();
             let mut criteria = Query::default();
             criteria.include.insert(stages[index + 1].id);
-            stage.conditions = vec![Condition::Profile { criteria }];
+            stage.conditions = vec![Condition::Profile { criteria: Box::new(criteria) }];
             store.update_category(&stage).unwrap();
         }
 
