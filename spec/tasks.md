@@ -26,7 +26,7 @@ Checkpoint:
 
 Goal: users can stay in TUI for daily operation and basic management/editing.
 
-- [ ] T010 Add TUI category manager MVP (list/create/delete).
+- [x] T010 Add TUI category manager MVP (list/create/delete).
 - [ ] T011 Add TUI category structural edits (rename/reparent + exclusivity/implicit-string toggles).
 - [ ] T012 Add inline item text editing in TUI.
 - [ ] T013 Add note create/edit flow in TUI.

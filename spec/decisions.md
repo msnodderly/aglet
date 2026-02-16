@@ -606,3 +606,38 @@ Example (local reference date Monday 2026-02-16):
 
 - Input: `next Tuesday at 3pm`
 - Confirmation: `parsed_when=2026-02-24 15:00:00`
+
+---
+
+## 25. TUI category manager is modal-first with low-friction child/root create
+
+**Date**: 2026-02-16
+**Relevant tasks**: T010
+
+The TUI category manager enters as a modal (`F9`) over the active view
+instead of replacing the primary item board layout. This keeps the daily
+triage context visible while exposing category operations.
+
+MVP interaction contract:
+
+- `F9` opens/closes category manager.
+- Category list renders as a hierarchy (indented tree).
+- `n` creates a category under the selected category (fast child creation).
+- `N` creates a top-level category.
+- `x` deletes selected category with explicit `y/n` confirmation.
+
+Why this shape:
+
+- It maps directly to low-friction CLI workflows in demo logs (rapid category
+  shaping before/alongside item triage) without forcing users to leave the TUI.
+- Child-create on selection matches the common "build branch now" flow
+  (`Work -> Project -> Subproject`) seen in demos.
+- Root-create remains one keypress away for global categories like `Priority`.
+
+Delete behavior intentionally uses existing core/store invariants:
+
+- Reserved categories cannot be deleted.
+- Categories with children cannot be deleted.
+
+The TUI surfaces these as operation errors in status text instead of adding
+UI-side duplicate validation logic in MVP.
