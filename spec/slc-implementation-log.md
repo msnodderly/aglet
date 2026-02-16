@@ -63,8 +63,14 @@ Completed:
 - Added literate CLI workflow demo with embedded command/output narrative:
   - `spec/literate-cli-demo-priority-and-assignment.md`
   - covers implicit assignment, manual assignment, category pre-existence, view inspection, and priority exclusivity checks.
-- Discovered and documented a domain correctness gap:
-  - exclusive sibling enforcement is not currently applied on manual assign path (`category assign`), allowing `High` and `Medium` simultaneously under exclusive `Priority`.
+- Fixed domain correctness gap for manual assignment:
+  - manual assign path now enforces exclusive sibling cleanup under exclusive parents.
+  - added regression tests in `agenda-core` for manual exclusivity behavior.
+- Added validation demo for exclusivity fix:
+  - `spec/literate-cli-demo-exclusive-fix-validation.md`
+  - includes expected duplicate-name failure behavior and per-branch priority exclusivity checks.
+- Confirmed category naming constraint from runtime/tests:
+  - category names are globally unique (duplicate names across branches are rejected).
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
