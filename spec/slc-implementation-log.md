@@ -37,16 +37,22 @@ Completed:
   - `deleted`
   - `restore`
   - `category list/create/delete`
+  - `category assign`
   - `view list/create/delete`
 - Added core tests for new APIs:
   - `agenda::mark_item_done_sets_done_fields_and_assigns_done_category`
   - `store::test_list_deleted_items_returns_latest_first`
   - `store::test_restore_deleted_item_recreates_item_and_assignments`
+  - `agenda::manual_assignment_applies_subsumption_to_all_ancestors`
 - Full test suite passing (`cargo test`).
 - Manual CLI smoke-tested against a temp DB (`/tmp/aglet-slc-test.ag`).
 - Manual delete/restore recovery flow smoke-tested (`/tmp/aglet-slc-restore.ag`).
 - End-to-end CLI workflow tested on fresh DB (`/tmp/aglet-slc-e2e.ag`):
   - add -> retroactive category assignment -> view create/list -> done -> delete -> deleted -> restore.
+- Nested category manual assignment tested (`/tmp/aglet-nested-assign.ag`):
+  - created `Work -> Project Y -> Frabulator`
+  - assigned `Frabulator` to item via CLI
+  - verified item shows `Frabulator`, `Project Y`, and `Work` via subsumption.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)

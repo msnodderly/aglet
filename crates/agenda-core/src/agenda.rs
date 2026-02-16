@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{NaiveDate, NaiveDateTime, Timelike, Utc};
 
@@ -103,6 +103,7 @@ impl<'a> Agenda<'a> {
         };
 
         self.store.assign_item(item_id, category_id, &assignment)?;
+        self.assign_subsumption_for_category(item_id, category_id)?;
         process_item(self.store, self.classifier, item_id)
     }
 
@@ -198,6 +199,35 @@ impl<'a> Agenda<'a> {
                 continue;
             }
             self.store.assign_item(item_id, *category_id, &assignment)?;
+        }
+
+        Ok(())
+    }
+
+    fn assign_subsumption_for_category(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
+        let categories = self.store.get_hierarchy()?;
+        let categories_by_id: HashMap<CategoryId, &Category> =
+            categories.iter().map(|category| (category.id, category)).collect();
+        let mut existing = self.store.get_assignments_for_item(item_id)?;
+
+        let mut cursor = categories_by_id.get(&category_id).and_then(|category| category.parent);
+        while let Some(parent_id) = cursor {
+            if !existing.contains_key(&parent_id) {
+                let parent_name = categories_by_id
+                    .get(&parent_id)
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| parent_id.to_string());
+                let assignment = Assignment {
+                    source: AssignmentSource::Subsumption,
+                    assigned_at: Utc::now(),
+                    sticky: true,
+                    origin: Some(format!("subsumption:{parent_name}")),
+                };
+                self.store.assign_item(item_id, parent_id, &assignment)?;
+                existing.insert(parent_id, assignment);
+            }
+
+            cursor = categories_by_id.get(&parent_id).and_then(|category| category.parent);
         }
 
         Ok(())
@@ -531,6 +561,41 @@ mod tests {
             AssignmentSource::Manual
         );
         assert!(assignments.contains_key(&escalated.id));
+    }
+
+    #[test]
+    fn manual_assignment_applies_subsumption_to_all_ancestors() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+        let frabulator = child_category("Frabulator", project_y.id, false);
+        store.create_category(&frabulator).unwrap();
+
+        let item = Item::new("Talk to Sarah".to_string());
+        store.create_item(&item).unwrap();
+
+        agenda
+            .assign_item_manual(item.id, frabulator.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&frabulator.id).map(|assignment| assignment.source),
+            Some(AssignmentSource::Manual)
+        );
+        assert_eq!(
+            assignments.get(&project_y.id).map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption)
+        );
+        assert_eq!(
+            assignments.get(&work.id).map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption)
+        );
     }
 
     #[test]
