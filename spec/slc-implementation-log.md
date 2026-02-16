@@ -93,6 +93,9 @@ Completed:
 - Executed cross-domain scenario batch and recorded results matrix:
   - `spec/cross-domain-scenarios-run-results.md`
   - all expected outcomes passed in this run.
+- Executed real-world end-to-end note-taking workflow from Wikipedia EGFR medical applications:
+  - `spec/literate-cli-demo-egfr-wikipedia.md`
+  - demonstrates 3-pass workflow (taxonomy seed, detailed notes + assignment, retroactive concept categories + views).
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
