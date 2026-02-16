@@ -27,6 +27,7 @@ name = "agenda-tui"
 version = "0.1.0"
 dependencies = [
  "agenda-core",
+ "chrono",
  "crossterm",
  "ratatui",
 ]
