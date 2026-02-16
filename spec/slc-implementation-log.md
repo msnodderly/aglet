@@ -60,6 +60,11 @@ Completed:
   - `view list` prints a usage hint for viewing contents
   - restore ID parsing now uses explicit UUID type
 - Domain-gap planning doc added: `spec/domain-gaps-main-iterations.md`.
+- Added literate CLI workflow demo with embedded command/output narrative:
+  - `spec/literate-cli-demo-priority-and-assignment.md`
+  - covers implicit assignment, manual assignment, category pre-existence, view inspection, and priority exclusivity checks.
+- Discovered and documented a domain correctness gap:
+  - exclusive sibling enforcement is not currently applied on manual assign path (`category assign`), allowing `High` and `Medium` simultaneously under exclusive `Priority`.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)

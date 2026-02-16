@@ -80,6 +80,11 @@ Why this is domain work:
 
 - Subsumption and exclusivity interactions require engine/store correctness, not just CLI wiring.
 
+### Confirmed symptom from current demo
+
+- With `Priority` marked exclusive and children `High`/`Medium`/`Low`, assigning `High` and then `Medium` through manual CLI assign currently leaves both child assignments on the item.
+- This indicates mutual exclusion is not fully enforced across all manual assignment paths yet.
+
 ## 5. Undo-Ready Mutation Ledger (Without Shipping Undo Yet)
 
 Current state:
