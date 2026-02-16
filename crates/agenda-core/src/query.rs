@@ -761,6 +761,158 @@ mod tests {
     }
 
     #[test]
+    fn resolve_view_include_and_exclude_matches_miguel_without_alice_workflow() {
+        let reference = day(2026, 2, 16);
+        let work = Uuid::new_v4();
+        let miguel = Uuid::new_v4();
+        let alice = Uuid::new_v4();
+        let project_atlas = Uuid::new_v4();
+        let project_delta = Uuid::new_v4();
+        let high = Uuid::new_v4();
+        let medium = Uuid::new_v4();
+        let priority = Uuid::new_v4();
+
+        let items = vec![
+            item_with_assignments(
+                "Project Atlas: Miguel and Alice triage defects",
+                None,
+                None,
+                &[work, miguel, alice, project_atlas, high, priority],
+            ),
+            item_with_assignments(
+                "Project Delta: Miguel close open QA defects",
+                None,
+                None,
+                &[work, miguel, project_delta, medium, priority],
+            ),
+            item_with_assignments(
+                "Project Atlas: Miguel draft rollout checklist",
+                None,
+                None,
+                &[work, miguel, project_atlas, high, priority],
+            ),
+        ];
+
+        let mut criteria = Query::default();
+        criteria.include.extend([work, miguel]);
+        criteria.exclude.insert(alice);
+        let view = view(criteria, vec![], true, "Unassigned");
+
+        let result = resolve_view(&view, &items, &[], reference);
+        assert!(result.sections.is_empty());
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched items")),
+            vec![items[1].id, items[2].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_include_and_exclude_matches_atlas_high_not_sarah_workflow() {
+        let reference = day(2026, 2, 16);
+        let project_atlas = Uuid::new_v4();
+        let high = Uuid::new_v4();
+        let priority = Uuid::new_v4();
+        let sarah = Uuid::new_v4();
+        let miguel = Uuid::new_v4();
+        let alice = Uuid::new_v4();
+
+        let items = vec![
+            item_with_assignments(
+                "Project Atlas: Sarah high-priority production hotfix",
+                None,
+                None,
+                &[project_atlas, sarah, high, priority],
+            ),
+            item_with_assignments(
+                "Project Atlas: Miguel and Alice triage defects",
+                None,
+                None,
+                &[project_atlas, miguel, alice, high, priority],
+            ),
+            item_with_assignments(
+                "Project Atlas: Miguel draft rollout checklist",
+                None,
+                None,
+                &[project_atlas, miguel, high, priority],
+            ),
+        ];
+
+        let mut criteria = Query::default();
+        criteria.include.extend([project_atlas, high]);
+        criteria.exclude.insert(sarah);
+        let view = view(criteria, vec![], true, "Unassigned");
+
+        let result = resolve_view(&view, &items, &[], reference);
+        assert!(result.sections.is_empty());
+        assert_eq!(
+            item_ids(result.unmatched.as_ref().expect("unmatched items")),
+            vec![items[1].id, items[2].id]
+        );
+    }
+
+    #[test]
+    fn resolve_view_include_and_exclude_can_intentionally_result_in_empty_set() {
+        let reference = day(2026, 2, 16);
+        let high = Uuid::new_v4();
+        let priority = Uuid::new_v4();
+        let project_cicada = Uuid::new_v4();
+        let priya = Uuid::new_v4();
+
+        let items = vec![
+            item_with_assignments(
+                "Clean out the garage",
+                None,
+                None,
+                &[high, priority],
+            ),
+            item_with_assignments(
+                "Project Atlas: Miguel draft rollout checklist",
+                None,
+                None,
+                &[high, priority],
+            ),
+            item_with_assignments(
+                "Project Cicada: Sarah and Priya incident rehearsal",
+                None,
+                None,
+                &[project_cicada, priya],
+            ),
+        ];
+
+        let mut high_without_priority = Query::default();
+        high_without_priority.include.insert(high);
+        high_without_priority.exclude.insert(priority);
+        let high_without_priority_view =
+            view(high_without_priority, vec![], true, "Unassigned");
+        let high_without_priority_result =
+            resolve_view(&high_without_priority_view, &items, &[], reference);
+
+        assert!(high_without_priority_result.sections.is_empty());
+        assert!(
+            high_without_priority_result
+                .unmatched
+                .as_ref()
+                .expect("unmatched")
+                .is_empty()
+        );
+
+        let mut cicada_without_priya = Query::default();
+        cicada_without_priya.include.insert(project_cicada);
+        cicada_without_priya.exclude.insert(priya);
+        let cicada_without_priya_view = view(cicada_without_priya, vec![], true, "Unassigned");
+        let cicada_without_priya_result = resolve_view(&cicada_without_priya_view, &items, &[], reference);
+
+        assert!(cicada_without_priya_result.sections.is_empty());
+        assert!(
+            cicada_without_priya_result
+                .unmatched
+                .as_ref()
+                .expect("unmatched")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn resolve_view_collects_unmatched_with_custom_label() {
         let reference = day(2026, 2, 11);
         let work = Uuid::new_v4();
