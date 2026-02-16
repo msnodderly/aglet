@@ -6,7 +6,7 @@ use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View};
 use agenda_core::query::resolve_view;
 use agenda_core::store::Store;
-use chrono::{Local, NaiveDateTime};
+use chrono::{Local, NaiveDateTime, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -73,6 +73,7 @@ struct CategoryListRow {
 enum Mode {
     Normal,
     AddInput,
+    ItemEditInput,
     FilterInput,
     ViewPicker,
     ConfirmDelete,
@@ -159,6 +160,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::AddInput => self.handle_add_key(code, agenda),
+            Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
@@ -179,6 +181,16 @@ impl App {
                 self.mode = Mode::AddInput;
                 self.input.clear();
                 self.status = "Add item: type text and press Enter".to_string();
+            }
+            KeyCode::Char('e') => {
+                if let Some(item) = self.selected_item() {
+                    let existing_text = item.text.clone();
+                    self.mode = Mode::ItemEditInput;
+                    self.input = existing_text;
+                    self.status = "Edit item text: Enter to save, Esc to cancel".to_string();
+                } else {
+                    self.status = "No selected item to edit".to_string();
+                }
             }
             KeyCode::Char('/') => {
                 self.mode = Mode::FilterInput;
@@ -256,6 +268,61 @@ impl App {
                 }
                 self.mode = Mode::Normal;
                 self.input.clear();
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_item_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = "Edit canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Edit failed: no selected item".to_string();
+                    return Ok(false);
+                };
+
+                let updated_text = self.input.trim().to_string();
+                if updated_text.is_empty() {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Edit canceled: text cannot be empty".to_string();
+                    return Ok(false);
+                }
+
+                let mut item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
+                if item.text == updated_text {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.status = "Edit canceled: no text change".to_string();
+                    return Ok(false);
+                }
+
+                item.text = updated_text;
+                item.modified_at = Utc::now();
+                let reference_date = Local::now().date_naive();
+                agenda
+                    .update_item_with_reference_date(&item, reference_date)
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = "Item text updated".to_string();
             }
             KeyCode::Backspace => {
                 self.input.pop();
@@ -726,6 +793,7 @@ impl App {
     fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input),
+            Mode::ItemEditInput => format!("Edit> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
@@ -739,8 +807,9 @@ impl App {
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
             Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
+            Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
             _ => {
-                "n:add  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  e:edit  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -1042,6 +1111,16 @@ impl App {
             .position(|row| row.id == category_id)
         {
             self.category_index = index;
+        }
+    }
+
+    fn set_item_selection_by_id(&mut self, item_id: ItemId) {
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            if let Some(item_index) = slot.items.iter().position(|item| item.id == item_id) {
+                self.slot_index = slot_index;
+                self.item_index = item_index;
+                return;
+            }
         }
     }
 }
