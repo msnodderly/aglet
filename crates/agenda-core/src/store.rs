@@ -1382,6 +1382,22 @@ mod tests {
     }
 
     #[test]
+    fn test_create_items_allows_duplicate_text_with_distinct_ids() {
+        let store = Store::open_memory().unwrap();
+        let first = Item::new("Buy milk".to_string());
+        let second = Item::new("Buy milk".to_string());
+        assert_ne!(first.id, second.id);
+
+        store.create_item(&first).unwrap();
+        store.create_item(&second).unwrap();
+
+        let items = store.list_items().unwrap();
+        let duplicates: Vec<&Item> = items.iter().filter(|item| item.text == "Buy milk").collect();
+        assert_eq!(duplicates.len(), 2);
+        assert_ne!(duplicates[0].id, duplicates[1].id);
+    }
+
+    #[test]
     fn test_item_with_assignments_loaded() {
         let store = Store::open_memory().unwrap();
         let item = Item::new("Test assignments".to_string());
