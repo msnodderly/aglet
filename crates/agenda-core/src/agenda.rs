@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
-use chrono::Utc;
+use chrono::{NaiveDate, NaiveDateTime, Utc};
 
+use crate::dates::{BasicDateParser, DateParser};
 use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, ProcessItemResult};
-use crate::error::Result;
+use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
     Assignment, AssignmentSource, Category, CategoryId, Item, ItemId, Section, View,
@@ -14,11 +15,16 @@ use crate::store::Store;
 pub struct Agenda<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
+    date_parser: BasicDateParser,
 }
 
 impl<'a> Agenda<'a> {
     pub fn new(store: &'a Store, classifier: &'a dyn Classifier) -> Self {
-        Self { store, classifier }
+        Self {
+            store,
+            classifier,
+            date_parser: BasicDateParser,
+        }
     }
 
     pub fn store(&self) -> &Store {
@@ -26,13 +32,51 @@ impl<'a> Agenda<'a> {
     }
 
     pub fn create_item(&self, item: &Item) -> Result<ProcessItemResult> {
-        self.store.create_item(item)?;
-        process_item(self.store, self.classifier, item.id)
+        self.create_item_with_reference_date(item, Utc::now().date_naive())
+    }
+
+    pub fn create_item_with_reference_date(
+        &self,
+        item: &Item,
+        reference_date: NaiveDate,
+    ) -> Result<ProcessItemResult> {
+        let mut item_to_create = item.clone();
+        let parsed_datetime = self.parse_datetime_from_text(&item_to_create.text, reference_date);
+        if let Some(datetime) = parsed_datetime {
+            item_to_create.when_date = Some(datetime);
+        }
+
+        self.store.create_item(&item_to_create)?;
+
+        if parsed_datetime.is_some() {
+            self.assign_when_provenance(item_to_create.id)?;
+        }
+
+        process_item(self.store, self.classifier, item_to_create.id)
     }
 
     pub fn update_item(&self, item: &Item) -> Result<ProcessItemResult> {
-        self.store.update_item(item)?;
-        process_item(self.store, self.classifier, item.id)
+        self.update_item_with_reference_date(item, Utc::now().date_naive())
+    }
+
+    pub fn update_item_with_reference_date(
+        &self,
+        item: &Item,
+        reference_date: NaiveDate,
+    ) -> Result<ProcessItemResult> {
+        let mut item_to_update = item.clone();
+        let parsed_datetime = self.parse_datetime_from_text(&item_to_update.text, reference_date);
+        if let Some(datetime) = parsed_datetime {
+            item_to_update.when_date = Some(datetime);
+        }
+
+        self.store.update_item(&item_to_update)?;
+
+        if parsed_datetime.is_some() {
+            self.assign_when_provenance(item_to_update.id)?;
+        }
+
+        process_item(self.store, self.classifier, item_to_update.id)
     }
 
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
@@ -141,21 +185,55 @@ impl<'a> Agenda<'a> {
         }
         Ok(())
     }
+
+    fn parse_datetime_from_text(
+        &self,
+        text: &str,
+        reference_date: NaiveDate,
+    ) -> Option<NaiveDateTime> {
+        self.date_parser
+            .parse(text, reference_date)
+            .map(|parsed| parsed.datetime)
+    }
+
+    fn assign_when_provenance(&self, item_id: ItemId) -> Result<()> {
+        let when_category_id = self.when_category_id()?;
+        let assignment = Assignment {
+            source: AssignmentSource::AutoMatch,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some("nlp:date".to_string()),
+        };
+        self.store
+            .assign_item(item_id, when_category_id, &assignment)
+    }
+
+    fn when_category_id(&self) -> Result<CategoryId> {
+        self.store
+            .get_hierarchy()?
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .map(|category| category.id)
+            .ok_or_else(|| AgendaError::StorageError {
+                source: Box::new(std::io::Error::other("missing reserved When category")),
+            })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use chrono::Utc;
+    use chrono::{NaiveDate, NaiveDateTime, Utc};
 
     use super::Agenda;
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
         Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, Query,
-        Section, View,
+        Section, View, WhenBucket,
     };
+    use crate::query::resolve_when_bucket;
     use crate::store::Store;
 
     fn category(name: &str, implicit: bool) -> Category {
@@ -191,6 +269,24 @@ mod tests {
             sticky: true,
             origin: Some(origin.to_string()),
         }
+    }
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    }
+
+    fn datetime(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
+        date(y, m, d).and_hms_opt(h, min, 0).expect("valid time")
+    }
+
+    fn when_category_id(store: &Store) -> CategoryId {
+        store
+            .get_hierarchy()
+            .expect("hierarchy available")
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .expect("reserved When category exists")
+            .id
     }
 
     #[test]
@@ -236,6 +332,90 @@ mod tests {
             .get_assignments_for_item(item.id)
             .unwrap()
             .contains_key(&urgent.id));
+    }
+
+    #[test]
+    fn create_item_parses_date_and_sets_when_provenance() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let when_id = when_category_id(&store);
+
+        let item = Item::new("next Tuesday at 3pm".to_string());
+        agenda
+            .create_item_with_reference_date(&item, date(2026, 2, 18))
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(loaded.when_date, Some(datetime(2026, 2, 24, 15, 0)));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let when_assignment = assignments.get(&when_id).expect("when assignment exists");
+        assert_eq!(when_assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(when_assignment.origin.as_deref(), Some("nlp:date"));
+    }
+
+    #[test]
+    fn update_item_parses_new_date_text_and_sets_when_date() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("plain task".to_string());
+        agenda
+            .create_item_with_reference_date(&item, date(2026, 2, 16))
+            .unwrap();
+
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "today at noon".to_string();
+        updated.modified_at = Utc::now();
+
+        agenda
+            .update_item_with_reference_date(&updated, date(2026, 2, 16))
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(loaded.when_date, Some(datetime(2026, 2, 16, 12, 0)));
+    }
+
+    #[test]
+    fn update_item_without_parse_does_not_auto_clear_when_date() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("tomorrow".to_string());
+        agenda
+            .create_item_with_reference_date(&item, date(2026, 2, 16))
+            .unwrap();
+
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "just notes now".to_string();
+        updated.modified_at = Utc::now();
+
+        agenda
+            .update_item_with_reference_date(&updated, date(2026, 2, 16))
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(loaded.when_date, Some(datetime(2026, 2, 17, 0, 0)));
+    }
+
+    #[test]
+    fn parsed_when_date_places_item_in_expected_bucket() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let reference_date = date(2026, 2, 16);
+
+        let item = Item::new("today at noon".to_string());
+        agenda
+            .create_item_with_reference_date(&item, reference_date)
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        let bucket = resolve_when_bucket(loaded.when_date, reference_date);
+        assert_eq!(bucket, WhenBucket::Today);
     }
 
     #[test]
@@ -302,7 +482,9 @@ mod tests {
         let mut escalated = category("Escalated", false);
         let mut criteria = Query::default();
         criteria.include.insert(urgent.id);
-        escalated.conditions.push(Condition::Profile { criteria: Box::new(criteria) });
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
         store.create_category(&escalated).unwrap();
 
         let item = Item::new("Task".to_string());
@@ -338,7 +520,9 @@ mod tests {
             let mut stage = store.get_category(stages[index].id).unwrap();
             let mut criteria = Query::default();
             criteria.include.insert(stages[index + 1].id);
-            stage.conditions = vec![Condition::Profile { criteria: Box::new(criteria) }];
+            stage.conditions = vec![Condition::Profile {
+                criteria: Box::new(criteria),
+            }];
             store.update_category(&stage).unwrap();
         }
 
@@ -450,7 +634,9 @@ mod tests {
         let mut criteria = Query::default();
         criteria.include.insert(work.id);
         criteria.include.insert(urgent.id);
-        escalated.conditions.push(Condition::Profile { criteria: Box::new(criteria) });
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
         store.create_category(&escalated).unwrap();
 
         let item = Item::new("task".to_string());

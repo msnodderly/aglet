@@ -495,3 +495,59 @@ repeatedly (on refresh, on view switch, on engine completion). User
 actions call edit-through functions, which mutate the store, then the
 TUI re-resolves to show the updated state. The TUI never caches
 resolved results across mutations.
+
+---
+
+## 20. BasicDateParser selection and two-digit year policy
+
+**Date**: 2026-02-16
+**Relevant tasks**: T029
+
+When input text contains multiple supported absolute date expressions,
+`BasicDateParser` returns the earliest match in the text (lowest start
+offset). If two candidates start at the same offset, it prefers the longer
+span (for example, a full month-day-year match over the month-day prefix).
+
+`M/D/YY` uses a deterministic MVP mapping of `YY -> 2000 + YY` (for example,
+`12/5/26` resolves to 2026-12-05). This avoids ambiguous century inference
+and keeps parser output stable.
+
+---
+
+## 21. BasicDateParser time composition defaults
+
+**Date**: 2026-02-16
+**Relevant tasks**: T031
+
+Time parsing is only applied when a supported date expression has already
+been matched. Supported time forms are `at 3pm`, `at 15:00`, and `at noon`,
+attached as a trailing compound expression (for example, `next Tuesday at 3pm`).
+
+Deterministic defaults:
+
+- Date-only matches resolve to `00:00`.
+- `at noon` resolves to `12:00`.
+- Time-only input remains a no-match (`None`).
+- If a date is followed by an invalid time token (for example `at 25:00`),
+  the parser keeps the valid date match at `00:00` rather than failing.
+
+---
+
+## 22. Date parser integration is create/update additive
+
+**Date**: 2026-02-16
+**Relevant tasks**: T032
+
+`Agenda` create/update flows run `BasicDateParser` before engine processing.
+If parsing succeeds, `when_date` is set to the parsed datetime and persisted.
+If parsing fails, existing `when_date` is left unchanged (no auto-clear).
+
+On parse success, provenance is recorded by upserting an assignment to the
+reserved `When` category with `source = AutoMatch` and
+`origin = "nlp:date"`. This assignment is provenance/inspection metadata;
+virtual `WhenBucket` placement continues to be computed from `when_date` at
+query time.
+
+The default create/update methods resolve `reference_date` from current UTC
+date. Deterministic variants with explicit `reference_date` exist for tests
+and callers that need stable date resolution behavior.
