@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use chrono::{NaiveDate, NaiveDateTime, Utc};
+use chrono::{NaiveDate, NaiveDateTime, Timelike, Utc};
 
 use crate::dates::{BasicDateParser, DateParser};
 use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, ProcessItemResult};
@@ -95,6 +95,8 @@ impl<'a> Agenda<'a> {
         category_id: CategoryId,
         origin: Option<String>,
     ) -> Result<ProcessItemResult> {
+        self.enforce_manual_exclusive_siblings(item_id, category_id)?;
+
         let assignment = Assignment {
             source: AssignmentSource::Manual,
             assigned_at: Utc::now(),
@@ -103,6 +105,7 @@ impl<'a> Agenda<'a> {
         };
 
         self.store.assign_item(item_id, category_id, &assignment)?;
+        self.assign_subsumption_for_category(item_id, category_id)?;
         process_item(self.store, self.classifier, item_id)
     }
 
@@ -151,6 +154,34 @@ impl<'a> Agenda<'a> {
         process_item(self.store, self.classifier, item_id)
     }
 
+    pub fn mark_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let mut item = self.store.get_item(item_id)?;
+        let now = Utc::now();
+        let done_at = now
+            .naive_utc()
+            .with_nanosecond(0)
+            .unwrap_or(now.naive_utc());
+        item.is_done = true;
+        item.done_date = Some(done_at);
+        item.modified_at = now;
+        self.store.update_item(&item)?;
+
+        let done_category_id = self.done_category_id()?;
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: now,
+            sticky: true,
+            origin: Some("manual:done".to_string()),
+        };
+        self.store
+            .assign_item(item_id, done_category_id, &assignment)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn delete_item(&self, item_id: ItemId, deleted_by: &str) -> Result<()> {
+        self.store.delete_item(item_id, deleted_by)
+    }
+
     fn assign_manual_categories(
         &self,
         item_id: ItemId,
@@ -179,6 +210,73 @@ impl<'a> Agenda<'a> {
         Ok(())
     }
 
+    fn enforce_manual_exclusive_siblings(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<()> {
+        let category = self.store.get_category(category_id)?;
+        let Some(parent_id) = category.parent else {
+            return Ok(());
+        };
+
+        let parent = self.store.get_category(parent_id)?;
+        if !parent.is_exclusive {
+            return Ok(());
+        }
+
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        for sibling_id in parent.children {
+            if sibling_id == category_id {
+                continue;
+            }
+            if assignments.contains_key(&sibling_id) {
+                self.store.unassign_item(item_id, sibling_id)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn assign_subsumption_for_category(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<()> {
+        let categories = self.store.get_hierarchy()?;
+        let categories_by_id: HashMap<CategoryId, &Category> = categories
+            .iter()
+            .map(|category| (category.id, category))
+            .collect();
+        let mut existing = self.store.get_assignments_for_item(item_id)?;
+
+        let mut cursor = categories_by_id
+            .get(&category_id)
+            .and_then(|category| category.parent);
+        while let Some(parent_id) = cursor {
+            if !existing.contains_key(&parent_id) {
+                let parent_name = categories_by_id
+                    .get(&parent_id)
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| parent_id.to_string());
+                let assignment = Assignment {
+                    source: AssignmentSource::Subsumption,
+                    assigned_at: Utc::now(),
+                    sticky: true,
+                    origin: Some(format!("subsumption:{parent_name}")),
+                };
+                self.store.assign_item(item_id, parent_id, &assignment)?;
+                existing.insert(parent_id, assignment);
+            }
+
+            cursor = categories_by_id
+                .get(&parent_id)
+                .and_then(|category| category.parent);
+        }
+
+        Ok(())
+    }
+
     fn unassign_categories(&self, item_id: ItemId, targets: &HashSet<CategoryId>) -> Result<()> {
         for category_id in targets {
             self.store.unassign_item(item_id, *category_id)?;
@@ -197,7 +295,7 @@ impl<'a> Agenda<'a> {
     }
 
     fn assign_when_provenance(&self, item_id: ItemId) -> Result<()> {
-        let when_category_id = self.when_category_id()?;
+        let when_category_id = self.category_id_by_name("When")?;
         let assignment = Assignment {
             source: AssignmentSource::AutoMatch,
             assigned_at: Utc::now(),
@@ -208,14 +306,20 @@ impl<'a> Agenda<'a> {
             .assign_item(item_id, when_category_id, &assignment)
     }
 
-    fn when_category_id(&self) -> Result<CategoryId> {
+    fn done_category_id(&self) -> Result<CategoryId> {
+        self.category_id_by_name("Done")
+    }
+
+    fn category_id_by_name(&self, category_name: &str) -> Result<CategoryId> {
         self.store
             .get_hierarchy()?
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .find(|category| category.name.eq_ignore_ascii_case(category_name))
             .map(|category| category.id)
             .ok_or_else(|| AgendaError::StorageError {
-                source: Box::new(std::io::Error::other("missing reserved When category")),
+                source: Box::new(std::io::Error::other(format!(
+                    "missing category: {category_name}"
+                ))),
             })
     }
 }
@@ -233,7 +337,7 @@ mod tests {
         Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, Query,
         Section, View, WhenBucket,
     };
-    use crate::query::resolve_when_bucket;
+    use crate::query::{resolve_view, resolve_when_bucket};
     use crate::store::Store;
 
     fn category(name: &str, implicit: bool) -> Category {
@@ -501,6 +605,148 @@ mod tests {
             AssignmentSource::Manual
         );
         assert!(assignments.contains_key(&escalated.id));
+    }
+
+    #[test]
+    fn manual_assignment_applies_subsumption_to_all_ancestors() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+        let frabulator = child_category("Frabulator", project_y.id, false);
+        store.create_category(&frabulator).unwrap();
+
+        let item = Item::new("Talk to Sarah".to_string());
+        store.create_item(&item).unwrap();
+
+        agenda
+            .assign_item_manual(item.id, frabulator.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments
+                .get(&frabulator.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Manual)
+        );
+        assert_eq!(
+            assignments
+                .get(&project_y.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption)
+        );
+        assert_eq!(
+            assignments
+                .get(&work.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption)
+        );
+    }
+
+    #[test]
+    fn manual_assignment_enforces_exclusive_siblings() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        store.create_category(&priority).unwrap();
+
+        let high = child_category("High", priority.id, false);
+        let medium = child_category("Medium", priority.id, false);
+        store.create_category(&high).unwrap();
+        store.create_category(&medium).unwrap();
+
+        let item = Item::new("Finish report".to_string());
+        store.create_item(&item).unwrap();
+
+        agenda
+            .assign_item_manual(item.id, high.id, Some("manual:user".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, medium.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&high.id));
+        assert!(assignments.contains_key(&medium.id));
+    }
+
+    #[test]
+    fn manual_assignment_rejects_duplicate_category_names() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_x = child_category("Project X", work.id, false);
+        store.create_category(&project_x).unwrap();
+
+        let mut work_priority = child_category("Priority", work.id, false);
+        work_priority.is_exclusive = true;
+        agenda.create_category(&work_priority).unwrap();
+
+        let mut project_priority = child_category("Priority", project_x.id, false);
+        project_priority.is_exclusive = true;
+        let err = agenda.create_category(&project_priority).unwrap_err();
+        assert!(matches!(err, AgendaError::DuplicateName { .. }));
+    }
+
+    #[test]
+    fn manual_assignment_enforces_exclusivity_per_priority_branch() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_x = child_category("Project X", work.id, false);
+        store.create_category(&project_x).unwrap();
+
+        let mut work_priority = child_category("Priority", work.id, false);
+        work_priority.is_exclusive = true;
+        store.create_category(&work_priority).unwrap();
+        let work_high = child_category("High", work_priority.id, false);
+        let work_medium = child_category("Medium", work_priority.id, false);
+        store.create_category(&work_high).unwrap();
+        store.create_category(&work_medium).unwrap();
+
+        let mut project_priority = child_category("Project X Priority", project_x.id, false);
+        project_priority.is_exclusive = true;
+        store.create_category(&project_priority).unwrap();
+        let project_high = child_category("Project X High", project_priority.id, false);
+        let project_medium = child_category("Project X Medium", project_priority.id, false);
+        store.create_category(&project_high).unwrap();
+        store.create_category(&project_medium).unwrap();
+
+        let item = Item::new("Prepare sprint plan".to_string());
+        store.create_item(&item).unwrap();
+
+        agenda
+            .assign_item_manual(item.id, work_high.id, Some("manual:user".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, project_high.id, Some("manual:user".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, work_medium.id, Some("manual:user".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, project_medium.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&work_high.id));
+        assert!(assignments.contains_key(&work_medium.id));
+        assert!(!assignments.contains_key(&project_high.id));
+        assert!(assignments.contains_key(&project_medium.id));
     }
 
     #[test]
@@ -836,5 +1082,100 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&trigger.id));
+    }
+
+    #[test]
+    fn db_backed_setup_with_items_categories_views_and_assignments_resolves_filters() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+
+        let mut project_atlas = child_category("Project Atlas", work.id, true);
+        project_atlas.enable_implicit_string = true;
+        agenda.create_category(&project_atlas).unwrap();
+
+        let mut miguel = child_category("Miguel", work.id, true);
+        miguel.enable_implicit_string = true;
+        agenda.create_category(&miguel).unwrap();
+
+        let mut alice = child_category("Alice", work.id, true);
+        alice.enable_implicit_string = true;
+        agenda.create_category(&alice).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        agenda.create_category(&priority).unwrap();
+        let high = child_category("High", priority.id, false);
+        agenda.create_category(&high).unwrap();
+
+        let collaborative = Item::new(
+            "Project Atlas: Miguel and Alice triage defects tomorrow at noon".to_string(),
+        );
+        agenda.create_item(&collaborative).unwrap();
+        agenda
+            .assign_item_manual(collaborative.id, high.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let solo = Item::new("Project Atlas: Miguel draft rollout checklist".to_string());
+        agenda.create_item(&solo).unwrap();
+        agenda
+            .assign_item_manual(solo.id, high.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let collaborative_assignments = store.get_assignments_for_item(collaborative.id).unwrap();
+        assert!(collaborative_assignments.contains_key(&project_atlas.id));
+        assert!(collaborative_assignments.contains_key(&work.id));
+        assert!(collaborative_assignments.contains_key(&miguel.id));
+        assert!(collaborative_assignments.contains_key(&alice.id));
+        assert!(collaborative_assignments.contains_key(&high.id));
+
+        let mut view = view("Miguel Without Alice");
+        view.criteria.include.extend([work.id, miguel.id]);
+        view.criteria.exclude.insert(alice.id);
+        store.create_view(&view).unwrap();
+
+        let persisted_view = store.get_view(view.id).unwrap();
+        let items = store.list_items().unwrap();
+        let categories = store.get_hierarchy().unwrap();
+        let result = resolve_view(&persisted_view, &items, &categories, date(2026, 2, 16));
+
+        assert!(result.sections.is_empty());
+        let unmatched = result.unmatched.expect("unmatched group is enabled");
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].id, solo.id);
+    }
+
+    #[test]
+    fn mark_item_done_sets_done_fields_and_assigns_done_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Ship SLC".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let _result = agenda.mark_item_done(item.id).unwrap();
+        let loaded = store.get_item(item.id).unwrap();
+        assert!(loaded.is_done);
+        assert!(loaded.done_date.is_some());
+
+        let done_category_id = store
+            .get_hierarchy()
+            .unwrap()
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category exists")
+            .id;
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&done_category_id));
+        assert_eq!(
+            assignments
+                .get(&done_category_id)
+                .and_then(|assignment| assignment.origin.as_deref()),
+            Some("manual:done")
+        );
     }
 }

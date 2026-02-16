@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, Category, CategoryId, Column, Condition, Item, ItemId,
-    Query, Section, View,
+    DeletionLogEntry, Query, Section, View,
 };
 
 const SCHEMA_VERSION: i32 = 1;
@@ -215,6 +215,69 @@ impl Store {
         rows.into_iter()
             .map(|item| self.load_assignments(item))
             .collect()
+    }
+
+    pub fn list_deleted_items(&self) -> Result<Vec<DeletionLogEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, text, note, entry_date, when_date, done_date, is_done,
+                    assignments_json, deleted_at, deleted_by
+             FROM deletion_log
+             ORDER BY deleted_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::row_to_deleted_item)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn restore_deleted_item(&self, log_entry_id: Uuid) -> Result<ItemId> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, text, note, entry_date, when_date, done_date, is_done,
+                    assignments_json, deleted_at, deleted_by
+             FROM deletion_log
+             WHERE id = ?1",
+        )?;
+        let entry = stmt
+            .query_row(params![log_entry_id.to_string()], Self::row_to_deleted_item)
+            .map_err(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => AgendaError::NotFound {
+                    entity: "DeletionLogEntry",
+                    id: log_entry_id,
+                },
+                other => AgendaError::from(other),
+            })?;
+
+        if self.get_item(entry.item_id).is_ok() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("item {} already exists", entry.item_id),
+            });
+        }
+
+        let now = Utc::now();
+        let item = Item {
+            id: entry.item_id,
+            text: entry.text,
+            note: entry.note,
+            created_at: now,
+            modified_at: now,
+            entry_date: entry.entry_date,
+            when_date: entry.when_date,
+            done_date: entry.done_date,
+            is_done: entry.is_done,
+            assignments: HashMap::new(),
+        };
+        self.create_item(&item)?;
+
+        let assignments: HashMap<CategoryId, Assignment> =
+            serde_json::from_str(&entry.assignments_json).unwrap_or_default();
+        for (category_id, assignment) in assignments {
+            if self.get_category(category_id).is_err() {
+                continue;
+            }
+            self.assign_item(item.id, category_id, &assignment)?;
+        }
+
+        Ok(item.id)
     }
 
     // ── Category CRUD ───────────────────────────────────────────
@@ -600,6 +663,34 @@ impl Store {
         })
     }
 
+    fn row_to_deleted_item(row: &Row<'_>) -> rusqlite::Result<DeletionLogEntry> {
+        let id_str: String = row.get(0)?;
+        let item_id_str: String = row.get(1)?;
+        let entry_str: String = row.get(4)?;
+        let when_str: Option<String> = row.get(5)?;
+        let done_str: Option<String> = row.get(6)?;
+        let is_done_int: i32 = row.get(7)?;
+        let deleted_at_str: String = row.get(9)?;
+
+        Ok(DeletionLogEntry {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            item_id: Uuid::parse_str(&item_id_str).unwrap_or_default(),
+            text: row.get(2)?,
+            note: row.get(3)?,
+            entry_date: NaiveDate::parse_from_str(&entry_str, "%Y-%m-%d").unwrap_or_default(),
+            when_date: when_str
+                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            done_date: done_str
+                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            is_done: is_done_int != 0,
+            assignments_json: row.get(8)?,
+            deleted_at: DateTime::parse_from_rfc3339(&deleted_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_default(),
+            deleted_by: row.get(10)?,
+        })
+    }
+
     fn load_assignments(&self, mut item: Item) -> Result<Item> {
         let mut stmt = self.conn.prepare(
             "SELECT category_id, source, assigned_at, sticky, origin
@@ -981,7 +1072,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssignmentSource, Category, Column, Item, Query, Section, View};
+    use crate::model::{Assignment, AssignmentSource, Category, Column, Item, Query, Section, View};
     use chrono::{Duration, Utc};
     use rusqlite::params;
     use std::collections::HashSet;
@@ -1218,9 +1309,66 @@ mod tests {
                 "SELECT COUNT(*) FROM deletion_log WHERE item_id = ?1",
                 params![id.to_string()],
                 |row| row.get(0),
-            )
+        )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_list_deleted_items_returns_latest_first() {
+        let store = Store::open_memory().unwrap();
+
+        let first = Item::new("First deleted".to_string());
+        let second = Item::new("Second deleted".to_string());
+        store.create_item(&first).unwrap();
+        store.create_item(&second).unwrap();
+
+        store.delete_item(first.id, "user").unwrap();
+        store.delete_item(second.id, "user").unwrap();
+
+        let deleted = store.list_deleted_items().unwrap();
+        assert_eq!(deleted.len(), 2);
+        assert_eq!(deleted[0].item_id, second.id);
+        assert_eq!(deleted[1].item_id, first.id);
+    }
+
+    #[test]
+    fn test_restore_deleted_item_recreates_item_and_assignments() {
+        let store = Store::open_memory().unwrap();
+        let category_id = make_category(&store, "RestoreTarget");
+
+        let item = Item::new("Restore me".to_string());
+        store.create_item(&item).unwrap();
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some("manual:test".to_string()),
+        };
+        store
+            .assign_item(item.id, category_id, &assignment)
+            .unwrap();
+        store.delete_item(item.id, "user").unwrap();
+
+        let log_entry_id: Uuid = store
+            .conn
+            .query_row(
+                "SELECT id FROM deletion_log WHERE item_id = ?1 ORDER BY deleted_at DESC LIMIT 1",
+                params![item.id.to_string()],
+                |row| {
+                    let id_str: String = row.get(0)?;
+                    Ok(Uuid::parse_str(&id_str).unwrap())
+                },
+            )
+            .unwrap();
+
+        let restored_item_id = store.restore_deleted_item(log_entry_id).unwrap();
+        assert_eq!(restored_item_id, item.id);
+
+        let restored = store.get_item(restored_item_id).unwrap();
+        assert_eq!(restored.text, "Restore me");
+        let assignments = store.get_assignments_for_item(restored_item_id).unwrap();
+        assert!(assignments.contains_key(&category_id));
     }
 
     #[test]
@@ -1231,6 +1379,22 @@ mod tests {
 
         let items = store.list_items().unwrap();
         assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_create_items_allows_duplicate_text_with_distinct_ids() {
+        let store = Store::open_memory().unwrap();
+        let first = Item::new("Buy milk".to_string());
+        let second = Item::new("Buy milk".to_string());
+        assert_ne!(first.id, second.id);
+
+        store.create_item(&first).unwrap();
+        store.create_item(&second).unwrap();
+
+        let items = store.list_items().unwrap();
+        let duplicates: Vec<&Item> = items.iter().filter(|item| item.text == "Buy milk").collect();
+        assert_eq!(duplicates.len(), 2);
+        assert_ne!(duplicates[0].id, duplicates[1].id);
     }
 
     #[test]
