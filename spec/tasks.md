@@ -42,10 +42,10 @@ Checkpoint:
 
 Goal: define and implement v1 mistake-recovery model.
 
-- [ ] T020 Record decision note: `minimal-undo` vs `no-undo + explicit recovery UX`.
-- [ ] T021 If `minimal-undo`: add mutation journal primitives in core.
-- [ ] T022 If `minimal-undo`: implement depth-1 undo for key operations (create/delete/assign/unassign/move/edit).
-- [ ] T023 If `minimal-undo`: wire TUI `Ctrl-Z` with status feedback and tests.
+- [x] T020 Record decision note: `minimal-undo` vs `no-undo + explicit recovery UX`.
+- [ ] T021 If `minimal-undo`: add mutation journal primitives in core. (inactive path for v1)
+- [ ] T022 If `minimal-undo`: implement depth-1 undo for key operations (create/delete/assign/unassign/move/edit). (inactive path for v1)
+- [ ] T023 If `minimal-undo`: wire TUI `Ctrl-Z` with status feedback and tests. (inactive path for v1)
 - [ ] T024 If `no-undo`: strengthen recovery UX (confirmations + deletion-log visibility + fast restore path).
 - [ ] T025 Update docs and CLI/TUI help text to match the chosen safety contract.
 
