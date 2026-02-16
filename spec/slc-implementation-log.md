@@ -33,14 +33,18 @@ Completed:
   - `list` (with `--view`, `--category`, `--include-done`)
   - `search`
   - `done`
+  - `delete`
   - `deleted`
+  - `restore`
   - `category list/create/delete`
   - `view list/create/delete`
 - Added core tests for new APIs:
   - `agenda::mark_item_done_sets_done_fields_and_assigns_done_category`
   - `store::test_list_deleted_items_returns_latest_first`
+  - `store::test_restore_deleted_item_recreates_item_and_assignments`
 - Full test suite passing (`cargo test`).
 - Manual CLI smoke-tested against a temp DB (`/tmp/aglet-slc-test.ag`).
+- Manual delete/restore recovery flow smoke-tested (`/tmp/aglet-slc-restore.ag`).
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
@@ -87,13 +91,13 @@ Remaining (high-level):
 4. Whether `agenda` (CLI without subcommand) should eventually launch TUI by default after one more stabilization pass.
    - Current behavior: defaults to list.
 5. Whether to add a lightweight restore command for deletion log in SLC v1.
-   - Current behavior: deletion log is inspectable from CLI (`deleted`) but not restorable yet.
+   - Resolved: implemented CLI restore (`restore <log-id>`) plus core restore API.
 
 ## Next Immediate Steps
 
-1. Commit TUI milestone with updated log.
+1. Commit safety/recovery milestone with updated log.
 2. Add targeted UX polish and stabilization:
    - section headers and empty states
    - safer item move semantics across generated sections
    - keybinding/help consistency across CLI/TUI docs
-3. Evaluate final SLC gaps (category manager UX, restore path, undo-ready boundaries) and implement highest-value remaining pieces.
+3. Evaluate final SLC gaps (category manager UX, default launcher behavior, undo-ready boundaries) and implement highest-value remaining pieces.

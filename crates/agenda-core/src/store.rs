@@ -230,6 +230,56 @@ impl Store {
         Ok(rows)
     }
 
+    pub fn restore_deleted_item(&self, log_entry_id: Uuid) -> Result<ItemId> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, text, note, entry_date, when_date, done_date, is_done,
+                    assignments_json, deleted_at, deleted_by
+             FROM deletion_log
+             WHERE id = ?1",
+        )?;
+        let entry = stmt
+            .query_row(params![log_entry_id.to_string()], Self::row_to_deleted_item)
+            .map_err(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => AgendaError::NotFound {
+                    entity: "DeletionLogEntry",
+                    id: log_entry_id,
+                },
+                other => AgendaError::from(other),
+            })?;
+
+        if self.get_item(entry.item_id).is_ok() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("item {} already exists", entry.item_id),
+            });
+        }
+
+        let now = Utc::now();
+        let item = Item {
+            id: entry.item_id,
+            text: entry.text,
+            note: entry.note,
+            created_at: now,
+            modified_at: now,
+            entry_date: entry.entry_date,
+            when_date: entry.when_date,
+            done_date: entry.done_date,
+            is_done: entry.is_done,
+            assignments: HashMap::new(),
+        };
+        self.create_item(&item)?;
+
+        let assignments: HashMap<CategoryId, Assignment> =
+            serde_json::from_str(&entry.assignments_json).unwrap_or_default();
+        for (category_id, assignment) in assignments {
+            if self.get_category(category_id).is_err() {
+                continue;
+            }
+            self.assign_item(item.id, category_id, &assignment)?;
+        }
+
+        Ok(item.id)
+    }
+
     // ── Category CRUD ───────────────────────────────────────────
 
     pub fn create_category(&self, category: &Category) -> Result<()> {
@@ -1022,7 +1072,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssignmentSource, Category, Column, Item, Query, Section, View};
+    use crate::model::{Assignment, AssignmentSource, Category, Column, Item, Query, Section, View};
     use chrono::{Duration, Utc};
     use rusqlite::params;
     use std::collections::HashSet;
@@ -1280,6 +1330,45 @@ mod tests {
         assert_eq!(deleted.len(), 2);
         assert_eq!(deleted[0].item_id, second.id);
         assert_eq!(deleted[1].item_id, first.id);
+    }
+
+    #[test]
+    fn test_restore_deleted_item_recreates_item_and_assignments() {
+        let store = Store::open_memory().unwrap();
+        let category_id = make_category(&store, "RestoreTarget");
+
+        let item = Item::new("Restore me".to_string());
+        store.create_item(&item).unwrap();
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some("manual:test".to_string()),
+        };
+        store
+            .assign_item(item.id, category_id, &assignment)
+            .unwrap();
+        store.delete_item(item.id, "user").unwrap();
+
+        let log_entry_id: Uuid = store
+            .conn
+            .query_row(
+                "SELECT id FROM deletion_log WHERE item_id = ?1 ORDER BY deleted_at DESC LIMIT 1",
+                params![item.id.to_string()],
+                |row| {
+                    let id_str: String = row.get(0)?;
+                    Ok(Uuid::parse_str(&id_str).unwrap())
+                },
+            )
+            .unwrap();
+
+        let restored_item_id = store.restore_deleted_item(log_entry_id).unwrap();
+        assert_eq!(restored_item_id, item.id);
+
+        let restored = store.get_item(restored_item_id).unwrap();
+        assert_eq!(restored.text, "Restore me");
+        let assignments = store.get_assignments_for_item(restored_item_id).unwrap();
+        assert!(assignments.contains_key(&category_id));
     }
 
     #[test]
