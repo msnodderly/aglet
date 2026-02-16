@@ -95,6 +95,12 @@ enum CategoryCommand {
 
     /// Delete a category by name
     Delete { name: String },
+
+    /// Assign a category to an item by id
+    Assign {
+        item_id: String,
+        category_name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -307,6 +313,29 @@ fn cmd_category(agenda: &Agenda<'_>, store: &Store, command: CategoryCommand) ->
             let category_id = category_id_by_name(&categories, &name)?;
             store.delete_category(category_id).map_err(|e| e.to_string())?;
             println!("deleted category {}", name);
+            Ok(())
+        }
+        CategoryCommand::Assign {
+            item_id,
+            category_name,
+        } => {
+            let item_id = parse_item_id(&item_id)?;
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &category_name)?;
+
+            if category_name.eq_ignore_ascii_case("Done") {
+                agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                println!("assigned Done to {} (is_done and done_date updated)", item_id);
+                return Ok(());
+            }
+
+            let result = agenda
+                .assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))
+                .map_err(|e| e.to_string())?;
+            println!("assigned {} to {}", category_name, item_id);
+            if !result.new_assignments.is_empty() {
+                println!("new_assignments={}", result.new_assignments.len());
+            }
             Ok(())
         }
     }
