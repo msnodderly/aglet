@@ -160,25 +160,26 @@ to understand what's done and what remains.
 ## Specify-on-Ready
 
 When an issue becomes unblocked, a reviewer writes a detailed implementer
-prompt before any agent claims it. See `spec/specify-on-ready.md` for the
+prompt before any agent claims it. See `docs/process-specify-on-ready.md` for the
 full procedure.
 
 **The flywheel:**
 1. Agent closes an issue → `br close` + commit
 2. `br ready` reveals newly unblocked issues
-3. Reviewer writes `spec/prompts/<task-id>-<name>.md` for each
+3. Reviewer writes `docs/process-prompt-<task-id>-<name>.md` for each
 4. Agent claims and implements using the prompt as context
 
-Implementer agents: check `spec/prompts/` for your task's prompt before
+Implementer agents: check `docs/process-prompt-*.md` for your task's prompt before
 starting work. If no prompt exists, flag it — don't start without one.
 
 ## Project Reference
 
-- Product spec: `spec/mvp-spec.md`
-- Product tasks: `spec/mvp-tasks.md`
-- Design decisions: `spec/design-decisions.md`
-- Deferred findings: `spec/deferred-findings.md`
-- Implementer prompts: `spec/prompts/`
-- Specify-on-ready procedure: `spec/specify-on-ready.md`
-- Issue creation procedure: `spec/issue-creation-procedure.md`
+- Product spec (current): `spec/product-current.md`
+- Product roadmap/tasks (current): `spec/roadmap-current.md`
+- Design decisions: `spec/decisions.md`
+- Known domain gaps: `spec/gaps.md`
+- Implementer prompts: `docs/process-prompt-*.md`
+- Specify-on-ready procedure: `docs/process-specify-on-ready.md`
+- Issue creation procedure: `docs/process-issue-creation-procedure.md`
+- External reference material: `reference/`
 - Local-only project: no pull requests, merge branches directly to main

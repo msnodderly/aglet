@@ -17,10 +17,10 @@ This keeps MVP speed while avoiding a "half-tool" that cannot stand on its own.
 
 Source of truth used:
 
-- `spec/mvp-spec.md`
-- `spec/mvp-tasks.md`
-- `spec/product-spec-v0.6.md`
-- `spec/tasks.md`
+- `archive/spec-legacy/mvp-spec.md`
+- `archive/spec-legacy/mvp-tasks.md`
+- `archive/spec-legacy/product-spec-v0.6.md`
+- `spec/roadmap-current.md`
 - `br list --all`
 - current code in `crates/*`
 
