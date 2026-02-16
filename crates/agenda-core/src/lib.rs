@@ -1,3 +1,4 @@
+pub mod agenda;
 pub mod dates;
 pub mod engine;
 pub mod error;
