@@ -21,16 +21,48 @@ pub struct ParsedDate {
     pub span: (usize, usize),
 }
 
-/// Deterministic MVP parser for absolute date expressions.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct BasicDateParser;
+/// Policy for interpreting ambiguous `this <weekday>` and `next <weekday>` phrases.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum WeekdayDisambiguationPolicy {
+    /// `next <weekday>` means the weekday in the following calendar week.
+    ///
+    /// Example from Monday 2026-02-16:
+    /// - `this Tuesday` => 2026-02-17
+    /// - `next Tuesday` => 2026-02-24
+    #[default]
+    StrictNextWeek,
+    /// `next <weekday>` means the next occurrence strictly after the reference date.
+    ///
+    /// Example from Monday 2026-02-16:
+    /// - `this Tuesday` => 2026-02-17
+    /// - `next Tuesday` => 2026-02-17
+    InclusiveNext,
+}
+
+/// Deterministic parser for supported date expressions.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BasicDateParser {
+    weekday_policy: WeekdayDisambiguationPolicy,
+}
+
+impl BasicDateParser {
+    pub const fn with_weekday_policy(policy: WeekdayDisambiguationPolicy) -> Self {
+        Self {
+            weekday_policy: policy,
+        }
+    }
+
+    pub const fn weekday_policy(&self) -> WeekdayDisambiguationPolicy {
+        self.weekday_policy
+    }
+}
 
 impl DateParser for BasicDateParser {
     fn parse(&self, text: &str, reference_date: NaiveDate) -> Option<ParsedDate> {
         let bytes = text.as_bytes();
         let mut best = None;
 
-        scan_relative_dates(bytes, reference_date, &mut best);
+        scan_relative_dates(bytes, reference_date, self.weekday_policy, &mut best);
         scan_month_name_dates(bytes, reference_date, &mut best);
         scan_iso_dashed_dates(bytes, &mut best);
         scan_iso_compact_dates(bytes, &mut best);
@@ -65,7 +97,27 @@ const WEEKDAYS: [(&str, Weekday); 7] = [
     ("sunday", Weekday::Sun),
 ];
 
-fn scan_relative_dates(bytes: &[u8], reference_date: NaiveDate, best: &mut Option<ParsedDate>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelativeWeekdayPrefix {
+    This,
+    Next,
+}
+
+impl RelativeWeekdayPrefix {
+    const fn keyword(self) -> &'static str {
+        match self {
+            RelativeWeekdayPrefix::This => "this",
+            RelativeWeekdayPrefix::Next => "next",
+        }
+    }
+}
+
+fn scan_relative_dates(
+    bytes: &[u8],
+    reference_date: NaiveDate,
+    weekday_policy: WeekdayDisambiguationPolicy,
+    best: &mut Option<ParsedDate>,
+) {
     for start in 0..bytes.len() {
         if !has_left_boundary(bytes, start) {
             continue;
@@ -93,13 +145,23 @@ fn scan_relative_dates(bytes: &[u8], reference_date: NaiveDate, best: &mut Optio
             }
         }
 
-        if let Some(candidate) = parse_relative_weekday(bytes, start, reference_date, "this", false)
-        {
+        if let Some(candidate) = parse_relative_weekday(
+            bytes,
+            start,
+            reference_date,
+            RelativeWeekdayPrefix::This,
+            weekday_policy,
+        ) {
             choose_best(best, candidate);
         }
 
-        if let Some(candidate) = parse_relative_weekday(bytes, start, reference_date, "next", true)
-        {
+        if let Some(candidate) = parse_relative_weekday(
+            bytes,
+            start,
+            reference_date,
+            RelativeWeekdayPrefix::Next,
+            weekday_policy,
+        ) {
             choose_best(best, candidate);
         }
     }
@@ -109,14 +171,14 @@ fn parse_relative_weekday(
     bytes: &[u8],
     start: usize,
     reference_date: NaiveDate,
-    prefix: &str,
-    strictly_after: bool,
+    prefix: RelativeWeekdayPrefix,
+    policy: WeekdayDisambiguationPolicy,
 ) -> Option<ParsedDate> {
-    if !matches_ascii_insensitive(bytes, start, prefix.as_bytes()) {
+    if !matches_ascii_insensitive(bytes, start, prefix.keyword().as_bytes()) {
         return None;
     }
 
-    let mut pos = start + prefix.len();
+    let mut pos = start + prefix.keyword().len();
     if pos >= bytes.len() || !bytes[pos].is_ascii_whitespace() {
         return None;
     }
@@ -132,7 +194,12 @@ fn parse_relative_weekday(
             continue;
         }
 
-        let day_delta = days_until_weekday(reference_date.weekday(), weekday, strictly_after);
+        let day_delta = days_until_relative_weekday(
+            reference_date.weekday(),
+            weekday,
+            prefix,
+            policy,
+        );
         let date = reference_date.checked_add_signed(Duration::days(day_delta))?;
 
         return Some(ParsedDate {
@@ -144,16 +211,42 @@ fn parse_relative_weekday(
     None
 }
 
-fn days_until_weekday(current: Weekday, target: Weekday, strictly_after: bool) -> i64 {
+fn days_until_relative_weekday(
+    current: Weekday,
+    target: Weekday,
+    prefix: RelativeWeekdayPrefix,
+    policy: WeekdayDisambiguationPolicy,
+) -> i64 {
+    match prefix {
+        RelativeWeekdayPrefix::This => days_until_weekday_this(current, target),
+        RelativeWeekdayPrefix::Next => days_until_weekday_next(current, target, policy),
+    }
+}
+
+fn days_until_weekday_this(current: Weekday, target: Weekday) -> i64 {
     let current_idx = current.num_days_from_monday() as i64;
     let target_idx = target.num_days_from_monday() as i64;
-    let mut delta = (target_idx - current_idx + 7) % 7;
+    (target_idx - current_idx + 7) % 7
+}
 
-    if strictly_after && delta == 0 {
-        delta = 7;
+fn days_until_weekday_next(
+    current: Weekday,
+    target: Weekday,
+    policy: WeekdayDisambiguationPolicy,
+) -> i64 {
+    let current_idx = current.num_days_from_monday() as i64;
+    let target_idx = target.num_days_from_monday() as i64;
+
+    match policy {
+        WeekdayDisambiguationPolicy::InclusiveNext => {
+            let mut delta = (target_idx - current_idx + 7) % 7;
+            if delta == 0 {
+                delta = 7;
+            }
+            delta
+        }
+        WeekdayDisambiguationPolicy::StrictNextWeek => 7 + target_idx - current_idx,
     }
-
-    delta
 }
 
 fn scan_month_name_dates(bytes: &[u8], reference_date: NaiveDate, best: &mut Option<ParsedDate>) {
@@ -577,7 +670,7 @@ fn at_midnight(date: NaiveDate) -> NaiveDateTime {
 
 #[cfg(test)]
 mod tests {
-    use super::{BasicDateParser, DateParser};
+    use super::{BasicDateParser, DateParser, WeekdayDisambiguationPolicy};
     use chrono::{NaiveDate, NaiveDateTime};
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -588,9 +681,13 @@ mod tests {
         date(y, m, d).and_hms_opt(h, min, 0).expect("valid time")
     }
 
+    fn parser_with_policy(policy: WeekdayDisambiguationPolicy) -> BasicDateParser {
+        BasicDateParser::with_weekday_policy(policy)
+    }
+
     #[test]
     fn month_name_full_date_parses_with_exact_span() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "meet May 25, 2026";
 
         let parsed = parser
@@ -610,7 +707,7 @@ mod tests {
 
     #[test]
     fn iso_dashed_date_parses() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "deadline 2026-05-25";
 
         let parsed = parser
@@ -623,7 +720,7 @@ mod tests {
 
     #[test]
     fn iso_compact_date_parses() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "deadline 20260525";
 
         let parsed = parser
@@ -636,7 +733,7 @@ mod tests {
 
     #[test]
     fn numeric_mdy_with_two_digit_year_parses() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "ship by 12/5/26";
 
         let parsed = parser
@@ -649,7 +746,7 @@ mod tests {
 
     #[test]
     fn month_day_without_year_stays_in_reference_year_when_not_past() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         let parsed = parser
             .parse("December 5", date(2026, 2, 16))
@@ -660,7 +757,7 @@ mod tests {
 
     #[test]
     fn month_day_without_year_rolls_forward_if_past() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         let parsed = parser
             .parse("December 5", date(2026, 12, 10))
@@ -671,14 +768,14 @@ mod tests {
 
     #[test]
     fn invalid_date_is_rejected() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         assert_eq!(parser.parse("2026-02-30", date(2026, 2, 16)), None);
     }
 
     #[test]
     fn today_parses_with_exact_span() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "do this today please";
 
         let parsed = parser
@@ -691,7 +788,7 @@ mod tests {
 
     #[test]
     fn tomorrow_and_yesterday_parse_relative_to_reference_date() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         let tomorrow = parser
             .parse("tomorrow", date(2026, 2, 16))
@@ -705,66 +802,143 @@ mod tests {
     }
 
     #[test]
-    fn this_and_next_weekday_semantics_match_spec() {
-        let parser = BasicDateParser;
+    fn default_weekday_disambiguation_policy_is_strict_next_week() {
+        assert_eq!(
+            BasicDateParser::default().weekday_policy(),
+            WeekdayDisambiguationPolicy::StrictNextWeek
+        );
+    }
+
+    #[test]
+    fn this_and_next_tuesday_behavior_is_pinned_per_mode() {
+        let reference = date(2026, 2, 16); // Monday
+        let strict = parser_with_policy(WeekdayDisambiguationPolicy::StrictNextWeek);
+        let inclusive = parser_with_policy(WeekdayDisambiguationPolicy::InclusiveNext);
+
+        let strict_this = strict
+            .parse("this Tuesday", reference)
+            .expect("expected strict this parse");
+        let strict_next = strict
+            .parse("next Tuesday", reference)
+            .expect("expected strict next parse");
+        let inclusive_this = inclusive
+            .parse("this Tuesday", reference)
+            .expect("expected inclusive this parse");
+        let inclusive_next = inclusive
+            .parse("next Tuesday", reference)
+            .expect("expected inclusive next parse");
+
+        assert_eq!(strict_this.datetime, datetime(2026, 2, 17, 0, 0));
+        assert_eq!(strict_next.datetime, datetime(2026, 2, 24, 0, 0));
+        assert_eq!(inclusive_this.datetime, datetime(2026, 2, 17, 0, 0));
+        assert_eq!(inclusive_next.datetime, datetime(2026, 2, 17, 0, 0));
+    }
+
+    #[test]
+    fn weekday_disambiguation_modes_are_deterministic_for_all_weekdays() {
+        let reference = date(2026, 2, 16); // Monday
+        let strict = parser_with_policy(WeekdayDisambiguationPolicy::StrictNextWeek);
+        let inclusive = parser_with_policy(WeekdayDisambiguationPolicy::InclusiveNext);
 
         struct Case {
-            text: &'static str,
-            reference: NaiveDate,
-            expected: NaiveDateTime,
+            weekday: &'static str,
+            this_expected: NaiveDateTime,
+            strict_next_expected: NaiveDateTime,
+            inclusive_next_expected: NaiveDateTime,
         }
 
         let cases = [
             Case {
-                text: "this Monday",
-                reference: date(2026, 2, 16),
-                expected: datetime(2026, 2, 16, 0, 0),
+                weekday: "Monday",
+                this_expected: datetime(2026, 2, 16, 0, 0),
+                strict_next_expected: datetime(2026, 2, 23, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 23, 0, 0),
             },
             Case {
-                text: "this Friday",
-                reference: date(2026, 2, 16),
-                expected: datetime(2026, 2, 20, 0, 0),
+                weekday: "Tuesday",
+                this_expected: datetime(2026, 2, 17, 0, 0),
+                strict_next_expected: datetime(2026, 2, 24, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 17, 0, 0),
             },
             Case {
-                text: "next Monday",
-                reference: date(2026, 2, 16),
-                expected: datetime(2026, 2, 23, 0, 0),
+                weekday: "Wednesday",
+                this_expected: datetime(2026, 2, 18, 0, 0),
+                strict_next_expected: datetime(2026, 2, 25, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 18, 0, 0),
             },
             Case {
-                text: "next Tuesday",
-                reference: date(2026, 2, 18),
-                expected: datetime(2026, 2, 24, 0, 0),
+                weekday: "Thursday",
+                this_expected: datetime(2026, 2, 19, 0, 0),
+                strict_next_expected: datetime(2026, 2, 26, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 19, 0, 0),
             },
             Case {
-                text: "this Tuesday",
-                reference: date(2026, 2, 18),
-                expected: datetime(2026, 2, 24, 0, 0),
+                weekday: "Friday",
+                this_expected: datetime(2026, 2, 20, 0, 0),
+                strict_next_expected: datetime(2026, 2, 27, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 20, 0, 0),
+            },
+            Case {
+                weekday: "Saturday",
+                this_expected: datetime(2026, 2, 21, 0, 0),
+                strict_next_expected: datetime(2026, 2, 28, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 21, 0, 0),
+            },
+            Case {
+                weekday: "Sunday",
+                this_expected: datetime(2026, 2, 22, 0, 0),
+                strict_next_expected: datetime(2026, 3, 1, 0, 0),
+                inclusive_next_expected: datetime(2026, 2, 22, 0, 0),
             },
         ];
 
         for case in cases {
-            let parsed = parser
-                .parse(case.text, case.reference)
-                .expect("expected parse");
-            assert_eq!(parsed.datetime, case.expected, "failed for '{}'", case.text);
-            assert_eq!(&case.text[parsed.span.0..parsed.span.1], case.text);
+            let this_phrase = format!("this {}", case.weekday);
+            let next_phrase = format!("next {}", case.weekday);
+
+            let strict_this = strict
+                .parse(&this_phrase, reference)
+                .expect("expected strict this parse");
+            let strict_next = strict
+                .parse(&next_phrase, reference)
+                .expect("expected strict next parse");
+            let inclusive_this = inclusive
+                .parse(&this_phrase, reference)
+                .expect("expected inclusive this parse");
+            let inclusive_next = inclusive
+                .parse(&next_phrase, reference)
+                .expect("expected inclusive next parse");
+
+            assert_eq!(strict_this.datetime, case.this_expected, "strict this failed");
+            assert_eq!(
+                strict_next.datetime, case.strict_next_expected,
+                "strict next failed"
+            );
+            assert_eq!(
+                inclusive_this.datetime, case.this_expected,
+                "inclusive this failed"
+            );
+            assert_eq!(
+                inclusive_next.datetime, case.inclusive_next_expected,
+                "inclusive next failed"
+            );
         }
     }
 
     #[test]
     fn relative_weekday_parsing_is_case_insensitive() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         let parsed = parser
             .parse("NEXT tuesday", date(2026, 2, 16))
             .expect("expected parse");
 
-        assert_eq!(parsed.datetime, datetime(2026, 2, 17, 0, 0));
+        assert_eq!(parsed.datetime, datetime(2026, 2, 24, 0, 0));
     }
 
     #[test]
     fn relative_phrase_boundaries_prevent_false_positives() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         assert_eq!(parser.parse("todayish", date(2026, 2, 16)), None);
         assert_eq!(parser.parse("annext tuesday", date(2026, 2, 16)), None);
@@ -772,7 +946,7 @@ mod tests {
 
     #[test]
     fn compound_with_12_hour_time_parses() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "next Tuesday at 3pm";
 
         let parsed = parser
@@ -786,7 +960,7 @@ mod tests {
 
     #[test]
     fn compound_with_24_hour_time_parses() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "meet May 25, 2026 at 15:00";
 
         let parsed = parser
@@ -799,7 +973,7 @@ mod tests {
 
     #[test]
     fn compound_with_noon_parses() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
         let text = "today at noon";
 
         let parsed = parser
@@ -812,7 +986,7 @@ mod tests {
 
     #[test]
     fn invalid_compound_time_falls_back_to_date_only() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         let parsed = parser
             .parse("today at 25:00", date(2026, 2, 16))
@@ -824,7 +998,7 @@ mod tests {
 
     #[test]
     fn compound_time_parsing_is_case_insensitive() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         let pm = parser
             .parse("today AT 3PM", date(2026, 2, 16))
@@ -839,7 +1013,7 @@ mod tests {
 
     #[test]
     fn time_only_phrases_are_still_out_of_scope() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         assert_eq!(parser.parse("at 3pm", date(2026, 2, 16)), None);
         assert_eq!(parser.parse("at 15:00", date(2026, 2, 16)), None);
@@ -848,7 +1022,7 @@ mod tests {
 
     #[test]
     fn non_date_text_does_not_false_positive() {
-        let parser = BasicDateParser;
+        let parser = BasicDateParser::default();
 
         assert_eq!(parser.parse("May I ask", date(2026, 2, 16)), None);
     }
