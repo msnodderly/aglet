@@ -31,20 +31,20 @@ Why it matters:
 - Product docs currently imply these are available; code does not support them.
 - This causes planning and acceptance-test drift.
 
-## 2.2 Undo Gap
+## 2.2 Safety Contract Gap (No-Undo Contract Hardening)
 
 Current state:
 
 - `crates/agenda-core/src/undo.rs` is effectively empty.
-- No operation journal/inverse operation framework exists.
+- V1 decision is no-undo + explicit recovery UX, not minimal undo.
 
 Gap:
 
-- v0.6 scenario coverage expects undo behavior for accidental move/remove workflows.
+- Recovery affordances and user guidance are present but not yet fully codified as a coherent no-undo safety contract in all CLI/TUI surfaces.
 
 Why it matters:
 
-- Safety/trust expectations are only partially covered by deletion log + restore.
+- Trust depends on fast, explicit recovery when mistakes happen, especially without `Ctrl-Z`.
 
 ## 2.3 TUI Safety/Advanced Workflow Gap (Post-Completion)
 
@@ -57,7 +57,7 @@ Current state:
 
 Gap:
 
-- No undo/revert path in TUI for accidental move/remove/edit operations.
+- No in-session undo/revert path in TUI for accidental move/remove/edit operations (intentional for v1 contract).
 - No suggestion review UX for assisted classification mode.
 - No equivalent of v0.6 advanced workflow tooling (recurrence controls, suggestion acceptance loop).
 

@@ -838,3 +838,39 @@ Policy:
   matrix when sequencing next phases.
 - Any issue that materially changes scenario status should update the matrix in
   the same change as code/docs updates.
+
+---
+
+## 33. V1 safety contract: no undo, explicit recovery UX
+
+**Date**: 2026-02-16
+**Relevant tasks**: T020, T024, T025
+
+For v1, the product will **not** ship `Ctrl-Z`/single-step undo semantics.
+The chosen contract is:
+
+- no in-session undo stack
+- explicit, discoverable recovery affordances
+- clear mutation confirmations for destructive operations
+
+V1 recovery baseline:
+
+- destructive delete confirmation in TUI
+- persistent deletion log via CLI (`deleted`)
+- explicit restore flow via CLI (`restore <log-id>`)
+- inspect-level unassign and edit-through corrections in TUI
+
+Rationale:
+
+- Current architecture already has a durable delete/restore model that works
+  across sessions, while `undo.rs` is unimplemented.
+- Shipping partial undo quickly introduces high behavioral risk across
+  move/remove/edit/assign cascades and mutual-exclusion side effects.
+- A no-undo contract is acceptable for v1 if recovery is explicit and
+  documented in CLI/TUI guidance.
+
+Scope implications:
+
+- `T021`-`T023` (minimal undo path) are out of scope unless this decision is
+  revisited.
+- `T024` and `T025` become the active safety-contract implementation path.

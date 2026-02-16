@@ -44,13 +44,15 @@ Exit criteria:
 
 ## R3. Safety Contract (v1)
 
-- Decide one of:
-  - implement minimal undo, or
-  - explicitly ship no-undo with strong recovery UX (deletion log visibility/restore flow + clear confirmations + inspect-driven recovery affordances).
+- Chosen contract: ship **no-undo** for v1 with strong explicit recovery UX.
+- Prioritize:
+  - destructive-action confirmation and clear status messaging
+  - deletion-log visibility and fast restore workflows
+  - CLI/TUI help text and docs that make the no-undo contract explicit
 
 Exit criteria:
 
-- A documented and implemented safety model for accidental edits.
+- A documented and implemented no-undo recovery model for accidental edits.
 
 ## 4. Next (Hardening)
 

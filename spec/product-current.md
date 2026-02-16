@@ -136,7 +136,7 @@ This is beyond "prototype core only" and should be treated as an **implemented S
 
 ## 5. Immediate Product Priorities
 
-1. Decide and implement undo/safety stance for v1 (either true undo or explicit non-undo safety UX + restore workflows).
+1. Implement the chosen v1 no-undo safety contract with explicit recovery UX (confirmations + deletion-log/restore discoverability + clear status messaging).
 2. Align data model/spec language with shipped model so docs stop implying already-shipped recurrence/suggestions/value-columns.
 3. Harden store decode strictness and restore fidelity policy.
 4. Continue deferred advanced features (recurrence/suggestions/typed value columns) behind clear phase gates.
