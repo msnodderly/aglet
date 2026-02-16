@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
+use agenda_core::error::AgendaError;
 use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, View};
 use agenda_core::query::{evaluate_query, resolve_view};
@@ -280,7 +281,11 @@ fn cmd_restore(store: &Store, log_id_str: String) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_category(agenda: &Agenda<'_>, store: &Store, command: CategoryCommand) -> Result<(), String> {
+fn cmd_category(
+    agenda: &Agenda<'_>,
+    store: &Store,
+    command: CategoryCommand,
+) -> Result<(), String> {
     match command {
         CategoryCommand::List => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
@@ -294,6 +299,7 @@ fn cmd_category(agenda: &Agenda<'_>, store: &Store, command: CategoryCommand) ->
             disable_implicit_string,
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let requested_name = name.clone();
             let mut category = Category::new(name);
             category.parent = parent
                 .as_deref()
@@ -302,9 +308,23 @@ fn cmd_category(agenda: &Agenda<'_>, store: &Store, command: CategoryCommand) ->
             category.is_exclusive = exclusive;
             category.enable_implicit_string = !disable_implicit_string;
 
-            let result = agenda
-                .create_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = match agenda.create_category(&category) {
+                Ok(result) => result,
+                Err(AgendaError::DuplicateName {
+                    name: duplicate_name,
+                }) => {
+                    let existing_id = categories
+                        .iter()
+                        .find(|existing| existing.name.eq_ignore_ascii_case(&duplicate_name))
+                        .map(|existing| existing.id);
+                    return Err(duplicate_category_create_error(
+                        &requested_name,
+                        parent.as_deref(),
+                        existing_id,
+                    ));
+                }
+                Err(other) => return Err(other.to_string()),
+            };
             println!(
                 "created category {} (processed_items={}, affected_items={})",
                 category.name, result.processed_items, result.affected_items
@@ -314,7 +334,9 @@ fn cmd_category(agenda: &Agenda<'_>, store: &Store, command: CategoryCommand) ->
         CategoryCommand::Delete { name } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
-            store.delete_category(category_id).map_err(|e| e.to_string())?;
+            store
+                .delete_category(category_id)
+                .map_err(|e| e.to_string())?;
             println!("deleted category {}", name);
             Ok(())
         }
@@ -453,6 +475,23 @@ fn view_by_name(store: &Store, name: &str) -> Result<View, String> {
         .ok_or_else(|| format!("view not found: {name}"))
 }
 
+fn duplicate_category_create_error(
+    requested_name: &str,
+    requested_parent: Option<&str>,
+    existing_id: Option<CategoryId>,
+) -> String {
+    let parent_context = requested_parent
+        .map(|parent| format!(" under parent \"{parent}\""))
+        .unwrap_or_default();
+    let id_fragment = existing_id
+        .map(|id| format!(" (existing id: {id})"))
+        .unwrap_or_default();
+
+    format!(
+        "category \"{requested_name}\" already exists{id_fragment}. Category names are global across the database, so it cannot be created{parent_context}. Use `agenda category assign <item-id> \"{requested_name}\"` to assign items to the existing category."
+    )
+}
+
 fn print_items_for_view(
     view: &View,
     items: &[Item],
@@ -487,6 +526,23 @@ fn print_items_for_view(
             );
             print_item_table(&unmatched, category_names);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::duplicate_category_create_error;
+    use uuid::Uuid;
+
+    #[test]
+    fn duplicate_category_error_includes_assign_guidance_and_parent_context() {
+        let id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").expect("valid uuid");
+        let msg = duplicate_category_create_error("Priority", Some("Project X"), Some(id));
+        assert!(msg.contains("already exists"));
+        assert!(msg.contains("Category names are global"));
+        assert!(msg.contains("under parent \"Project X\""));
+        assert!(msg.contains("agenda category assign <item-id> \"Priority\""));
+        assert!(msg.contains("123e4567-e89b-12d3-a456-426614174000"));
     }
 }
 
@@ -532,11 +588,19 @@ fn print_category_tree(categories: &[Category]) {
     }
 }
 
-fn print_category_subtree(category: &Category, depth: usize, by_id: &HashMap<CategoryId, &Category>) {
+fn print_category_subtree(
+    category: &Category,
+    depth: usize,
+    by_id: &HashMap<CategoryId, &Category>,
+) {
     let indent = "  ".repeat(depth);
     let flags = format!(
         "{}{}",
-        if category.is_exclusive { " [exclusive]" } else { "" },
+        if category.is_exclusive {
+            " [exclusive]"
+        } else {
+            ""
+        },
         if !category.enable_implicit_string {
             " [no-implicit-string]"
         } else {

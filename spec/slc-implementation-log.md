@@ -71,6 +71,12 @@ Completed:
   - includes expected duplicate-name failure behavior and per-branch priority exclusivity checks.
 - Confirmed category naming constraint from runtime/tests:
   - category names are globally unique (duplicate names across branches are rejected).
+- Improved duplicate-category create UX in CLI:
+  - duplicate create now returns actionable guidance to assign existing category instead of creating a duplicate.
+  - message includes existing category UUID and requested parent context.
+- Added global-priority reuse demo:
+  - `spec/literate-cli-demo-global-priority-reuse.md`
+  - demonstrates one global `Priority` reused across `Project X` and `Project Y` items.
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
