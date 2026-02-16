@@ -83,6 +83,13 @@ Completed:
 - Added new scenario test script (not executed in this step):
   - `spec/scenario-script-work-personal.md`
   - covers multi-project work/personal workflow with staged category creation.
+- Added cross-domain workflow scenario pack for non-task information management:
+  - `spec/workflow-scenarios.md`
+  - script set in `spec/scripts/`:
+    - `scenario-01-research-dinosaurs.md`
+    - `scenario-02-investigative-journalism.md`
+    - `scenario-03-legal-matter-intelligence.md`
+    - `scenario-04-security-incident-intel.md`
 - Implemented first usable TUI in `agenda-tui`:
   - view-based sections/items display
   - keyboard navigation (sections + items)
