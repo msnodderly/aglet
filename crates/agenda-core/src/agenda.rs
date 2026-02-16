@@ -337,7 +337,7 @@ mod tests {
         Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, Query,
         Section, View, WhenBucket,
     };
-    use crate::query::resolve_when_bucket;
+    use crate::query::{resolve_view, resolve_when_bucket};
     use crate::store::Store;
 
     fn category(name: &str, implicit: bool) -> Category {
@@ -1082,6 +1082,70 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&trigger.id));
+    }
+
+    #[test]
+    fn db_backed_setup_with_items_categories_views_and_assignments_resolves_filters() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+
+        let mut project_atlas = child_category("Project Atlas", work.id, true);
+        project_atlas.enable_implicit_string = true;
+        agenda.create_category(&project_atlas).unwrap();
+
+        let mut miguel = child_category("Miguel", work.id, true);
+        miguel.enable_implicit_string = true;
+        agenda.create_category(&miguel).unwrap();
+
+        let mut alice = child_category("Alice", work.id, true);
+        alice.enable_implicit_string = true;
+        agenda.create_category(&alice).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        agenda.create_category(&priority).unwrap();
+        let high = child_category("High", priority.id, false);
+        agenda.create_category(&high).unwrap();
+
+        let collaborative = Item::new(
+            "Project Atlas: Miguel and Alice triage defects tomorrow at noon".to_string(),
+        );
+        agenda.create_item(&collaborative).unwrap();
+        agenda
+            .assign_item_manual(collaborative.id, high.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let solo = Item::new("Project Atlas: Miguel draft rollout checklist".to_string());
+        agenda.create_item(&solo).unwrap();
+        agenda
+            .assign_item_manual(solo.id, high.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let collaborative_assignments = store.get_assignments_for_item(collaborative.id).unwrap();
+        assert!(collaborative_assignments.contains_key(&project_atlas.id));
+        assert!(collaborative_assignments.contains_key(&work.id));
+        assert!(collaborative_assignments.contains_key(&miguel.id));
+        assert!(collaborative_assignments.contains_key(&alice.id));
+        assert!(collaborative_assignments.contains_key(&high.id));
+
+        let mut view = view("Miguel Without Alice");
+        view.criteria.include.extend([work.id, miguel.id]);
+        view.criteria.exclude.insert(alice.id);
+        store.create_view(&view).unwrap();
+
+        let persisted_view = store.get_view(view.id).unwrap();
+        let items = store.list_items().unwrap();
+        let categories = store.get_hierarchy().unwrap();
+        let result = resolve_view(&persisted_view, &items, &categories, date(2026, 2, 16));
+
+        assert!(result.sections.is_empty());
+        let unmatched = result.unmatched.expect("unmatched group is enabled");
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].id, solo.id);
     }
 
     #[test]
