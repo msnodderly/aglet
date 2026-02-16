@@ -51,19 +51,21 @@ cargo run -q -p agenda-cli -- --db "$DB" category create Finance --parent Person
 # ------------------------------------------------------------
 
 # Work projects and subtasks (project categories will be created later)
-cargo run -q -p agenda-cli -- --db "$DB" add "Project Atlas: Sarah finalize API contract Friday 2pm"
+# Use parser-supported date phrases: today/tomorrow/yesterday, this/next <weekday>,
+# Month Day[, Year], YYYY-MM-DD, YYYYMMDD, M/D/YY, and optional "at <time>".
+cargo run -q -p agenda-cli -- --db "$DB" add "Project Atlas: Sarah finalize API contract tomorrow at 2pm"
 cargo run -q -p agenda-cli -- --db "$DB" add "Project Atlas: Miguel draft rollout checklist"
-cargo run -q -p agenda-cli -- --db "$DB" add "Project Borealis: Priya review migration plan Monday 10am"
+cargo run -q -p agenda-cli -- --db "$DB" add "Project Borealis: Priya review migration plan next Monday at 10am"
 cargo run -q -p agenda-cli -- --db "$DB" add "Project Borealis: Alex prepare test dataset"
-cargo run -q -p agenda-cli -- --db "$DB" add "Project Cicada: Sarah and Priya incident rehearsal Wednesday 1pm"
+cargo run -q -p agenda-cli -- --db "$DB" add "Project Cicada: Sarah and Priya incident rehearsal this Wednesday at 1pm"
 cargo run -q -p agenda-cli -- --db "$DB" add "Project Delta: Miguel close open QA defects"
 cargo run -q -p agenda-cli -- --db "$DB" add "Project Delta: Alex send stakeholder update"
 
 # Personal tasks
-cargo run -q -p agenda-cli -- --db "$DB" add "Clean out the garage Saturday morning"
-cargo run -q -p agenda-cli -- --db "$DB" add "Pay the bills Monday 8am"
-cargo run -q -p agenda-cli -- --db "$DB" add "Buy groceries Tuesday evening"
-cargo run -q -p agenda-cli -- --db "$DB" add "Schedule annual physical next month"
+cargo run -q -p agenda-cli -- --db "$DB" add "Clean out the garage tomorrow at 9am"
+cargo run -q -p agenda-cli -- --db "$DB" add "Pay the bills next Monday at 8am"
+cargo run -q -p agenda-cli -- --db "$DB" add "Buy groceries tomorrow at 6pm"
+cargo run -q -p agenda-cli -- --db "$DB" add "Schedule annual physical May 25, 2026 at 3pm"
 
 # Snapshot current state
 cargo run -q -p agenda-cli -- --db "$DB" list --include-done
@@ -173,4 +175,3 @@ cargo run -q -p agenda-cli -- --db "$DB" list --include-done
 - Manual and implicit category assignment behavior.
 - Exclusive priority switching behavior.
 - Views, filtering, done/delete/restore lifecycle.
-
