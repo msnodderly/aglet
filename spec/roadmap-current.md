@@ -9,23 +9,26 @@ Already implemented:
 
 - Core domain engine and storage foundations.
 - Functional CLI control plane (items/categories/views/delete log/restore).
-- Usable TUI daily loop (navigate/add/move/remove/done/delete/filter/inspect/view switch).
+- Usable TUI daily loop and management/editing workflows (navigate/add/move/remove/done/delete/filter/inspect/view switch/category manager/edit/unassign).
 - Broad automated coverage (`cargo test` passes workspace).
 - Multiple manual/e2e scenario logs under `docs/`.
+- Scenario-to-capability matrix for `product-spec-complete` scenarios (`spec/scenario-capability-matrix.md`).
 
 Therefore, roadmap emphasis shifts from "build from scratch" to "close targeted completion and hardening gaps".
 
-## 2. Now (Highest Priority)
+## 2. Completed Milestones
 
 ## R1. Spec/Reality Alignment
 
 - Rewrite product docs to match shipped model and behavior.
 - Mark recurrence/suggestions/typed-value-columns as deferred until implemented.
 - Keep acceptance criteria tied to current parser and UI capability.
+- Add scenario-to-capability mapping for `product-spec-complete` NLSpec scenarios.
 
 Exit criteria:
 
 - `spec/product-current.md`, `spec/gaps.md`, `spec/roadmap-current.md` reflect current code truth.
+- `spec/scenario-capability-matrix.md` exists and is kept current as conformance reference.
 
 ## R2. TUI Completion For SLC
 
@@ -37,6 +40,8 @@ Exit criteria:
 
 - User can run day-to-day without dropping to CLI for basic management/editing.
 
+## 3. Now (Highest Priority)
+
 ## R3. Safety Contract (v1)
 
 - Decide one of:
@@ -47,7 +52,7 @@ Exit criteria:
 
 - A documented and implemented safety model for accidental edits.
 
-## 3. Next (Hardening)
+## 4. Next (Hardening)
 
 ## R4. Persistence/Data Integrity Hardening
 
@@ -60,7 +65,7 @@ Exit criteria:
 - Add first-class domain operations for category/view evolution (rename/reparent/reorder/update semantics with strong invariants).
 - Keep frontends consuming domain APIs rather than embedding mutation logic.
 
-## 4. Later (Deferred v0.6 Features)
+## 5. Later (Deferred v0.6 Features)
 
 ## R6. Advanced Intelligence + Model Expansion
 
@@ -69,7 +74,7 @@ Exit criteria:
 - Classification mode thresholds and assisted/manual review paths.
 - Typed value columns and advanced computed views.
 
-## 5. Evidence Anchors
+## 6. Evidence Anchors
 
 Roadmap priorities were set using current implementation and executed demos, including:
 
@@ -77,11 +82,12 @@ Roadmap priorities were set using current implementation and executed demos, inc
 - `docs/demo-view-logic-demo-run.md`
 - `docs/demo-literate-cli-demo-global-priority-reuse.md`
 - `docs/test-cross-domain-scenarios-run-results.md`
+- `docs/test-script-tui-smoke-e2e.md`
+- `spec/scenario-capability-matrix.md`
 
-## 6. Recommended Sequencing
+## 7. Recommended Sequencing
 
-1. Finish spec/doc alignment.
-2. Close TUI completeness gaps.
-3. Lock and implement safety contract.
-4. Harden persistence and restore integrity.
-5. Resume deferred advanced feature track.
+1. Lock and implement safety contract.
+2. Harden persistence and restore integrity.
+3. Grow domain API maturity for robust frontend evolution.
+4. Resume deferred advanced feature track.

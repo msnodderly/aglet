@@ -818,3 +818,23 @@ Scope guard for bd-1b5 implementation:
 - Keep existing known-hashtag behavior unchanged (`#High` -> `High`,
   `#Follow-up` -> `Follow-up` when categories exist).
 - Keep current rule that `#`-prefixed category names are not created.
+
+---
+
+## 32. Scenario-capability matrix is the conformance baseline
+
+**Date**: 2026-02-16
+**Relevant tasks**: T004 (`bd-3ih`)
+
+`spec/scenario-capability-matrix.md` is the canonical mapping between
+`spec/product-spec-complete.md` scenarios and current implementation status
+(`implemented`, `partial`, `deferred`).
+
+Policy:
+
+- Product conformance claims in `spec/product-current.md` should summarize from
+  this matrix rather than maintain a separate unsourced list.
+- Roadmap and gap prioritization should reference scenario clusters in this
+  matrix when sequencing next phases.
+- Any issue that materially changes scenario status should update the matrix in
+  the same change as code/docs updates.

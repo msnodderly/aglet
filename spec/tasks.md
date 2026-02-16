@@ -16,7 +16,7 @@ Goal: lock documentation and acceptance language to current implementation reali
 - [x] T001 Update `spec/product-current.md` to implementation-grounded status.
 - [x] T002 Update `spec/gaps.md` to actual spec-vs-code gaps.
 - [x] T003 Update `spec/roadmap-current.md` to now/next/later execution model.
-- [ ] T004 Add a scenario-to-capability matrix mapping `spec/product-spec-complete.md` scenarios to: implemented / partial / deferred.
+- [x] T004 Add a scenario-to-capability matrix mapping `spec/product-spec-complete.md` scenarios to: implemented / partial / deferred.
 
 Checkpoint:
 
