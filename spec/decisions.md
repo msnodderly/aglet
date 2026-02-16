@@ -551,3 +551,32 @@ query time.
 The default create/update methods resolve `reference_date` from current UTC
 date. Deterministic variants with explicit `reference_date` exist for tests
 and callers that need stable date resolution behavior.
+
+---
+
+## 23. Weekday disambiguation policy for `this`/`next`
+
+**Date**: 2026-02-16
+**Relevant tasks**: bd-3fl
+
+`BasicDateParser` supports two explicit policies for ambiguous relative weekday
+phrases:
+
+- `strict_next_week`
+- `inclusive_next`
+
+Default behavior in `Agenda` flows is `strict_next_week`.
+
+Policy rules:
+
+- `this <weekday>` resolves to the next occurrence on or after the reference
+  date in both modes.
+- `next <weekday>` differs by mode:
+  - `strict_next_week`: the target weekday in the following calendar week.
+  - `inclusive_next`: the next occurrence strictly after the reference date.
+
+Pinned example using reference date Monday 2026-02-16:
+
+- `this Tuesday` => 2026-02-17 (both modes)
+- `next Tuesday` => 2026-02-24 (`strict_next_week`)
+- `next Tuesday` => 2026-02-17 (`inclusive_next`)
