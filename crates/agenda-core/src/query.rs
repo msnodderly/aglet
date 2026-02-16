@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
 
 use crate::model::WhenBucket;
 
@@ -21,10 +21,8 @@ pub fn resolve_when_bucket(
         return WhenBucket::Today;
     }
 
-    // "Tomorrow" is explicit, except at Saturday/Sunday week boundary where
-    // the prompt expects Sunday to remain in ThisWeek.
     if let Some(tomorrow) = reference_date.succ_opt() {
-        if when_day == tomorrow && reference_date.weekday() != Weekday::Sat {
+        if when_day == tomorrow {
             return WhenBucket::Tomorrow;
         }
     }
@@ -168,7 +166,7 @@ mod tests {
         let sunday = Some(datetime(2026, 2, 15, 9, 0));
         let monday = Some(datetime(2026, 2, 16, 9, 0));
 
-        assert_eq!(resolve_when_bucket(sunday, reference), WhenBucket::ThisWeek);
+        assert_eq!(resolve_when_bucket(sunday, reference), WhenBucket::Tomorrow);
         assert_eq!(resolve_when_bucket(monday, reference), WhenBucket::NextWeek);
     }
 }
