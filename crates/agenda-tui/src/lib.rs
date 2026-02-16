@@ -42,7 +42,9 @@ pub fn run(db_path: &std::path::Path) -> Result<(), String> {
 
 #[derive(Clone)]
 enum SlotContext {
-    Section { section_index: usize },
+    Section {
+        section_index: usize,
+    },
     GeneratedSection {
         on_insert_assign: HashSet<CategoryId>,
         on_remove_unassign: HashSet<CategoryId>,
@@ -57,6 +59,16 @@ struct Slot {
     context: SlotContext,
 }
 
+#[derive(Clone)]
+struct CategoryListRow {
+    id: CategoryId,
+    name: String,
+    depth: usize,
+    is_reserved: bool,
+    is_exclusive: bool,
+    enable_implicit_string: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
@@ -64,6 +76,9 @@ enum Mode {
     FilterInput,
     ViewPicker,
     ConfirmDelete,
+    CategoryManager,
+    CategoryCreateInput,
+    CategoryDeleteConfirm,
 }
 
 struct App {
@@ -78,6 +93,9 @@ struct App {
     picker_index: usize,
 
     categories: Vec<Category>,
+    category_rows: Vec<CategoryListRow>,
+    category_index: usize,
+    category_create_parent: Option<CategoryId>,
     slots: Vec<Slot>,
     slot_index: usize,
     item_index: usize,
@@ -87,7 +105,7 @@ impl Default for App {
     fn default() -> Self {
         Self {
             mode: Mode::Normal,
-            status: "Press n to add, F8 to switch views, q to quit".to_string(),
+            status: "Press n to add, F8 to switch views, F9 for categories, q to quit".to_string(),
             input: String::new(),
             filter: None,
             show_inspect: false,
@@ -95,6 +113,9 @@ impl Default for App {
             view_index: 0,
             picker_index: 0,
             categories: Vec::new(),
+            category_rows: Vec::new(),
+            category_index: 0,
+            category_create_parent: None,
             slots: Vec::new(),
             slot_index: 0,
             item_index: 0,
@@ -141,6 +162,9 @@ impl App {
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
+            Mode::CategoryManager => self.handle_category_manager_key(code),
+            Mode::CategoryCreateInput => self.handle_category_create_key(code, agenda),
+            Mode::CategoryDeleteConfirm => self.handle_category_delete_key(code, agenda),
         }
     }
 
@@ -171,6 +195,11 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status = "View picker: Enter to switch, Esc to cancel".to_string();
+            }
+            KeyCode::F(9) => {
+                self.mode = Mode::CategoryManager;
+                self.status =
+                    "Category manager: n child, N root, x delete, Esc to close".to_string();
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
@@ -221,7 +250,8 @@ impl App {
             KeyCode::Enter => {
                 let text = self.input.trim();
                 if !text.is_empty() {
-                    let parsed_when = self.create_item_in_current_context(agenda, text.to_string())?;
+                    let parsed_when =
+                        self.create_item_in_current_context(agenda, text.to_string())?;
                     self.status = add_capture_status_message(parsed_when);
                 }
                 self.mode = Mode::Normal;
@@ -334,6 +364,122 @@ impl App {
         Ok(false)
     }
 
+    fn handle_category_manager_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc | KeyCode::F(9) => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.category_create_parent = None;
+                self.status = "Category manager closed".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
+            KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
+            KeyCode::Char('n') => {
+                self.mode = Mode::CategoryCreateInput;
+                self.input.clear();
+                self.category_create_parent = self.selected_category_id();
+                let parent = self
+                    .create_parent_name()
+                    .unwrap_or_else(|| "(root)".to_string());
+                self.status = format!("Create category under {parent}: type name and Enter");
+            }
+            KeyCode::Char('N') => {
+                self.mode = Mode::CategoryCreateInput;
+                self.input.clear();
+                self.category_create_parent = None;
+                self.status = "Create top-level category: type name and Enter".to_string();
+            }
+            KeyCode::Char('x') => {
+                if let Some(row) = self.selected_category_row() {
+                    let row_name = row.name.clone();
+                    self.mode = Mode::CategoryDeleteConfirm;
+                    self.status = format!("Delete category \"{}\"? y/n", row_name);
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_category_create_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::CategoryManager;
+                self.input.clear();
+                self.category_create_parent = None;
+                self.status = "Category create canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let name = self.input.trim().to_string();
+                if !name.is_empty() {
+                    let mut category = Category::new(name.clone());
+                    category.parent = self.category_create_parent;
+                    let create_result =
+                        agenda.create_category(&category).map_err(|e| e.to_string());
+                    match create_result {
+                        Ok(result) => {
+                            self.refresh(agenda.store())?;
+                            self.set_category_selection_by_id(category.id);
+                            self.mode = Mode::CategoryManager;
+                            self.status = format!(
+                                "Created category {} (processed_items={}, affected_items={})",
+                                category.name, result.processed_items, result.affected_items
+                            );
+                        }
+                        Err(err) => {
+                            self.mode = Mode::CategoryManager;
+                            self.status = format!("Create failed: {err}");
+                        }
+                    }
+                } else {
+                    self.mode = Mode::CategoryManager;
+                    self.status = "Category create canceled (empty name)".to_string();
+                }
+                self.input.clear();
+                self.category_create_parent = None;
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_category_delete_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') => {
+                if let Some(row) = self.selected_category_row().cloned() {
+                    match agenda.store().delete_category(row.id) {
+                        Ok(()) => {
+                            self.refresh(agenda.store())?;
+                            self.status = format!("Deleted category {}", row.name);
+                        }
+                        Err(err) => {
+                            self.status = format!("Delete failed: {err}");
+                        }
+                    }
+                }
+                self.mode = Mode::CategoryManager;
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                self.mode = Mode::CategoryManager;
+                self.status = "Delete canceled".to_string();
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     fn refresh(&mut self, store: &Store) -> Result<(), String> {
         self.views = store.list_views().map_err(|e| e.to_string())?;
         if self.views.is_empty() {
@@ -342,9 +488,16 @@ impl App {
 
         self.view_index = self.view_index.min(self.views.len().saturating_sub(1));
         self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+        self.category_rows = build_category_rows(&self.categories);
+        self.category_index = self
+            .category_index
+            .min(self.category_rows.len().saturating_sub(1));
         let items = store.list_items().map_err(|e| e.to_string())?;
 
-        let view = self.current_view().cloned().ok_or("No active view".to_string())?;
+        let view = self
+            .current_view()
+            .cloned()
+            .ok_or("No active view".to_string())?;
         let reference_date = Local::now().date_naive();
         let result = resolve_view(&view, &items, &self.categories, reference_date);
 
@@ -400,9 +553,11 @@ impl App {
 
         self.slots = slots;
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
-        self.item_index = self
-            .item_index
-            .min(self.current_slot().map(|slot| slot.items.len().saturating_sub(1)).unwrap_or(0));
+        self.item_index = self.item_index.min(
+            self.current_slot()
+                .map(|slot| slot.items.len().saturating_sub(1))
+                .unwrap_or(0),
+        );
 
         Ok(())
     }
@@ -410,7 +565,11 @@ impl App {
     fn draw(&self, frame: &mut ratatui::Frame<'_>) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(3)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
             .split(frame.area());
 
         let header = self.render_header();
@@ -423,6 +582,12 @@ impl App {
 
         if self.mode == Mode::ViewPicker {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
+        }
+        if matches!(
+            self.mode,
+            Mode::CategoryManager | Mode::CategoryCreateInput | Mode::CategoryDeleteConfirm
+        ) {
+            self.render_category_manager(frame, centered_rect(72, 72, frame.area()));
         }
     }
 
@@ -439,7 +604,10 @@ impl App {
             .unwrap_or_default();
 
         Paragraph::new(Line::from(vec![
-            Span::styled("Agenda Reborn", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Agenda Reborn",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(format!("  view:{view_name}  mode:{mode}{filter}")),
         ]))
     }
@@ -560,14 +728,23 @@ impl App {
             Mode::AddInput => format!("Add> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
+            Mode::CategoryCreateInput => format!("Category create> {}", self.input),
+            Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
             _ => self.status.clone(),
         };
+        let footer_title = match self.mode {
+            Mode::CategoryManager => {
+                "j/k:select  n:new-child  N:new-root  x:delete  Esc/F9:close"
+            }
+            Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
+            Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
+            Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
+            _ => {
+                "n:add  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+            }
+        };
 
-        Paragraph::new(prompt).block(
-            Block::default()
-                .title("n:add  [/]:filter  F8:views  []:move  r:remove  d:done  x:delete  i:inspect  q:quit")
-                .borders(Borders::ALL),
-        )
+        Paragraph::new(prompt).block(Block::default().title(footer_title).borders(Borders::ALL))
     }
 
     fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -578,7 +755,11 @@ impl App {
             .iter()
             .enumerate()
             .map(|(index, view)| {
-                let marker = if index == self.picker_index { "> " } else { "  " };
+                let marker = if index == self.picker_index {
+                    "> "
+                } else {
+                    "  "
+                };
                 Line::from(format!("{marker}{}", view.name))
             })
             .collect();
@@ -594,14 +775,74 @@ impl App {
         );
     }
 
+    fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+
+        let mut lines = vec![Line::from(
+            "Categories are global; create under selection with n or at root with N.",
+        )];
+
+        if self.category_rows.is_empty() {
+            lines.push(Line::from("(no categories)"));
+        } else {
+            for (index, row) in self.category_rows.iter().enumerate() {
+                let marker = if index == self.category_index {
+                    "> "
+                } else {
+                    "  "
+                };
+                let indent = "  ".repeat(row.depth);
+                let mut flags = Vec::new();
+                if row.is_reserved {
+                    flags.push("reserved");
+                }
+                if row.is_exclusive {
+                    flags.push("exclusive");
+                }
+                if !row.enable_implicit_string {
+                    flags.push("no-implicit");
+                }
+                let suffix = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(","))
+                };
+                lines.push(Line::from(format!(
+                    "{marker}{indent}{}{}",
+                    row.name, suffix
+                )));
+            }
+        }
+
+        if self.mode == Mode::CategoryCreateInput {
+            let parent = self
+                .create_parent_name()
+                .unwrap_or_else(|| "(root)".to_string());
+            lines.push(Line::from(""));
+            lines.push(Line::from(format!("Create parent: {parent}")));
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title("Category Manager")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Green)),
+            ),
+            area,
+        );
+    }
+
     fn move_slot_cursor(&mut self, delta: i32) {
         if self.slots.is_empty() {
             return;
         }
         self.slot_index = next_index(self.slot_index, self.slots.len(), delta);
-        self.item_index = self
-            .item_index
-            .min(self.current_slot().map(|slot| slot.items.len().saturating_sub(1)).unwrap_or(0));
+        self.item_index = self.item_index.min(
+            self.current_slot()
+                .map(|slot| slot.items.len().saturating_sub(1))
+                .unwrap_or(0),
+        );
     }
 
     fn move_item_cursor(&mut self, delta: i32) {
@@ -613,6 +854,14 @@ impl App {
             return;
         }
         self.item_index = next_index(self.item_index, slot.items.len(), delta);
+    }
+
+    fn move_category_cursor(&mut self, delta: i32) {
+        if self.category_rows.is_empty() {
+            self.category_index = 0;
+            return;
+        }
+        self.category_index = next_index(self.category_index, self.category_rows.len(), delta);
     }
 
     fn move_selected_item_between_slots(
@@ -643,7 +892,10 @@ impl App {
             .get(to_index)
             .map(|slot| slot.context.clone())
             .ok_or("Invalid target slot".to_string())?;
-        let view = self.current_view().cloned().ok_or("No active view".to_string())?;
+        let view = self
+            .current_view()
+            .cloned()
+            .ok_or("No active view".to_string())?;
 
         self.remove_from_context(agenda, item_id, &view, &from_context)?;
         self.insert_into_context(agenda, item_id, &view, &to_context)?;
@@ -672,7 +924,10 @@ impl App {
             }
         }
 
-        let created = agenda.store().get_item(item.id).map_err(|e| e.to_string())?;
+        let created = agenda
+            .store()
+            .get_item(item.id)
+            .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         Ok(created.when_date)
     }
@@ -763,9 +1018,38 @@ impl App {
     fn current_view(&self) -> Option<&View> {
         self.views.get(self.view_index)
     }
+
+    fn selected_category_row(&self) -> Option<&CategoryListRow> {
+        self.category_rows.get(self.category_index)
+    }
+
+    fn selected_category_id(&self) -> Option<CategoryId> {
+        self.selected_category_row().map(|row| row.id)
+    }
+
+    fn create_parent_name(&self) -> Option<String> {
+        let parent_id = self.category_create_parent?;
+        self.category_rows
+            .iter()
+            .find(|row| row.id == parent_id)
+            .map(|row| row.name.clone())
+    }
+
+    fn set_category_selection_by_id(&mut self, category_id: CategoryId) {
+        if let Some(index) = self
+            .category_rows
+            .iter()
+            .position(|row| row.id == category_id)
+        {
+            self.category_index = index;
+        }
+    }
 }
 
-fn generated_section(on_remove_unassign: HashSet<CategoryId>, on_insert_assign: HashSet<CategoryId>) -> Section {
+fn generated_section(
+    on_remove_unassign: HashSet<CategoryId>,
+    on_insert_assign: HashSet<CategoryId>,
+) -> Section {
     Section {
         title: "generated".to_string(),
         criteria: Query::default(),
@@ -805,6 +1089,50 @@ fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
         .collect()
 }
 
+fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
+    let parent_by_id: HashMap<CategoryId, Option<CategoryId>> = categories
+        .iter()
+        .map(|category| (category.id, category.parent))
+        .collect();
+
+    categories
+        .iter()
+        .map(|category| CategoryListRow {
+            id: category.id,
+            name: category.name.clone(),
+            depth: category_depth(category.id, &parent_by_id, categories.len()),
+            is_reserved: is_reserved_category_name(&category.name),
+            is_exclusive: category.is_exclusive,
+            enable_implicit_string: category.enable_implicit_string,
+        })
+        .collect()
+}
+
+fn category_depth(
+    category_id: CategoryId,
+    parent_by_id: &HashMap<CategoryId, Option<CategoryId>>,
+    max_depth: usize,
+) -> usize {
+    let mut depth = 0usize;
+    let mut cursor = parent_by_id.get(&category_id).copied().flatten();
+
+    while let Some(parent_id) = cursor {
+        depth += 1;
+        if depth > max_depth {
+            break;
+        }
+        cursor = parent_by_id.get(&parent_id).copied().flatten();
+    }
+
+    depth
+}
+
+fn is_reserved_category_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("When")
+        || name.eq_ignore_ascii_case("Entry")
+        || name.eq_ignore_ascii_case("Done")
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -836,8 +1164,15 @@ fn add_capture_status_message(parsed_when: Option<NaiveDateTime>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::add_capture_status_message;
+    use std::collections::HashMap;
+
+    use super::{add_capture_status_message, build_category_rows};
+    use agenda_core::model::{Category, CategoryId};
     use chrono::NaiveDate;
+
+    fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
+        rows.iter().map(|row| (row.id, row.depth)).collect()
+    }
 
     #[test]
     fn add_capture_status_message_includes_parsed_datetime_when_present() {
@@ -855,5 +1190,47 @@ mod tests {
     #[test]
     fn add_capture_status_message_defaults_when_no_datetime() {
         assert_eq!(add_capture_status_message(None), "Item added");
+    }
+
+    #[test]
+    fn build_category_rows_marks_reserved_and_tracks_depth() {
+        let mut work = Category::new("Work".to_string());
+        let mut project = Category::new("Project Y".to_string());
+        project.parent = Some(work.id);
+        let mut frabulator = Category::new("Frabulator".to_string());
+        frabulator.parent = Some(project.id);
+        let done = Category::new("Done".to_string());
+
+        work.enable_implicit_string = true;
+
+        let categories = vec![
+            done.clone(),
+            work.clone(),
+            project.clone(),
+            frabulator.clone(),
+        ];
+        let rows = build_category_rows(&categories);
+        let depth_by_id = row_depth_map(&rows);
+
+        assert_eq!(depth_by_id.get(&work.id), Some(&0));
+        assert_eq!(depth_by_id.get(&project.id), Some(&1));
+        assert_eq!(depth_by_id.get(&frabulator.id), Some(&2));
+
+        let done_row = rows
+            .iter()
+            .find(|row| row.id == done.id)
+            .expect("done row present");
+        assert!(done_row.is_reserved);
+    }
+
+    #[test]
+    fn build_category_rows_handles_missing_parent_without_panic() {
+        let mut orphan = Category::new("Orphan".to_string());
+        orphan.parent = Some(CategoryId::new_v4());
+
+        let rows = build_category_rows(&[orphan.clone()]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].depth, 1);
+        assert!(!rows[0].is_reserved);
     }
 }
