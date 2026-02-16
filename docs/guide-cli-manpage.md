@@ -43,8 +43,11 @@ Notes:
 
 - Natural-language date/time in `<TEXT>` may be parsed into `when_date`.
 - Parsed date/time text can auto-assign the reserved `When` category.
+- When a capture resolves to `when_date`, `add` prints `parsed_when=<datetime>`.
 - Hashtag text like `#high` can match an existing category name (`High`) via implicit string matching.
 - Unknown hashtags do not currently auto-create categories and do not currently emit a warning.
+- Date parsing for capture uses the local calendar date as reference (`Local::now().date_naive()`).
+  Weekday/date phrase resolution is therefore based on local date (not UTC date).
 
 ### list
 
@@ -184,6 +187,12 @@ Create and list items:
 `agenda-cli add "Follow up with Sarah next Tuesday at 3pm"`
 
 `agenda-cli list`
+
+Example add output when date parsing succeeds:
+
+`created <item-id>`
+
+`parsed_when=2026-02-24 15:00:00`
 
 Create a global priority taxonomy:
 

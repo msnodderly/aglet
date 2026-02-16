@@ -9,7 +9,7 @@ use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, View};
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
-use chrono::Local;
+use chrono::{Local, NaiveDateTime};
 use clap::{Parser, Subcommand};
 use uuid::Uuid;
 
@@ -177,12 +177,27 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
     let mut item = Item::new(text);
     item.note = note;
 
-    let result = agenda.create_item(&item).map_err(|e| e.to_string())?;
+    let reference_date = Local::now().date_naive();
+    let result = agenda
+        .create_item_with_reference_date(&item, reference_date)
+        .map_err(|e| e.to_string())?;
+    let created = agenda
+        .store()
+        .get_item(item.id)
+        .map_err(|e| e.to_string())?;
+
     println!("created {}", item.id);
+    if let Some(line) = parsed_when_feedback_line(created.when_date) {
+        println!("{line}");
+    }
     if !result.new_assignments.is_empty() {
         println!("new_assignments={}", result.new_assignments.len());
     }
     Ok(())
+}
+
+fn parsed_when_feedback_line(when_date: Option<NaiveDateTime>) -> Option<String> {
+    when_date.map(|when| format!("parsed_when={when}"))
 }
 
 fn cmd_list(
@@ -223,8 +238,10 @@ fn cmd_search(store: &Store, query: String, include_done: bool) -> Result<(), St
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let category_names = category_name_map(&categories);
 
-    let mut q = Query::default();
-    q.text_search = Some(query);
+    let q = Query {
+        text_search: Some(query),
+        ..Query::default()
+    };
     let reference_date = Local::now().date_naive();
     let matches = evaluate_query(&q, &items, reference_date);
 
@@ -540,7 +557,8 @@ fn print_items_for_view(
 
 #[cfg(test)]
 mod tests {
-    use super::duplicate_category_create_error;
+    use super::{duplicate_category_create_error, parsed_when_feedback_line};
+    use chrono::NaiveDate;
     use uuid::Uuid;
 
     #[test]
@@ -552,6 +570,22 @@ mod tests {
         assert!(msg.contains("under parent \"Project X\""));
         assert!(msg.contains("agenda category assign <item-id> \"Priority\""));
         assert!(msg.contains("123e4567-e89b-12d3-a456-426614174000"));
+    }
+
+    #[test]
+    fn parsed_when_feedback_line_includes_datetime_when_present() {
+        let when = NaiveDate::from_ymd_opt(2026, 2, 24)
+            .expect("valid date")
+            .and_hms_opt(15, 0, 0)
+            .expect("valid time");
+
+        let line = parsed_when_feedback_line(Some(when)).expect("expected line");
+        assert_eq!(line, "parsed_when=2026-02-24 15:00:00");
+    }
+
+    #[test]
+    fn parsed_when_feedback_line_omits_output_when_absent() {
+        assert_eq!(parsed_when_feedback_line(None), None);
     }
 }
 

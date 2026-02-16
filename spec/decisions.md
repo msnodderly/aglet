@@ -580,3 +580,29 @@ Pinned example using reference date Monday 2026-02-16:
 - `this Tuesday` => 2026-02-17 (both modes)
 - `next Tuesday` => 2026-02-24 (`strict_next_week`)
 - `next Tuesday` => 2026-02-17 (`inclusive_next`)
+
+---
+
+## 24. Capture-time parsed datetime confirmation in CLI/TUI
+
+**Date**: 2026-02-16
+**Relevant tasks**: bd-198
+
+Capture surfaces provide immediate parsed datetime feedback when item creation
+produces a concrete `when_date`.
+
+- CLI `add` prints a confirmation line: `parsed_when=<datetime>`.
+- TUI add flow status line includes parsed datetime in the add confirmation.
+- The confirmation is non-blocking and never requires user approval to save.
+
+Reference-date/timezone assumption for capture parsing:
+
+- CLI and TUI add flows resolve date phrases using local calendar date
+  (`Local::now().date_naive()`) as parser reference date.
+- Date parser outputs remain local naive datetimes, rendered in existing
+  display format.
+
+Example (local reference date Monday 2026-02-16):
+
+- Input: `next Tuesday at 3pm`
+- Confirmation: `parsed_when=2026-02-24 15:00:00`
