@@ -146,3 +146,70 @@ assignments so the item isn't left in an inconsistent state.
 it straightforward. If it requires substantial infrastructure changes, skip
 it — document that partial writes may exist on cap-exceeded errors and
 defer transactional execution to a later task.
+
+---
+
+## 6. Subsumption is bookkeeping, not classification
+
+**Date**: 2026-02-15
+**Relevant tasks**: T019
+
+When assigning to a child category, subsumption creates implicit
+assignments for all ancestors (`source: Subsumption`). These assignments
+have two constraints:
+
+1. **Subsumption does not fire ancestor actions.** If "Projects" has an
+   Assign action targeting "Dashboard", and an item is subsumed into
+   "Projects" via "Project Alpha", the "Dashboard" action does NOT fire.
+   Only a direct condition match on "Projects" fires its actions.
+
+2. **Subsumption does not count as a new assignment for the fixed-point
+   loop.** Subsumption assignments are created during a pass but don't
+   cause additional passes. They are bookkeeping to maintain the ancestor
+   invariant, not classification events.
+
+3. **Subsumption does not overwrite existing assignments.** If an item is
+   already assigned to an ancestor (Manual, AutoMatch, etc.), the
+   subsumption walk skips it. The original source and origin are preserved.
+
+**Rationale for not firing actions**: Subsumption is structural — it means
+"this item is in a child, so logically it's also in the parent." It does
+not mean "this item matched the parent's conditions." Firing actions on
+subsumption would create surprising cascades where adding a child category
+triggers the parent's workflow rules, even though the parent's conditions
+weren't evaluated.
+
+**May revisit**: This is a reasonable MVP default, but real-world usage may
+reveal cases where users expect ancestor actions to fire on subsumption.
+For example, a "Work" category with an action to tag items for a dashboard
+might expect all items in any child of "Work" to appear. If this becomes a
+pain point, consider adding a per-category flag like
+`fire_actions_on_subsumption: bool` (default false) so users can opt in.
+For now, the simpler behavior avoids unexpected cascades.
+
+---
+
+## 7. Mutual exclusion is immediate, not deferred
+
+**Date**: 2026-02-15
+**Relevant tasks**: T020
+
+When assigning to a child of an exclusive parent (`is_exclusive = true`),
+sibling unassignment happens **immediately** — not deferred like
+`Action::Remove`.
+
+**Rationale**: Mutual exclusion is a structural invariant, not a workflow
+action. The rule is: "an item can be in at most one child of this parent."
+If we deferred the sibling unassignment, the item would be in two exclusive
+siblings simultaneously during the cascade, violating the invariant. Other
+conditions evaluated mid-cascade could see the inconsistent state and make
+wrong decisions.
+
+`Action::Remove` is deferred because it's a workflow side-effect that
+shouldn't destabilize mid-cascade evaluation. Mutual exclusion is the
+opposite — it *stabilizes* the state by enforcing a constraint.
+
+**Stale subsumption**: When unassigning a sibling due to exclusion, any
+subsumption assignments created for that sibling's ancestors may become
+stale. For MVP, these are left in place — they're harmless bookkeeping.
+Cleaning them up is deferred to hardening (Phase 11).
