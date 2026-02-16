@@ -19,13 +19,12 @@ This is what the TUI will call to render its grid. The CLI's `agenda list
 1. `spec/mvp-spec.md` §2.6 — View, Section, Query structs. Key behaviors:
    section membership, unmatched section, show_children (T026, not this task).
 2. `spec/phase4-overview.md` — Overall phase context and the "My Week" example.
-3. `crates/agenda-core/src/query.rs` — `evaluate_query` (T024) and
+3. `spec/design-decisions.md` §13-§15 — Query ANDing, items-as-input,
+   non-exclusive section membership.
+4. `crates/agenda-core/src/query.rs` — `evaluate_query` (T024) and
    `resolve_when_bucket` (T023). Build on these.
-4. `crates/agenda-core/src/model.rs` — `View`, `Section`, `Query`,
+5. `crates/agenda-core/src/model.rs` — `View`, `Section`, `Query`,
    `Item`.
-5. `crates/agenda-core/src/store.rs` — `list_items()`, `get_hierarchy()`.
-   The resolver may need to fetch items and categories from the store,
-   or the caller may provide them — design choice is yours.
 
 ## What to build
 
@@ -70,14 +69,16 @@ ergonomic for iteration and display.
 
 ### Data flow
 
-The resolver needs all items from the store to filter against the View
-criteria. Options:
-- Accept a `&[Item]` slice (caller fetches items)
-- Accept a `&Store` reference (resolver fetches items)
+`evaluate_query` takes `&[Item]` and returns `Vec<&Item>`. The resolver
+calls it twice per section: once for the View criteria (against all items),
+then for each Section's criteria (against the View-matched items). Note
+that the section pass needs to feed `Vec<&Item>` back into a function
+expecting `&[Item]` — you may need to collect owned items or adjust the
+approach.
 
-Either is fine. If you accept a slice, the caller has more control (useful
-for testing). If you accept a Store, it's more convenient for callers.
-Consider offering both, or pick whichever fits better.
+The resolver should take `&[Item]` as input (caller fetches items from the
+store). This keeps it as a pure function consistent with `evaluate_query`
+and makes testing straightforward.
 
 ## Tests to write
 
