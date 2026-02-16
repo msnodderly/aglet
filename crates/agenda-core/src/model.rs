@@ -54,7 +54,7 @@ pub struct Category {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
     ImplicitString,
-    Profile { criteria: Query },
+    Profile { criteria: Box<Query> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

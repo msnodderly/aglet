@@ -302,7 +302,7 @@ mod tests {
         let mut escalated = category("Escalated", false);
         let mut criteria = Query::default();
         criteria.include.insert(urgent.id);
-        escalated.conditions.push(Condition::Profile { criteria });
+        escalated.conditions.push(Condition::Profile { criteria: Box::new(criteria) });
         store.create_category(&escalated).unwrap();
 
         let item = Item::new("Task".to_string());
@@ -338,7 +338,7 @@ mod tests {
             let mut stage = store.get_category(stages[index].id).unwrap();
             let mut criteria = Query::default();
             criteria.include.insert(stages[index + 1].id);
-            stage.conditions = vec![Condition::Profile { criteria }];
+            stage.conditions = vec![Condition::Profile { criteria: Box::new(criteria) }];
             store.update_category(&stage).unwrap();
         }
 
@@ -450,7 +450,7 @@ mod tests {
         let mut criteria = Query::default();
         criteria.include.insert(work.id);
         criteria.include.insert(urgent.id);
-        escalated.conditions.push(Condition::Profile { criteria });
+        escalated.conditions.push(Condition::Profile { criteria: Box::new(criteria) });
         store.create_category(&escalated).unwrap();
 
         let item = Item::new("task".to_string());
