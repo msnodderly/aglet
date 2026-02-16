@@ -8,6 +8,8 @@ Date: 2026-02-16
   inline text edit (`e`) with save/cancel and re-evaluation refresh.
 - `T013` implemented on branch `codex/bd-2ji-tui-inline-text-edit`:
   note create/edit (`m`) with empty-to-clear behavior.
+- `T014` implemented on branch `codex/bd-2ji-tui-inline-text-edit`:
+  inspect-panel unassign picker (`u`) with explicit select/confirm flow.
 - Both features have local manual smoke validation; merge is intentionally
   pending user manual test confirmation.
 
