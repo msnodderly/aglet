@@ -2,96 +2,83 @@
 
 ## Context
 
-Phase 5 introduces date intelligence to the core library so natural-language
-item text can populate `Item.when_date`. This task is the contract layer only:
-define the parser interface and output shape that later tasks will implement
-and wire into the engine flow.
+Phase 5 adds deterministic date extraction so item text can populate
+`Item.when_date` and drive virtual When buckets. T028 is the contract boundary:
+shape the parser interface and result model that T029-T031 will implement and
+T032 will call during item create/update flows.
 
-A clean, stable trait here prevents churn in downstream tasks. T029-T031 will
-add parsing behavior against this API, and T032 will integrate parser results
-into item create/update paths.
+This task should stay small and stable. A clear contract here prevents API churn
+across the rest of the date-parsing chain.
 
 ## What to read
 
-1. `spec/phase5-overview.md` — T028 section (trait contract, `ParsedDate`,
-   `reference_date` semantics)
-2. `spec/mvp-spec.md` §2.7 — DateParser + ParsedDate model contract
-3. `spec/mvp-spec.md` §2.1 and §2.3 — how `when_date` is represented and used
-4. `spec/mvp-tasks.md` — Phase 5 task chain (T028 → T029 → T030 → T031 → T032)
-5. `crates/agenda-core/src/dates.rs` — currently empty target module
-6. `crates/agenda-core/src/lib.rs` — module export surface
-7. `crates/agenda-core/src/model.rs` (`Item.when_date`) and
-   `crates/agenda-core/src/query.rs` (`WhenBucket` resolution) for downstream context
+1. `spec/phase5-overview.md` — T028 through T032 flow and `reference_date` semantics.
+2. `spec/mvp-spec.md` §2.7 — DateParser + ParsedDate contract.
+3. `spec/mvp-spec.md` §2.1 and §2.3 — `Item.when_date` usage and When category behavior.
+4. `spec/mvp-tasks.md` — Phase 5 dependency chain (T028 → T029 → T030 → T031 → T032).
+5. `crates/agenda-core/src/dates.rs` — current contract/tests; verify scope and semantics.
+6. `crates/agenda-core/src/lib.rs` — module export surface.
+7. `crates/agenda-core/src/model.rs` (`Item.when_date`) and `crates/agenda-core/src/query.rs`
+   (`resolve_when_bucket`) for downstream compatibility.
 
 ## What to build
 
 **File**: `crates/agenda-core/src/dates.rs`
 
-Define the public date-parsing interface used by the rest of the system.
+Define the public interface only.
 
-### Required API surface
+### Behavioral rules
 
-- Add a public `DateParser` trait with:
-  - `Send + Sync` bounds
-  - a single parse method taking item text and `reference_date`
-  - return type `Option<ParsedDate>`
-- Add a public `ParsedDate` type carrying:
-  - parsed `NaiveDateTime`
-  - source text span as `(usize, usize)` character range
+- Expose a `DateParser` trait (`Send + Sync`) with a parse method that takes
+  item text plus `reference_date` and returns `Option<ParsedDate>`.
+- Expose a public `ParsedDate` carrying:
+  - resolved absolute local `NaiveDateTime`
+  - matched source span in the original text
+- Contract meaning:
+  - `None` => no supported date expression found
+  - `Some(ParsedDate)` => expression found and resolved at parse time
+- Relative language is resolved using `reference_date`; no relative token should
+  leak into model/state.
+- Document span semantics explicitly and keep them stable for downstream
+  provenance/highlighting.
 
-### Behavioral contract to encode (docs + type semantics)
+### Key design decisions
 
-- `None` means "no date expression found".
-- `Some(ParsedDate)` means "a date expression was found and resolved to an
-  absolute local `NaiveDateTime`".
-- Relative expressions are resolved at parse time using `reference_date`
-  (implementation comes in later tasks, but the contract belongs here).
-- Span represents where the matched expression came from in the input text, so
-  downstream features can inspect/highlight provenance.
-
-### Design constraints
-
-- Keep this module dependency-light: no store, engine, or UI coupling.
-- Keep the API deterministic and MVP-oriented; do not add optional confidence
-  scoring, parser metadata objects, or suggestion queues.
-- Make `ParsedDate` ergonomically testable (derives appropriate for equality/
-  debug assertions).
+- Keep this module dependency-light (no store/engine/UI coupling).
+- Keep the contract deterministic and MVP-focused; no confidence scoring,
+  parser metadata envelopes, or fallback pipelines.
+- Keep `ParsedDate` ergonomic for assertions (`Debug`/equality-friendly derives).
+- Prefer explicit span semantics that are Rust-slice-compatible to avoid
+  ambiguity in later parser tasks.
 
 ## Tests to write
 
-Add focused unit tests in `crates/agenda-core/src/dates.rs` using small fake
-parsers to validate the interface contract (not parsing logic).
+Use stub/fake parser implementations in `crates/agenda-core/src/dates.rs` tests
+to validate interface behavior only (not parsing logic).
 
-1. **No-match contract**: A parser implementation returning `None` is accepted
-   and treated as "no date found."
-2. **Successful parse shape**: A parser implementation returning `Some` carries
-   both `datetime` and `span` intact.
-3. **Reference date is part of API**: A parser implementation can branch on
-   `reference_date`, proving the trait shape supports deterministic relative
-   resolution.
-4. **Span round-trip sanity**: Returned span values can be asserted as exact
-   `(start, end)` tuples in tests (no hidden transformation).
-
-These tests should compile and pass before any real parser implementation exists.
+1. **No-match contract**: parser returns `None` and caller can treat it as
+   "no date found."
+2. **Successful shape**: parser returns `Some` preserving both datetime and span.
+3. **Reference-date contract**: parser can branch on `reference_date`, proving
+   the trait supports deterministic relative resolution.
+4. **Span round-trip**: returned `(start, end)` span can be asserted exactly and
+   used for precise source extraction.
 
 ## What NOT to do
 
-- **Do not implement date parsing behavior** — absolute/relative/time parsing is
-  T029-T031.
-- **Do not wire parser calls into item create/update flows** — that is T032.
-- **Do not modify engine/store/agenda/query code in this task.**
-- **Do not add extra parser abstractions** (confidence models, parser pipelines,
-  fallback engines, external crates) beyond the MVP trait + result type.
+- Do not implement absolute/relative/time parsing behavior (T029-T031).
+- Do not wire parser invocation into item create/update or assignment provenance (T032).
+- Do not modify engine/store/query/agenda modules for this task.
+- Do not add extra abstractions beyond the trait + parsed result contract.
 
 ## How your code will be used
 
-- **T029** will introduce `BasicDateParser` implementing `DateParser` for
-  absolute date formats.
-- **T030/T031** will extend that implementation for relative and time
-  expressions without changing the trait contract.
+- **T029** will add `BasicDateParser` for absolute date forms using this trait.
+- **T030/T031** will extend the same implementation for relative and time forms
+  without changing the API.
 - **T032** will call `parse(text, reference_date)` during item create/update,
-  then write `ParsedDate.datetime` into `Item.when_date` and provenance into
-  assignments (`origin = "nlp:date"`).
+  write `ParsedDate.datetime` into `Item.when_date`, and tag provenance as
+  `origin = "nlp:date"`.
 
 ## Workflow
 
@@ -105,10 +92,10 @@ git checkout -b task/t028-date-parser-trait
 
 ## Definition of done
 
-- [ ] `DateParser` trait exists in `crates/agenda-core/src/dates.rs` with MVP contract
-- [ ] `ParsedDate` public type exists with `datetime` and `span`
-- [ ] Unit tests validate interface behavior using parser stubs
-- [ ] No parsing logic implemented yet (kept scoped to interface/data shape)
-- [ ] No unrelated files changed
-- [ ] All tests pass — `cargo test -p agenda-core`
-- [ ] `cargo clippy -p agenda-core` clean
+- [ ] `DateParser` trait exists in `crates/agenda-core/src/dates.rs` with MVP contract.
+- [ ] `ParsedDate` public type exists with datetime + span provenance.
+- [ ] Unit tests validate interface behavior using parser stubs.
+- [ ] No real date parsing behavior is implemented yet.
+- [ ] No unrelated files changed.
+- [ ] `cargo test -p agenda-core` passes.
+- [ ] `cargo clippy -p agenda-core` is clean for this scope.
