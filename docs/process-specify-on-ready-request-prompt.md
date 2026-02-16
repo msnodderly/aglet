@@ -1,18 +1,19 @@
-# Reusable Request Prompt: Generate Flywheel Task Prompts
+# Reusable Request Prompt: Generate Specify-on-Ready Prompts
 
-Use this prompt when you want the agent to run the full specify-on-ready process and produce implementer prompts only for currently unblocked work.
+Use this prompt when you want an agent to run the full specify-on-ready review
+and produce implementer prompts only for currently unblocked work.
 
 ```text
-Act as the flywheel "specify-on-ready" reviewer.
+Act as the specify-on-ready reviewer.
 
 1) Read `AGENTS.md` and `docs/process-specify-on-ready.md` first.
-2) Read `archive/spec-legacy/phase5-overview.md`, `archive/spec-legacy/mvp-spec.md`, and `archive/spec-legacy/mvp-tasks.md`.
+2) Read current product docs: `spec/product-current.md`, `spec/roadmap-current.md`, `spec/gaps.md`, `spec/tasks.md`, and relevant sections of `spec/product-spec-complete.md`.
 3) Run `br ready` and treat it as the scheduling source of truth.
 4) For each currently ready issue only:
    - Run `br show <id>`
-   - Read the relevant current code files the implementer is expected to touch
-   - Create or update exactly one prompt file named `docs/process-prompt-t<task>-<short-name>.md`
-5) Prompt quality bar: match `docs/process-prompt-t019-subsumption.md` for structure and specificity.
+   - Read the relevant current code and tests the implementer is expected to touch
+   - Create or update exactly one prompt file named `docs/process-prompt-<issue-id>-<short-name>.md`
+5) Prompt quality bar: match the structure/specificity of high-quality existing prompts (for example `docs/process-prompt-t019-subsumption.md`).
 6) Each prompt must include these sections:
    - Context
    - What to read
@@ -23,10 +24,10 @@ Act as the flywheel "specify-on-ready" reviewer.
    - Workflow
    - Definition of done
 7) Scope rules:
-   - Do not create prompts for tasks that are not currently `br ready`
+   - Do not create prompts for issues not currently in `br ready`
    - Do not run any `br` write commands (`update`, `close`, `create`, `sync`, comments)
    - Do not edit unrelated files
-8) If no ready tasks exist, report that and make no file changes.
+8) If no ready issues exist, report that and make no file changes.
 9) At the end, report:
    - Ready issue IDs found
    - Prompt files created/updated
@@ -36,5 +37,5 @@ Act as the flywheel "specify-on-ready" reviewer.
 ## Short Variant
 
 ```text
-Run specify-on-ready: read `AGENTS.md`, `docs/process-specify-on-ready.md`, `archive/spec-legacy/phase5-overview.md`, `archive/spec-legacy/mvp-spec.md`, `archive/spec-legacy/mvp-tasks.md`; then run `br ready` and create/update prompts only for those ready issues in `docs/process-prompt-*.md` (one file per task, `docs/process-prompt-t<task>-<short-name>.md`), matching `docs/process-prompt-t019-subsumption.md` specificity and section structure. No `br` write commands. End with a report of ready IDs and files changed.
+Run specify-on-ready: read `AGENTS.md`, `docs/process-specify-on-ready.md`, `spec/product-current.md`, `spec/roadmap-current.md`, `spec/gaps.md`, `spec/tasks.md`, and relevant sections of `spec/product-spec-complete.md`; run `br ready`; then create/update prompts only for those ready issues in `docs/process-prompt-*.md` (one per issue unless tightly coupled), using the filename pattern `docs/process-prompt-<issue-id>-<short-name>.md`. No `br` write commands. End with a report of ready IDs and files changed.
 ```

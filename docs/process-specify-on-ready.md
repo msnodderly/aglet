@@ -1,110 +1,112 @@
 # Specify-on-Ready Workflow
 
-When an issue becomes unblocked ("ready"), a reviewer specifies it with
-implementer-level detail before an agent claims it. This bridges the gap
-between the lightweight issue descriptions created during phase planning and
-the context an implementer actually needs to do good work.
+When an issue becomes unblocked (`br ready`), a reviewer writes an implementer
+prompt before any agent claims it. The prompt should reflect current code and
+current roadmap, not legacy assumptions.
 
 ---
 
 ## When this runs
 
-After closing an issue:
+After closing an issue on `main`:
 
 ```bash
 br close <id>
 br sync --flush-only && git add .beads/ && git commit -m "br sync: Close <id>"
 
-# Check what's newly ready
+# Scheduling source of truth
 br ready
 ```
 
-For each newly ready issue, the reviewer writes a spec prompt before any agent
-claims it.
+For each newly ready issue, write or update a prompt before implementation work
+is claimed.
 
-## What the reviewer does
+## Reviewer workflow
 
-1. **Read the issue** — `br show <id>` for the current description.
+1. **Read scheduling output** — run `br ready` and treat it as source of truth.
 
-2. **Read the codebase** — Look at the files the implementer will touch and
-   the files they'll depend on. Understand the current state, not just what
-   the spec says should exist.
+2. **Read each ready issue** — `br show <id>`.
 
-3. **Read the spec** — Find the relevant sections of `archive/spec-legacy/mvp-spec.md`. Note any
-   gaps between spec intent and current code.
+3. **Read current product context** — use current docs first:
+   - `spec/product-current.md`
+   - `spec/roadmap-current.md`
+   - `spec/gaps.md`
+   - `spec/tasks.md`
+   - `spec/product-spec-complete.md` (relevant scenario sections)
 
-4. **Write the prompt** — Create `docs/process-prompt-<task-id>-<short-name>.md`
-   with the sections below.
+4. **Read relevant code/tests** — inspect files the implementer is expected to
+   touch plus neighboring tests and integration paths.
 
-5. **Commit** — `git add docs/process-prompt-*.md && git commit -m "docs: Add prompt for <task-id>"`
+5. **Write prompt file** — create/update:
+   - `docs/process-prompt-<issue-id>-<short-name>.md`
+
+6. **Commit prompt docs** —
+   `git add docs/process-prompt-*.md && git commit -m "docs: add/update prompt for <issue-id>"`
 
 ## Prompt structure
 
-Each prompt should have these sections. The goal is context, not prescription.
-Tell the implementer what to achieve and what to watch out for — not how to
-write the code.
+Each prompt should include:
 
-### Context
-2-3 sentences. What is this component? Why does it exist? How does it fit into
-the system? Write this for someone who hasn't read the full spec.
+- Context
+- What to read
+- What to build
+- Tests to write
+- What NOT to do
+- How your code will be used
+- Workflow
+- Definition of done
+
+Quality bar: match the specificity and practical guidance level in strong
+existing prompts (for example `docs/process-prompt-t019-subsumption.md`).
+
+## Prompt guidance
 
 ### What to read
-Ordered list of files and spec sections the implementer should read before
-starting. Include section numbers or line ranges. Prioritize: most important
-first.
+
+List code + docs in priority order. Include enough path-level detail that an
+implementer can start immediately.
 
 ### What to build
-Describe the behavior, not the implementation. Include:
-- **Behavioral rules** — what should happen in each scenario
-- **Edge cases** — things that might be missed
-- **Key design decisions** — things that came out of spec/model analysis
-  (e.g., "check the bool flag, not the conditions vec")
 
-Do NOT include:
-- Exact function signatures or struct layouts
-- Internal algorithm choices
-- Step-by-step implementation instructions
+Describe behavior and invariants, not exact internals.
 
-The implementer designs the API. The spec describes what it should do.
+Include:
+
+- required behavior
+- edge cases
+- known constraints from current model/roadmap
+
+Do not include:
+
+- exact function signatures
+- prescribed algorithm internals
+- step-by-step code instructions
 
 ### Tests to write
-Concrete input/output examples as acceptance criteria. These are behavioral
-tests — "given X, expect Y" — not implementation tests.
+
+Use explicit behavioral acceptance examples (`given X, expect Y`).
 
 ### What NOT to do
-Scope fencing. What belongs to other tasks. What to defer. Common pitfalls
-that would waste time.
 
-### How your code will be used
-Show how downstream code (the next task in the chain) will consume this work.
-This helps the implementer design the right public API without being told
-what it should look like.
+Fence scope to prevent accidental spillover into deferred roadmap areas.
 
-### Workflow
-Standard: point to `AGENTS.md`, include the `br` issue ID, remind about
-branch naming.
+## Scope rules
 
-### Definition of done
-Checklist: tests pass, clippy clean, files touched are within scope.
-
-## What this is NOT
-
-- **Not a code review** — the reviewer writes specs, not code.
-- **Not a rewrite of the issue** — the original `br` description stays. The
-  prompt is a companion document that adds context.
-- **Not required for trivial issues** — if an issue is self-explanatory and
-  touches one function, skip the prompt.
-- **Not prescriptive about internals** — the prompt describes the "what" and
-  "why", never the "how". The implementer chooses the approach.
+- Create/update prompts only for issues currently shown by `br ready`.
+- Do not run `br` write commands during this review pass
+  (`update`, `close`, `create`, `sync`, comments).
+- Do not edit unrelated files.
+- If no ready issues exist, report that and make no file changes.
 
 ## Naming convention
 
-`docs/process-prompt-<task-ids>-<short-name>.md`
+`docs/process-prompt-<issue-id>-<short-name>.md`
 
 Examples:
-- `docs/process-prompt-t015-t016-classifier.md` (merged tasks)
-- `docs/process-prompt-t017-rule-engine.md`
-- `docs/process-prompt-t018-t019-t020-engine-features.md` (parallel tasks sharing context)
 
-Tasks that can be specified together (same file, tight coupling) can share a
-prompt. Tasks that are independent get separate prompts.
+- `docs/process-prompt-bd-3fl-next-weekday-policy.md`
+- `docs/process-prompt-t017-rule-engine.md`
+- `docs/process-prompt-t018-t019-engine-features.md`
+
+Tightly-coupled ready issues may share one prompt file; independent ready issues
+should get separate prompt files.
