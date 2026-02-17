@@ -42,7 +42,7 @@ Exit criteria:
 
 ## 3. Now (Highest Priority)
 
-## R3. TUI View + Category Workflow Streamlining
+## R3. TUI View + Category Workflow Streamlining (Completed, Maintain)
 
 - Adopt the workflow spec in `spec/tui-view-category-workflow.md`.
 - Replace split-pane section navigation with section-first horizontal board layout.
@@ -53,6 +53,19 @@ Exit criteria:
 Exit criteria:
 
 - View and category workflows in TUI match the formal interaction spec and no longer require CLI for basic view criteria shaping.
+
+## R3.5. View + Column Workflow Design and Experiments
+
+- Lock view/column workflow contract using Lotus-style selection/demarcation/annotation framing.
+- Keep current baseline (`When | Item | All Categories`) explicit and stable for all views.
+- Prototype category-family column headings (for example `Priority`, `People`, `Department`) with UI-first experiments before model changes.
+- Add an explicit model/persistence gate so schema changes happen only if experimentation proves necessity.
+
+Exit criteria:
+
+- A detailed design spec exists (`spec/tui-view-column-workflow-design.md`).
+- A sequenced experiment plan exists in `spec/tasks.md` (`T077-T083`).
+- Team has a clear decision path for "UI-only vs model extension" for column workflows.
 
 ## R4. Safety Contract (v1)
 
@@ -102,7 +115,8 @@ Roadmap priorities were set using current implementation and executed demos, inc
 ## 7. Recommended Sequencing
 
 1. Implement TUI view/category workflow streamlining.
-2. Lock and implement safety contract.
-3. Harden persistence and restore integrity.
-4. Grow domain API maturity for robust frontend evolution.
-5. Resume deferred advanced feature track.
+2. Lock and run view/column workflow design experiments.
+3. Lock and implement safety contract.
+4. Harden persistence and restore integrity.
+5. Grow domain API maturity for robust frontend evolution.
+6. Resume deferred advanced feature track.

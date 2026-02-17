@@ -157,6 +157,7 @@ struct App {
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
     view_create_include_selection: HashSet<CategoryId>,
+    view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
     view_editor_category_target: Option<CategoryEditTarget>,
     view_editor_bucket_target: Option<BucketEditTarget>,
@@ -192,6 +193,7 @@ impl Default for App {
             view_pending_edit_name: None,
             view_category_index: 0,
             view_create_include_selection: HashSet::new(),
+            view_create_exclude_selection: HashSet::new(),
             view_editor: None,
             view_editor_category_target: None,
             view_editor_bucket_target: None,
@@ -436,6 +438,12 @@ impl App {
             }
             KeyCode::Char('.') => {
                 self.cycle_view(1, agenda)?;
+            }
+            KeyCode::Tab => {
+                self.cycle_view(1, agenda)?;
+            }
+            KeyCode::BackTab => {
+                self.cycle_view(-1, agenda)?;
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -933,17 +941,31 @@ impl App {
                     self.view_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.view_create_include_selection.clear();
+                    self.view_create_exclude_selection.clear();
                     self.mode = Mode::ViewCreateCategoryPicker;
                     self.clear_input();
-                    self.status = format!(
-                        "Create view {name}: Space toggles include categories, Enter creates"
-                    );
+                    self.status =
+                        format!("Create view {name}: + include, - exclude, Enter creates");
                 }
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
+    }
+
+    fn toggle_view_create_include(&mut self, category_id: CategoryId) {
+        if !self.view_create_include_selection.insert(category_id) {
+            self.view_create_include_selection.remove(&category_id);
+        }
+        self.view_create_exclude_selection.remove(&category_id);
+    }
+
+    fn toggle_view_create_exclude(&mut self, category_id: CategoryId) {
+        if !self.view_create_exclude_selection.insert(category_id) {
+            self.view_create_exclude_selection.remove(&category_id);
+        }
+        self.view_create_include_selection.remove(&category_id);
     }
 
     fn handle_view_create_category_key(
@@ -956,6 +978,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.view_pending_name = None;
                 self.view_create_include_selection.clear();
+                self.view_create_exclude_selection.clear();
                 self.status = "View create canceled".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -970,11 +993,14 @@ impl App {
                         next_index(self.view_category_index, self.category_rows.len(), -1);
                 }
             }
-            KeyCode::Char(' ') => {
+            KeyCode::Char(' ') | KeyCode::Char('+') => {
                 if let Some(row) = self.category_rows.get(self.view_category_index) {
-                    if !self.view_create_include_selection.insert(row.id) {
-                        self.view_create_include_selection.remove(&row.id);
-                    }
+                    self.toggle_view_create_include(row.id);
+                }
+            }
+            KeyCode::Char('-') => {
+                if let Some(row) = self.category_rows.get(self.view_category_index) {
+                    self.toggle_view_create_exclude(row.id);
                 }
             }
             KeyCode::Enter => {
@@ -985,7 +1011,9 @@ impl App {
                 };
 
                 let mut view = View::new(name.clone());
-                if self.view_create_include_selection.is_empty() {
+                if self.view_create_include_selection.is_empty()
+                    && self.view_create_exclude_selection.is_empty()
+                {
                     if let Some(row) = self.category_rows.get(self.view_category_index) {
                         view.criteria.include.insert(row.id);
                     }
@@ -993,6 +1021,9 @@ impl App {
                     view.criteria
                         .include
                         .extend(self.view_create_include_selection.iter().copied());
+                    view.criteria
+                        .exclude
+                        .extend(self.view_create_exclude_selection.iter().copied());
                 }
 
                 match agenda.store().create_view(&view) {
@@ -1002,15 +1033,18 @@ impl App {
                         self.mode = Mode::Normal;
                         self.view_pending_name = None;
                         self.view_create_include_selection.clear();
+                        self.view_create_exclude_selection.clear();
                         self.status = format!(
-                            "Created view {} (include categories={})",
+                            "Created view {} (include={}, exclude={})",
                             view.name,
-                            view.criteria.include.len()
+                            view.criteria.include.len(),
+                            view.criteria.exclude.len()
                         );
                     }
                     Err(err) => {
                         self.mode = Mode::ViewPicker;
                         self.view_create_include_selection.clear();
+                        self.view_create_exclude_selection.clear();
                         self.status = format!("View create failed: {err}");
                     }
                 }
@@ -2115,43 +2149,44 @@ impl App {
             .map(|_| Constraint::Percentage(pct))
             .collect();
         let columns = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(Direction::Vertical)
             .constraints(constraints)
             .split(area);
 
         let category_names = category_name_map(&self.categories);
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
-            let lines: Vec<Line<'_>> = if slot.items.is_empty() {
-                vec![Line::from("(no items)")]
+            let inner_width = columns[slot_index].width.saturating_sub(2);
+            let widths = board_column_widths(inner_width);
+            let mut lines: Vec<Line<'_>> = vec![Line::from(board_annotation_header(widths))];
+            if slot.items.is_empty() {
+                lines.push(Line::from("(no items)"));
             } else {
-                slot.items
-                    .iter()
-                    .enumerate()
-                    .map(|(item_index, item)| {
-                        let marker = if is_selected_slot && item_index == self.item_index {
-                            "> "
-                        } else {
-                            "  "
-                        };
-                        let when = item
-                            .when_date
-                            .map(|dt| dt.to_string())
-                            .unwrap_or_else(|| "-".to_string());
-                        let done = if item.is_done { "[done] " } else { "" };
-                        let categories = item_assignment_labels(item, &category_names);
-                        let categories_text = if categories.is_empty() {
-                            "-".to_string()
-                        } else {
-                            categories.join(", ")
-                        };
-                        Line::from(format!(
-                            "{marker}{done}{} | {} | {}",
-                            when, item.text, categories_text
-                        ))
-                    })
-                    .collect()
-            };
+                lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
+                    let when = item
+                        .when_date
+                        .map(|dt| dt.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let item_text = if item.is_done {
+                        format!("[done] {}", item.text)
+                    } else {
+                        item.text.clone()
+                    };
+                    let categories = item_assignment_labels(item, &category_names);
+                    let categories_text = if categories.is_empty() {
+                        "-".to_string()
+                    } else {
+                        categories.join(", ")
+                    };
+                    Line::from(board_item_row(
+                        is_selected_slot && item_index == self.item_index,
+                        &when,
+                        &item_text,
+                        &categories_text,
+                        widths,
+                    ))
+                }));
+            }
             let title = format!("{} ({})", slot.title, slot.items.len());
             let border_color = if is_selected_slot {
                 Color::Cyan
@@ -2159,14 +2194,12 @@ impl App {
                 Color::Blue
             };
             frame.render_widget(
-                Paragraph::new(lines)
-                    .block(
-                        Block::default()
-                            .title(title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(border_color)),
-                    )
-                    .wrap(Wrap { trim: false }),
+                Paragraph::new(lines).block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(border_color)),
+                ),
                 columns[slot_index],
             );
         }
@@ -2216,7 +2249,9 @@ impl App {
             Mode::ViewCreateNameInput => format!("View create> {}", self.input),
             Mode::ViewRenameInput => format!("View rename> {}", self.input),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
-            Mode::ViewCreateCategoryPicker => "Select include category for new view".to_string(),
+            Mode::ViewCreateCategoryPicker => {
+                "Set include/exclude categories for new view".to_string()
+            }
             Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
             Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
@@ -2242,7 +2277,7 @@ impl App {
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewCreateCategoryPicker => {
-                "j/k:select category  Space:toggle include  Enter:create view  Esc:cancel"
+                "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
             Mode::ViewEditor => "+:include  -:exclude  [/] virtual  s:sections  u:unmatched  Enter:save  Esc:cancel",
             Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
@@ -2257,7 +2292,7 @@ impl App {
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  a:assign-item  e:edit-item  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  ,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a:assign-item  e:edit-item  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  Tab/,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -2299,7 +2334,7 @@ impl App {
         frame.render_widget(Clear, area);
 
         let mut lines = vec![Line::from(
-            "Choose include categories for new view (Space toggle, Enter create)",
+            "Choose criteria for new view (+ include, - exclude, Enter create)",
         )];
         if self.category_rows.is_empty() {
             lines.push(Line::from("(no categories available)"));
@@ -2322,8 +2357,13 @@ impl App {
                 } else {
                     format!(" [{}]", flags.join(","))
                 };
-                let selected = self.view_create_include_selection.contains(&row.id);
-                let check = if selected { "[x]" } else { "[ ]" };
+                let check = if self.view_create_include_selection.contains(&row.id) {
+                    "[+]"
+                } else if self.view_create_exclude_selection.contains(&row.id) {
+                    "[-]"
+                } else {
+                    "[ ]"
+                };
                 lines.push(Line::from(format!(
                     "{marker}{check} {}{}{}",
                     "  ".repeat(row.depth),
@@ -2334,8 +2374,8 @@ impl App {
         }
 
         let title = match self.mode {
-            Mode::ViewCreateCategoryPicker => "Create View Include",
-            _ => "View Include",
+            Mode::ViewCreateCategoryPicker => "Create View Criteria",
+            _ => "View Criteria",
         };
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -3225,6 +3265,139 @@ fn item_assignment_labels(
     labels
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoardColumnWidths {
+    marker: usize,
+    when: usize,
+    item: usize,
+    categories: usize,
+}
+
+const BOARD_ROW_MARKER_WIDTH: usize = 2;
+const BOARD_COLUMN_SEPARATOR: &str = " | ";
+const BOARD_WHEN_TARGET_WIDTH: usize = 19;
+const BOARD_WHEN_MIN_WIDTH: usize = 10;
+const BOARD_ITEM_MIN_WIDTH: usize = 12;
+const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
+const BOARD_CATEGORY_MIN_WIDTH: usize = 14;
+const BOARD_TRUNCATION_SUFFIX: &str = "...";
+
+fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
+    let total = slot_width as usize;
+    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
+    let separator_total = BOARD_COLUMN_SEPARATOR.len() * 2;
+    let available = total.saturating_sub(marker + separator_total);
+
+    if available == 0 {
+        return BoardColumnWidths {
+            marker,
+            when: 0,
+            item: 0,
+            categories: 0,
+        };
+    }
+
+    let mut when = BOARD_WHEN_TARGET_WIDTH.min(available);
+    let mut categories = BOARD_CATEGORY_TARGET_WIDTH.min(available.saturating_sub(when));
+    let mut item = available.saturating_sub(when + categories);
+
+    let min_item = BOARD_ITEM_MIN_WIDTH.min(available);
+    if item < min_item {
+        let needed = min_item - item;
+        let min_categories = BOARD_CATEGORY_MIN_WIDTH.min(categories);
+        let category_shift = needed.min(categories.saturating_sub(min_categories));
+        categories -= category_shift;
+        item += category_shift;
+
+        let needed = min_item.saturating_sub(item);
+        let min_when = BOARD_WHEN_MIN_WIDTH.min(when);
+        let when_shift = needed.min(when.saturating_sub(min_when));
+        when -= when_shift;
+        item += when_shift;
+    }
+
+    if item == 0 && available > 0 {
+        if categories > 0 {
+            categories -= 1;
+            item += 1;
+        } else if when > 0 {
+            when -= 1;
+            item += 1;
+        }
+    }
+
+    let used = when + item + categories;
+    if used < available {
+        item += available - used;
+    }
+
+    BoardColumnWidths {
+        marker,
+        when,
+        item,
+        categories,
+    }
+}
+
+fn fit_board_cell(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let count = text.chars().count();
+    if count <= width {
+        return format!("{text:<width$}");
+    }
+    if width <= BOARD_TRUNCATION_SUFFIX.len() {
+        return ".".repeat(width);
+    }
+    let keep = width - BOARD_TRUNCATION_SUFFIX.len();
+    let prefix: String = text.chars().take(keep).collect();
+    format!("{prefix}{BOARD_TRUNCATION_SUFFIX}")
+}
+
+fn board_row_marker(is_selected: bool, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if is_selected {
+        let mut marker = ">".to_string();
+        marker.push_str(&" ".repeat(width.saturating_sub(1)));
+        marker
+    } else {
+        " ".repeat(width)
+    }
+}
+
+fn board_annotation_header(widths: BoardColumnWidths) -> String {
+    format!(
+        "{}{}{}{}{}{}",
+        " ".repeat(widths.marker),
+        fit_board_cell("When", widths.when),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell("Item", widths.item),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell("All Categories", widths.categories),
+    )
+}
+
+fn board_item_row(
+    is_selected: bool,
+    when: &str,
+    item: &str,
+    categories: &str,
+    widths: BoardColumnWidths,
+) -> String {
+    format!(
+        "{}{}{}{}{}{}",
+        board_row_marker(is_selected, widths.marker),
+        fit_board_cell(when, widths.when),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell(item, widths.item),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell(categories, widths.categories),
+    )
+}
+
 fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
     let parent_by_id: HashMap<CategoryId, Option<CategoryId>> = categories
         .iter()
@@ -3371,10 +3544,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, bucket_target_set_mut, build_category_rows,
-        build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
-        item_assignment_labels, should_render_unmatched_lane, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
+        add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
+        bucket_target_set_mut, build_category_rows, build_reparent_options,
+        category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
+        next_index, should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3676,6 +3850,107 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_tab_and_backtab_cycle_views() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-tab-cycle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        store
+            .create_view(&View::new("AAA".to_string()))
+            .expect("create first view");
+        store
+            .create_view(&View::new("BBB".to_string()))
+            .expect("create second view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("AAA");
+        app.mode = Mode::Normal;
+        let start_index = app.view_index;
+        let expected_next = app.views[next_index(start_index, app.views.len(), 1)]
+            .name
+            .clone();
+
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab should cycle view");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some(expected_next.as_str())
+        );
+
+        app.handle_normal_key(KeyCode::BackTab, &agenda)
+            .expect("backtab should cycle backwards");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("AAA")
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_create_category_picker_supports_include_and_exclude() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-create-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let include_cat = Category::new("ProjectY".to_string());
+        let exclude_cat = Category::new("Someday".to_string());
+        store
+            .create_category(&include_cat)
+            .expect("create include category");
+        store
+            .create_category(&exclude_cat)
+            .expect("create exclude category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewCreateCategoryPicker;
+        app.view_pending_name = Some("Mixed".to_string());
+        app.view_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == include_cat.id)
+            .expect("include row should exist");
+        app.handle_view_create_category_key(KeyCode::Char('+'), &agenda)
+            .expect("include toggle should work");
+
+        app.view_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == exclude_cat.id)
+            .expect("exclude row should exist");
+        app.handle_view_create_category_key(KeyCode::Char('-'), &agenda)
+            .expect("exclude toggle should work");
+
+        app.handle_view_create_category_key(KeyCode::Enter, &agenda)
+            .expect("view create should succeed");
+
+        let created = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Mixed")
+            .expect("created view exists");
+        assert!(created.criteria.include.contains(&include_cat.id));
+        assert!(created.criteria.exclude.contains(&exclude_cat.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn text_input_editing_supports_navigation_insert_backspace_and_delete() {
         let mut app = App::default();
         app.set_input("ac".to_string());
@@ -3791,5 +4066,37 @@ mod tests {
         ]);
         let labels = item_assignment_labels(&item, &names);
         assert_eq!(labels, vec!["garage".to_string(), "slotB".to_string()]);
+    }
+
+    #[test]
+    fn board_annotation_header_and_rows_share_grid_boundaries() {
+        let widths = board_column_widths(72);
+        let header = board_annotation_header(widths);
+        let row = board_item_row(
+            true,
+            "2026-02-17",
+            "alignment check",
+            "Home, SlotA, SlotB",
+            widths,
+        );
+
+        let header_pipes: Vec<usize> = header.match_indices('|').map(|(idx, _)| idx).collect();
+        let row_pipes: Vec<usize> = row.match_indices('|').map(|(idx, _)| idx).collect();
+        assert_eq!(header_pipes, row_pipes);
+    }
+
+    #[test]
+    fn board_item_row_truncates_to_slot_width() {
+        let widths = board_column_widths(44);
+        let row = board_item_row(
+            false,
+            "2026-02-17 14:00:00",
+            "very long item text that should truncate cleanly",
+            "one, two, three, four, five, six",
+            widths,
+        );
+
+        assert!(row.len() <= 44);
+        assert!(row.contains("..."));
     }
 }

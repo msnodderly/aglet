@@ -41,7 +41,7 @@ Out of scope for this phase:
 
 ### 4.1 Layout
 
-- Board renders section lanes as horizontal columns.
+- Board renders sections as stacked lanes top-to-bottom.
 - Each lane shows:
   - lane title
   - item count
@@ -59,6 +59,11 @@ Out of scope for this phase:
   - values sorted by category display name
   - rendered as a comma-separated list
   - empty when the item has no category assignments
+- Header and item rows use one shared width layout so `When`, `Item`, and
+  `All Categories` stay visually aligned as a grid.
+- When content exceeds available column width, truncate in-cell rather than
+  shifting separator positions.
+- Row density is compact (single-line rows, no wrap-induced blank spacer lines).
 - This fixed annotation contract is intentionally model-free in this phase (UI behavior only).
 
 ### 4.3 Cursor Model
@@ -81,6 +86,7 @@ Out of scope for this phase:
 - `v` / `F8`: open view palette.
 - `c` / `F9`: open category manager.
 - `,` / `.`: previous/next view.
+- `Tab` / `Shift+Tab`: next/previous view.
 - `i`: toggle inspect panel.
 - `/`: filter input.
 - `q`: quit.
@@ -128,9 +134,10 @@ Step 1: name input
 Step 2: include-category picker
 
 - `j/k`: move category cursor.
-- `Space`: toggle category include selection.
-- `Enter`: create view from selected includes.
-  - If no toggles were selected, fallback is current highlighted category.
+- `+` (or `Space`): toggle include selection for highlighted category.
+- `-`: toggle exclude selection for highlighted category.
+- `Enter`: create view from selected include/exclude criteria.
+  - If both include and exclude sets are empty, fallback is current highlighted category as include.
 - `Esc`: cancel and return to palette.
 
 ### 6.3 View Rename Flow
@@ -236,21 +243,15 @@ The TUI should favor the minimal logically consistent mutation for actions taken
 
 ## 9. Deferred Next Slice: Column Headings Inside Sections
 
-The next design slice should define a first-class "column heading" model for board presentation, based on category hierarchy:
+The next design slice is specified in:
 
-- heading category example: `Priority`
-  - values/subcolumns: `High`, `Medium`, `Low`
-- heading category example: `People`
-  - values/subcolumns: person categories
-- heading category example: `Department`
-  - values/subcolumns: `Sales`, `Marketing`, `Engineering`
+- `/Users/mds/src/aglet-experiments/spec/tui-view-column-workflow-design.md`
 
-Open design questions for that slice:
+Summary of target direction:
 
-- whether heading/value are view metadata vs derived from existing category parent-child relationships
-- how many heading categories can be active in one view
-- interaction between section criteria and heading-driven subcolumns
-- row/column rendering strategy in narrow terminal widths
+- column headings should usually map to category-family roots (for example `Priority`, `People`, `Department`)
+- column values should come from assigned categories in the selected heading subtree
+- column sets may eventually vary by section after experimentation and persistence-gate review
 
 ## 10. Acceptance Criteria
 

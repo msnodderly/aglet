@@ -895,3 +895,82 @@ Rationale:
   shown in existing demos (capturing, organizing, and reshaping focus views).
 - Item-first phrasing is clearer and more natural in interaction text and
   status feedback.
+
+---
+
+## 35. TUI annotation columns render as an aligned grid with truncation
+
+**Date**: 2026-02-17
+**Relevant tasks**: T078, T079
+
+For the V1 annotation contract (`When | Item | All Categories`), the board
+renderer uses a single width layout for both header and rows, so separators
+stay aligned inside each section lane.
+
+Chosen rendering policy:
+
+- fixed-width selection marker prefix
+- fixed target width for `When`
+- flexible dominant width for `Item`
+- bounded width for `All Categories`
+- truncation with suffix (`...`) when a cell exceeds available width
+
+Rationale:
+
+- Human scanning is materially better when separators do not drift across rows.
+- Grid alignment can be delivered entirely in TUI rendering code without model
+  or store schema changes.
+- Truncation is preferable to wrap-driven misalignment for this board-first
+  workflow.
+
+---
+
+## 36. Section lanes are stacked top-to-bottom for information density
+
+**Date**: 2026-02-17
+**Relevant tasks**: T084
+
+Board sections are rendered as vertically stacked lanes (top-to-bottom), not
+side-by-side columns.
+
+Chosen rendering behavior:
+
+- each section gets full lane width for annotation columns
+- rows are rendered as compact single lines
+- wrap-induced blank spacing between item rows is avoided
+
+Rationale:
+
+- Side-by-side lanes constrain width too aggressively once annotation columns
+  are visible (`When | Item | All Categories`), forcing hard truncation.
+- Stacked sections preserve readability of item text and category columns while
+  still keeping section boundaries explicit.
+
+---
+
+## 37. View creation supports include/exclude picks and Tab view cycling
+
+**Date**: 2026-02-17
+**Relevant tasks**: T079, T085
+
+The view-create category picker now supports both include and exclude
+selection directly:
+
+- `+` (or `Space`) toggles include for the highlighted category
+- `-` toggles exclude for the highlighted category
+- include/exclude are mutually exclusive per category in the picker
+
+If no include or exclude categories are selected, create falls back to using
+the highlighted category as include (to preserve quick-create behavior).
+
+Normal mode also accepts:
+
+- `Tab`: next view
+- `Shift+Tab`: previous view
+
+Rationale:
+
+- Include-only create flow was insufficient for common "all except X" and
+  quick negative-filter workflows.
+- `Tab`/`Shift+Tab` provides faster cycling ergonomics on laptops than symbol
+  shortcuts alone.
