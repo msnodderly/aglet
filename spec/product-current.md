@@ -92,13 +92,13 @@ Implemented:
 - Remove from view.
 - Mark done.
 - Delete with confirmation.
-- View picker (`F8`).
-- View create/rename/include-edit flow in picker (`F8`: `N`/`r`/`e`).
+- View palette (`v` with `F8` alias).
+- Full in-app view editing flow (criteria/sections/unmatched) from palette (`e`).
 - In-view text filter (`/`).
 - Inspect panel for assignment provenance (`i`).
 - Inspect unassign action (`u` from inspect panel).
 - Direct item-to-category assignment action (`a`).
-- Category manager (`F9`) with create/rename/reparent/toggle/delete.
+- Category manager (`c` with `F9` alias) with create/rename/reparent/toggle/delete.
 - Inline text edit (`e`) and note edit (`m`).
 - Non-fatal mutation error handling and no-view fallback behavior.
 

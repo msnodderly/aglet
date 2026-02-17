@@ -12,7 +12,8 @@ This script validates the TUI daily loop across:
 - inline text edit (`e`)
 - note create/edit (`m`)
 - inspect unassign (`i` + `u`)
-- category manager create/rename/reparent/toggle/delete (`F9`)
+- category manager create/rename/reparent/toggle/delete (`c` / `F9`)
+- full view editor criteria/section/unmatched flows (`v` + `e`)
 
 ## 1) Setup
 
@@ -61,31 +62,44 @@ cargo run -q -p agenda-tui -- --db "$DB"
 
 Inside TUI, run the following checklist.
 
-1. Category manager and structural edits (`F9`):
-- Press `F9`.
+1. Category manager and structural edits (`c` / `F9`):
+- Press `c`.
 - Press `N`, create `Work`.
 - Select `Work`, press `n`, create `Project X`.
 - Select `Project X`, press `r`, rename to `Project X2`.
 - With `Project X2` selected, press `t` (toggle exclusive) and `i` (toggle implicit).
 - Press `p`, choose `(root)`, Enter (reparent).
-- Press `F9` to close manager.
+- Press `Esc` (or `F9`) to close manager.
 
-2. View create/edit flow (`F8`):
-- Press `F8`.
+2. View create/edit flow (`v` / `F8` + full editor):
+- Press `v`.
 - Press `N`, type `Work Focus`, Enter.
 - In include-category picker, select `Work`, Enter.
-- Press `F8`, select `Work Focus`, press `r`, rename to `Work Board`, Enter.
-- Press `F8`, select `Work Board`, press `e`, select `Project X2`, Enter.
+- Press `v`, select `Work Focus`, press `r`, rename to `Work Board`, Enter.
+- Press `v`, select `Work Board`, press `e` to open view editor.
+  - Press `+`, toggle `Project X2` with Space, press Enter.
+  - Press `-`, toggle `Done` with Space (or another category), press Enter.
+  - Press `]`, toggle `Today` bucket with Space, press Enter.
+  - Press `s` to open section editor.
+    - Press `N` to add section.
+    - Press `Enter` to open section detail.
+    - Press `t`, rename section to `Focus`, Enter.
+    - Press `+`, add at least one include category, Enter.
+    - Press `Esc` back to section list, `Esc` back to view editor.
+  - Press `u` to open unmatched settings.
+    - Press `l`, set label to `Backlog`, Enter.
+    - Press `Esc` back to view editor.
+  - Press `Enter` to save view editor.
 
 3. Sectioned move/remove flow:
-- Press `F8`, switch to `Smoke Board`.
+- Press `v`, switch to `Smoke Board`.
 - Ensure `Slot A` section is selected, press `n`, add: `smoke flow item`.
 - Press `]` to move to `Slot B`.
 - Press `r` to remove from view.
   - Expected: item disappears from `Smoke Board`.
 
 4. Edit/note/inspect-unassign flow:
-- Press `F8`, switch to `All Items`.
+- Press `v`, switch to `All Items`.
 - Select any non-done item.
 - Press `e`, append ` Foo`, Enter.
 - Press `m`, type `smoke note`, Enter.
@@ -120,7 +134,7 @@ cargo run -q -p agenda-cli -- --db "$DB" deleted
 
 - TUI remains stable through the full sequence (no crash/forced exit).
 - Category create/rename/reparent/toggle operations succeed and persist.
-- View create/rename/include-edit operations succeed and persist.
+- View create/rename/full-editor operations succeed and persist.
 - Item can be moved between `Slot A`/`Slot B` and removed from `Smoke Board`.
 - Inline text edit and note edit persist.
 - Inspect unassign removes selected assignment.

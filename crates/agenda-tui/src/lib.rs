@@ -3,8 +3,8 @@ use std::io;
 
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
-use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View};
-use agenda_core::query::resolve_view;
+use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View, WhenBucket};
+use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use chrono::{Local, NaiveDateTime, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -83,6 +83,34 @@ struct ReparentOptionRow {
     label: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CategoryEditTarget {
+    ViewInclude,
+    ViewExclude,
+    SectionCriteriaInclude,
+    SectionCriteriaExclude,
+    SectionOnInsertAssign,
+    SectionOnRemoveUnassign,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BucketEditTarget {
+    ViewVirtualInclude,
+    ViewVirtualExclude,
+    SectionVirtualInclude,
+    SectionVirtualExclude,
+}
+
+#[derive(Clone)]
+struct ViewEditorState {
+    base_view_name: String,
+    draft: View,
+    category_index: usize,
+    bucket_index: usize,
+    section_index: usize,
+    preview_count: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
@@ -96,7 +124,14 @@ enum Mode {
     ViewCreateNameInput,
     ViewCreateCategoryPicker,
     ViewRenameInput,
-    ViewEditCategoryPicker,
+    ViewEditor,
+    ViewEditorCategoryPicker,
+    ViewEditorBucketPicker,
+    ViewSectionEditor,
+    ViewSectionDetail,
+    ViewSectionTitleInput,
+    ViewUnmatchedSettings,
+    ViewUnmatchedLabelInput,
     ConfirmDelete,
     CategoryManager,
     CategoryCreateInput,
@@ -112,6 +147,7 @@ struct App {
     input_cursor: usize,
     filter: Option<String>,
     show_inspect: bool,
+    all_items: Vec<Item>,
 
     views: Vec<View>,
     view_index: usize,
@@ -119,6 +155,9 @@ struct App {
     view_pending_name: Option<String>,
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
+    view_editor: Option<ViewEditorState>,
+    view_editor_category_target: Option<CategoryEditTarget>,
+    view_editor_bucket_target: Option<BucketEditTarget>,
 
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
@@ -137,19 +176,22 @@ impl Default for App {
     fn default() -> Self {
         Self {
             mode: Mode::Normal,
-            status:
-                "Press n to add, a to assign item to category, F8 to switch views, F9 for categories, q to quit"
-                    .to_string(),
+            status: "Press n to add, v for view palette, c for category manager, q to quit"
+                .to_string(),
             input: String::new(),
             input_cursor: 0,
             filter: None,
             show_inspect: false,
+            all_items: Vec::new(),
             views: Vec::new(),
             view_index: 0,
             picker_index: 0,
             view_pending_name: None,
             view_pending_edit_name: None,
             view_category_index: 0,
+            view_editor: None,
+            view_editor_category_target: None,
+            view_editor_bucket_target: None,
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
@@ -219,7 +261,14 @@ impl App {
             Mode::ViewCreateNameInput => self.handle_view_create_name_key(code),
             Mode::ViewCreateCategoryPicker => self.handle_view_create_category_key(code, agenda),
             Mode::ViewRenameInput => self.handle_view_rename_key(code, agenda),
-            Mode::ViewEditCategoryPicker => self.handle_view_edit_category_key(code, agenda),
+            Mode::ViewEditor => self.handle_view_editor_key(code, agenda),
+            Mode::ViewEditorCategoryPicker => self.handle_view_editor_category_key(code),
+            Mode::ViewEditorBucketPicker => self.handle_view_editor_bucket_key(code),
+            Mode::ViewSectionEditor => self.handle_view_section_editor_key(code),
+            Mode::ViewSectionDetail => self.handle_view_section_detail_key(code),
+            Mode::ViewSectionTitleInput => self.handle_view_section_title_key(code),
+            Mode::ViewUnmatchedSettings => self.handle_view_unmatched_settings_key(code),
+            Mode::ViewUnmatchedLabelInput => self.handle_view_unmatched_label_key(code),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
             Mode::CategoryManager => self.handle_category_manager_key(code, agenda),
             Mode::CategoryCreateInput => self.handle_category_create_key(code, agenda),
@@ -366,17 +415,23 @@ impl App {
                     self.status = "Filter cleared".to_string();
                 }
             }
-            KeyCode::F(8) => {
+            KeyCode::F(8) | KeyCode::Char('v') => {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =
-                    "View picker: Enter switch, N create, r rename, e edit include, Esc cancel"
+                    "View palette: Enter switch, N create, r rename, e edit view, Esc cancel"
                         .to_string();
             }
-            KeyCode::F(9) => {
+            KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
                 self.status =
                     "Category manager: n child, N root, x delete, Esc to close".to_string();
+            }
+            KeyCode::Char(',') => {
+                self.cycle_view(-1, agenda)?;
+            }
+            KeyCode::Char('.') => {
+                self.cycle_view(1, agenda)?;
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -779,13 +834,8 @@ impl App {
             }
             KeyCode::Char('e') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
-                    self.mode = Mode::ViewEditCategoryPicker;
-                    self.view_pending_edit_name = Some(view.name.clone());
-                    self.view_category_index =
-                        first_non_reserved_category_index(&self.category_rows);
-                    self.status =
-                        "Edit view include category: j/k select category, Enter save, Esc cancel"
-                            .to_string();
+                    self.open_view_editor(view);
+                    self.status = "View editor: + include, - exclude, [/] virtual, s sections, u unmatched, Enter save, Esc cancel".to_string();
                 } else {
                     self.status = "No selected view to edit".to_string();
                 }
@@ -968,7 +1018,35 @@ impl App {
         Ok(false)
     }
 
-    fn handle_view_edit_category_key(
+    fn open_view_editor(&mut self, view: View) {
+        let preview_count = self.preview_count_for_query(&view.criteria);
+        self.view_editor = Some(ViewEditorState {
+            base_view_name: view.name.clone(),
+            draft: view,
+            category_index: first_non_reserved_category_index(&self.category_rows),
+            bucket_index: 0,
+            section_index: 0,
+            preview_count,
+        });
+        self.view_editor_category_target = None;
+        self.view_editor_bucket_target = None;
+        self.mode = Mode::ViewEditor;
+    }
+
+    fn preview_count_for_query(&self, query: &Query) -> usize {
+        let reference_date = Local::now().date_naive();
+        evaluate_query(query, &self.all_items, reference_date).len()
+    }
+
+    fn refresh_view_editor_preview(&mut self) {
+        if let Some(editor) = &mut self.view_editor {
+            let reference_date = Local::now().date_naive();
+            editor.preview_count =
+                evaluate_query(&editor.draft.criteria, &self.all_items, reference_date).len();
+        }
+    }
+
+    fn handle_view_editor_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
@@ -976,64 +1054,365 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
-                self.view_pending_edit_name = None;
+                self.view_editor = None;
+                self.view_editor_category_target = None;
+                self.view_editor_bucket_target = None;
+                self.clear_input();
                 self.status = "View edit canceled".to_string();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.category_rows.is_empty() {
-                    self.view_category_index =
-                        next_index(self.view_category_index, self.category_rows.len(), 1);
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !self.category_rows.is_empty() {
-                    self.view_category_index =
-                        next_index(self.view_category_index, self.category_rows.len(), -1);
-                }
-            }
             KeyCode::Enter => {
-                let Some(view_name) = self.view_pending_edit_name.clone() else {
+                let Some(editor) = self.view_editor.clone() else {
                     self.mode = Mode::ViewPicker;
-                    self.status = "View edit failed: no selected view".to_string();
+                    self.status = "View edit failed: no draft".to_string();
                     return Ok(false);
                 };
-                let Some(row) = self.category_rows.get(self.view_category_index).cloned() else {
-                    self.mode = Mode::ViewPicker;
-                    self.status = "View edit failed: no category selected".to_string();
-                    return Ok(false);
-                };
-                let Some(mut view) = self
-                    .views
-                    .iter()
-                    .find(|view| view.name.eq_ignore_ascii_case(&view_name))
-                    .cloned()
-                else {
-                    self.mode = Mode::ViewPicker;
-                    self.status = "View edit failed: selected view not found".to_string();
-                    return Ok(false);
-                };
-
-                view.criteria.include.clear();
-                view.criteria.include.insert(row.id);
-
-                match agenda.store().update_view(&view) {
+                match agenda.store().update_view(&editor.draft) {
                     Ok(()) => {
                         self.refresh(agenda.store())?;
-                        self.set_view_selection_by_name(&view.name);
+                        self.set_view_selection_by_name(&editor.base_view_name);
                         self.mode = Mode::ViewPicker;
-                        self.view_pending_edit_name = None;
-                        self.status = format!(
-                            "Updated view {} include category to {}",
-                            view.name, row.name
-                        );
+                        self.view_editor = None;
+                        self.view_editor_category_target = None;
+                        self.view_editor_bucket_target = None;
+                        self.status = format!("Updated view {}", editor.base_view_name);
                     }
                     Err(err) => {
-                        self.mode = Mode::ViewPicker;
-                        self.view_pending_edit_name = None;
                         self.status = format!("View edit failed: {err}");
                     }
                 }
             }
+            KeyCode::Char('+') => {
+                self.open_view_editor_category_picker(CategoryEditTarget::ViewInclude);
+            }
+            KeyCode::Char('-') => {
+                self.open_view_editor_category_picker(CategoryEditTarget::ViewExclude);
+            }
+            KeyCode::Char(']') => {
+                self.open_view_editor_bucket_picker(BucketEditTarget::ViewVirtualInclude);
+            }
+            KeyCode::Char('[') => {
+                self.open_view_editor_bucket_picker(BucketEditTarget::ViewVirtualExclude);
+            }
+            KeyCode::Char('s') => {
+                self.mode = Mode::ViewSectionEditor;
+                self.status = "Section editor: j/k select, N add, x remove, [/] reorder, Enter edit, Esc back".to_string();
+            }
+            KeyCode::Char('u') => {
+                self.mode = Mode::ViewUnmatchedSettings;
+                self.status = "Unmatched: t toggle visibility, l edit label, Esc back".to_string();
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn open_view_editor_category_picker(&mut self, target: CategoryEditTarget) {
+        if self.category_rows.is_empty() {
+            self.status = "No categories available".to_string();
+            return;
+        }
+        self.view_editor_category_target = Some(target);
+        self.mode = Mode::ViewEditorCategoryPicker;
+        self.status = "Category picker: j/k select, Space toggle, Enter/Esc back".to_string();
+    }
+
+    fn open_view_editor_bucket_picker(&mut self, target: BucketEditTarget) {
+        self.view_editor_bucket_target = Some(target);
+        self.mode = Mode::ViewEditorBucketPicker;
+        self.status = "Bucket picker: j/k select, Space toggle, Enter/Esc back".to_string();
+    }
+
+    fn handle_view_editor_category_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        let Some(target) = self.view_editor_category_target else {
+            self.mode = Mode::ViewEditor;
+            return Ok(false);
+        };
+        match code {
+            KeyCode::Esc | KeyCode::Enter => {
+                self.view_editor_category_target = None;
+                self.mode = if category_target_is_section(target) {
+                    Mode::ViewSectionDetail
+                } else {
+                    Mode::ViewEditor
+                };
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.category_index =
+                        next_index(editor.category_index, self.category_rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.category_index =
+                        next_index(editor.category_index, self.category_rows.len(), -1);
+                }
+            }
+            KeyCode::Char(' ') => {
+                let Some(editor) = &mut self.view_editor else {
+                    return Ok(false);
+                };
+                let row_index = editor
+                    .category_index
+                    .min(self.category_rows.len().saturating_sub(1));
+                let Some(row) = self.category_rows.get(row_index).cloned() else {
+                    return Ok(false);
+                };
+                if let Some(set) =
+                    category_target_set_mut(&mut editor.draft, editor.section_index, target)
+                {
+                    if !set.insert(row.id) {
+                        set.remove(&row.id);
+                    }
+                }
+                self.refresh_view_editor_preview();
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_editor_bucket_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        let Some(target) = self.view_editor_bucket_target else {
+            self.mode = Mode::ViewEditor;
+            return Ok(false);
+        };
+        let buckets = when_bucket_options();
+        match code {
+            KeyCode::Esc | KeyCode::Enter => {
+                self.view_editor_bucket_target = None;
+                self.mode = if bucket_target_is_section(target) {
+                    Mode::ViewSectionDetail
+                } else {
+                    Mode::ViewEditor
+                };
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.bucket_index = next_index(editor.bucket_index, buckets.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.bucket_index = next_index(editor.bucket_index, buckets.len(), -1);
+                }
+            }
+            KeyCode::Char(' ') => {
+                let Some(editor) = &mut self.view_editor else {
+                    return Ok(false);
+                };
+                let bucket = buckets[editor.bucket_index.min(buckets.len().saturating_sub(1))];
+                if let Some(set) =
+                    bucket_target_set_mut(&mut editor.draft, editor.section_index, target)
+                {
+                    if !set.insert(bucket) {
+                        set.remove(&bucket);
+                    }
+                }
+                self.refresh_view_editor_preview();
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_section_editor_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        let Some(editor) = &mut self.view_editor else {
+            self.mode = Mode::ViewPicker;
+            return Ok(false);
+        };
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewEditor;
+                self.status = "View editor".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !editor.draft.sections.is_empty() {
+                    editor.section_index =
+                        next_index(editor.section_index, editor.draft.sections.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !editor.draft.sections.is_empty() {
+                    editor.section_index =
+                        next_index(editor.section_index, editor.draft.sections.len(), -1);
+                }
+            }
+            KeyCode::Char('N') => {
+                let next = editor.draft.sections.len() + 1;
+                editor.draft.sections.push(Section {
+                    title: format!("Section {next}"),
+                    criteria: Query::default(),
+                    on_insert_assign: HashSet::new(),
+                    on_remove_unassign: HashSet::new(),
+                    show_children: false,
+                });
+                editor.section_index = editor.draft.sections.len().saturating_sub(1);
+            }
+            KeyCode::Char('x') => {
+                if !editor.draft.sections.is_empty() {
+                    editor.draft.sections.remove(editor.section_index);
+                    editor.section_index = editor
+                        .section_index
+                        .min(editor.draft.sections.len().saturating_sub(1));
+                }
+            }
+            KeyCode::Char('[') => {
+                if editor.section_index > 0 {
+                    editor
+                        .draft
+                        .sections
+                        .swap(editor.section_index, editor.section_index - 1);
+                    editor.section_index -= 1;
+                }
+            }
+            KeyCode::Char(']') => {
+                if editor.section_index + 1 < editor.draft.sections.len() {
+                    editor
+                        .draft
+                        .sections
+                        .swap(editor.section_index, editor.section_index + 1);
+                    editor.section_index += 1;
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('e') => {
+                if !editor.draft.sections.is_empty() {
+                    self.mode = Mode::ViewSectionDetail;
+                    self.status = "Section detail: t title, +/- categories, [/ ] virtual, a insert-set, r remove-set, h toggle children, Esc back".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_section_detail_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        let Some(section_index) = self.view_editor.as_ref().map(|editor| editor.section_index)
+        else {
+            self.mode = Mode::ViewPicker;
+            return Ok(false);
+        };
+        let section_exists = self
+            .view_editor
+            .as_ref()
+            .and_then(|editor| editor.draft.sections.get(section_index))
+            .is_some();
+        if !section_exists {
+            self.mode = Mode::ViewSectionEditor;
+            return Ok(false);
+        }
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewSectionEditor;
+            }
+            KeyCode::Char('t') => {
+                let title = self
+                    .view_editor
+                    .as_ref()
+                    .and_then(|editor| editor.draft.sections.get(section_index))
+                    .map(|section| section.title.clone())
+                    .unwrap_or_default();
+                self.mode = Mode::ViewSectionTitleInput;
+                self.set_input(title);
+            }
+            KeyCode::Char('+') => {
+                self.open_view_editor_category_picker(CategoryEditTarget::SectionCriteriaInclude);
+            }
+            KeyCode::Char('-') => {
+                self.open_view_editor_category_picker(CategoryEditTarget::SectionCriteriaExclude);
+            }
+            KeyCode::Char(']') => {
+                self.open_view_editor_bucket_picker(BucketEditTarget::SectionVirtualInclude);
+            }
+            KeyCode::Char('[') => {
+                self.open_view_editor_bucket_picker(BucketEditTarget::SectionVirtualExclude);
+            }
+            KeyCode::Char('a') => {
+                self.open_view_editor_category_picker(CategoryEditTarget::SectionOnInsertAssign);
+            }
+            KeyCode::Char('r') => {
+                self.open_view_editor_category_picker(CategoryEditTarget::SectionOnRemoveUnassign);
+            }
+            KeyCode::Char('h') => {
+                if let Some(editor) = &mut self.view_editor {
+                    if let Some(section) = editor.draft.sections.get_mut(section_index) {
+                        section.show_children = !section.show_children;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_section_title_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewSectionDetail;
+                self.clear_input();
+            }
+            KeyCode::Enter => {
+                if let Some(editor) = &mut self.view_editor {
+                    if let Some(section) = editor.draft.sections.get_mut(editor.section_index) {
+                        let title = self.input.trim().to_string();
+                        if !title.is_empty() {
+                            section.title = title;
+                        }
+                    }
+                }
+                self.mode = Mode::ViewSectionDetail;
+                self.clear_input();
+            }
+            _ if self.handle_text_input_key(code) => {}
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_unmatched_settings_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        let label = self
+            .view_editor
+            .as_ref()
+            .map(|editor| editor.draft.unmatched_label.clone());
+        if label.is_none() {
+            self.mode = Mode::ViewPicker;
+            return Ok(false);
+        }
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewEditor;
+            }
+            KeyCode::Char('t') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.draft.show_unmatched = !editor.draft.show_unmatched;
+                }
+            }
+            KeyCode::Char('l') => {
+                self.mode = Mode::ViewUnmatchedLabelInput;
+                self.set_input(label.unwrap_or_default());
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_unmatched_label_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewUnmatchedSettings;
+                self.clear_input();
+            }
+            KeyCode::Enter => {
+                if let Some(editor) = &mut self.view_editor {
+                    let label = self.input.trim().to_string();
+                    if !label.is_empty() {
+                        editor.draft.unmatched_label = label;
+                    }
+                }
+                self.mode = Mode::ViewUnmatchedSettings;
+                self.clear_input();
+            }
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -1395,12 +1774,13 @@ impl App {
             .category_index
             .min(self.category_rows.len().saturating_sub(1));
         let items = store.list_items().map_err(|e| e.to_string())?;
+        self.all_items = items.clone();
 
         let mut slots = Vec::new();
         if self.views.is_empty() {
             slots.push(Slot {
                 title: "All Items (no views configured)".to_string(),
-                items,
+                items: items.clone(),
                 context: SlotContext::Unmatched,
             });
             if self.mode == Mode::Normal {
@@ -1442,19 +1822,21 @@ impl App {
             }
 
             if let Some(unmatched_items) = result.unmatched {
-                slots.push(Slot {
-                    title: result
-                        .unmatched_label
-                        .unwrap_or_else(|| "Unassigned".to_string()),
-                    items: unmatched_items,
-                    context: SlotContext::Unmatched,
-                });
+                if should_render_unmatched_lane(&unmatched_items) {
+                    slots.push(Slot {
+                        title: result
+                            .unmatched_label
+                            .unwrap_or_else(|| "Unassigned".to_string()),
+                        items: unmatched_items,
+                        context: SlotContext::Unmatched,
+                    });
+                }
             }
 
             if slots.is_empty() {
                 slots.push(Slot {
-                    title: "All Items".to_string(),
-                    items,
+                    title: "No visible sections".to_string(),
+                    items: Vec::new(),
                     context: SlotContext::Unmatched,
                 });
             }
@@ -1516,11 +1898,32 @@ impl App {
         if self.mode == Mode::ItemAssignCategoryPicker {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
+        if matches!(self.mode, Mode::ViewCreateCategoryPicker) {
+            self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
+        }
+        if self.mode == Mode::ViewEditor {
+            self.render_view_editor(frame, centered_rect(72, 72, frame.area()));
+        }
+        if self.mode == Mode::ViewEditorCategoryPicker {
+            self.render_view_editor_category_picker(frame, centered_rect(72, 72, frame.area()));
+        }
+        if self.mode == Mode::ViewEditorBucketPicker {
+            self.render_view_editor_bucket_picker(frame, centered_rect(60, 60, frame.area()));
+        }
+        if self.mode == Mode::ViewSectionEditor {
+            self.render_view_section_editor(frame, centered_rect(72, 72, frame.area()));
+        }
         if matches!(
             self.mode,
-            Mode::ViewCreateCategoryPicker | Mode::ViewEditCategoryPicker
+            Mode::ViewSectionDetail | Mode::ViewSectionTitleInput
         ) {
-            self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
+            self.render_view_section_detail(frame, centered_rect(72, 72, frame.area()));
+        }
+        if matches!(
+            self.mode,
+            Mode::ViewUnmatchedSettings | Mode::ViewUnmatchedLabelInput
+        ) {
+            self.render_view_unmatched_settings(frame, centered_rect(60, 40, frame.area()));
         }
         if matches!(
             self.mode,
@@ -1542,6 +1945,8 @@ impl App {
             Mode::FilterInput => Some("Filter> "),
             Mode::ViewCreateNameInput => Some("View create> "),
             Mode::ViewRenameInput => Some("View rename> "),
+            Mode::ViewSectionTitleInput => Some("Section title> "),
+            Mode::ViewUnmatchedLabelInput => Some("Unmatched label> "),
             Mode::CategoryCreateInput => Some("Category create> "),
             Mode::CategoryRenameInput => Some("Category rename> "),
             _ => None,
@@ -1592,53 +1997,56 @@ impl App {
     }
 
     fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let horizontal = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-            .split(area);
-
-        let section_lines: Vec<Line<'_>> = self
-            .slots
-            .iter()
-            .enumerate()
-            .map(|(index, slot)| {
-                let marker = if index == self.slot_index { "> " } else { "  " };
-                Line::from(format!("{marker}{} ({})", slot.title, slot.items.len()))
-            })
-            .collect();
-
-        frame.render_widget(
-            Paragraph::new(section_lines).block(
-                Block::default()
-                    .title("Sections")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Blue)),
-            ),
-            horizontal[0],
-        );
-
         if self.show_inspect {
-            let right = Layout::default()
+            let split = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-                .split(horizontal[1]);
-            frame.render_widget(self.render_item_panel(), right[0]);
-            frame.render_widget(self.render_inspect_panel(), right[1]);
+                .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+                .split(area);
+            self.render_board_columns(frame, split[0]);
+            frame.render_widget(self.render_inspect_panel(), split[1]);
         } else {
-            frame.render_widget(self.render_item_panel(), horizontal[1]);
+            self.render_board_columns(frame, area);
         }
     }
 
-    fn render_item_panel(&self) -> Paragraph<'_> {
-        let lines = if let Some(slot) = self.current_slot() {
-            if slot.items.is_empty() {
-                vec![Line::from("(no items in section)")]
+    fn render_board_columns(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if self.slots.is_empty() {
+            frame.render_widget(
+                Paragraph::new(vec![Line::from("(no sections)")]).block(
+                    Block::default()
+                        .title("Board")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                ),
+                area,
+            );
+            return;
+        }
+
+        let slot_count = self.slots.len() as u16;
+        let pct = (100 / slot_count).max(1);
+        let constraints: Vec<Constraint> = (0..self.slots.len())
+            .map(|_| Constraint::Percentage(pct))
+            .collect();
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(constraints)
+            .split(area);
+
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let is_selected_slot = slot_index == self.slot_index;
+            let lines: Vec<Line<'_>> = if slot.items.is_empty() {
+                vec![Line::from("(no items)")]
             } else {
                 slot.items
                     .iter()
                     .enumerate()
-                    .map(|(index, item)| {
-                        let marker = if index == self.item_index { "> " } else { "  " };
+                    .map(|(item_index, item)| {
+                        let marker = if is_selected_slot && item_index == self.item_index {
+                            "> "
+                        } else {
+                            "  "
+                        };
                         let when = item
                             .when_date
                             .map(|dt| dt.to_string())
@@ -1647,19 +2055,25 @@ impl App {
                         Line::from(format!("{marker}{done}{} | {}", when, item.text))
                     })
                     .collect()
-            }
-        } else {
-            vec![Line::from("(no section)")]
-        };
-
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title("Items")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: false })
+            };
+            let title = format!("{} ({})", slot.title, slot.items.len());
+            let border_color = if is_selected_slot {
+                Color::Cyan
+            } else {
+                Color::Blue
+            };
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .block(
+                        Block::default()
+                            .title(title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(border_color)),
+                    )
+                    .wrap(Wrap { trim: false }),
+                columns[slot_index],
+            );
+        }
     }
 
     fn render_inspect_panel(&self) -> Paragraph<'_> {
@@ -1706,7 +2120,8 @@ impl App {
             Mode::ViewCreateNameInput => format!("View create> {}", self.input),
             Mode::ViewRenameInput => format!("View rename> {}", self.input),
             Mode::ViewCreateCategoryPicker => "Select include category for new view".to_string(),
-            Mode::ViewEditCategoryPicker => "Select include category for selected view".to_string(),
+            Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
+            Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
             Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
@@ -1723,17 +2138,24 @@ impl App {
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
             Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
-            Mode::ViewPicker => "j/k:select  Enter:switch  N:create  r:rename  e:edit include  Esc:cancel",
+            Mode::ViewPicker => "j/k:select  Enter:switch  N:create  r:rename  e:edit view  Esc:cancel",
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewCreateCategoryPicker => "j/k:select category  Enter:create view  Esc:cancel",
-            Mode::ViewEditCategoryPicker => "j/k:select category  Enter:update view  Esc:cancel",
+            Mode::ViewEditor => "+:include  -:exclude  [/] virtual  s:sections  u:unmatched  Enter:save  Esc:cancel",
+            Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
+            Mode::ViewEditorBucketPicker => "j/k:select bucket  Space:toggle  Enter/Esc:back",
+            Mode::ViewSectionEditor => "j/k:select  N:add  x:remove  [/] reorder  Enter:edit  Esc:back",
+            Mode::ViewSectionDetail => "t:title  +/-:criteria  [/] virtual  a:on-insert  r:on-remove  h:children  Esc:back",
+            Mode::ViewSectionTitleInput => "Type section title, Enter:save, Esc:cancel",
+            Mode::ViewUnmatchedSettings => "t:toggle unmatched  l:label  Esc:back",
+            Mode::ViewUnmatchedLabelInput => "Type unmatched label, Enter:save, Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Enter:assign item to category  Esc:cancel",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  a:assign-item  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a:assign-item  e:edit  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  ,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -1763,7 +2185,7 @@ impl App {
         frame.render_widget(
             Paragraph::new(lines).block(
                 Block::default()
-                    .title("Select View")
+                    .title("View Palette")
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Magenta)),
             ),
@@ -1807,7 +2229,6 @@ impl App {
 
         let title = match self.mode {
             Mode::ViewCreateCategoryPicker => "Create View Include",
-            Mode::ViewEditCategoryPicker => "Edit View Include",
             _ => "View Include",
         };
         frame.render_widget(
@@ -1817,6 +2238,246 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Magenta)),
             ),
+            area,
+        );
+    }
+
+    fn render_view_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let mut lines = vec![
+            Line::from(format!("Editing view: {}", editor.base_view_name)),
+            Line::from(format!("Preview matches: {}", editor.preview_count)),
+            Line::from(""),
+            Line::from(format!(
+                "Include categories: {}",
+                editor.draft.criteria.include.len()
+            )),
+            Line::from(format!(
+                "Exclude categories: {}",
+                editor.draft.criteria.exclude.len()
+            )),
+            Line::from(format!(
+                "Virtual include buckets: {}",
+                editor.draft.criteria.virtual_include.len()
+            )),
+            Line::from(format!(
+                "Virtual exclude buckets: {}",
+                editor.draft.criteria.virtual_exclude.len()
+            )),
+            Line::from(format!("Sections: {}", editor.draft.sections.len())),
+            Line::from(format!(
+                "Unmatched enabled: {} | label: {}",
+                editor.draft.show_unmatched, editor.draft.unmatched_label
+            )),
+            Line::from(""),
+            Line::from("Keys: + include  - exclude  ] v-include  [ v-exclude"),
+            Line::from("      s sections  u unmatched  Enter save  Esc cancel"),
+        ];
+        if editor.draft.sections.is_empty() {
+            lines.push(Line::from("No sections configured yet."));
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("View Editor")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_view_editor_category_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let Some(target) = self.view_editor_category_target else {
+            return;
+        };
+        let mut lines = vec![Line::from(format!(
+            "Target: {}",
+            category_target_label(target)
+        ))];
+        for (index, row) in self.category_rows.iter().enumerate() {
+            let marker = if index == editor.category_index {
+                "> "
+            } else {
+                "  "
+            };
+            let selected =
+                category_target_contains(&editor.draft, editor.section_index, target, row.id);
+            let check = if selected { "[x]" } else { "[ ]" };
+            lines.push(Line::from(format!(
+                "{marker}{check} {}{}",
+                "  ".repeat(row.depth),
+                row.name
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Category Picker")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_view_editor_bucket_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let Some(target) = self.view_editor_bucket_target else {
+            return;
+        };
+        let mut lines = vec![Line::from(format!(
+            "Target: {}",
+            bucket_target_label(target)
+        ))];
+        for (index, bucket) in when_bucket_options().iter().enumerate() {
+            let marker = if index == editor.bucket_index {
+                "> "
+            } else {
+                "  "
+            };
+            let selected =
+                bucket_target_contains(&editor.draft, editor.section_index, target, *bucket);
+            let check = if selected { "[x]" } else { "[ ]" };
+            lines.push(Line::from(format!(
+                "{marker}{check} {}",
+                when_bucket_label(*bucket)
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Bucket Picker")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_view_section_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let mut lines = vec![Line::from("Sections in current view draft:")];
+        if editor.draft.sections.is_empty() {
+            lines.push(Line::from("(no sections)"));
+        } else {
+            for (index, section) in editor.draft.sections.iter().enumerate() {
+                let marker = if index == editor.section_index {
+                    "> "
+                } else {
+                    "  "
+                };
+                lines.push(Line::from(format!(
+                    "{marker}{} (include={}, exclude={}, v+={}, v-={}, show_children={})",
+                    section.title,
+                    section.criteria.include.len(),
+                    section.criteria.exclude.len(),
+                    section.criteria.virtual_include.len(),
+                    section.criteria.virtual_exclude.len(),
+                    section.show_children
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            "N add  x remove  [/] reorder  Enter edit  Esc back",
+        ));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Section Editor")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_view_section_detail(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let Some(section) = editor.draft.sections.get(editor.section_index) else {
+            return;
+        };
+
+        let lines = vec![
+            Line::from(format!("Section: {}", section.title)),
+            Line::from(format!(
+                "criteria include={} exclude={} v_include={} v_exclude={}",
+                section.criteria.include.len(),
+                section.criteria.exclude.len(),
+                section.criteria.virtual_include.len(),
+                section.criteria.virtual_exclude.len()
+            )),
+            Line::from(format!(
+                "on_insert_assign={} on_remove_unassign={}",
+                section.on_insert_assign.len(),
+                section.on_remove_unassign.len()
+            )),
+            Line::from(format!("show_children={}", section.show_children)),
+            Line::from(""),
+            Line::from("t title  + include  - exclude  ] v-include  [ v-exclude"),
+            Line::from("a on-insert  r on-remove  h toggle show_children  Esc back"),
+        ];
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Section Detail")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_view_unmatched_settings(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let lines = vec![
+            Line::from(format!("show_unmatched: {}", editor.draft.show_unmatched)),
+            Line::from(format!("unmatched_label: {}", editor.draft.unmatched_label)),
+            Line::from(""),
+            Line::from("t toggle visibility  l edit label  Esc back"),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Unmatched Settings")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false }),
             area,
         );
     }
@@ -2210,6 +2871,24 @@ impl App {
             self.picker_index = index;
         }
     }
+
+    fn cycle_view(&mut self, delta: i32, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.views.is_empty() {
+            self.status = "No views available".to_string();
+            return Ok(());
+        }
+        self.view_index = next_index(self.view_index, self.views.len(), delta);
+        self.picker_index = self.view_index;
+        self.slot_index = 0;
+        self.item_index = 0;
+        self.refresh(agenda.store())?;
+        let view_name = self
+            .current_view()
+            .map(|view| view.name.clone())
+            .unwrap_or_else(|| "(none)".to_string());
+        self.status = format!("Switched to view: {view_name}");
+        Ok(())
+    }
 }
 
 fn generated_section(
@@ -2235,6 +2914,173 @@ fn next_index(current: usize, len: usize, delta: i32) -> usize {
         let amount = (-delta) as usize % len;
         (current + len - amount) % len
     }
+}
+
+fn when_bucket_options() -> &'static [WhenBucket] {
+    &[
+        WhenBucket::Overdue,
+        WhenBucket::Today,
+        WhenBucket::Tomorrow,
+        WhenBucket::ThisWeek,
+        WhenBucket::NextWeek,
+        WhenBucket::ThisMonth,
+        WhenBucket::Future,
+        WhenBucket::NoDate,
+    ]
+}
+
+fn when_bucket_label(bucket: WhenBucket) -> &'static str {
+    match bucket {
+        WhenBucket::Overdue => "Overdue",
+        WhenBucket::Today => "Today",
+        WhenBucket::Tomorrow => "Tomorrow",
+        WhenBucket::ThisWeek => "ThisWeek",
+        WhenBucket::NextWeek => "NextWeek",
+        WhenBucket::ThisMonth => "ThisMonth",
+        WhenBucket::Future => "Future",
+        WhenBucket::NoDate => "NoDate",
+    }
+}
+
+fn category_target_is_section(target: CategoryEditTarget) -> bool {
+    matches!(
+        target,
+        CategoryEditTarget::SectionCriteriaInclude
+            | CategoryEditTarget::SectionCriteriaExclude
+            | CategoryEditTarget::SectionOnInsertAssign
+            | CategoryEditTarget::SectionOnRemoveUnassign
+    )
+}
+
+fn bucket_target_is_section(target: BucketEditTarget) -> bool {
+    matches!(
+        target,
+        BucketEditTarget::SectionVirtualInclude | BucketEditTarget::SectionVirtualExclude
+    )
+}
+
+fn category_target_label(target: CategoryEditTarget) -> &'static str {
+    match target {
+        CategoryEditTarget::ViewInclude => "View include categories",
+        CategoryEditTarget::ViewExclude => "View exclude categories",
+        CategoryEditTarget::SectionCriteriaInclude => "Section include criteria",
+        CategoryEditTarget::SectionCriteriaExclude => "Section exclude criteria",
+        CategoryEditTarget::SectionOnInsertAssign => "Section on-insert assign",
+        CategoryEditTarget::SectionOnRemoveUnassign => "Section on-remove unassign",
+    }
+}
+
+fn bucket_target_label(target: BucketEditTarget) -> &'static str {
+    match target {
+        BucketEditTarget::ViewVirtualInclude => "View virtual include buckets",
+        BucketEditTarget::ViewVirtualExclude => "View virtual exclude buckets",
+        BucketEditTarget::SectionVirtualInclude => "Section virtual include buckets",
+        BucketEditTarget::SectionVirtualExclude => "Section virtual exclude buckets",
+    }
+}
+
+fn category_target_set_mut<'a>(
+    view: &'a mut View,
+    section_index: usize,
+    target: CategoryEditTarget,
+) -> Option<&'a mut HashSet<CategoryId>> {
+    match target {
+        CategoryEditTarget::ViewInclude => Some(&mut view.criteria.include),
+        CategoryEditTarget::ViewExclude => Some(&mut view.criteria.exclude),
+        CategoryEditTarget::SectionCriteriaInclude => view
+            .sections
+            .get_mut(section_index)
+            .map(|section| &mut section.criteria.include),
+        CategoryEditTarget::SectionCriteriaExclude => view
+            .sections
+            .get_mut(section_index)
+            .map(|section| &mut section.criteria.exclude),
+        CategoryEditTarget::SectionOnInsertAssign => view
+            .sections
+            .get_mut(section_index)
+            .map(|section| &mut section.on_insert_assign),
+        CategoryEditTarget::SectionOnRemoveUnassign => view
+            .sections
+            .get_mut(section_index)
+            .map(|section| &mut section.on_remove_unassign),
+    }
+}
+
+fn bucket_target_set_mut<'a>(
+    view: &'a mut View,
+    section_index: usize,
+    target: BucketEditTarget,
+) -> Option<&'a mut HashSet<WhenBucket>> {
+    match target {
+        BucketEditTarget::ViewVirtualInclude => Some(&mut view.criteria.virtual_include),
+        BucketEditTarget::ViewVirtualExclude => Some(&mut view.criteria.virtual_exclude),
+        BucketEditTarget::SectionVirtualInclude => view
+            .sections
+            .get_mut(section_index)
+            .map(|section| &mut section.criteria.virtual_include),
+        BucketEditTarget::SectionVirtualExclude => view
+            .sections
+            .get_mut(section_index)
+            .map(|section| &mut section.criteria.virtual_exclude),
+    }
+}
+
+fn category_target_contains(
+    view: &View,
+    section_index: usize,
+    target: CategoryEditTarget,
+    category_id: CategoryId,
+) -> bool {
+    match target {
+        CategoryEditTarget::ViewInclude => view.criteria.include.contains(&category_id),
+        CategoryEditTarget::ViewExclude => view.criteria.exclude.contains(&category_id),
+        CategoryEditTarget::SectionCriteriaInclude => view
+            .sections
+            .get(section_index)
+            .map(|section| section.criteria.include.contains(&category_id))
+            .unwrap_or(false),
+        CategoryEditTarget::SectionCriteriaExclude => view
+            .sections
+            .get(section_index)
+            .map(|section| section.criteria.exclude.contains(&category_id))
+            .unwrap_or(false),
+        CategoryEditTarget::SectionOnInsertAssign => view
+            .sections
+            .get(section_index)
+            .map(|section| section.on_insert_assign.contains(&category_id))
+            .unwrap_or(false),
+        CategoryEditTarget::SectionOnRemoveUnassign => view
+            .sections
+            .get(section_index)
+            .map(|section| section.on_remove_unassign.contains(&category_id))
+            .unwrap_or(false),
+    }
+}
+
+fn bucket_target_contains(
+    view: &View,
+    section_index: usize,
+    target: BucketEditTarget,
+    bucket: WhenBucket,
+) -> bool {
+    match target {
+        BucketEditTarget::ViewVirtualInclude => view.criteria.virtual_include.contains(&bucket),
+        BucketEditTarget::ViewVirtualExclude => view.criteria.virtual_exclude.contains(&bucket),
+        BucketEditTarget::SectionVirtualInclude => view
+            .sections
+            .get(section_index)
+            .map(|section| section.criteria.virtual_include.contains(&bucket))
+            .unwrap_or(false),
+        BucketEditTarget::SectionVirtualExclude => view
+            .sections
+            .get(section_index)
+            .map(|section| section.criteria.virtual_exclude.contains(&bucket))
+            .unwrap_or(false),
+    }
+}
+
+fn should_render_unmatched_lane(unmatched_items: &[Item]) -> bool {
+    !unmatched_items.is_empty()
 }
 
 fn item_text_matches(item: &Item, needle_lower_ascii: &str) -> bool {
@@ -2400,10 +3246,12 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        add_capture_status_message, build_category_rows, build_reparent_options,
-        first_non_reserved_category_index, App, CategoryListRow, Mode,
+        add_capture_status_message, bucket_target_set_mut, build_category_rows,
+        build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
+        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        CategoryEditTarget, CategoryListRow, Mode,
     };
-    use agenda_core::model::{Category, CategoryId};
+    use agenda_core::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
     use chrono::NaiveDate;
     use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
@@ -2571,6 +3419,8 @@ mod tests {
             (Mode::FilterInput, "Filter> "),
             (Mode::ViewCreateNameInput, "View create> "),
             (Mode::ViewRenameInput, "View rename> "),
+            (Mode::ViewSectionTitleInput, "Section title> "),
+            (Mode::ViewUnmatchedLabelInput, "Unmatched label> "),
             (Mode::CategoryCreateInput, "Category create> "),
             (Mode::CategoryRenameInput, "Category rename> "),
         ];
@@ -2653,5 +3503,71 @@ mod tests {
         assert!(app.handle_text_input_key(KeyCode::Delete));
         assert_eq!(app.input, "a");
         assert_eq!(app.input_cursor, 1);
+    }
+
+    #[test]
+    fn should_render_unmatched_lane_hides_empty_and_shows_non_empty() {
+        assert!(!should_render_unmatched_lane(&[]));
+        let item = Item::new("one".to_string());
+        assert!(should_render_unmatched_lane(&[item]));
+    }
+
+    #[test]
+    fn category_target_set_mut_supports_view_and_section_targets() {
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "One".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        let category_id = CategoryId::new_v4();
+
+        let view_include = category_target_set_mut(&mut view, 0, CategoryEditTarget::ViewInclude)
+            .expect("view include set");
+        view_include.insert(category_id);
+        assert!(view.criteria.include.contains(&category_id));
+
+        let section_insert =
+            category_target_set_mut(&mut view, 0, CategoryEditTarget::SectionOnInsertAssign)
+                .expect("section on_insert_assign set");
+        section_insert.insert(category_id);
+        assert!(view.sections[0].on_insert_assign.contains(&category_id));
+    }
+
+    #[test]
+    fn bucket_target_set_mut_supports_view_and_section_targets() {
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "One".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+
+        let view_virtual =
+            bucket_target_set_mut(&mut view, 0, BucketEditTarget::ViewVirtualInclude)
+                .expect("view virtual include set");
+        view_virtual.insert(WhenBucket::Today);
+        assert!(view.criteria.virtual_include.contains(&WhenBucket::Today));
+
+        let section_virtual =
+            bucket_target_set_mut(&mut view, 0, BucketEditTarget::SectionVirtualExclude)
+                .expect("section virtual exclude set");
+        section_virtual.insert(WhenBucket::NoDate);
+        assert!(view.sections[0]
+            .criteria
+            .virtual_exclude
+            .contains(&WhenBucket::NoDate));
+    }
+
+    #[test]
+    fn when_bucket_options_exposes_expected_bucket_set() {
+        let options = when_bucket_options();
+        assert!(options.contains(&WhenBucket::Today));
+        assert!(options.contains(&WhenBucket::NoDate));
+        assert_eq!(options.len(), 8);
     }
 }

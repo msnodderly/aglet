@@ -53,6 +53,12 @@ This document defines the target interaction model for a streamlined daily loop.
   - hide when empty (default)
   - rename unmatched label
 
+Implementation note for current R3 slice:
+
+- This phase keeps existing core model/store fields and ships hide-empty default
+  plus unmatched label/toggle configuration in TUI.
+- Persisted always-show-empty pin semantics are deferred to a later iteration.
+
 ## 5. View Management Workflow
 
 ## 5.1 View Palette
