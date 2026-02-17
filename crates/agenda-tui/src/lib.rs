@@ -191,6 +191,7 @@ struct App {
     input_cursor: usize,
     filter: Option<String>,
     show_inspect: bool,
+    show_item_details: bool,
     all_items: Vec<Item>,
 
     views: Vec<View>,
@@ -227,6 +228,7 @@ struct App {
     item_edit_note: String,
     item_edit_note_cursor: usize,
     inspect_scroll: usize,
+    item_details_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
@@ -243,6 +245,7 @@ impl Default for App {
             input_cursor: 0,
             filter: None,
             show_inspect: false,
+            show_item_details: false,
             all_items: Vec::new(),
             views: Vec::new(),
             view_index: 0,
@@ -277,6 +280,7 @@ impl Default for App {
             item_edit_note: String::new(),
             item_edit_note_cursor: 0,
             inspect_scroll: 0,
+            item_details_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
@@ -657,16 +661,36 @@ impl App {
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
+                if self.show_inspect {
+                    self.show_item_details = false;
+                    self.status = "Inspect pane opened".to_string();
+                } else {
+                    self.status = "Inspect pane closed".to_string();
+                }
                 self.inspect_scroll = 0;
+            }
+            KeyCode::Char('I') => {
+                self.show_item_details = !self.show_item_details;
+                if self.show_item_details {
+                    self.show_inspect = false;
+                    self.status = "Item details pane opened".to_string();
+                } else {
+                    self.status = "Item details pane closed".to_string();
+                }
+                self.item_details_scroll = 0;
             }
             KeyCode::Char('J') => {
                 if self.show_inspect {
                     self.inspect_scroll = self.inspect_scroll.saturating_add(1);
+                } else if self.show_item_details {
+                    self.item_details_scroll = self.item_details_scroll.saturating_add(1);
                 }
             }
             KeyCode::Char('K') => {
                 if self.show_inspect {
                     self.inspect_scroll = self.inspect_scroll.saturating_sub(1);
+                } else if self.show_item_details {
+                    self.item_details_scroll = self.item_details_scroll.saturating_sub(1);
                 }
             }
             KeyCode::Char('r') => {
@@ -3076,10 +3100,15 @@ impl App {
             .selected_item()
             .map(|item| self.inspect_assignment_rows_for_item(item).len())
             .unwrap_or(0);
+        let details_len = self
+            .selected_item()
+            .map(|item| self.item_details_lines_for_item(item).len())
+            .unwrap_or(0);
         self.inspect_assignment_index = self
             .inspect_assignment_index
             .min(inspect_len.saturating_sub(1));
         self.inspect_scroll = self.inspect_scroll.min(inspect_len.saturating_sub(1));
+        self.item_details_scroll = self.item_details_scroll.min(details_len.saturating_sub(1));
 
         Ok(())
     }
@@ -3278,13 +3307,17 @@ impl App {
             self.render_view_manager_screen(frame, area);
             return;
         }
-        if self.show_inspect {
+        if self.show_inspect || self.show_item_details {
             let split = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
                 .split(area);
             self.render_board_columns(frame, split[0]);
-            frame.render_widget(self.render_inspect_panel(), split[1]);
+            if self.show_inspect {
+                frame.render_widget(self.render_inspect_panel(), split[1]);
+            } else {
+                frame.render_widget(self.render_item_details_panel(), split[1]);
+            }
         } else {
             self.render_board_columns(frame, area);
         }
@@ -3578,6 +3611,60 @@ impl App {
             .wrap(Wrap { trim: false })
     }
 
+    fn item_details_lines_for_item(&self, item: &Item) -> Vec<Line<'_>> {
+        let category_names = category_name_map(&self.categories);
+        let categories = item_assignment_labels(item, &category_names);
+        let mut lines = vec![
+            Line::from("Item details"),
+            Line::from("J/K scroll"),
+            Line::from(""),
+            Line::from("Categories"),
+        ];
+
+        if categories.is_empty() {
+            lines.push(Line::from("  (none)"));
+        } else {
+            for category in categories {
+                lines.push(Line::from(format!("  - {}", category)));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from("Note"));
+        match &item.note {
+            Some(note) if !note.is_empty() => {
+                for line in note.lines() {
+                    lines.push(Line::from(format!("  {}", line)));
+                }
+            }
+            _ => lines.push(Line::from("  (none)")),
+        }
+        lines
+    }
+
+    fn render_item_details_panel(&self) -> Paragraph<'_> {
+        let lines = if let Some(item) = self.selected_item() {
+            self.item_details_lines_for_item(item)
+        } else {
+            vec![
+                Line::from("Item details"),
+                Line::from("J/K scroll"),
+                Line::from(""),
+                Line::from("(no selected item)"),
+            ]
+        };
+
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title("Item Details (I)")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .scroll((self.item_details_scroll.min(u16::MAX as usize) as u16, 0))
+            .wrap(Wrap { trim: false })
+    }
+
     fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input),
@@ -3657,7 +3744,7 @@ impl App {
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
-                "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d/D:done-toggle  x:delete  i:inspect  J/K:inspect-scroll  q:quit"
+                "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d/D:done-toggle  x:delete  i:inspect  I:item-details  J/K:pane-scroll  q:quit"
             }
         };
 
@@ -6144,6 +6231,67 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
             .expect("u alias should open item category picker");
         assert_eq!(app.mode, Mode::ItemAssignCategoryPicker);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_i_and_shift_i_toggle_side_panes_exclusively() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-side-pane-toggle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('i'), &agenda)
+            .expect("toggle inspect on");
+        assert!(app.show_inspect);
+        assert!(!app.show_item_details);
+
+        app.handle_normal_key(KeyCode::Char('I'), &agenda)
+            .expect("toggle item details on");
+        assert!(!app.show_inspect);
+        assert!(app.show_item_details);
+
+        app.handle_normal_key(KeyCode::Char('I'), &agenda)
+            .expect("toggle item details off");
+        assert!(!app.show_item_details);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_jk_scrolls_item_details_pane() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-item-details-scroll-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.show_item_details = true;
+
+        app.handle_normal_key(KeyCode::Char('J'), &agenda)
+            .expect("scroll down");
+        assert_eq!(app.item_details_scroll, 1);
+
+        app.handle_normal_key(KeyCode::Char('K'), &agenda)
+            .expect("scroll up");
+        assert_eq!(app.item_details_scroll, 0);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
