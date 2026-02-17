@@ -109,6 +109,32 @@ impl<'a> Agenda<'a> {
         process_item(self.store, self.classifier, item_id)
     }
 
+    pub fn unassign_item_manual(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
+        if let Some(blocking_descendant_id) =
+            self.first_assigned_descendant(item_id, category_id)?
+        {
+            let hierarchy = self.store.get_hierarchy()?;
+            let names: HashMap<CategoryId, String> = hierarchy
+                .into_iter()
+                .map(|category| (category.id, category.name))
+                .collect();
+            let ancestor_name = names
+                .get(&category_id)
+                .cloned()
+                .unwrap_or_else(|| category_id.to_string());
+            let descendant_name = names
+                .get(&blocking_descendant_id)
+                .cloned()
+                .unwrap_or_else(|| blocking_descendant_id.to_string());
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "cannot remove category '{ancestor_name}' while descendant '{descendant_name}' is assigned; remove descendant first"
+                ),
+            });
+        }
+        self.store.unassign_item(item_id, category_id)
+    }
+
     pub fn insert_item_in_section(
         &self,
         item_id: ItemId,
@@ -285,6 +311,42 @@ impl<'a> Agenda<'a> {
             self.store.unassign_item(item_id, *category_id)?;
         }
         Ok(())
+    }
+
+    fn first_assigned_descendant(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<Option<CategoryId>> {
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        if !assignments.contains_key(&category_id) {
+            return Ok(None);
+        }
+
+        let hierarchy = self.store.get_hierarchy()?;
+        let categories_by_id: HashMap<CategoryId, &Category> = hierarchy
+            .iter()
+            .map(|category| (category.id, category))
+            .collect();
+        let mut stack: Vec<CategoryId> = categories_by_id
+            .get(&category_id)
+            .map(|category| category.children.clone())
+            .unwrap_or_default();
+        let mut visited = HashSet::new();
+
+        while let Some(current_id) = stack.pop() {
+            if !visited.insert(current_id) {
+                continue;
+            }
+            if assignments.contains_key(&current_id) {
+                return Ok(Some(current_id));
+            }
+            if let Some(category) = categories_by_id.get(&current_id) {
+                stack.extend(category.children.iter().copied());
+            }
+        }
+
+        Ok(None)
     }
 
     fn parse_datetime_from_text(
@@ -700,6 +762,59 @@ mod tests {
                 .map(|assignment| assignment.source),
             Some(AssignmentSource::Subsumption)
         );
+    }
+
+    #[test]
+    fn manual_unassign_blocks_removing_ancestor_while_descendant_assigned() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+
+        let item = Item::new("Kickoff".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, project_y.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let err = agenda.unassign_item_manual(item.id, work.id).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+        let message = err.to_string();
+        assert!(message.contains("cannot remove category"));
+        assert!(message.contains("Project Y"));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&project_y.id));
+        assert!(assignments.contains_key(&work.id));
+    }
+
+    #[test]
+    fn manual_unassign_allows_removing_leaf_then_parent() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+
+        let item = Item::new("Kickoff".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, project_y.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        agenda.unassign_item_manual(item.id, project_y.id).unwrap();
+        agenda.unassign_item_manual(item.id, work.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&project_y.id));
+        assert!(!assignments.contains_key(&work.id));
     }
 
     #[test]

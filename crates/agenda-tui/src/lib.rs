@@ -108,6 +108,7 @@ struct ViewEditorState {
     category_index: usize,
     bucket_index: usize,
     section_index: usize,
+    action_index: usize,
     preview_count: usize,
 }
 
@@ -118,6 +119,7 @@ enum Mode {
     ItemEditInput,
     NoteEditInput,
     ItemAssignCategoryPicker,
+    ItemAssignCategoryInput,
     InspectUnassignPicker,
     FilterInput,
     ViewPicker,
@@ -139,6 +141,13 @@ enum Mode {
     CategoryRenameInput,
     CategoryReparentPicker,
     CategoryDeleteConfirm,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CategoryGridColumn {
+    Name,
+    Exclusive,
+    NoImplicit,
 }
 
 struct App {
@@ -165,10 +174,12 @@ struct App {
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
+    category_grid_column: CategoryGridColumn,
     category_create_parent: Option<CategoryId>,
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
     item_assign_category_index: usize,
+    inspect_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
@@ -200,10 +211,12 @@ impl Default for App {
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
+            category_grid_column: CategoryGridColumn::Name,
             category_create_parent: None,
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
             item_assign_category_index: 0,
+            inspect_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
@@ -260,6 +273,9 @@ impl App {
             Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
             Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
             Mode::ItemAssignCategoryPicker => self.handle_item_assign_category_key(code, agenda),
+            Mode::ItemAssignCategoryInput => {
+                self.handle_item_assign_category_input_key(code, agenda)
+            }
             Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
@@ -430,8 +446,9 @@ impl App {
             }
             KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
+                self.category_grid_column = CategoryGridColumn::Name;
                 self.status =
-                    "Category manager: n child, N root, x delete, Esc to close".to_string();
+                    "Category manager: Left/Right focus column, Space/Enter toggle checkbox, e=exclusive i=no-implicit".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, agenda)?;
@@ -445,38 +462,36 @@ impl App {
             KeyCode::BackTab => {
                 self.cycle_view(-1, agenda)?;
             }
-            KeyCode::Char('a') => {
+            KeyCode::Char('g') => {
+                self.jump_to_all_items_view(agenda)?;
+            }
+            KeyCode::Char('a') | KeyCode::Char('u') => {
                 if self.selected_item_id().is_none() {
-                    self.status = "No selected item to assign".to_string();
+                    self.status = "No selected item to edit categories".to_string();
                 } else if self.category_rows.is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignCategoryPicker;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
+                    self.clear_input();
                     self.status =
-                        "Assign item to category: j/k select category, Enter assign, Esc cancel"
+                        "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
                             .to_string();
                 }
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
+                self.inspect_scroll = 0;
             }
-            KeyCode::Char('u') => {
-                if !self.show_inspect {
-                    self.status = "Open inspect panel (i) to unassign".to_string();
-                } else if let Some(item) = self.selected_item() {
-                    let rows = self.inspect_assignment_rows_for_item(item);
-                    if rows.is_empty() {
-                        self.status = "Selected item has no assignments".to_string();
-                    } else {
-                        self.mode = Mode::InspectUnassignPicker;
-                        self.inspect_assignment_index = 0;
-                        self.status = "Unassign: j/k select assignment, Enter confirm, Esc cancel"
-                            .to_string();
-                    }
-                } else {
-                    self.status = "No selected item to unassign".to_string();
+            KeyCode::Char('J') => {
+                if self.show_inspect {
+                    self.inspect_scroll = self.inspect_scroll.saturating_add(1);
+                }
+            }
+            KeyCode::Char('K') => {
+                if self.show_inspect {
+                    self.inspect_scroll = self.inspect_scroll.saturating_sub(1);
                 }
             }
             KeyCode::Char('r') => {
@@ -660,6 +675,7 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
+                self.clear_input();
                 self.status = "Assign canceled".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -677,7 +693,12 @@ impl App {
                     );
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Char('n') | KeyCode::Char('/') => {
+                self.mode = Mode::ItemAssignCategoryInput;
+                self.clear_input();
+                self.status = "Type category name: Enter assign/create, Esc back".to_string();
+            }
+            KeyCode::Char(' ') => {
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
                     self.status = "Assign failed: no selected item".to_string();
@@ -688,7 +709,6 @@ impl App {
                     .get(self.item_assign_category_index)
                     .cloned()
                 else {
-                    self.mode = Mode::Normal;
                     self.status = "Assign failed: no category selected".to_string();
                     return Ok(false);
                 };
@@ -697,23 +717,107 @@ impl App {
                     agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
-                    self.mode = Mode::Normal;
                     self.status = "Assigned item to category Done (marked done)".to_string();
                     return Ok(false);
                 }
 
+                if self.selected_item_has_assignment(row.id) {
+                    match agenda.unassign_item_manual(item_id, row.id) {
+                        Ok(()) => {
+                            self.refresh(agenda.store())?;
+                            self.set_item_selection_by_id(item_id);
+                            self.status = format!("Removed category {}", row.name);
+                        }
+                        Err(err) => {
+                            self.status = format!("Cannot remove {}: {}", row.name, err);
+                        }
+                    }
+                } else {
+                    let result = agenda
+                        .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
+                        .map_err(|e| e.to_string())?;
+                    self.refresh(agenda.store())?;
+                    self.set_item_selection_by_id(item_id);
+                    self.status = format!(
+                        "Added category {} (new_assignments={})",
+                        row.name,
+                        result.new_assignments.len()
+                    );
+                }
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                self.clear_input();
+                self.status = "Category edit saved".to_string();
+            }
+            _ => {}
+        }
+
+        Ok(false)
+    }
+
+    fn handle_item_assign_category_input_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ItemAssignCategoryPicker;
+                self.clear_input();
+                self.status = "Category name entry canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.status = "Assign failed: no selected item".to_string();
+                    return Ok(false);
+                };
+                let name = self.input.trim().to_string();
+                if name.is_empty() {
+                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.clear_input();
+                    self.status = "Category name entry canceled (empty)".to_string();
+                    return Ok(false);
+                }
+
+                let category_id = if let Some(existing) = self
+                    .categories
+                    .iter()
+                    .find(|category| category.name.eq_ignore_ascii_case(&name))
+                {
+                    existing.id
+                } else {
+                    let category = Category::new(name.clone());
+                    agenda
+                        .store()
+                        .create_category(&category)
+                        .map_err(|e| e.to_string())?;
+                    category.id
+                };
+
                 let result = agenda
-                    .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
+                    .assign_item_manual(item_id, category_id, Some("manual:tui.assign".to_string()))
                     .map_err(|e| e.to_string())?;
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
-                self.mode = Mode::Normal;
+                if let Some(index) = self
+                    .category_rows
+                    .iter()
+                    .position(|row| row.id == category_id)
+                {
+                    self.item_assign_category_index = index;
+                }
+                self.mode = Mode::ItemAssignCategoryPicker;
+                self.clear_input();
                 self.status = format!(
-                    "Assigned item to category {} (new_assignments={})",
-                    row.name,
+                    "Assigned category {} (new_assignments={})",
+                    name,
                     result.new_assignments.len()
                 );
             }
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
 
@@ -760,8 +864,7 @@ impl App {
                 };
 
                 agenda
-                    .store()
-                    .unassign_item(item_id, row.category_id)
+                    .unassign_item_manual(item_id, row.category_id)
                     .map_err(|e| e.to_string())?;
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
@@ -845,10 +948,12 @@ impl App {
                     self.status = "No selected view to rename".to_string();
                 }
             }
-            KeyCode::Char('e') => {
+            KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
                     self.open_view_editor(view);
-                    self.status = "View editor: + include, - exclude, [/] virtual, s sections, u unmatched, Enter save, Esc cancel".to_string();
+                    self.status =
+                        "View editor: j/k select row, o/right open, Enter save, Esc cancel"
+                            .to_string();
                 } else {
                     self.status = "No selected view to edit".to_string();
                 }
@@ -1136,6 +1241,7 @@ impl App {
             category_index: first_non_reserved_category_index(&self.category_rows),
             bucket_index: 0,
             section_index: 0,
+            action_index: 0,
             preview_count,
         });
         self.view_editor_category_target = None;
@@ -1161,6 +1267,7 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        const VIEW_EDITOR_ACTIONS: usize = 6;
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
@@ -1191,6 +1298,23 @@ impl App {
                     }
                 }
             }
+            KeyCode::Right | KeyCode::Char('o') => {
+                if let Some(action_index) =
+                    self.view_editor.as_ref().map(|editor| editor.action_index)
+                {
+                    self.activate_view_editor_action(action_index);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.action_index = next_index(editor.action_index, VIEW_EDITOR_ACTIONS, 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(editor) = &mut self.view_editor {
+                    editor.action_index = next_index(editor.action_index, VIEW_EDITOR_ACTIONS, -1);
+                }
+            }
             KeyCode::Char('+') => {
                 self.open_view_editor_category_picker(CategoryEditTarget::ViewInclude);
             }
@@ -1214,6 +1338,24 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn activate_view_editor_action(&mut self, action_index: usize) {
+        match action_index {
+            0 => self.open_view_editor_category_picker(CategoryEditTarget::ViewInclude),
+            1 => self.open_view_editor_category_picker(CategoryEditTarget::ViewExclude),
+            2 => self.open_view_editor_bucket_picker(BucketEditTarget::ViewVirtualInclude),
+            3 => self.open_view_editor_bucket_picker(BucketEditTarget::ViewVirtualExclude),
+            4 => {
+                self.mode = Mode::ViewSectionEditor;
+                self.status = "Section editor: j/k select, N add, x remove, [/] reorder, Enter edit, Esc back".to_string();
+            }
+            5 => {
+                self.mode = Mode::ViewUnmatchedSettings;
+                self.status = "Unmatched: t toggle visibility, l edit label, Esc back".to_string();
+            }
+            _ => {}
+        }
     }
 
     fn open_view_editor_category_picker(&mut self, target: CategoryEditTarget) {
@@ -1569,6 +1711,20 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.category_grid_column = match self.category_grid_column {
+                    CategoryGridColumn::Name => CategoryGridColumn::Name,
+                    CategoryGridColumn::Exclusive => CategoryGridColumn::Name,
+                    CategoryGridColumn::NoImplicit => CategoryGridColumn::Exclusive,
+                };
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.category_grid_column = match self.category_grid_column {
+                    CategoryGridColumn::Name => CategoryGridColumn::Exclusive,
+                    CategoryGridColumn::Exclusive => CategoryGridColumn::NoImplicit,
+                    CategoryGridColumn::NoImplicit => CategoryGridColumn::NoImplicit,
+                };
+            }
             KeyCode::Char('n') => {
                 self.mode = Mode::CategoryCreateInput;
                 self.clear_input();
@@ -1605,50 +1761,17 @@ impl App {
                     self.status = "Reparent category: j/k select parent, Enter apply".to_string();
                 }
             }
-            KeyCode::Char('t') => {
-                if let Some(category_id) = self.selected_category_id() {
-                    let mut category = agenda
-                        .store()
-                        .get_category(category_id)
-                        .map_err(|e| e.to_string())?;
-                    category.is_exclusive = !category.is_exclusive;
-                    let updated = category.clone();
-                    let result = agenda
-                        .update_category(&category)
-                        .map_err(|e| e.to_string())?;
-                    self.refresh(agenda.store())?;
-                    self.set_category_selection_by_id(updated.id);
-                    self.status = format!(
-                        "{} exclusive={} (processed_items={}, affected_items={})",
-                        updated.name,
-                        updated.is_exclusive,
-                        result.processed_items,
-                        result.affected_items
-                    );
-                }
+            KeyCode::Char('e') => {
+                self.toggle_selected_category_exclusive(agenda)?;
             }
             KeyCode::Char('i') => {
-                if let Some(category_id) = self.selected_category_id() {
-                    let mut category = agenda
-                        .store()
-                        .get_category(category_id)
-                        .map_err(|e| e.to_string())?;
-                    category.enable_implicit_string = !category.enable_implicit_string;
-                    let updated = category.clone();
-                    let result = agenda
-                        .update_category(&category)
-                        .map_err(|e| e.to_string())?;
-                    self.refresh(agenda.store())?;
-                    self.set_category_selection_by_id(updated.id);
-                    self.status = format!(
-                        "{} implicit-string={} (processed_items={}, affected_items={})",
-                        updated.name,
-                        updated.enable_implicit_string,
-                        result.processed_items,
-                        result.affected_items
-                    );
-                }
+                self.toggle_selected_category_implicit(agenda)?;
             }
+            KeyCode::Char(' ') | KeyCode::Enter => match self.category_grid_column {
+                CategoryGridColumn::Name => {}
+                CategoryGridColumn::Exclusive => self.toggle_selected_category_exclusive(agenda)?,
+                CategoryGridColumn::NoImplicit => self.toggle_selected_category_implicit(agenda)?,
+            },
             KeyCode::Char('x') => {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
@@ -1659,6 +1782,55 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn toggle_selected_category_exclusive(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        category.is_exclusive = !category.is_exclusive;
+        let updated = category.clone();
+        let result = agenda
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} exclusive={} (processed_items={}, affected_items={})",
+            updated.name, updated.is_exclusive, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
+    fn toggle_selected_category_implicit(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        category.enable_implicit_string = !category.enable_implicit_string;
+        let updated = category.clone();
+        let result = agenda
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} no-implicit={} (processed_items={}, affected_items={})",
+            updated.name,
+            !updated.enable_implicit_string,
+            result.processed_items,
+            result.affected_items
+        );
+        Ok(())
     }
 
     fn handle_category_create_key(
@@ -1980,6 +2152,7 @@ impl App {
         self.inspect_assignment_index = self
             .inspect_assignment_index
             .min(inspect_len.saturating_sub(1));
+        self.inspect_scroll = self.inspect_scroll.min(inspect_len.saturating_sub(1));
 
         Ok(())
     }
@@ -2015,7 +2188,10 @@ impl App {
         ) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
-        if self.mode == Mode::ItemAssignCategoryPicker {
+        if matches!(
+            self.mode,
+            Mode::ItemAssignCategoryPicker | Mode::ItemAssignCategoryInput
+        ) {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
         if matches!(self.mode, Mode::ViewCreateCategoryPicker) {
@@ -2069,6 +2245,7 @@ impl App {
             Mode::ViewUnmatchedLabelInput => Some("Unmatched label> "),
             Mode::CategoryCreateInput => Some("Category create> "),
             Mode::CategoryRenameInput => Some("Category rename> "),
+            Mode::ItemAssignCategoryInput => Some("Category> "),
             _ => None,
         }
     }
@@ -2120,7 +2297,7 @@ impl App {
         if self.show_inspect {
             let split = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+                .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
                 .split(area);
             self.render_board_columns(frame, split[0]);
             frame.render_widget(self.render_inspect_panel(), split[1]);
@@ -2178,13 +2355,14 @@ impl App {
                     } else {
                         categories.join(", ")
                     };
-                    Line::from(board_item_row(
-                        is_selected_slot && item_index == self.item_index,
-                        &when,
-                        &item_text,
-                        &categories_text,
-                        widths,
-                    ))
+                    let is_selected = is_selected_slot && item_index == self.item_index;
+                    let row_text =
+                        board_item_row(is_selected, &when, &item_text, &categories_text, widths);
+                    if is_selected {
+                        Line::styled(row_text, selected_row_style())
+                    } else {
+                        Line::from(row_text)
+                    }
                 }));
             }
             let title = format!("{} ({})", slot.title, slot.items.len());
@@ -2206,7 +2384,10 @@ impl App {
     }
 
     fn render_inspect_panel(&self) -> Paragraph<'_> {
-        let mut lines = vec![Line::from("Assignment provenance")];
+        let mut lines = vec![
+            Line::from("Assignment provenance"),
+            Line::from("J/K scroll"),
+        ];
         if let Some(item) = self.selected_item() {
             let rows = self.inspect_assignment_rows_for_item(item);
             if rows.is_empty() {
@@ -2236,6 +2417,7 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Yellow)),
             )
+            .scroll((self.inspect_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
     }
 
@@ -2259,12 +2441,13 @@ impl App {
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
             Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
-            Mode::InspectUnassignPicker => "Select assignment to unassign".to_string(),
+            Mode::ItemAssignCategoryInput => format!("Category> {}", self.input),
+            Mode::InspectUnassignPicker => "Select assignment".to_string(),
             _ => self.status.clone(),
         };
         let footer_title = match self.mode {
             Mode::CategoryManager => {
-                "j/k:select  n:create-subcategory  N:create-top-level  r:rename  p:reparent  t:toggle-exclusive  i:toggle-implicit  x:delete  Esc/F9:close"
+                "j/k:row  h/l:left/right column  Space/Enter:toggle focused checkbox  e:exclusive  i:no-implicit  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
             }
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
@@ -2279,7 +2462,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
-            Mode::ViewEditor => "+:include  -:exclude  [/] virtual  s:sections  u:unmatched  Enter:save  Esc:cancel",
+            Mode::ViewEditor => "j/k:select  o/right:open  +|-|[|]:quick open  s/u:sections/unmatched  Enter:save  Esc:cancel",
             Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
             Mode::ViewEditorBucketPicker => "j/k:select bucket  Space:toggle  Enter/Esc:back",
             Mode::ViewSectionEditor => "j/k:select  N:add  x:remove  [/] reorder  Enter:edit  Esc:back",
@@ -2287,12 +2470,13 @@ impl App {
             Mode::ViewSectionTitleInput => "Type section title, Enter:save, Esc:cancel",
             Mode::ViewUnmatchedSettings => "t:toggle unmatched  l:label  Esc:back",
             Mode::ViewUnmatchedLabelInput => "Type unmatched label, Enter:save, Esc:cancel",
-            Mode::ItemAssignCategoryPicker => "j/k:select category  Enter:assign item to category  Esc:cancel",
+            Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
+            Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
-            Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
+            Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
-                "n:add  a:assign-item  e:edit-item  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  Tab/,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a/u:item-categories  e:edit-item  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  J/K:inspect-scroll  q:quit"
             }
         };
 
@@ -2309,18 +2493,28 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(index, view)| {
-                    let marker = if index == self.picker_index {
-                        "> "
+                    let is_selected = index == self.picker_index;
+                    let marker = if is_selected { "> " } else { "  " };
+                    let text = format!("{marker}{}", view.name);
+                    if is_selected {
+                        Line::styled(text, selected_row_style())
                     } else {
-                        "  "
-                    };
-                    Line::from(format!("{marker}{}", view.name))
+                        Line::from(text)
+                    }
                 })
                 .collect()
         };
+        let scroll = list_scroll_for_selected_line(
+            area,
+            if self.views.is_empty() {
+                None
+            } else {
+                Some(self.picker_index)
+            },
+        );
 
         frame.render_widget(
-            Paragraph::new(lines).block(
+            Paragraph::new(lines).scroll((scroll, 0)).block(
                 Block::default()
                     .title("View Palette")
                     .borders(Borders::ALL)
@@ -2364,12 +2558,17 @@ impl App {
                 } else {
                     "[ ]"
                 };
-                lines.push(Line::from(format!(
+                let text = format!(
                     "{marker}{check} {}{}{}",
                     "  ".repeat(row.depth),
                     row.name,
                     suffix
-                )));
+                );
+                if index == self.view_category_index {
+                    lines.push(Line::styled(text, selected_row_style()));
+                } else {
+                    lines.push(Line::from(text));
+                }
             }
         }
 
@@ -2377,8 +2576,16 @@ impl App {
             Mode::ViewCreateCategoryPicker => "Create View Criteria",
             _ => "View Criteria",
         };
+        let scroll = list_scroll_for_selected_line(
+            area,
+            if self.category_rows.is_empty() {
+                None
+            } else {
+                Some(1 + self.view_category_index)
+            },
+        );
         frame.render_widget(
-            Paragraph::new(lines).block(
+            Paragraph::new(lines).scroll((scroll, 0)).block(
                 Block::default()
                     .title(title)
                     .borders(Borders::ALL)
@@ -2397,37 +2604,57 @@ impl App {
             Line::from(format!("Editing view: {}", editor.base_view_name)),
             Line::from(format!("Preview matches: {}", editor.preview_count)),
             Line::from(""),
-            Line::from(format!(
-                "Include categories: {}",
-                editor.draft.criteria.include.len()
-            )),
-            Line::from(format!(
-                "Exclude categories: {}",
-                editor.draft.criteria.exclude.len()
-            )),
-            Line::from(format!(
-                "Virtual include buckets: {}",
-                editor.draft.criteria.virtual_include.len()
-            )),
-            Line::from(format!(
-                "Virtual exclude buckets: {}",
-                editor.draft.criteria.virtual_exclude.len()
-            )),
-            Line::from(format!("Sections: {}", editor.draft.sections.len())),
-            Line::from(format!(
-                "Unmatched enabled: {} | label: {}",
-                editor.draft.show_unmatched, editor.draft.unmatched_label
-            )),
-            Line::from(""),
-            Line::from("Keys: + include  - exclude  ] v-include  [ v-exclude"),
-            Line::from("      s sections  u unmatched  Enter save  Esc cancel"),
         ];
+        let actions = [
+            format!(
+                "Include categories ({})",
+                editor.draft.criteria.include.len()
+            ),
+            format!(
+                "Exclude categories ({})",
+                editor.draft.criteria.exclude.len()
+            ),
+            format!(
+                "Virtual include buckets ({})",
+                editor.draft.criteria.virtual_include.len()
+            ),
+            format!(
+                "Virtual exclude buckets ({})",
+                editor.draft.criteria.virtual_exclude.len()
+            ),
+            format!("Sections ({})", editor.draft.sections.len()),
+            format!(
+                "Unmatched settings (enabled={} label={})",
+                editor.draft.show_unmatched, editor.draft.unmatched_label
+            ),
+        ];
+        for (index, action) in actions.into_iter().enumerate() {
+            let marker = if index == editor.action_index {
+                "> "
+            } else {
+                "  "
+            };
+            let text = format!("{marker}{action}");
+            if index == editor.action_index {
+                lines.push(Line::styled(text, selected_row_style()));
+            } else {
+                lines.push(Line::from(text));
+            }
+        }
+        lines.extend([
+            Line::from(""),
+            Line::from("Use j/k then o/right to open selected editor."),
+            Line::from("Quick keys: + include  - exclude  ] v-include  [ v-exclude"),
+            Line::from("            s sections  u unmatched  Enter save  Esc cancel"),
+        ]);
         if editor.draft.sections.is_empty() {
             lines.push(Line::from("No sections configured yet."));
         }
 
+        let scroll = list_scroll_for_selected_line(area, Some(3 + editor.action_index));
         frame.render_widget(
             Paragraph::new(lines)
+                .scroll((scroll, 0))
                 .block(
                     Block::default()
                         .title("View Editor")
@@ -2460,14 +2687,24 @@ impl App {
             let selected =
                 category_target_contains(&editor.draft, editor.section_index, target, row.id);
             let check = if selected { "[x]" } else { "[ ]" };
-            lines.push(Line::from(format!(
-                "{marker}{check} {}{}",
-                "  ".repeat(row.depth),
-                row.name
-            )));
+            let text = format!("{marker}{check} {}{}", "  ".repeat(row.depth), row.name);
+            if index == editor.category_index {
+                lines.push(Line::styled(text, selected_row_style()));
+            } else {
+                lines.push(Line::from(text));
+            }
         }
+        let scroll = list_scroll_for_selected_line(
+            area,
+            if self.category_rows.is_empty() {
+                None
+            } else {
+                Some(1 + editor.category_index)
+            },
+        );
         frame.render_widget(
             Paragraph::new(lines)
+                .scroll((scroll, 0))
                 .block(
                     Block::default()
                         .title("Category Picker")
@@ -2500,13 +2737,17 @@ impl App {
             let selected =
                 bucket_target_contains(&editor.draft, editor.section_index, target, *bucket);
             let check = if selected { "[x]" } else { "[ ]" };
-            lines.push(Line::from(format!(
-                "{marker}{check} {}",
-                when_bucket_label(*bucket)
-            )));
+            let text = format!("{marker}{check} {}", when_bucket_label(*bucket));
+            if index == editor.bucket_index {
+                lines.push(Line::styled(text, selected_row_style()));
+            } else {
+                lines.push(Line::from(text));
+            }
         }
+        let scroll = list_scroll_for_selected_line(area, Some(1 + editor.bucket_index));
         frame.render_widget(
             Paragraph::new(lines)
+                .scroll((scroll, 0))
                 .block(
                     Block::default()
                         .title("Bucket Picker")
@@ -2533,7 +2774,7 @@ impl App {
                 } else {
                     "  "
                 };
-                lines.push(Line::from(format!(
+                let text = format!(
                     "{marker}{} (include={}, exclude={}, v+={}, v-={}, show_children={})",
                     section.title,
                     section.criteria.include.len(),
@@ -2541,7 +2782,12 @@ impl App {
                     section.criteria.virtual_include.len(),
                     section.criteria.virtual_exclude.len(),
                     section.show_children
-                )));
+                );
+                if index == editor.section_index {
+                    lines.push(Line::styled(text, selected_row_style()));
+                } else {
+                    lines.push(Line::from(text));
+                }
             }
         }
         lines.push(Line::from(""));
@@ -2549,8 +2795,17 @@ impl App {
             "N add  x remove  [/] reorder  Enter edit  Esc back",
         ));
 
+        let scroll = list_scroll_for_selected_line(
+            area,
+            if editor.draft.sections.is_empty() {
+                None
+            } else {
+                Some(1 + editor.section_index)
+            },
+        );
         frame.render_widget(
             Paragraph::new(lines)
+                .scroll((scroll, 0))
                 .block(
                     Block::default()
                         .title("Section Editor")
@@ -2631,7 +2886,9 @@ impl App {
     fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let mut lines = vec![Line::from("Assign selected item to category")];
+        let mut lines = vec![Line::from(
+            "Edit selected item categories (Space toggles, n or / enters category text)",
+        )];
         if self.category_rows.is_empty() {
             lines.push(Line::from("(no categories)"));
         } else {
@@ -2653,17 +2910,35 @@ impl App {
                 } else {
                     format!(" [{}]", flags.join(","))
                 };
-                lines.push(Line::from(format!(
-                    "{marker}{}{}{}",
+                let assigned = if self.selected_item_has_assignment(row.id) {
+                    "[x]"
+                } else {
+                    "[ ]"
+                };
+                let text = format!(
+                    "{marker}{assigned} {}{}{}",
                     "  ".repeat(row.depth),
                     row.name,
                     suffix
-                )));
+                );
+                if index == self.item_assign_category_index {
+                    lines.push(Line::styled(text, selected_row_style()));
+                } else {
+                    lines.push(Line::from(text));
+                }
             }
         }
 
+        let scroll = list_scroll_for_selected_line(
+            area,
+            if self.category_rows.is_empty() {
+                None
+            } else {
+                Some(1 + self.item_assign_category_index)
+            },
+        );
         frame.render_widget(
-            Paragraph::new(lines).block(
+            Paragraph::new(lines).scroll((scroll, 0)).block(
                 Block::default()
                     .title("Assign Item")
                     .borders(Borders::ALL)
@@ -2676,39 +2951,105 @@ impl App {
     fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
+        let focus_label = match self.category_grid_column {
+            CategoryGridColumn::Name => "Category",
+            CategoryGridColumn::Exclusive => "Excl",
+            CategoryGridColumn::NoImplicit => "NoImp",
+        };
         let mut lines = vec![Line::from(
-            "Categories are global. n=subcategory, N=top-level, r rename, p reparent, t/i toggle, x delete.",
+            format!(
+                "Categories are global. Focus={focus_label}. Left/Right changes column; Space/Enter toggles focused checkbox."
+            ),
         )];
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let marker_width = 2usize;
+        let excl_width = 4usize;
+        let noimpl_width = 7usize;
+        let separator_width = BOARD_COLUMN_SEPARATOR.len() * 2;
+        let name_width =
+            inner_width.saturating_sub(marker_width + excl_width + noimpl_width + separator_width);
+        let category_header = if self.category_grid_column == CategoryGridColumn::Name {
+            "Category*"
+        } else {
+            "Category"
+        };
+        let excl_header = if self.category_grid_column == CategoryGridColumn::Exclusive {
+            "Excl*"
+        } else {
+            "Excl"
+        };
+        let noimp_header = if self.category_grid_column == CategoryGridColumn::NoImplicit {
+            "NoImp*"
+        } else {
+            "NoImp"
+        };
+        lines.push(Line::from(format!(
+            "{}{}{}{}{}{}",
+            " ".repeat(marker_width),
+            fit_board_cell(category_header, name_width),
+            BOARD_COLUMN_SEPARATOR,
+            fit_board_cell(excl_header, excl_width),
+            BOARD_COLUMN_SEPARATOR,
+            fit_board_cell(noimp_header, noimpl_width),
+        )));
 
+        let mut selected_line = None;
         if self.category_rows.is_empty() {
             lines.push(Line::from("(no categories)"));
         } else {
             for (index, row) in self.category_rows.iter().enumerate() {
-                let marker = if index == self.category_index {
-                    "> "
-                } else {
-                    "  "
-                };
+                let is_selected = index == self.category_index;
+                let marker = if is_selected { "> " } else { "  " };
+                if is_selected {
+                    selected_line = Some(2 + index);
+                }
                 let indent = "  ".repeat(row.depth);
-                let mut flags = Vec::new();
+                let mut label = format!("{indent}{}", row.name);
                 if row.is_reserved {
-                    flags.push("reserved");
+                    label.push_str(" [reserved]");
                 }
-                if row.is_exclusive {
-                    flags.push("exclusive");
-                }
-                if !row.enable_implicit_string {
-                    flags.push("no-implicit");
-                }
-                let suffix = if flags.is_empty() {
-                    String::new()
+                let excl = if row.is_exclusive { "[x]" } else { "[ ]" };
+                let noimp = if !row.enable_implicit_string {
+                    "[x]"
                 } else {
-                    format!(" [{}]", flags.join(","))
+                    "[ ]"
                 };
-                lines.push(Line::from(format!(
-                    "{marker}{indent}{}{}",
-                    row.name, suffix
-                )));
+                if is_selected {
+                    let row_style = selected_row_style();
+                    let name_style = if self.category_grid_column == CategoryGridColumn::Name {
+                        focused_cell_style()
+                    } else {
+                        row_style
+                    };
+                    let excl_style = if self.category_grid_column == CategoryGridColumn::Exclusive {
+                        focused_cell_style()
+                    } else {
+                        row_style
+                    };
+                    let noimp_style = if self.category_grid_column == CategoryGridColumn::NoImplicit
+                    {
+                        focused_cell_style()
+                    } else {
+                        row_style
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(marker.to_string(), row_style),
+                        Span::styled(fit_board_cell(&label, name_width), name_style),
+                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
+                        Span::styled(fit_board_cell(excl, excl_width), excl_style),
+                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
+                        Span::styled(fit_board_cell(noimp, noimpl_width), noimp_style),
+                    ]));
+                } else {
+                    lines.push(Line::from(format!(
+                        "{marker}{}{}{}{}{}",
+                        fit_board_cell(&label, name_width),
+                        BOARD_COLUMN_SEPARATOR,
+                        fit_board_cell(excl, excl_width),
+                        BOARD_COLUMN_SEPARATOR,
+                        fit_board_cell(noimp, noimpl_width),
+                    )));
+                }
             }
         }
 
@@ -2733,19 +3074,24 @@ impl App {
             if self.category_reparent_options.is_empty() {
                 lines.push(Line::from("(no valid parent options)"));
             } else {
+                let options_start = lines.len();
                 for (index, option) in self.category_reparent_options.iter().enumerate() {
                     let marker = if index == self.category_reparent_index {
                         "> "
                     } else {
                         "  "
                     };
+                    if index == self.category_reparent_index {
+                        selected_line = Some(options_start + index);
+                    }
                     lines.push(Line::from(format!("{marker}{}", option.label)));
                 }
             }
         }
+        let scroll = list_scroll_for_selected_line(area, selected_line);
 
         frame.render_widget(
-            Paragraph::new(lines).block(
+            Paragraph::new(lines).scroll((scroll, 0)).block(
                 Block::default()
                     .title("Category Manager")
                     .borders(Borders::ALL)
@@ -2933,6 +3279,12 @@ impl App {
             .and_then(|slot| slot.items.get(self.item_index))
     }
 
+    fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {
+        self.selected_item()
+            .map(|item| item.assignments.contains_key(&category_id))
+            .unwrap_or(false)
+    }
+
     fn inspect_assignment_rows_for_item(&self, item: &Item) -> Vec<InspectAssignmentRow> {
         let category_names = category_name_map(&self.categories);
         let mut rows: Vec<InspectAssignmentRow> = item
@@ -3033,6 +3385,24 @@ impl App {
             .map(|view| view.name.clone())
             .unwrap_or_else(|| "(none)".to_string());
         self.status = format!("Switched to view: {view_name} (press v then e to edit view)");
+        Ok(())
+    }
+
+    fn jump_to_all_items_view(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(index) = self
+            .views
+            .iter()
+            .position(|view| view.name.eq_ignore_ascii_case("All Items"))
+        else {
+            self.status = "All Items view not found".to_string();
+            return Ok(());
+        };
+        self.view_index = index;
+        self.picker_index = index;
+        self.slot_index = 0;
+        self.item_index = 0;
+        self.refresh(agenda.store())?;
+        self.status = "Jumped to view: All Items".to_string();
         Ok(())
     }
 }
@@ -3225,6 +3595,20 @@ fn bucket_target_contains(
     }
 }
 
+fn list_scroll_for_selected_line(area: Rect, selected_line: Option<usize>) -> u16 {
+    let Some(selected_line) = selected_line else {
+        return 0;
+    };
+    let viewport_rows = area.height.saturating_sub(2) as usize;
+    if viewport_rows == 0 {
+        return 0;
+    }
+    selected_line
+        .saturating_add(1)
+        .saturating_sub(viewport_rows)
+        .min(u16::MAX as usize) as u16
+}
+
 fn should_render_unmatched_lane(unmatched_items: &[Item]) -> bool {
     !unmatched_items.is_empty()
 }
@@ -3398,6 +3782,17 @@ fn board_item_row(
     )
 }
 
+fn selected_row_style() -> Style {
+    Style::default().fg(Color::Black).bg(Color::Cyan)
+}
+
+fn focused_cell_style() -> Style {
+    Style::default()
+        .fg(Color::Black)
+        .bg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
+}
+
 fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
     let parent_by_id: HashMap<CategoryId, Option<CategoryId>> = categories
         .iter()
@@ -3547,8 +3942,8 @@ mod tests {
         add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
         bucket_target_set_mut, build_category_rows, build_reparent_options,
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
-        next_index, should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
-        CategoryEditTarget, CategoryListRow, Mode,
+        list_scroll_for_selected_line, next_index, should_render_unmatched_lane,
+        when_bucket_options, App, BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3725,6 +4120,7 @@ mod tests {
             (Mode::ViewUnmatchedLabelInput, "Unmatched label> "),
             (Mode::CategoryCreateInput, "Category create> "),
             (Mode::CategoryRenameInput, "Category rename> "),
+            (Mode::ItemAssignCategoryInput, "Category> "),
         ];
 
         for (mode, prefix) in cases {
@@ -3785,6 +4181,15 @@ mod tests {
         };
 
         assert_eq!(app.input_cursor_position(footer), Some((8, 1)));
+    }
+
+    #[test]
+    fn list_scroll_keeps_selected_line_visible() {
+        let area = Rect::new(0, 0, 50, 10);
+        assert_eq!(list_scroll_for_selected_line(area, None), 0);
+        assert_eq!(list_scroll_for_selected_line(area, Some(0)), 0);
+        assert_eq!(list_scroll_for_selected_line(area, Some(7)), 0);
+        assert_eq!(list_scroll_for_selected_line(area, Some(8)), 1);
     }
 
     #[test]
@@ -3895,6 +4300,67 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_u_opens_item_category_picker_alias() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-u-alias-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        store
+            .create_category(&Category::new("Work".to_string()))
+            .expect("create category");
+        store
+            .create_item(&Item::new("demo item".to_string()))
+            .expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("u alias should open item category picker");
+        assert_eq!(app.mode, Mode::ItemAssignCategoryPicker);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_g_jumps_to_all_items_view() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-g-all-items-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        store
+            .create_view(&View::new("Work Board".to_string()))
+            .expect("create second view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("Work Board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g should jump to all items view");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("All Items")
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_create_category_picker_supports_include_and_exclude() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3945,6 +4411,40 @@ mod tests {
             .expect("created view exists");
         assert!(created.criteria.include.contains(&include_cat.id));
         assert!(created.criteria.exclude.contains(&exclude_cat.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_editor_action_selection_opens_expected_picker() {
+        let mut app = App::default();
+        app.category_rows = vec![CategoryListRow {
+            id: CategoryId::new_v4(),
+            name: "Work".to_string(),
+            depth: 0,
+            is_reserved: false,
+            is_exclusive: false,
+            enable_implicit_string: true,
+        }];
+        app.open_view_editor(View::new("Board".to_string()));
+        if let Some(editor) = &mut app.view_editor {
+            editor.action_index = 0;
+        }
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-editor-action-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        app.handle_view_editor_key(KeyCode::Char('o'), &agenda)
+            .expect("open selected action");
+        assert_eq!(app.mode, Mode::ViewEditorCategoryPicker);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
