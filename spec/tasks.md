@@ -72,6 +72,21 @@ Checkpoint:
 
 - View/column workflow is specified, testable, and sequenced for low-risk experimentation.
 
+## Phase 2c - View Manager UX Refactor (R3.6)
+
+Goal: replace the clunky popup view flow with a full-screen manager for boolean criteria and multi-section authoring.
+
+- [x] T087 Publish detailed view manager workflow spec: `spec/tui-view-manager-v2-spec.md`.
+- [x] T088 Publish terminal mockup/wireframes: `spec/tui-view-manager-v2-mockup.md`.
+- [ ] T089 Implement full-screen view manager shell with 3-pane navigation and explicit save/cancel.
+- [ ] T090 Implement row-based boolean criteria builder (`+`/`-`, `AND`/`OR`, optional nesting) with validation + preview summary.
+- [ ] T091 Integrate section authoring into the same screen (add/remove/reorder + section criteria + insert/remove assignment sets).
+- [ ] T092 Add regression/smoke coverage for view-manager flows and boolean-criteria edge cases.
+
+Checkpoint:
+
+- A single in-app view manager supports end-to-end authoring of criteria and sections with explicit save and preview feedback.
+
 ## Phase 3 - Safety Contract (R4)
 
 Goal: define and implement v1 mistake-recovery model.
@@ -130,7 +145,7 @@ Checkpoint:
 
 ## Dependency Order
 
-1. Phase 0 -> Phase 1 -> Phase 2 -> Phase 2b -> Phase 3 -> Phase 4 -> Phase 5 -> Phase 6
+1. Phase 0 -> Phase 1 -> Phase 2 -> Phase 2b -> Phase 2c -> Phase 3 -> Phase 4 -> Phase 5 -> Phase 6
 2. `T020` gates the branch between `T021-023` and `T024`.
 3. `T030-033` should complete before major persistence-affecting advanced features (`T050-053`).
 4. `T040-044` should precede broad TUI feature expansion to avoid frontend logic drift.
@@ -141,5 +156,6 @@ Checkpoint:
 - `T071`, `T072`, and `T074` can run in parallel once `T070` is approved.
 - `T078` and `T079` can run in parallel after `T077`.
 - `T080` and `T081` can run in parallel once `T078` is merged.
+- `T089` can begin in parallel with `T090` if shell layout + state boundaries are pre-agreed.
 - `T031` (policy) can run in parallel with `T030` (technical strictness), then converge at `T032`.
 - `T044` test authoring can begin as soon as API contracts for `T040-042` are drafted.

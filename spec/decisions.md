@@ -1004,3 +1004,33 @@ Rationale:
   ancestors.
 - Allowing direct ancestor removal while descendants remain yields inconsistent
   assignment sets and confusing view results.
+
+---
+
+## 39. View management moves to a dedicated full-screen workflow
+
+**Date**: 2026-02-17
+**Relevant tasks**: T087, T088, T089, T090
+
+View creation/editing should no longer be a popup-centric flow. The preferred
+interaction model is a dedicated full-screen View Manager with:
+
+- a view list pane (create/rename/delete/clone)
+- a criteria-definition pane (include/exclude + boolean composition)
+- a sections pane (add/remove/reorder + section-specific criteria/behavior)
+- an explicit save command and live preview summary
+
+Chosen defaults for this slice:
+
+- save is explicit (`s`), not implicit on Enter
+- include/exclude is represented as row-based rules first; freeform parser is deferred
+- multiple sections remain supported
+- existing model/store fields are reused where possible; schema changes are gated
+
+Rationale:
+
+- The current view workflow is high-friction and fragmented.
+- Users need to author boolean-style criteria and section definitions in one
+  contiguous flow.
+- A full-screen editor provides enough information density for criteria,
+  sections, and preview without mode confusion.

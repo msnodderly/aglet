@@ -10,7 +10,7 @@ Define a concrete workflow and execution plan for Lotus-style "Annotation" colum
 
 This document complements:
 
-- `/Users/mds/src/aglet-experiments/spec/tui-view-category-workflow.md`
+- `/Users/mds/src/aglet/spec/tui-view-category-workflow.md`
 
 ## 2. Design Anchors From Lotus Agenda
 
