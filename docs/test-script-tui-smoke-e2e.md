@@ -76,6 +76,9 @@ Inside TUI, run the following checklist.
 - Press `N`, type `Work Focus`, Enter.
 - In include-category picker, select `Work`, Enter.
 - Press `v`, select `Work Focus`, press `r`, rename to `Work Board`, Enter.
+- Press `v`, press `N`, type `Temp Delete`, Enter; in include picker press Enter.
+- Select `Temp Delete`, press `x`, then `n` (cancel) and verify view remains.
+- Press `x`, then `y` and verify `Temp Delete` is removed.
 - Press `v`, select `Work Board`, press `e` to open view editor.
   - Press `+`, toggle `Project X2` with Space, press Enter.
   - Press `-`, toggle `Done` with Space (or another category), press Enter.
@@ -135,6 +138,7 @@ cargo run -q -p agenda-cli -- --db "$DB" deleted
 - TUI remains stable through the full sequence (no crash/forced exit).
 - Category create/rename/reparent/toggle operations succeed and persist.
 - View create/rename/full-editor operations succeed and persist.
+- View delete/cancel flow behaves correctly (`x` then `n`/`y`).
 - Item can be moved between `Slot A`/`Slot B` and removed from `Smoke Board`.
 - Inline text edit and note edit persist.
 - Inspect unassign removes selected assignment.
