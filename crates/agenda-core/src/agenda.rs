@@ -192,7 +192,7 @@ impl<'a> Agenda<'a> {
             return Ok(());
         }
 
-        let existing = self.store.get_assignments_for_item(item_id)?;
+        let mut existing = self.store.get_assignments_for_item(item_id)?;
         let assignment = Assignment {
             source: AssignmentSource::Manual,
             assigned_at: Utc::now(),
@@ -204,7 +204,10 @@ impl<'a> Agenda<'a> {
             if existing.contains_key(category_id) {
                 continue;
             }
+            self.enforce_manual_exclusive_siblings(item_id, *category_id)?;
             self.store.assign_item(item_id, *category_id, &assignment)?;
+            self.assign_subsumption_for_category(item_id, *category_id)?;
+            existing = self.store.get_assignments_for_item(item_id)?;
         }
 
         Ok(())
@@ -954,6 +957,40 @@ mod tests {
     }
 
     #[test]
+    fn insert_item_in_section_applies_subsumption_for_manual_section_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+
+        let mut current_view = view("Project Y Board");
+        current_view.criteria.include.insert(project_y.id);
+        let mut current_section = section("Project Y");
+        current_section.on_insert_assign.insert(project_y.id);
+
+        agenda
+            .insert_item_in_section(item.id, &current_view, &current_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&project_y.id));
+        assert!(assignments.contains_key(&work.id));
+        assert_eq!(
+            assignments
+                .get(&work.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption)
+        );
+    }
+
+    #[test]
     fn remove_from_section_unassigns_targets_and_preserves_others() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
@@ -1047,6 +1084,38 @@ mod tests {
         assert_eq!(
             assignments.get(&work.id).and_then(|a| a.origin.as_deref()),
             Some("edit:view.insert")
+        );
+    }
+
+    #[test]
+    fn unmatched_insert_applies_subsumption_for_view_include_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+
+        let mut current_view = view("Project Y Board");
+        current_view.criteria.include.insert(project_y.id);
+
+        agenda
+            .insert_item_in_unmatched(item.id, &current_view)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&project_y.id));
+        assert!(assignments.contains_key(&work.id));
+        assert_eq!(
+            assignments
+                .get(&work.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption)
         );
     }
 

@@ -107,6 +107,8 @@ Each section lane should include a visible header row for column labels.
 
 - Default labels: `When | Item | All Categories`
 - Future labels: include category-family headings configured in view/section
+- Current board arrangement is section lanes stacked top-to-bottom to maximize
+  usable row width for annotation columns.
 
 ## 6.2 Width Policy
 
@@ -118,6 +120,7 @@ Initial policy (implemented in T079):
 - `All Categories`: bounded width with truncation.
 - Selection marker (`>`) is a dedicated fixed-width prefix and does not shift
   column boundaries.
+- Render rows as compact single lines; avoid wrap-induced spacer lines.
 
 Fallback for narrow terminals:
 
