@@ -496,6 +496,41 @@ impl App {
         self.item_edit_note_cursor = self.item_edit_note_len_chars();
     }
 
+    fn move_item_edit_note_cursor_up(&mut self) {
+        self.move_item_edit_note_cursor_vertical(-1);
+    }
+
+    fn move_item_edit_note_cursor_down(&mut self) {
+        self.move_item_edit_note_cursor_vertical(1);
+    }
+
+    fn move_item_edit_note_cursor_vertical(&mut self, delta: i32) {
+        let cursor = self.clamped_item_edit_note_cursor();
+        let (line, col) = note_cursor_line_col(&self.item_edit_note, cursor);
+        let line_starts = note_line_start_chars(&self.item_edit_note);
+        if line_starts.is_empty() {
+            self.item_edit_note_cursor = 0;
+            return;
+        }
+        let target_line = if delta < 0 {
+            line.saturating_sub(1)
+        } else {
+            (line + 1).min(line_starts.len().saturating_sub(1))
+        };
+        if target_line == line {
+            return;
+        }
+        let target_start = line_starts[target_line];
+        let note_len = self.item_edit_note_len_chars();
+        let target_end = if target_line + 1 < line_starts.len() {
+            line_starts[target_line + 1].saturating_sub(1)
+        } else {
+            note_len
+        };
+        let target_len = target_end.saturating_sub(target_start);
+        self.item_edit_note_cursor = target_start + col.min(target_len);
+    }
+
     fn backspace_item_edit_note_char(&mut self) {
         let cursor = self.clamped_item_edit_note_cursor();
         if cursor == 0 {
@@ -539,6 +574,8 @@ impl App {
         match code {
             KeyCode::Left => self.move_item_edit_note_cursor_left(),
             KeyCode::Right => self.move_item_edit_note_cursor_right(),
+            KeyCode::Up => self.move_item_edit_note_cursor_up(),
+            KeyCode::Down => self.move_item_edit_note_cursor_down(),
             KeyCode::Home => self.move_item_edit_note_cursor_home(),
             KeyCode::End => self.move_item_edit_note_cursor_end(),
             KeyCode::Backspace => self.backspace_item_edit_note_char(),
@@ -753,7 +790,8 @@ impl App {
             self.item_edit_note = existing_note;
             self.item_edit_note_cursor = self.item_edit_note.chars().count();
             self.status =
-                "Edit item: Tab cycles fields/buttons, Enter activates focused control".to_string();
+                "Edit item: Tab cycles fields/buttons, Enter activates focused control, Up/Down in note"
+                    .to_string();
         } else {
             self.status = "No selected item to edit".to_string();
         }
@@ -3244,41 +3282,57 @@ impl App {
         if popup_area.width < 3 || popup_area.height < 3 {
             return None;
         }
-        let inner_x = popup_area.x.saturating_add(1);
-        let max_inner_x = popup_area
-            .x
-            .saturating_add(popup_area.width.saturating_sub(2));
-        let max_inner_y = popup_area
-            .y
-            .saturating_add(popup_area.height.saturating_sub(2));
-        let (prefix_len, input_chars, input_y) = match self.item_edit_focus {
-            ItemEditFocus::Text => (
-                "  Text> ".chars().count().min(u16::MAX as usize) as u16,
-                self.clamped_input_cursor().min(u16::MAX as usize) as u16,
-                popup_area.y.saturating_add(3),
-            ),
+        let regions = item_edit_popup_regions(popup_area)?;
+        match self.item_edit_focus {
+            ItemEditFocus::Text => {
+                let prefix_len = "  Text> ".chars().count().min(u16::MAX as usize) as u16;
+                let input_chars = self.clamped_input_cursor().min(u16::MAX as usize) as u16;
+                let max_x = regions
+                    .text
+                    .x
+                    .saturating_add(regions.text.width.saturating_sub(1));
+                let cursor_x = regions
+                    .text
+                    .x
+                    .saturating_add(prefix_len)
+                    .saturating_add(input_chars)
+                    .min(max_x);
+                Some((cursor_x, regions.text.y))
+            }
             ItemEditFocus::Note => {
+                if regions.note_inner.width == 0 || regions.note_inner.height == 0 {
+                    return None;
+                }
                 let (line, col) = note_cursor_line_col(
                     &self.item_edit_note,
                     self.clamped_item_edit_note_cursor(),
                 );
-                let indent = "  Note> ".chars().count();
-                let prefix_chars = if line == 0 { indent } else { indent };
-                (
-                    prefix_chars.min(u16::MAX as usize) as u16,
-                    col.min(u16::MAX as usize) as u16,
-                    popup_area.y.saturating_add(5 + line as u16),
-                )
+                let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
+                let visible_line = line.saturating_sub(scroll);
+                let max_x = regions
+                    .note_inner
+                    .x
+                    .saturating_add(regions.note_inner.width.saturating_sub(1));
+                let max_y = regions
+                    .note_inner
+                    .y
+                    .saturating_add(regions.note_inner.height.saturating_sub(1));
+                let cursor_x = regions
+                    .note_inner
+                    .x
+                    .saturating_add(col.min(u16::MAX as usize) as u16)
+                    .min(max_x);
+                let cursor_y = regions
+                    .note_inner
+                    .y
+                    .saturating_add(visible_line.min(u16::MAX as usize) as u16)
+                    .min(max_y);
+                Some((cursor_x, cursor_y))
             }
             ItemEditFocus::CategoriesButton
             | ItemEditFocus::SaveButton
-            | ItemEditFocus::CancelButton => return None,
-        };
-        let raw_x = inner_x
-            .saturating_add(prefix_len)
-            .saturating_add(input_chars);
-        let cursor_x = raw_x.min(max_inner_x);
-        Some((cursor_x, input_y.min(max_inner_y)))
+            | ItemEditFocus::CancelButton => None,
+        }
     }
 
     fn render_header(&self) -> Paragraph<'_> {
@@ -3624,9 +3678,7 @@ impl App {
         if categories.is_empty() {
             lines.push(Line::from("  (none)"));
         } else {
-            for category in categories {
-                lines.push(Line::from(format!("  - {}", category)));
-            }
+            lines.push(Line::from(format!("  {}", categories.join(", "))));
         }
 
         lines.push(Line::from(""));
@@ -3740,7 +3792,9 @@ impl App {
             Mode::ViewUnmatchedLabelInput => "Type unmatched label, Enter:save, Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
-            Mode::ItemEditInput => "Edit popup: Tab/Shift+Tab navigate  Enter activate  Esc cancel  F3 categories",
+            Mode::ItemEditInput => {
+                "Edit popup: Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories"
+            }
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
@@ -3753,12 +3807,15 @@ impl App {
 
     fn render_item_edit_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
-        let text_marker = if self.item_edit_focus == ItemEditFocus::Text {
-            ">"
-        } else {
-            " "
+        let block = Block::default()
+            .title("Edit Item")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        frame.render_widget(block, area);
+        let Some(regions) = item_edit_popup_regions(area) else {
+            return;
         };
-        let note_marker = if self.item_edit_focus == ItemEditFocus::Note {
+        let text_marker = if self.item_edit_focus == ItemEditFocus::Text {
             ">"
         } else {
             " "
@@ -3779,37 +3836,55 @@ impl App {
             "[Cancel]"
         };
 
-        let mut lines = vec![
-            Line::from("Edit selected item"),
-            Line::from(""),
-            Line::from(format!("{text_marker} Text> {}", self.input)),
-            Line::from(""),
-        ];
-
-        let note_lines: Vec<&str> = self.item_edit_note.split('\n').collect();
-        for (index, line) in note_lines.iter().enumerate() {
-            if index == 0 {
-                lines.push(Line::from(format!("{note_marker} Note> {}", line)));
-            } else {
-                lines.push(Line::from(format!("  Note> {}", line)));
-            }
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            "  {}  {}  {}",
-            categories_button, save_button, cancel_button
-        )));
-        lines.push(Line::from("Tab navigate  Enter activate  Esc cancel  F3 categories"));
+        frame.render_widget(Paragraph::new("Edit selected item"), regions.heading);
         frame.render_widget(
-            Paragraph::new(lines)
+            Paragraph::new(format!("{text_marker} Text> {}", self.input)),
+            regions.text,
+        );
+
+        let note_lines: Vec<Line<'_>> = if self.item_edit_note.is_empty() {
+            vec![Line::from("")]
+        } else {
+            self.item_edit_note.lines().map(Line::from).collect()
+        };
+        let note_border_color = if self.item_edit_focus == ItemEditFocus::Note {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        let note_title = if self.item_edit_focus == ItemEditFocus::Note {
+            "Note (> editable)"
+        } else {
+            "Note (editable)"
+        };
+        let note_cursor_line = note_cursor_line_col(
+            &self.item_edit_note,
+            self.clamped_item_edit_note_cursor(),
+        )
+        .0;
+        let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
+        frame.render_widget(
+            Paragraph::new(note_lines)
+                .scroll((note_scroll, 0))
                 .block(
                     Block::default()
-                        .title("Edit Item")
+                        .title(note_title)
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(Style::default().fg(note_border_color)),
                 )
                 .wrap(Wrap { trim: false }),
-            area,
+            regions.note,
+        );
+        frame.render_widget(
+            Paragraph::new(format!(
+                "  {}  {}  {}",
+                categories_button, save_button, cancel_button
+            )),
+            regions.buttons,
+        );
+        frame.render_widget(
+            Paragraph::new("Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories"),
+            regions.help,
         );
     }
 
@@ -5343,6 +5418,55 @@ fn item_edit_popup_area(area: Rect) -> Rect {
     centered_rect(84, 70, area)
 }
 
+struct ItemEditPopupRegions {
+    heading: Rect,
+    text: Rect,
+    note: Rect,
+    note_inner: Rect,
+    buttons: Rect,
+    help: Rect,
+}
+
+fn item_edit_popup_regions(area: Rect) -> Option<ItemEditPopupRegions> {
+    if area.width < 3 || area.height < 3 {
+        return None;
+    }
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    if inner.width == 0 || inner.height < 5 {
+        return None;
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let note = chunks[2];
+    let note_inner = Rect {
+        x: note.x.saturating_add(1),
+        y: note.y.saturating_add(1),
+        width: note.width.saturating_sub(2),
+        height: note.height.saturating_sub(2),
+    };
+    Some(ItemEditPopupRegions {
+        heading: chunks[0],
+        text: chunks[1],
+        note,
+        note_inner,
+        buttons: chunks[3],
+        help: chunks[4],
+    })
+}
+
 fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
     let mut line = 0usize;
     let mut col = 0usize;
@@ -5355,6 +5479,18 @@ fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
         }
     }
     (line, col)
+}
+
+fn note_line_start_chars(note: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    let mut char_index = 0usize;
+    for c in note.chars() {
+        char_index += 1;
+        if c == '\n' {
+            starts.push(char_index);
+        }
+    }
+    starts
 }
 
 fn add_capture_status_message(
@@ -5387,7 +5523,9 @@ mod tests {
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
-    use agenda_core::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
+    use agenda_core::model::{
+        Assignment, AssignmentSource, Category, CategoryId, Item, Query, Section, View, WhenBucket,
+    };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use crossterm::event::KeyCode;
@@ -5638,7 +5776,7 @@ mod tests {
         };
         assert_eq!(
             app.item_edit_cursor_position(popup),
-            Some((popup.x + 1 + "  Text> ".len() as u16 + 2, popup.y + 3))
+            Some((popup.x + 1 + "  Text> ".len() as u16 + 2, popup.y + 2))
         );
     }
 
@@ -6295,6 +6433,47 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_details_categories_are_single_comma_separated_line() {
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        let mut item = Item::new("demo".to_string());
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: chrono::Utc::now(),
+            sticky: false,
+            origin: None,
+        };
+        item.assignments.insert(alpha.id, assignment.clone());
+        item.assignments.insert(beta.id, assignment);
+
+        let app = App {
+            categories: vec![alpha, beta],
+            ..App::default()
+        };
+        let lines = app.item_details_lines_for_item(&item);
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+        assert!(plain
+            .iter()
+            .any(|line| line == "  Alpha, Beta" || line == "  Beta, Alpha"));
+    }
+
+    #[test]
+    fn item_edit_note_up_down_moves_cursor_between_lines() {
+        let mut app = App::default();
+        app.item_edit_note = "first\nsecond".to_string();
+        app.item_edit_note_cursor = "first\nse".chars().count();
+
+        app.move_item_edit_note_cursor_up();
+        assert_eq!(app.item_edit_note_cursor, "fi".chars().count());
+
+        app.move_item_edit_note_cursor_down();
+        assert_eq!(app.item_edit_note_cursor, "first\nse".chars().count());
     }
 
     #[test]
