@@ -200,8 +200,10 @@ mod tests {
             "Follow-up".to_string(),
             "Work_Item".to_string(),
         ];
-        let unknown =
-            unknown_hashtag_tokens("review #high #FOLLOW-UP #work_item #office", &category_names);
+        let unknown = unknown_hashtag_tokens(
+            "review #high #FOLLOW-UP #work_item #office",
+            &category_names,
+        );
         assert_eq!(unknown, vec!["office"]);
     }
 }

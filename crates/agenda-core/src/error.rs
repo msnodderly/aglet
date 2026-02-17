@@ -17,7 +17,9 @@ pub enum AgendaError {
     InvalidOperation { message: String },
 
     /// SQLite or other storage failure.
-    StorageError { source: Box<dyn std::error::Error + Send + Sync> },
+    StorageError {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl fmt::Display for AgendaError {

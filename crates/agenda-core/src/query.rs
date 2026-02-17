@@ -859,12 +859,7 @@ mod tests {
         let priya = Uuid::new_v4();
 
         let items = vec![
-            item_with_assignments(
-                "Clean out the garage",
-                None,
-                None,
-                &[high, priority],
-            ),
+            item_with_assignments("Clean out the garage", None, None, &[high, priority]),
             item_with_assignments(
                 "Project Atlas: Miguel draft rollout checklist",
                 None,
@@ -882,34 +877,30 @@ mod tests {
         let mut high_without_priority = Query::default();
         high_without_priority.include.insert(high);
         high_without_priority.exclude.insert(priority);
-        let high_without_priority_view =
-            view(high_without_priority, vec![], true, "Unassigned");
+        let high_without_priority_view = view(high_without_priority, vec![], true, "Unassigned");
         let high_without_priority_result =
             resolve_view(&high_without_priority_view, &items, &[], reference);
 
         assert!(high_without_priority_result.sections.is_empty());
-        assert!(
-            high_without_priority_result
-                .unmatched
-                .as_ref()
-                .expect("unmatched")
-                .is_empty()
-        );
+        assert!(high_without_priority_result
+            .unmatched
+            .as_ref()
+            .expect("unmatched")
+            .is_empty());
 
         let mut cicada_without_priya = Query::default();
         cicada_without_priya.include.insert(project_cicada);
         cicada_without_priya.exclude.insert(priya);
         let cicada_without_priya_view = view(cicada_without_priya, vec![], true, "Unassigned");
-        let cicada_without_priya_result = resolve_view(&cicada_without_priya_view, &items, &[], reference);
+        let cicada_without_priya_result =
+            resolve_view(&cicada_without_priya_view, &items, &[], reference);
 
         assert!(cicada_without_priya_result.sections.is_empty());
-        assert!(
-            cicada_without_priya_result
-                .unmatched
-                .as_ref()
-                .expect("unmatched")
-                .is_empty()
-        );
+        assert!(cicada_without_priya_result
+            .unmatched
+            .as_ref()
+            .expect("unmatched")
+            .is_empty());
     }
 
     #[test]
