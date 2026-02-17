@@ -44,7 +44,7 @@ Exit criteria:
 
 ## R3. TUI View + Category Workflow Streamlining (Completed, Maintain)
 
-- Adopt the workflow spec in `spec/tui-view-category-workflow.md`.
+- Adopt the consolidated workflow spec in `spec/tui-view-workflow-implementation.md`.
 - Replace split-pane section navigation with section-first horizontal board layout.
 - Implement full in-TUI view criteria editing (multi include/exclude + virtual include/exclude).
 - Reduce shortcut friction with laptop-friendly bindings and retain F-key aliases.
@@ -63,7 +63,7 @@ Exit criteria:
 
 Exit criteria:
 
-- A detailed design spec exists (`spec/tui-view-column-workflow-design.md`).
+- A detailed consolidated design spec exists (`spec/tui-view-workflow-implementation.md`).
 - A sequenced experiment plan exists in `spec/tasks.md` (`T077-T083`).
 - Team has a clear decision path for "UI-only vs model extension" for column workflows.
 

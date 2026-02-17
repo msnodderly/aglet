@@ -42,7 +42,7 @@ Checkpoint:
 
 Goal: ship a low-friction TUI workflow for board layout, view criteria editing, and category interactions.
 
-- [x] T070 Adopt and maintain `spec/tui-view-category-workflow.md` as the implementation contract.
+- [x] T070 Adopt and maintain `spec/tui-view-workflow-implementation.md` as the implementation contract.
 - [x] T071 Redesign TUI board rendering to section-first horizontal layout (remove dedicated section selector pane).
 - [x] T072 Add full TUI view editor for multi include/exclude and virtual include/exclude criteria.
 - [x] T073 Add section/unmatched configuration in TUI view editor (hide-empty default, label/pin settings).
@@ -52,20 +52,20 @@ Goal: ship a low-friction TUI workflow for board layout, view criteria editing, 
 
 Checkpoint:
 
-- View/category management workflows are fast, in-app, and aligned with `spec/tui-view-category-workflow.md`.
+- View/category management workflows are fast, in-app, and aligned with `spec/tui-view-workflow-implementation.md`.
 
 ## Phase 2b - View + Column Workflow Design and Experiments (R3.5)
 
 Goal: lock and validate a Lotus-style annotation-column workflow before committing to persistence/model changes.
 
-- [x] T077 Publish detailed view/column workflow design spec: `spec/tui-view-column-workflow-design.md`.
+- [x] T077 Publish detailed view/column workflow design spec (consolidated): `spec/tui-view-workflow-implementation.md`.
 - [x] T078 Add explicit in-lane column headers in TUI for `When | Item | All Categories`.
 - [x] T079 Add rendering policy + tests for `All Categories` cell formatting (sorted, comma-separated, truncated safely).
 - [x] T084 Switch board section arrangement to top-to-bottom stacked lanes and tighten row density.
 - [x] T085 Add view-create include/exclude picks (`+`/`-`) and `Tab`/`Shift+Tab` view cycling.
 - [ ] T080 Add view-editor "column setup" experimental UX entry point (no persistence changes).
 - [ ] T081 Prototype category-family column rendering (for examples like `Priority`, `People`, `Department`) with non-persistent config.
-- [ ] T082 Record model/persistence decision using the gate in `spec/tui-view-column-workflow-design.md`.
+- [ ] T082 Record model/persistence decision using the gate in `spec/tui-view-workflow-implementation.md`.
 - [ ] T083 Extend smoke/manual script coverage for annotation-column workflows and category-family prototype scenarios.
 
 Checkpoint:
@@ -76,8 +76,8 @@ Checkpoint:
 
 Goal: replace the clunky popup view flow with a full-screen manager for boolean criteria and multi-section authoring.
 
-- [x] T087 Publish detailed view manager workflow spec: `spec/tui-view-manager-v2-spec.md`.
-- [x] T088 Publish terminal mockup/wireframes: `spec/tui-view-manager-v2-mockup.md`.
+- [x] T087 Publish detailed view manager workflow spec (consolidated): `spec/tui-view-workflow-implementation.md`.
+- [x] T088 Publish terminal mockup/wireframes (consolidated): `spec/tui-view-workflow-implementation.md`.
 - [ ] T089 Implement full-screen view manager shell with 3-pane navigation and explicit save/cancel.
 - [ ] T090 Implement row-based boolean criteria builder (`+`/`-`, `AND`/`OR`, optional nesting) with validation + preview summary.
 - [ ] T091 Integrate section authoring into the same screen (add/remove/reorder + section criteria + insert/remove assignment sets).
