@@ -153,6 +153,20 @@ enum ViewManagerPane {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum ViewCriteriaSign {
+    Include,
+    Exclude,
+}
+
+#[derive(Clone)]
+struct ViewCriteriaRow {
+    sign: ViewCriteriaSign,
+    category_id: CategoryId,
+    join_is_or: bool,
+    depth: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum CategoryGridColumn {
     Name,
     Exclusive,
@@ -188,6 +202,10 @@ struct App {
     view_manager_pane: ViewManagerPane,
     view_manager_definition_index: usize,
     view_manager_section_index: usize,
+    view_manager_rows: Vec<ViewCriteriaRow>,
+    view_manager_loaded_view_name: Option<String>,
+    view_manager_preview_count: usize,
+    view_manager_dirty: bool,
     view_create_include_selection: HashSet<CategoryId>,
     view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
@@ -234,6 +252,10 @@ impl Default for App {
             view_manager_pane: ViewManagerPane::Views,
             view_manager_definition_index: 0,
             view_manager_section_index: 0,
+            view_manager_rows: Vec::new(),
+            view_manager_loaded_view_name: None,
+            view_manager_preview_count: 0,
+            view_manager_dirty: false,
             view_create_include_selection: HashSet::new(),
             view_create_exclude_selection: HashSet::new(),
             view_editor: None,
@@ -1248,8 +1270,8 @@ impl App {
                     self.mode = Mode::ViewManagerScreen;
                     self.view_return_to_manager = false;
                     self.view_manager_pane = ViewManagerPane::Views;
-                    self.view_manager_definition_index = 0;
                     self.view_manager_section_index = 0;
+                    self.load_view_manager_rows_from_selected_view();
                     self.status =
                         "View manager: Tab pane, j/k row, Enter action, s save, q/Esc back"
                             .to_string();
@@ -1310,12 +1332,32 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => match self.view_manager_pane {
                 ViewManagerPane::Views => {
                     if !self.views.is_empty() {
-                        self.picker_index = next_index(self.picker_index, self.views.len(), 1);
+                        let next = next_index(self.picker_index, self.views.len(), 1);
+                        if self.view_manager_dirty
+                            && self
+                                .view_manager_loaded_view_name
+                                .as_ref()
+                                .map(|name| {
+                                    self.views
+                                        .get(next)
+                                        .map(|view| !view.name.eq_ignore_ascii_case(name))
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
+                        {
+                            self.status =
+                                "Unsaved definition changes. Press s to save before switching view."
+                                    .to_string();
+                        } else {
+                            self.picker_index = next;
+                            self.load_view_manager_rows_from_selected_view();
+                        }
                     }
                 }
                 ViewManagerPane::Definition => {
+                    let count = self.view_manager_rows.len().max(1);
                     self.view_manager_definition_index =
-                        next_index(self.view_manager_definition_index, 4, 1);
+                        next_index(self.view_manager_definition_index, count, 1);
                 }
                 ViewManagerPane::Sections => {
                     let section_count = self
@@ -1330,12 +1372,32 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => match self.view_manager_pane {
                 ViewManagerPane::Views => {
                     if !self.views.is_empty() {
-                        self.picker_index = next_index(self.picker_index, self.views.len(), -1);
+                        let next = next_index(self.picker_index, self.views.len(), -1);
+                        if self.view_manager_dirty
+                            && self
+                                .view_manager_loaded_view_name
+                                .as_ref()
+                                .map(|name| {
+                                    self.views
+                                        .get(next)
+                                        .map(|view| !view.name.eq_ignore_ascii_case(name))
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
+                        {
+                            self.status =
+                                "Unsaved definition changes. Press s to save before switching view."
+                                    .to_string();
+                        } else {
+                            self.picker_index = next;
+                            self.load_view_manager_rows_from_selected_view();
+                        }
                     }
                 }
                 ViewManagerPane::Definition => {
+                    let count = self.view_manager_rows.len().max(1);
                     self.view_manager_definition_index =
-                        next_index(self.view_manager_definition_index, 4, -1);
+                        next_index(self.view_manager_definition_index, count, -1);
                 }
                 ViewManagerPane::Sections => {
                     let section_count = self
@@ -1359,6 +1421,19 @@ impl App {
                             .map(|view| view.name.clone())
                             .unwrap_or_else(|| "(none)".to_string());
                         self.status = format!("Focused view in manager: {view_name}");
+                        self.load_view_manager_rows_from_selected_view();
+                    }
+                } else if self.view_manager_pane == ViewManagerPane::Definition {
+                    if let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    {
+                        row.sign = match row.sign {
+                            ViewCriteriaSign::Include => ViewCriteriaSign::Exclude,
+                            ViewCriteriaSign::Exclude => ViewCriteriaSign::Include,
+                        };
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
                     }
                 } else {
                     self.status =
@@ -1367,17 +1442,61 @@ impl App {
                 }
             }
             KeyCode::Char('s') => {
-                self.status =
-                    "View manager save is not wired yet (planned in T090/T091)".to_string();
+                let Some(view) = self.views.get(self.picker_index).cloned() else {
+                    self.status = "No selected view to save".to_string();
+                    return Ok(false);
+                };
+                let mut updated = view.clone();
+                updated.criteria = self.view_manager_query_from_rows(&view);
+                match agenda.store().update_view(&updated) {
+                    Ok(()) => {
+                        self.refresh(agenda.store())?;
+                        self.set_view_selection_by_name(&updated.name);
+                        self.load_view_manager_rows_from_selected_view();
+                        self.status = format!(
+                            "Saved criteria for {} (matching={})",
+                            updated.name, self.view_manager_preview_count
+                        );
+                    }
+                    Err(err) => {
+                        self.status = format!("View manager save failed: {err}");
+                    }
+                }
             }
             KeyCode::Char('N') => {
-                if self.view_manager_pane == ViewManagerPane::Views {
-                    self.mode = Mode::ViewCreateNameInput;
-                    self.clear_input();
-                    self.view_pending_name = None;
-                    self.view_pending_edit_name = None;
-                    self.view_return_to_manager = true;
-                    self.status = "Create view: type name and press Enter".to_string();
+                match self.view_manager_pane {
+                    ViewManagerPane::Views => {
+                        self.mode = Mode::ViewCreateNameInput;
+                        self.clear_input();
+                        self.view_pending_name = None;
+                        self.view_pending_edit_name = None;
+                        self.view_return_to_manager = true;
+                        self.status = "Create view: type name and press Enter".to_string();
+                    }
+                    ViewManagerPane::Definition => {
+                        let Some(category_row) = self
+                            .category_rows
+                            .iter()
+                            .find(|row| !row.is_reserved)
+                            .cloned()
+                        else {
+                            self.status = "No user categories available for criteria rows"
+                                .to_string();
+                            return Ok(false);
+                        };
+                        self.view_manager_rows.push(ViewCriteriaRow {
+                            sign: ViewCriteriaSign::Include,
+                            category_id: category_row.id,
+                            join_is_or: false,
+                            depth: 0,
+                        });
+                        self.view_manager_definition_index =
+                            self.view_manager_rows.len().saturating_sub(1);
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
+                        self.status = format!("Added criteria row for {}", category_row.name);
+                    }
+                    ViewManagerPane::Sections => {}
                 }
             }
             KeyCode::Char('r') => {
@@ -1394,14 +1513,127 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                if self.view_manager_pane == ViewManagerPane::Views {
-                    if let Some(view) = self.views.get(self.picker_index) {
-                        self.mode = Mode::ViewDeleteConfirm;
-                        self.view_return_to_manager = true;
-                        self.status = format!("Delete view '{}' ? y/n", view.name);
-                    } else {
-                        self.status = "No selected view to delete".to_string();
+                match self.view_manager_pane {
+                    ViewManagerPane::Views => {
+                        if let Some(view) = self.views.get(self.picker_index) {
+                            self.mode = Mode::ViewDeleteConfirm;
+                            self.view_return_to_manager = true;
+                            self.status = format!("Delete view '{}' ? y/n", view.name);
+                        } else {
+                            self.status = "No selected view to delete".to_string();
+                        }
                     }
+                    ViewManagerPane::Definition => {
+                        if self.view_manager_rows.is_empty() {
+                            self.status = "No criteria row to remove".to_string();
+                            return Ok(false);
+                        }
+                        let removed = self
+                            .view_manager_rows
+                            .remove(self.view_manager_definition_index.min(
+                                self.view_manager_rows.len().saturating_sub(1),
+                            ));
+                        self.view_manager_definition_index = self
+                            .view_manager_definition_index
+                            .min(self.view_manager_rows.len().saturating_sub(1));
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
+                        let category_name = self
+                            .category_rows
+                            .iter()
+                            .find(|row| row.id == removed.category_id)
+                            .map(|row| row.name.clone())
+                            .unwrap_or_else(|| removed.category_id.to_string());
+                        self.status = format!("Removed criteria row {}", category_name);
+                    }
+                    ViewManagerPane::Sections => {}
+                }
+            }
+            KeyCode::Char(' ') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    if let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    {
+                        row.sign = match row.sign {
+                            ViewCriteriaSign::Include => ViewCriteriaSign::Exclude,
+                            ViewCriteriaSign::Exclude => ViewCriteriaSign::Include,
+                        };
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
+                    }
+                }
+            }
+            KeyCode::Char('a') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    if let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    {
+                        row.join_is_or = false;
+                        self.view_manager_dirty = true;
+                    }
+                }
+            }
+            KeyCode::Char('o') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    if let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    {
+                        row.join_is_or = true;
+                        self.view_manager_dirty = true;
+                    }
+                }
+            }
+            KeyCode::Char('(') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    if let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    {
+                        row.depth = row.depth.saturating_add(1).min(8);
+                        self.view_manager_dirty = true;
+                    }
+                }
+            }
+            KeyCode::Char(')') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    if let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    {
+                        row.depth = row.depth.saturating_sub(1);
+                        self.view_manager_dirty = true;
+                    }
+                }
+            }
+            KeyCode::Char('c') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    let Some(row) = self
+                        .view_manager_rows
+                        .get_mut(self.view_manager_definition_index)
+                    else {
+                        self.status = "No criteria row selected".to_string();
+                        return Ok(false);
+                    };
+                    let non_reserved: Vec<CategoryId> = self
+                        .category_rows
+                        .iter()
+                        .filter(|cat| !cat.is_reserved)
+                        .map(|cat| cat.id)
+                        .collect();
+                    if non_reserved.is_empty() {
+                        self.status = "No user categories available".to_string();
+                        return Ok(false);
+                    }
+                    let current_index = non_reserved
+                        .iter()
+                        .position(|id| *id == row.category_id)
+                        .unwrap_or(0);
+                    row.category_id = non_reserved[next_index(current_index, non_reserved.len(), 1)];
+                    self.view_manager_dirty = true;
+                    self.refresh_view_manager_preview();
                 }
             }
             KeyCode::Char('C') => {
@@ -1424,6 +1656,7 @@ impl App {
                             self.refresh(agenda.store())?;
                             self.set_view_selection_by_name(&clone_name);
                             self.mode = Mode::ViewManagerScreen;
+                            self.load_view_manager_rows_from_selected_view();
                             self.status = format!("Cloned view as {clone_name}");
                         }
                         Err(err) => {
@@ -1449,6 +1682,83 @@ impl App {
             counter += 1;
         }
         candidate
+    }
+
+    fn load_view_manager_rows_from_selected_view(&mut self) {
+        let Some(view) = self.views.get(self.picker_index) else {
+            self.view_manager_rows.clear();
+            self.view_manager_loaded_view_name = None;
+            self.view_manager_preview_count = 0;
+            self.view_manager_definition_index = 0;
+            self.view_manager_dirty = false;
+            return;
+        };
+
+        let category_names = category_name_map(&self.categories);
+        let mut rows: Vec<ViewCriteriaRow> = view
+            .criteria
+            .include
+            .iter()
+            .map(|category_id| ViewCriteriaRow {
+                sign: ViewCriteriaSign::Include,
+                category_id: *category_id,
+                join_is_or: false,
+                depth: 0,
+            })
+            .chain(view.criteria.exclude.iter().map(|category_id| ViewCriteriaRow {
+                sign: ViewCriteriaSign::Exclude,
+                category_id: *category_id,
+                join_is_or: false,
+                depth: 0,
+            }))
+            .collect();
+        rows.sort_by(|a, b| {
+            let a_name = category_names
+                .get(&a.category_id)
+                .cloned()
+                .unwrap_or_else(|| a.category_id.to_string());
+            let b_name = category_names
+                .get(&b.category_id)
+                .cloned()
+                .unwrap_or_else(|| b.category_id.to_string());
+            let a_sign = matches!(a.sign, ViewCriteriaSign::Exclude) as u8;
+            let b_sign = matches!(b.sign, ViewCriteriaSign::Exclude) as u8;
+            (a_sign, a_name.to_ascii_lowercase()).cmp(&(b_sign, b_name.to_ascii_lowercase()))
+        });
+
+        self.view_manager_rows = rows;
+        self.view_manager_loaded_view_name = Some(view.name.clone());
+        self.view_manager_definition_index = 0;
+        self.refresh_view_manager_preview();
+        self.view_manager_dirty = false;
+    }
+
+    fn view_manager_query_from_rows(&self, base_view: &View) -> Query {
+        let mut query = base_view.criteria.clone();
+        query.include.clear();
+        query.exclude.clear();
+        for row in &self.view_manager_rows {
+            match row.sign {
+                ViewCriteriaSign::Include => {
+                    query.include.insert(row.category_id);
+                    query.exclude.remove(&row.category_id);
+                }
+                ViewCriteriaSign::Exclude => {
+                    query.exclude.insert(row.category_id);
+                    query.include.remove(&row.category_id);
+                }
+            }
+        }
+        query
+    }
+
+    fn refresh_view_manager_preview(&mut self) {
+        let Some(view) = self.views.get(self.picker_index) else {
+            self.view_manager_preview_count = 0;
+            return;
+        };
+        let query = self.view_manager_query_from_rows(view);
+        self.view_manager_preview_count = self.preview_count_for_query(&query);
     }
 
     fn handle_view_delete_key(
@@ -1482,6 +1792,9 @@ impl App {
                         self.picker_index =
                             self.picker_index.min(self.views.len().saturating_sub(1));
                         self.view_return_to_manager = false;
+                        if self.mode == Mode::ViewManagerScreen {
+                            self.load_view_manager_rows_from_selected_view();
+                        }
                         self.status = format!("Deleted view: {}", view.name);
                     }
                     Err(err) => {
@@ -1494,6 +1807,9 @@ impl App {
             KeyCode::Char('n') | KeyCode::Esc => {
                 self.mode = return_mode;
                 self.view_return_to_manager = false;
+                if self.mode == Mode::ViewManagerScreen {
+                    self.load_view_manager_rows_from_selected_view();
+                }
                 self.status = "Delete canceled".to_string();
             }
             _ => {}
@@ -1513,6 +1829,9 @@ impl App {
                 self.clear_input();
                 self.view_pending_name = None;
                 self.view_return_to_manager = false;
+                if self.mode == Mode::ViewManagerScreen {
+                    self.load_view_manager_rows_from_selected_view();
+                }
                 self.status = "View create canceled".to_string();
             }
             KeyCode::Enter => {
@@ -1522,6 +1841,9 @@ impl App {
                     self.clear_input();
                     self.view_pending_name = None;
                     self.view_return_to_manager = false;
+                    if self.mode == Mode::ViewManagerScreen {
+                        self.load_view_manager_rows_from_selected_view();
+                    }
                     self.status = "View create canceled (empty name)".to_string();
                 } else {
                     self.view_pending_name = Some(name.clone());
@@ -1631,6 +1953,9 @@ impl App {
                         self.view_create_include_selection.clear();
                         self.view_create_exclude_selection.clear();
                         self.view_return_to_manager = false;
+                        if self.mode == Mode::ViewManagerScreen {
+                            self.load_view_manager_rows_from_selected_view();
+                        }
                         self.status = format!(
                             "Created view {} (include={}, exclude={})",
                             view.name,
@@ -1647,6 +1972,9 @@ impl App {
                         self.view_create_include_selection.clear();
                         self.view_create_exclude_selection.clear();
                         self.view_return_to_manager = false;
+                        if self.mode == Mode::ViewManagerScreen {
+                            self.load_view_manager_rows_from_selected_view();
+                        }
                         self.status = format!("View create failed: {err}");
                     }
                 }
@@ -1672,6 +2000,9 @@ impl App {
                 self.clear_input();
                 self.view_pending_edit_name = None;
                 self.view_return_to_manager = false;
+                if self.mode == Mode::ViewManagerScreen {
+                    self.load_view_manager_rows_from_selected_view();
+                }
                 self.status = "View rename canceled".to_string();
             }
             KeyCode::Enter => {
@@ -1725,6 +2056,9 @@ impl App {
                         self.clear_input();
                         self.view_pending_edit_name = None;
                         self.view_return_to_manager = false;
+                        if self.mode == Mode::ViewManagerScreen {
+                            self.load_view_manager_rows_from_selected_view();
+                        }
                         self.status = format!("Renamed view to {}", new_name);
                     }
                     Err(err) => {
@@ -2911,6 +3245,7 @@ impl App {
             .split(area);
 
         let selected_view = self.views.get(self.picker_index);
+        let category_names = category_name_map(&self.categories);
         let views_lines: Vec<Line<'_>> = if self.views.is_empty() {
             vec![Line::from("(no views)")]
         } else {
@@ -2949,19 +3284,54 @@ impl App {
         if let Some(view) = selected_view {
             definition_lines.push(Line::from(format!("View: {}", view.name)));
             definition_lines.push(Line::from(format!(
-                "Include: {}  Exclude: {}",
-                view.criteria.include.len(),
-                view.criteria.exclude.len()
+                "Rows: {}{}",
+                self.view_manager_rows.len(),
+                if self.view_manager_dirty { "  *unsaved*" } else { "" }
             )));
             definition_lines.push(Line::from(format!(
-                "Virtual +: {}  Virtual -: {}",
-                view.criteria.virtual_include.len(),
-                view.criteria.virtual_exclude.len()
+                "Preview matching: {}",
+                self.view_manager_preview_count
             )));
-            definition_lines.push(Line::from(format!(
-                "Selected row index: {}",
-                self.view_manager_definition_index
-            )));
+            definition_lines.push(Line::from(""));
+            if self.view_manager_rows.is_empty() {
+                definition_lines.push(Line::from("(no criteria rows)"));
+            } else {
+                definition_lines.extend(self.view_manager_rows.iter().enumerate().map(
+                    |(index, row)| {
+                        let marker = if index == self.view_manager_definition_index {
+                            "> "
+                        } else {
+                            "  "
+                        };
+                        let join = if index == 0 {
+                            "  "
+                        } else if row.join_is_or {
+                            "OR"
+                        } else {
+                            "AND"
+                        };
+                        let sign = match row.sign {
+                            ViewCriteriaSign::Include => '+',
+                            ViewCriteriaSign::Exclude => '-',
+                        };
+                        let category_name = category_names
+                            .get(&row.category_id)
+                            .cloned()
+                            .unwrap_or_else(|| row.category_id.to_string());
+                        let text = format!(
+                            "{marker}{join} {}{} {}",
+                            "  ".repeat(row.depth),
+                            sign,
+                            category_name
+                        );
+                        if index == self.view_manager_definition_index {
+                            Line::styled(text, selected_row_style())
+                        } else {
+                            Line::from(text)
+                        }
+                    },
+                ));
+            }
         } else {
             definition_lines.push(Line::from("(no selected view)"));
         }
@@ -3164,7 +3534,16 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "Set include/exclude categories for new view".to_string()
             }
-            Mode::ViewManagerScreen => "View manager (shell)".to_string(),
+            Mode::ViewManagerScreen => format!(
+                "View manager pane:{:?} preview:{}{}",
+                self.view_manager_pane,
+                self.view_manager_preview_count,
+                if self.view_manager_dirty {
+                    "  *unsaved*"
+                } else {
+                    ""
+                }
+            ),
             Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
             Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
@@ -3198,7 +3577,7 @@ impl App {
                 "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
             Mode::ViewManagerScreen => {
-                "Tab/Shift+Tab:pane  j/k:row  Enter:action  s:save(stub)  q/Esc:back"
+                "Tab/Shift+Tab:pane  j/k:row  Enter/Space:toggle-sign  N:add  x:remove  a/o:join  (/):depth  c:next-category  s:save  q/Esc:back"
             }
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
@@ -5401,6 +5780,117 @@ mod tests {
             .collect();
         assert!(names.iter().any(|n| n == "Board"));
         assert!(names.iter().any(|n| n == "Board Copy"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_definition_space_and_save_persists_criteria() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-def-save-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut view = View::new("WorkView".to_string());
+        view.criteria.include.insert(category.id);
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "WorkView")
+            .expect("view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+
+        app.handle_view_manager_key(KeyCode::Tab, &agenda)
+            .expect("move to definition pane");
+        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
+        app.handle_view_manager_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle sign");
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("save criteria");
+
+        let saved = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "WorkView")
+            .expect("saved view");
+        assert!(!saved.criteria.include.contains(&category.id));
+        assert!(saved.criteria.exclude.contains(&category.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_definition_add_remove_rows_and_save() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-def-rows-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Focus".to_string());
+        store.create_category(&category).expect("create category");
+        let view = View::new("FocusView".to_string());
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "FocusView")
+            .expect("view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.handle_view_manager_key(KeyCode::Tab, &agenda)
+            .expect("move to definition pane");
+
+        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
+            .expect("add criteria row");
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("save include row");
+
+        let saved_with_row = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "FocusView")
+            .expect("saved view");
+        assert!(saved_with_row.criteria.include.contains(&category.id));
+
+        app.handle_view_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("remove criteria row");
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("save without rows");
+
+        let saved_without_row = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "FocusView")
+            .expect("saved view");
+        assert!(!saved_without_row.criteria.include.contains(&category.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
