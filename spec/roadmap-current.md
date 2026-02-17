@@ -1,6 +1,6 @@
 # Roadmap (Current Reality)
 
-Date: 2026-02-16
+Date: 2026-02-17
 Scope: execution roadmap derived from what is already implemented, not from pre-implementation MVP task templates.
 
 ## 1. Status Snapshot
@@ -42,7 +42,19 @@ Exit criteria:
 
 ## 3. Now (Highest Priority)
 
-## R3. Safety Contract (v1)
+## R3. TUI View + Category Workflow Streamlining
+
+- Adopt the workflow spec in `spec/tui-view-category-workflow.md`.
+- Replace split-pane section navigation with section-first horizontal board layout.
+- Implement full in-TUI view criteria editing (multi include/exclude + virtual include/exclude).
+- Reduce shortcut friction with laptop-friendly bindings and retain F-key aliases.
+- Make unmatched section behavior configurable and less intrusive by default.
+
+Exit criteria:
+
+- View and category workflows in TUI match the formal interaction spec and no longer require CLI for basic view criteria shaping.
+
+## R4. Safety Contract (v1)
 
 - Chosen contract: ship **no-undo** for v1 with strong explicit recovery UX.
 - Prioritize:
@@ -56,20 +68,20 @@ Exit criteria:
 
 ## 4. Next (Hardening)
 
-## R4. Persistence/Data Integrity Hardening
+## R5. Persistence/Data Integrity Hardening
 
 - Replace silent decode fallbacks with explicit typed errors where feasible.
 - Define and implement restore fidelity policy (timestamp provenance + missing-category behavior).
 - Add targeted corruption/restore regression tests.
 
-## R5. Domain API Maturity
+## R6. Domain API Maturity
 
 - Add first-class domain operations for category/view evolution (rename/reparent/reorder/update semantics with strong invariants).
 - Keep frontends consuming domain APIs rather than embedding mutation logic.
 
 ## 5. Later (Deferred v0.6 Features)
 
-## R6. Advanced Intelligence + Model Expansion
+## R7. Advanced Intelligence + Model Expansion
 
 - Recurrence model and next-instance generation.
 - Suggestion queue/review workflow and rejection memory.
@@ -89,7 +101,8 @@ Roadmap priorities were set using current implementation and executed demos, inc
 
 ## 7. Recommended Sequencing
 
-1. Lock and implement safety contract.
-2. Harden persistence and restore integrity.
-3. Grow domain API maturity for robust frontend evolution.
-4. Resume deferred advanced feature track.
+1. Implement TUI view/category workflow streamlining.
+2. Lock and implement safety contract.
+3. Harden persistence and restore integrity.
+4. Grow domain API maturity for robust frontend evolution.
+5. Resume deferred advanced feature track.
