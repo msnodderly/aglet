@@ -1,6 +1,6 @@
 # Tasks: Agenda Reborn (Current Roadmap)
 
-Date: 2026-02-16
+Date: 2026-02-17
 Input: `spec/roadmap-current.md`
 
 ## Status Legend
@@ -38,7 +38,23 @@ Checkpoint:
 
 - Daily triage + basic taxonomy management is possible without dropping to CLI.
 
-## Phase 2 - Safety Contract (R3)
+## Phase 2 - TUI View + Category Workflow Streamlining (R3)
+
+Goal: ship a low-friction TUI workflow for board layout, view criteria editing, and category interactions.
+
+- [ ] T070 Adopt and maintain `spec/tui-view-category-workflow.md` as the implementation contract.
+- [ ] T071 Redesign TUI board rendering to section-first horizontal layout (remove dedicated section selector pane).
+- [ ] T072 Add full TUI view editor for multi include/exclude and virtual include/exclude criteria.
+- [ ] T073 Add section/unmatched configuration in TUI view editor (hide-empty default, label/pin settings).
+- [ ] T074 Replace function-key dependence with laptop-friendly shortcuts (`v`/`c`/`,`/`.`) and retain F-key aliases.
+- [ ] T075 Update TUI help/footer/status text to match new workflows and shortcut model.
+- [ ] T076 Add regression/smoke coverage for streamlined view/category workflows.
+
+Checkpoint:
+
+- View/category management workflows are fast, in-app, and aligned with `spec/tui-view-category-workflow.md`.
+
+## Phase 3 - Safety Contract (R4)
 
 Goal: define and implement v1 mistake-recovery model.
 
@@ -53,7 +69,7 @@ Checkpoint:
 
 - Recovery behavior is explicit, test-backed, and discoverable.
 
-## Phase 3 - Persistence/Data Integrity Hardening (R4)
+## Phase 4 - Persistence/Data Integrity Hardening (R5)
 
 Goal: eliminate silent corruption handling and lock restore semantics.
 
@@ -66,7 +82,7 @@ Checkpoint:
 
 - Decode and restore paths are explicit and fail predictably.
 
-## Phase 4 - Domain API Maturity (R5)
+## Phase 5 - Domain API Maturity (R6)
 
 Goal: provide robust, frontend-agnostic evolution APIs for categories and views.
 
@@ -80,7 +96,7 @@ Checkpoint:
 
 - Frontends share one canonical mutation behavior surface.
 
-## Phase 5 - Deferred Advanced Features (R6)
+## Phase 6 - Deferred Advanced Features (R7)
 
 Goal: close major v0.6 deferred capability gaps.
 
@@ -96,7 +112,7 @@ Checkpoint:
 
 ## Dependency Order
 
-1. Phase 0 -> Phase 1 -> Phase 2 -> Phase 3 -> Phase 4 -> Phase 5
+1. Phase 0 -> Phase 1 -> Phase 2 -> Phase 3 -> Phase 4 -> Phase 5 -> Phase 6
 2. `T020` gates the branch between `T021-023` and `T024`.
 3. `T030-033` should complete before major persistence-affecting advanced features (`T050-053`).
 4. `T040-044` should precede broad TUI feature expansion to avoid frontend logic drift.
@@ -104,5 +120,6 @@ Checkpoint:
 ## Parallel Work Opportunities
 
 - `T012`, `T013`, and `T015` can run in parallel after TUI category manager baseline (`T010`).
+- `T071`, `T072`, and `T074` can run in parallel once `T070` is approved.
 - `T031` (policy) can run in parallel with `T030` (technical strictness), then converge at `T032`.
 - `T044` test authoring can begin as soon as API contracts for `T040-042` are drafted.
