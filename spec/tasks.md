@@ -42,13 +42,13 @@ Checkpoint:
 
 Goal: ship a low-friction TUI workflow for board layout, view criteria editing, and category interactions.
 
-- [ ] T070 Adopt and maintain `spec/tui-view-category-workflow.md` as the implementation contract.
-- [ ] T071 Redesign TUI board rendering to section-first horizontal layout (remove dedicated section selector pane).
-- [ ] T072 Add full TUI view editor for multi include/exclude and virtual include/exclude criteria.
-- [ ] T073 Add section/unmatched configuration in TUI view editor (hide-empty default, label/pin settings).
-- [ ] T074 Replace function-key dependence with laptop-friendly shortcuts (`v`/`c`/`,`/`.`) and retain F-key aliases.
-- [ ] T075 Update TUI help/footer/status text to match new workflows and shortcut model.
-- [ ] T076 Add regression/smoke coverage for streamlined view/category workflows.
+- [x] T070 Adopt and maintain `spec/tui-view-category-workflow.md` as the implementation contract.
+- [x] T071 Redesign TUI board rendering to section-first horizontal layout (remove dedicated section selector pane).
+- [x] T072 Add full TUI view editor for multi include/exclude and virtual include/exclude criteria.
+- [x] T073 Add section/unmatched configuration in TUI view editor (hide-empty default, label/pin settings).
+- [x] T074 Replace function-key dependence with laptop-friendly shortcuts (`v`/`c`/`,`/`.`) and retain F-key aliases.
+- [x] T075 Update TUI help/footer/status text to match new workflows and shortcut model.
+- [x] T076 Add regression/smoke coverage for streamlined view/category workflows.
 
 Checkpoint:
 
