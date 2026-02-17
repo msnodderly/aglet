@@ -194,12 +194,8 @@ fn parse_relative_weekday(
             continue;
         }
 
-        let day_delta = days_until_relative_weekday(
-            reference_date.weekday(),
-            weekday,
-            prefix,
-            policy,
-        );
+        let day_delta =
+            days_until_relative_weekday(reference_date.weekday(), weekday, prefix, policy);
         let date = reference_date.checked_add_signed(Duration::days(day_delta))?;
 
         return Some(ParsedDate {
@@ -909,7 +905,10 @@ mod tests {
                 .parse(&next_phrase, reference)
                 .expect("expected inclusive next parse");
 
-            assert_eq!(strict_this.datetime, case.this_expected, "strict this failed");
+            assert_eq!(
+                strict_this.datetime, case.this_expected,
+                "strict this failed"
+            );
             assert_eq!(
                 strict_next.datetime, case.strict_next_expected,
                 "strict next failed"

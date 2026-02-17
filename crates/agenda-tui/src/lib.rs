@@ -66,6 +66,7 @@ struct CategoryListRow {
     depth: usize,
     is_reserved: bool,
     is_exclusive: bool,
+    is_actionable: bool,
     enable_implicit_string: bool,
 }
 
@@ -148,6 +149,16 @@ enum CategoryGridColumn {
     Name,
     Exclusive,
     NoImplicit,
+    Actionable,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ItemEditFocus {
+    Text,
+    Note,
+    CategoriesButton,
+    SaveButton,
+    CancelButton,
 }
 
 struct App {
@@ -179,6 +190,10 @@ struct App {
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
     item_assign_category_index: usize,
+    item_assign_return_to_item_edit: bool,
+    item_edit_focus: ItemEditFocus,
+    item_edit_note: String,
+    item_edit_note_cursor: usize,
     inspect_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
@@ -216,6 +231,10 @@ impl Default for App {
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
             item_assign_category_index: 0,
+            item_assign_return_to_item_edit: false,
+            item_edit_focus: ItemEditFocus::Text,
+            item_edit_note: String::new(),
+            item_edit_note_cursor: 0,
             inspect_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
@@ -393,6 +412,122 @@ impl App {
         true
     }
 
+    fn item_edit_note_len_chars(&self) -> usize {
+        self.item_edit_note.chars().count()
+    }
+
+    fn item_edit_note_byte_index(&self, char_index: usize) -> usize {
+        if char_index == 0 {
+            return 0;
+        }
+        self.item_edit_note
+            .char_indices()
+            .nth(char_index)
+            .map(|(byte_index, _)| byte_index)
+            .unwrap_or(self.item_edit_note.len())
+    }
+
+    fn clamped_item_edit_note_cursor(&self) -> usize {
+        self.item_edit_note_cursor.min(self.item_edit_note_len_chars())
+    }
+
+    fn move_item_edit_note_cursor_left(&mut self) {
+        let cursor = self.clamped_item_edit_note_cursor();
+        self.item_edit_note_cursor = cursor.saturating_sub(1);
+    }
+
+    fn move_item_edit_note_cursor_right(&mut self) {
+        let cursor = self.clamped_item_edit_note_cursor();
+        self.item_edit_note_cursor = (cursor + 1).min(self.item_edit_note_len_chars());
+    }
+
+    fn move_item_edit_note_cursor_home(&mut self) {
+        self.item_edit_note_cursor = 0;
+    }
+
+    fn move_item_edit_note_cursor_end(&mut self) {
+        self.item_edit_note_cursor = self.item_edit_note_len_chars();
+    }
+
+    fn backspace_item_edit_note_char(&mut self) {
+        let cursor = self.clamped_item_edit_note_cursor();
+        if cursor == 0 {
+            return;
+        }
+        let start = self.item_edit_note_byte_index(cursor - 1);
+        let end = self.item_edit_note_byte_index(cursor);
+        self.item_edit_note.replace_range(start..end, "");
+        self.item_edit_note_cursor = cursor - 1;
+    }
+
+    fn delete_item_edit_note_char(&mut self) {
+        let cursor = self.clamped_item_edit_note_cursor();
+        if cursor >= self.item_edit_note_len_chars() {
+            return;
+        }
+        let start = self.item_edit_note_byte_index(cursor);
+        let end = self.item_edit_note_byte_index(cursor + 1);
+        self.item_edit_note.replace_range(start..end, "");
+        self.item_edit_note_cursor = cursor;
+    }
+
+    fn insert_item_edit_note_char(&mut self, c: char) {
+        if c.is_control() {
+            return;
+        }
+        let cursor = self.clamped_item_edit_note_cursor();
+        let byte_index = self.item_edit_note_byte_index(cursor);
+        self.item_edit_note.insert(byte_index, c);
+        self.item_edit_note_cursor = cursor + 1;
+    }
+
+    fn insert_item_edit_note_newline(&mut self) {
+        let cursor = self.clamped_item_edit_note_cursor();
+        let byte_index = self.item_edit_note_byte_index(cursor);
+        self.item_edit_note.insert(byte_index, '\n');
+        self.item_edit_note_cursor = cursor + 1;
+    }
+
+    fn handle_item_edit_note_input_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Left => self.move_item_edit_note_cursor_left(),
+            KeyCode::Right => self.move_item_edit_note_cursor_right(),
+            KeyCode::Home => self.move_item_edit_note_cursor_home(),
+            KeyCode::End => self.move_item_edit_note_cursor_end(),
+            KeyCode::Backspace => self.backspace_item_edit_note_char(),
+            KeyCode::Delete => self.delete_item_edit_note_char(),
+            KeyCode::Enter => self.insert_item_edit_note_newline(),
+            KeyCode::Char(c) => self.insert_item_edit_note_char(c),
+            _ => return false,
+        }
+        true
+    }
+
+    fn handle_item_edit_field_input_key(&mut self, code: KeyCode) -> bool {
+        match self.item_edit_focus {
+            ItemEditFocus::Text => self.handle_text_input_key(code),
+            ItemEditFocus::Note => self.handle_item_edit_note_input_key(code),
+            ItemEditFocus::CategoriesButton
+            | ItemEditFocus::SaveButton
+            | ItemEditFocus::CancelButton => false,
+        }
+    }
+
+    fn cycle_item_edit_focus(&mut self, delta: i32) {
+        self.item_edit_focus = match (self.item_edit_focus, delta.signum()) {
+            (ItemEditFocus::Text, d) if d >= 0 => ItemEditFocus::Note,
+            (ItemEditFocus::Note, d) if d >= 0 => ItemEditFocus::CategoriesButton,
+            (ItemEditFocus::CategoriesButton, d) if d >= 0 => ItemEditFocus::SaveButton,
+            (ItemEditFocus::SaveButton, d) if d >= 0 => ItemEditFocus::CancelButton,
+            (ItemEditFocus::CancelButton, d) if d >= 0 => ItemEditFocus::Text,
+            (ItemEditFocus::Text, _) => ItemEditFocus::CancelButton,
+            (ItemEditFocus::Note, _) => ItemEditFocus::Text,
+            (ItemEditFocus::CategoriesButton, _) => ItemEditFocus::Note,
+            (ItemEditFocus::SaveButton, _) => ItemEditFocus::CategoriesButton,
+            (ItemEditFocus::CancelButton, _) => ItemEditFocus::SaveButton,
+        };
+    }
+
     fn handle_normal_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
         match code {
             KeyCode::Char('q') => return Ok(true),
@@ -406,14 +541,10 @@ impl App {
                 self.status = "Add item: type text and press Enter".to_string();
             }
             KeyCode::Char('e') => {
-                if let Some(item) = self.selected_item() {
-                    let existing_text = item.text.clone();
-                    self.mode = Mode::ItemEditInput;
-                    self.set_input(existing_text);
-                    self.status = "Edit item text: Enter to save, Esc to cancel".to_string();
-                } else {
-                    self.status = "No selected item to edit".to_string();
-                }
+                self.open_item_edit_for_selected_item();
+            }
+            KeyCode::Enter => {
+                self.open_item_edit_for_selected_item();
             }
             KeyCode::Char('m') => {
                 if let Some(item) = self.selected_item() {
@@ -448,7 +579,7 @@ impl App {
                 self.mode = Mode::CategoryManager;
                 self.category_grid_column = CategoryGridColumn::Name;
                 self.status =
-                    "Category manager: Left/Right focus column, Space/Enter toggle checkbox, e=exclusive i=no-implicit".to_string();
+                    "Category manager: Left/Right focus column, Space/Enter toggle checkbox, e=exclusive i=no-implicit a=actionable".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, agenda)?;
@@ -472,6 +603,7 @@ impl App {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignCategoryPicker;
+                    self.item_assign_return_to_item_edit = false;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
@@ -505,11 +637,25 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('d') | KeyCode::Char('D') => {
                 if let Some(item_id) = self.selected_item_id() {
-                    agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                    let was_done = self
+                        .selected_item()
+                        .map(|item| item.is_done)
+                        .unwrap_or(false);
+                    if !was_done && !self.selected_item_has_actionable_assignment() {
+                        self.status =
+                            "Done unavailable: item has no actionable category assignments"
+                                .to_string();
+                        return Ok(false);
+                    }
+                    agenda.toggle_item_done(item_id).map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
-                    self.status = "Marked item done".to_string();
+                    self.status = if was_done {
+                        "Marked item not-done".to_string()
+                    } else {
+                        "Marked item done".to_string()
+                    };
                 }
             }
             KeyCode::Char('x') => {
@@ -528,6 +674,22 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    fn open_item_edit_for_selected_item(&mut self) {
+        if let Some(item) = self.selected_item() {
+            let existing_text = item.text.clone();
+            let existing_note = item.note.clone().unwrap_or_default();
+            self.mode = Mode::ItemEditInput;
+            self.set_input(existing_text);
+            self.item_edit_focus = ItemEditFocus::Text;
+            self.item_edit_note = existing_note;
+            self.item_edit_note_cursor = self.item_edit_note.chars().count();
+            self.status =
+                "Edit item: Tab cycles fields/buttons, Enter activates focused control".to_string();
+        } else {
+            self.status = "No selected item to edit".to_string();
+        }
     }
 
     fn handle_add_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
@@ -566,51 +728,118 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.clear_input();
+                self.item_edit_note.clear();
+                self.item_edit_note_cursor = 0;
+                self.item_edit_focus = ItemEditFocus::Text;
                 self.status = "Edit canceled".to_string();
             }
-            KeyCode::Enter => {
-                let Some(item_id) = self.selected_item_id() else {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = "Edit failed: no selected item".to_string();
-                    return Ok(false);
-                };
-
-                let updated_text = self.input.trim().to_string();
-                if updated_text.is_empty() {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = "Edit canceled: text cannot be empty".to_string();
-                    return Ok(false);
-                }
-
-                let mut item = agenda
-                    .store()
-                    .get_item(item_id)
-                    .map_err(|e| e.to_string())?;
-                if item.text == updated_text {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = "Edit canceled: no text change".to_string();
-                    return Ok(false);
-                }
-
-                item.text = updated_text;
-                item.modified_at = Utc::now();
-                let reference_date = Local::now().date_naive();
-                agenda
-                    .update_item_with_reference_date(&item, reference_date)
-                    .map_err(|e| e.to_string())?;
-                self.refresh(agenda.store())?;
-                self.set_item_selection_by_id(item_id);
-                self.mode = Mode::Normal;
-                self.clear_input();
-                self.status = "Item text updated".to_string();
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.cycle_item_edit_focus(if matches!(code, KeyCode::BackTab) {
+                    -1
+                } else {
+                    1
+                });
             }
-            _ if self.handle_text_input_key(code) => {}
+            KeyCode::F(3) => {
+                self.item_edit_focus = ItemEditFocus::CategoriesButton;
+                self.open_item_assign_picker_from_item_edit();
+            }
+            KeyCode::Enter => {
+                match self.item_edit_focus {
+                    ItemEditFocus::Text => {
+                        self.cycle_item_edit_focus(1);
+                    }
+                    ItemEditFocus::Note => {
+                        self.insert_item_edit_note_newline();
+                    }
+                    ItemEditFocus::CategoriesButton => {
+                        self.open_item_assign_picker_from_item_edit();
+                    }
+                    ItemEditFocus::SaveButton => {
+                        self.save_item_edit(agenda)?;
+                    }
+                    ItemEditFocus::CancelButton => {
+                        self.mode = Mode::Normal;
+                        self.clear_input();
+                        self.item_edit_note.clear();
+                        self.item_edit_note_cursor = 0;
+                        self.item_edit_focus = ItemEditFocus::Text;
+                        self.status = "Edit canceled".to_string();
+                    }
+                }
+            }
+            _ if self.handle_item_edit_field_input_key(code) => {}
             _ => {}
         }
         Ok(false)
+    }
+
+    fn open_item_assign_picker_from_item_edit(&mut self) {
+        if self.selected_item_id().is_none() {
+            self.status = "No selected item to edit categories".to_string();
+            return;
+        }
+        if self.category_rows.is_empty() {
+            self.status = "No categories available".to_string();
+            return;
+        }
+        self.mode = Mode::ItemAssignCategoryPicker;
+        self.item_assign_return_to_item_edit = true;
+        self.item_assign_category_index = first_non_reserved_category_index(&self.category_rows);
+        self.status =
+            "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                .to_string();
+    }
+
+    fn save_item_edit(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(item_id) = self.selected_item_id() else {
+            self.mode = Mode::Normal;
+            self.clear_input();
+            self.item_edit_note.clear();
+            self.item_edit_note_cursor = 0;
+            self.item_edit_focus = ItemEditFocus::Text;
+            self.status = "Edit failed: no selected item".to_string();
+            return Ok(());
+        };
+
+        let updated_text = self.input.trim().to_string();
+        if updated_text.is_empty() {
+            self.status = "Cannot save: text cannot be empty".to_string();
+            return Ok(());
+        }
+        let updated_note = if self.item_edit_note.trim().is_empty() {
+            None
+        } else {
+            Some(self.item_edit_note.clone())
+        };
+
+        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+        if item.text == updated_text && item.note == updated_note {
+            self.mode = Mode::Normal;
+            self.clear_input();
+            self.item_edit_note.clear();
+            self.item_edit_note_cursor = 0;
+            self.item_edit_focus = ItemEditFocus::Text;
+            self.status = "Edit canceled: no changes".to_string();
+            return Ok(());
+        }
+
+        item.text = updated_text;
+        item.note = updated_note;
+        item.modified_at = Utc::now();
+        let reference_date = Local::now().date_naive();
+        agenda
+            .update_item_with_reference_date(&item, reference_date)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(item_id);
+        self.mode = Mode::Normal;
+        self.clear_input();
+        self.item_edit_note.clear();
+        self.item_edit_note_cursor = 0;
+        self.item_edit_focus = ItemEditFocus::Text;
+        self.status = "Item updated".to_string();
+        Ok(())
     }
 
     fn handle_note_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
@@ -674,7 +903,12 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.mode = if self.item_assign_return_to_item_edit {
+                    Mode::ItemEditInput
+                } else {
+                    Mode::Normal
+                };
+                self.item_assign_return_to_item_edit = false;
                 self.clear_input();
                 self.status = "Assign canceled".to_string();
             }
@@ -700,7 +934,12 @@ impl App {
             }
             KeyCode::Char(' ') => {
                 let Some(item_id) = self.selected_item_id() else {
-                    self.mode = Mode::Normal;
+                    self.mode = if self.item_assign_return_to_item_edit {
+                        Mode::ItemEditInput
+                    } else {
+                        Mode::Normal
+                    };
+                    self.item_assign_return_to_item_edit = false;
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -714,10 +953,30 @@ impl App {
                 };
 
                 if row.name.eq_ignore_ascii_case("Done") {
-                    agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
-                    self.refresh(agenda.store())?;
-                    self.set_item_selection_by_id(item_id);
-                    self.status = "Assigned item to category Done (marked done)".to_string();
+                    let was_done = self
+                        .selected_item()
+                        .map(|item| item.is_done)
+                        .unwrap_or(false);
+                    if !was_done && !self.selected_item_has_actionable_assignment() {
+                        self.status =
+                            "Done unavailable: item has no actionable category assignments"
+                                .to_string();
+                        return Ok(false);
+                    }
+                    match agenda.toggle_item_done(item_id) {
+                        Ok(_) => {
+                            self.refresh(agenda.store())?;
+                            self.set_item_selection_by_id(item_id);
+                            self.status = if was_done {
+                                "Removed category Done (marked not-done)".to_string()
+                            } else {
+                                "Assigned item to category Done (marked done)".to_string()
+                            };
+                        }
+                        Err(err) => {
+                            self.status = format!("Done toggle failed: {}", err);
+                        }
+                    }
                     return Ok(false);
                 }
 
@@ -746,7 +1005,12 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.mode = Mode::Normal;
+                self.mode = if self.item_assign_return_to_item_edit {
+                    Mode::ItemEditInput
+                } else {
+                    Mode::Normal
+                };
+                self.item_assign_return_to_item_edit = false;
                 self.clear_input();
                 self.status = "Category edit saved".to_string();
             }
@@ -1716,13 +1980,15 @@ impl App {
                     CategoryGridColumn::Name => CategoryGridColumn::Name,
                     CategoryGridColumn::Exclusive => CategoryGridColumn::Name,
                     CategoryGridColumn::NoImplicit => CategoryGridColumn::Exclusive,
+                    CategoryGridColumn::Actionable => CategoryGridColumn::NoImplicit,
                 };
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 self.category_grid_column = match self.category_grid_column {
                     CategoryGridColumn::Name => CategoryGridColumn::Exclusive,
                     CategoryGridColumn::Exclusive => CategoryGridColumn::NoImplicit,
-                    CategoryGridColumn::NoImplicit => CategoryGridColumn::NoImplicit,
+                    CategoryGridColumn::NoImplicit => CategoryGridColumn::Actionable,
+                    CategoryGridColumn::Actionable => CategoryGridColumn::Actionable,
                 };
             }
             KeyCode::Char('n') => {
@@ -1767,10 +2033,16 @@ impl App {
             KeyCode::Char('i') => {
                 self.toggle_selected_category_implicit(agenda)?;
             }
+            KeyCode::Char('a') => {
+                self.toggle_selected_category_actionable(agenda)?;
+            }
             KeyCode::Char(' ') | KeyCode::Enter => match self.category_grid_column {
                 CategoryGridColumn::Name => {}
                 CategoryGridColumn::Exclusive => self.toggle_selected_category_exclusive(agenda)?,
                 CategoryGridColumn::NoImplicit => self.toggle_selected_category_implicit(agenda)?,
+                CategoryGridColumn::Actionable => {
+                    self.toggle_selected_category_actionable(agenda)?
+                }
             },
             KeyCode::Char('x') => {
                 if let Some(row) = self.selected_category_row() {
@@ -1829,6 +2101,29 @@ impl App {
             !updated.enable_implicit_string,
             result.processed_items,
             result.affected_items
+        );
+        Ok(())
+    }
+
+    fn toggle_selected_category_actionable(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        category.is_actionable = !category.is_actionable;
+        let updated = category.clone();
+        let result = agenda
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} actionable={} (processed_items={}, affected_items={})",
+            updated.name, updated.is_actionable, result.processed_items, result.affected_items
         );
         Ok(())
     }
@@ -2178,6 +2473,13 @@ impl App {
         if let Some((x, y)) = self.input_cursor_position(footer_area) {
             frame.set_cursor_position((x, y));
         }
+        if self.mode == Mode::ItemEditInput {
+            let popup_area = item_edit_popup_area(frame.area());
+            self.render_item_edit_popup(frame, popup_area);
+            if let Some((x, y)) = self.item_edit_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
 
         if matches!(
             self.mode,
@@ -2236,7 +2538,6 @@ impl App {
     fn input_prompt_prefix(&self) -> Option<&'static str> {
         match self.mode {
             Mode::AddInput => Some("Add> "),
-            Mode::ItemEditInput => Some("Edit> "),
             Mode::NoteEditInput => Some("Note> "),
             Mode::FilterInput => Some("Filter> "),
             Mode::ViewCreateNameInput => Some("View create> "),
@@ -2270,6 +2571,50 @@ impl App {
         let cursor_x = raw_x.min(max_inner_x);
 
         Some((cursor_x, inner_y))
+    }
+
+    fn item_edit_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::ItemEditInput {
+            return None;
+        }
+        if popup_area.width < 3 || popup_area.height < 3 {
+            return None;
+        }
+        let inner_x = popup_area.x.saturating_add(1);
+        let max_inner_x = popup_area
+            .x
+            .saturating_add(popup_area.width.saturating_sub(2));
+        let max_inner_y = popup_area
+            .y
+            .saturating_add(popup_area.height.saturating_sub(2));
+        let (prefix_len, input_chars, input_y) = match self.item_edit_focus {
+            ItemEditFocus::Text => (
+                "  Text> ".chars().count().min(u16::MAX as usize) as u16,
+                self.clamped_input_cursor().min(u16::MAX as usize) as u16,
+                popup_area.y.saturating_add(3),
+            ),
+            ItemEditFocus::Note => {
+                let (line, col) = note_cursor_line_col(
+                    &self.item_edit_note,
+                    self.clamped_item_edit_note_cursor(),
+                );
+                let indent = "  Note> ".chars().count();
+                let prefix_chars = if line == 0 { indent } else { indent };
+                (
+                    prefix_chars.min(u16::MAX as usize) as u16,
+                    col.min(u16::MAX as usize) as u16,
+                    popup_area.y.saturating_add(5 + line as u16),
+                )
+            }
+            ItemEditFocus::CategoriesButton
+            | ItemEditFocus::SaveButton
+            | ItemEditFocus::CancelButton => return None,
+        };
+        let raw_x = inner_x
+            .saturating_add(prefix_len)
+            .saturating_add(input_chars);
+        let cursor_x = raw_x.min(max_inner_x);
+        Some((cursor_x, input_y.min(max_inner_y)))
     }
 
     fn render_header(&self) -> Paragraph<'_> {
@@ -2424,7 +2769,6 @@ impl App {
     fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input),
-            Mode::ItemEditInput => format!("Edit> {}", self.input),
             Mode::NoteEditInput => format!("Note> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
@@ -2443,11 +2787,21 @@ impl App {
             Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignCategoryInput => format!("Category> {}", self.input),
             Mode::InspectUnassignPicker => "Select assignment".to_string(),
+            Mode::ItemEditInput => format!(
+                "Edit item fields in popup (focus: {})",
+                match self.item_edit_focus {
+                    ItemEditFocus::Text => "Text",
+                    ItemEditFocus::Note => "Note",
+                    ItemEditFocus::CategoriesButton => "Categories",
+                    ItemEditFocus::SaveButton => "Save",
+                    ItemEditFocus::CancelButton => "Cancel",
+                }
+            ),
             _ => self.status.clone(),
         };
         let footer_title = match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  h/l:left/right column  Space/Enter:toggle focused checkbox  e:exclusive  i:no-implicit  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
+                "j/k:row  h/l:left/right column  Space/Enter:toggle focused checkbox  e:exclusive  i:no-implicit  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
             }
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
@@ -2472,15 +2826,77 @@ impl App {
             Mode::ViewUnmatchedLabelInput => "Type unmatched label, Enter:save, Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
-            Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
+            Mode::ItemEditInput => "Edit popup: Tab/Shift+Tab navigate  Enter activate  Esc cancel  F3 categories",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
-                "n:add  a/u:item-categories  e:edit-item  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  J/K:inspect-scroll  q:quit"
+                "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d/D:done-toggle  x:delete  i:inspect  J/K:inspect-scroll  q:quit"
             }
         };
 
         Paragraph::new(prompt).block(Block::default().title(footer_title).borders(Borders::ALL))
+    }
+
+    fn render_item_edit_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let text_marker = if self.item_edit_focus == ItemEditFocus::Text {
+            ">"
+        } else {
+            " "
+        };
+        let note_marker = if self.item_edit_focus == ItemEditFocus::Note {
+            ">"
+        } else {
+            " "
+        };
+        let categories_button = if self.item_edit_focus == ItemEditFocus::CategoriesButton {
+            "[> Categories <]"
+        } else {
+            "[Categories]"
+        };
+        let save_button = if self.item_edit_focus == ItemEditFocus::SaveButton {
+            "[> Save <]"
+        } else {
+            "[Save]"
+        };
+        let cancel_button = if self.item_edit_focus == ItemEditFocus::CancelButton {
+            "[> Cancel <]"
+        } else {
+            "[Cancel]"
+        };
+
+        let mut lines = vec![
+            Line::from("Edit selected item"),
+            Line::from(""),
+            Line::from(format!("{text_marker} Text> {}", self.input)),
+            Line::from(""),
+        ];
+
+        let note_lines: Vec<&str> = self.item_edit_note.split('\n').collect();
+        for (index, line) in note_lines.iter().enumerate() {
+            if index == 0 {
+                lines.push(Line::from(format!("{note_marker} Note> {}", line)));
+            } else {
+                lines.push(Line::from(format!("  Note> {}", line)));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            "  {}  {}  {}",
+            categories_button, save_button, cancel_button
+        )));
+        lines.push(Line::from("Tab navigate  Enter activate  Esc cancel  F3 categories"));
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Edit Item")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2955,6 +3371,7 @@ impl App {
             CategoryGridColumn::Name => "Category",
             CategoryGridColumn::Exclusive => "Excl",
             CategoryGridColumn::NoImplicit => "NoImp",
+            CategoryGridColumn::Actionable => "Todo",
         };
         let mut lines = vec![Line::from(
             format!(
@@ -2965,9 +3382,11 @@ impl App {
         let marker_width = 2usize;
         let excl_width = 4usize;
         let noimpl_width = 7usize;
-        let separator_width = BOARD_COLUMN_SEPARATOR.len() * 2;
-        let name_width =
-            inner_width.saturating_sub(marker_width + excl_width + noimpl_width + separator_width);
+        let todo_width = 6usize;
+        let separator_width = BOARD_COLUMN_SEPARATOR.len() * 3;
+        let name_width = inner_width.saturating_sub(
+            marker_width + excl_width + noimpl_width + todo_width + separator_width,
+        );
         let category_header = if self.category_grid_column == CategoryGridColumn::Name {
             "Category*"
         } else {
@@ -2983,14 +3402,21 @@ impl App {
         } else {
             "NoImp"
         };
+        let todo_header = if self.category_grid_column == CategoryGridColumn::Actionable {
+            "Todo*"
+        } else {
+            "Todo"
+        };
         lines.push(Line::from(format!(
-            "{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}",
             " ".repeat(marker_width),
             fit_board_cell(category_header, name_width),
             BOARD_COLUMN_SEPARATOR,
             fit_board_cell(excl_header, excl_width),
             BOARD_COLUMN_SEPARATOR,
             fit_board_cell(noimp_header, noimpl_width),
+            BOARD_COLUMN_SEPARATOR,
+            fit_board_cell(todo_header, todo_width),
         )));
 
         let mut selected_line = None;
@@ -3014,6 +3440,7 @@ impl App {
                 } else {
                     "[ ]"
                 };
+                let todo = if row.is_actionable { "[x]" } else { "[ ]" };
                 if is_selected {
                     let row_style = selected_row_style();
                     let name_style = if self.category_grid_column == CategoryGridColumn::Name {
@@ -3032,6 +3459,12 @@ impl App {
                     } else {
                         row_style
                     };
+                    let todo_style = if self.category_grid_column == CategoryGridColumn::Actionable
+                    {
+                        focused_cell_style()
+                    } else {
+                        row_style
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(marker.to_string(), row_style),
                         Span::styled(fit_board_cell(&label, name_width), name_style),
@@ -3039,15 +3472,19 @@ impl App {
                         Span::styled(fit_board_cell(excl, excl_width), excl_style),
                         Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
                         Span::styled(fit_board_cell(noimp, noimpl_width), noimp_style),
+                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
+                        Span::styled(fit_board_cell(todo, todo_width), todo_style),
                     ]));
                 } else {
                     lines.push(Line::from(format!(
-                        "{marker}{}{}{}{}{}",
+                        "{marker}{}{}{}{}{}{}{}",
                         fit_board_cell(&label, name_width),
                         BOARD_COLUMN_SEPARATOR,
                         fit_board_cell(excl, excl_width),
                         BOARD_COLUMN_SEPARATOR,
                         fit_board_cell(noimp, noimpl_width),
+                        BOARD_COLUMN_SEPARATOR,
+                        fit_board_cell(todo, todo_width),
                     )));
                 }
             }
@@ -3283,6 +3720,19 @@ impl App {
         self.selected_item()
             .map(|item| item.assignments.contains_key(&category_id))
             .unwrap_or(false)
+    }
+
+    fn selected_item_has_actionable_assignment(&self) -> bool {
+        let Some(item) = self.selected_item() else {
+            return false;
+        };
+        item.assignments.keys().any(|category_id| {
+            self.categories
+                .iter()
+                .find(|category| category.id == *category_id)
+                .map(|category| category.is_actionable)
+                .unwrap_or(false)
+        })
     }
 
     fn inspect_assignment_rows_for_item(&self, item: &Item) -> Vec<InspectAssignmentRow> {
@@ -3807,6 +4257,7 @@ fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
             depth: category_depth(category.id, &parent_by_id, categories.len()),
             is_reserved: is_reserved_category_name(&category.name),
             is_exclusive: category.is_exclusive,
+            is_actionable: category.is_actionable,
             enable_implicit_string: category.enable_implicit_string,
         })
         .collect()
@@ -3918,6 +4369,24 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
+fn item_edit_popup_area(area: Rect) -> Rect {
+    centered_rect(84, 70, area)
+}
+
+fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
+    let mut line = 0usize;
+    let mut col = 0usize;
+    for c in note.chars().take(cursor_chars) {
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
 fn add_capture_status_message(
     parsed_when: Option<NaiveDateTime>,
     unknown_hashtags: &[String],
@@ -3942,8 +4411,9 @@ mod tests {
         add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
         bucket_target_set_mut, build_category_rows, build_reparent_options,
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
-        list_scroll_for_selected_line, next_index, should_render_unmatched_lane,
-        when_bucket_options, App, BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
+        item_edit_popup_area, list_scroll_for_selected_line, next_index,
+        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4066,6 +4536,7 @@ mod tests {
             depth: 0,
             is_reserved: true,
             is_exclusive: false,
+            is_actionable: false,
             enable_implicit_string: false,
         };
         let user = CategoryListRow {
@@ -4074,6 +4545,7 @@ mod tests {
             depth: 0,
             is_reserved: false,
             is_exclusive: false,
+            is_actionable: true,
             enable_implicit_string: true,
         };
 
@@ -4091,6 +4563,7 @@ mod tests {
             depth: 0,
             is_reserved: true,
             is_exclusive: false,
+            is_actionable: false,
             enable_implicit_string: false,
         };
         let when = CategoryListRow {
@@ -4099,6 +4572,7 @@ mod tests {
             depth: 0,
             is_reserved: true,
             is_exclusive: false,
+            is_actionable: false,
             enable_implicit_string: false,
         };
 
@@ -4111,7 +4585,6 @@ mod tests {
         let input = "abc";
         let cases = [
             (Mode::AddInput, "Add> "),
-            (Mode::ItemEditInput, "Edit> "),
             (Mode::NoteEditInput, "Note> "),
             (Mode::FilterInput, "Filter> "),
             (Mode::ViewCreateNameInput, "View create> "),
@@ -4181,6 +4654,111 @@ mod tests {
         };
 
         assert_eq!(app.input_cursor_position(footer), Some((8, 1)));
+    }
+
+    #[test]
+    fn item_edit_cursor_position_uses_popup_area() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let popup = item_edit_popup_area(screen);
+        let app = App {
+            mode: Mode::ItemEditInput,
+            input: "abcd".to_string(),
+            input_cursor: 2,
+            ..App::default()
+        };
+        assert_eq!(
+            app.item_edit_cursor_position(popup),
+            Some((popup.x + 1 + "  Text> ".len() as u16 + 2, popup.y + 3))
+        );
+    }
+
+    #[test]
+    fn item_edit_tab_switches_to_note_and_saves_note_inline() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-item-edit-note-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("demo item".to_string());
+        item.note = Some("old".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('e'), &agenda)
+            .expect("open item edit");
+        assert_eq!(app.mode, Mode::ItemEditInput);
+
+        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+            .expect("switch to note");
+        assert_eq!(app.item_edit_focus, super::ItemEditFocus::Note);
+
+        for c in " updated".chars() {
+            app.handle_item_edit_key(KeyCode::Char(c), &agenda)
+                .expect("type note");
+        }
+        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+            .expect("focus categories button");
+        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+            .expect("focus save button");
+        app.handle_item_edit_key(KeyCode::Enter, &agenda)
+            .expect("save item edit");
+
+        let saved = store.get_item(item.id).expect("load item");
+        assert_eq!(saved.note.as_deref(), Some("old updated"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_edit_enter_in_note_inserts_newline_until_save_button() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-item-edit-multiline-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("demo item".to_string());
+        item.note = Some("line1".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+        app.handle_normal_key(KeyCode::Enter, &agenda)
+            .expect("enter opens edit");
+        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+            .expect("focus note");
+        app.handle_item_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter adds newline");
+        for c in "line2".chars() {
+            app.handle_item_edit_key(KeyCode::Char(c), &agenda)
+                .expect("type note line2");
+        }
+        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+            .expect("focus categories");
+        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+            .expect("focus save");
+        app.handle_item_edit_key(KeyCode::Enter, &agenda)
+            .expect("save");
+
+        let saved = store.get_item(item.id).expect("load item");
+        assert_eq!(saved.note.as_deref(), Some("line1\nline2"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
@@ -4361,6 +4939,81 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_d_toggles_done_state() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-d-toggle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .expect("assign actionable category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("d should mark done");
+        assert!(store.get_item(item.id).expect("load item").is_done);
+
+        app.handle_normal_key(KeyCode::Char('D'), &agenda)
+            .expect("D should clear done");
+        assert!(!store.get_item(item.id).expect("load item").is_done);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_d_refuses_done_for_non_actionable_item() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-d-non-actionable-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut reference = Category::new("Reference".to_string());
+        reference.is_actionable = false;
+        store
+            .create_category(&reference)
+            .expect("create non-actionable category");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, reference.id, Some("manual:test".to_string()))
+            .expect("assign non-actionable category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("d should be handled");
+        assert!(!store.get_item(item.id).expect("load item").is_done);
+        assert_eq!(
+            app.status,
+            "Done unavailable: item has no actionable category assignments"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_create_category_picker_supports_include_and_exclude() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4425,6 +5078,7 @@ mod tests {
             depth: 0,
             is_reserved: false,
             is_exclusive: false,
+            is_actionable: true,
             enable_implicit_string: true,
         }];
         app.open_view_editor(View::new("Board".to_string()));

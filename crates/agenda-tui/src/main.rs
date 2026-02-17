@@ -23,9 +23,7 @@ fn resolve_db_path() -> Result<PathBuf, String> {
 
     while let Some(arg) = args.next() {
         if arg == "--db" {
-            let value = args
-                .next()
-                .ok_or("--db requires a value".to_string())?;
+            let value = args.next().ok_or("--db requires a value".to_string())?;
             explicit = Some(PathBuf::from(value));
             continue;
         }

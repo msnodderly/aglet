@@ -614,8 +614,7 @@ mod tests {
 
     #[test]
     fn unknown_hashtag_feedback_line_includes_unknown_tokens() {
-        let line =
-            unknown_hashtag_feedback_line(&["office".to_string(), "someday".to_string()]);
+        let line = unknown_hashtag_feedback_line(&["office".to_string(), "someday".to_string()]);
         assert_eq!(
             line.as_deref(),
             Some("warning: unknown_hashtags=office,someday")
