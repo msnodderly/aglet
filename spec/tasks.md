@@ -60,7 +60,7 @@ Goal: lock and validate a Lotus-style annotation-column workflow before committi
 
 - [x] T077 Publish detailed view/column workflow design spec: `spec/tui-view-column-workflow-design.md`.
 - [x] T078 Add explicit in-lane column headers in TUI for `When | Item | All Categories`.
-- [ ] T079 Add rendering policy + tests for `All Categories` cell formatting (sorted, comma-separated, truncated safely).
+- [x] T079 Add rendering policy + tests for `All Categories` cell formatting (sorted, comma-separated, truncated safely).
 - [ ] T080 Add view-editor "column setup" experimental UX entry point (no persistence changes).
 - [ ] T081 Prototype category-family column rendering (for examples like `Priority`, `People`, `Department`) with non-persistent config.
 - [ ] T082 Record model/persistence decision using the gate in `spec/tui-view-column-workflow-design.md`.

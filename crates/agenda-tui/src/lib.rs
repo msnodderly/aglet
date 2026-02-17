@@ -2122,30 +2122,33 @@ impl App {
         let category_names = category_name_map(&self.categories);
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
-            let mut lines: Vec<Line<'_>> = vec![Line::from(board_annotation_header())];
+            let widths = board_column_widths(columns[slot_index].width);
+            let mut lines: Vec<Line<'_>> = vec![Line::from(board_annotation_header(widths))];
             if slot.items.is_empty() {
                 lines.push(Line::from("(no items)"));
             } else {
                 lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
-                    let marker = if is_selected_slot && item_index == self.item_index {
-                        "> "
-                    } else {
-                        "  "
-                    };
                     let when = item
                         .when_date
                         .map(|dt| dt.to_string())
                         .unwrap_or_else(|| "-".to_string());
-                    let done = if item.is_done { "[done] " } else { "" };
+                    let item_text = if item.is_done {
+                        format!("[done] {}", item.text)
+                    } else {
+                        item.text.clone()
+                    };
                     let categories = item_assignment_labels(item, &category_names);
                     let categories_text = if categories.is_empty() {
                         "-".to_string()
                     } else {
                         categories.join(", ")
                     };
-                    Line::from(format!(
-                        "{marker}{done}{} | {} | {}",
-                        when, item.text, categories_text
+                    Line::from(board_item_row(
+                        is_selected_slot && item_index == self.item_index,
+                        &when,
+                        &item_text,
+                        &categories_text,
+                        widths,
                     ))
                 }));
             }
@@ -3222,8 +3225,137 @@ fn item_assignment_labels(
     labels
 }
 
-fn board_annotation_header() -> &'static str {
-    "  When | Item | All Categories"
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoardColumnWidths {
+    marker: usize,
+    when: usize,
+    item: usize,
+    categories: usize,
+}
+
+const BOARD_ROW_MARKER_WIDTH: usize = 2;
+const BOARD_COLUMN_SEPARATOR: &str = " | ";
+const BOARD_WHEN_TARGET_WIDTH: usize = 10;
+const BOARD_WHEN_MIN_WIDTH: usize = 6;
+const BOARD_ITEM_MIN_WIDTH: usize = 12;
+const BOARD_CATEGORY_TARGET_WIDTH: usize = 24;
+const BOARD_CATEGORY_MIN_WIDTH: usize = 10;
+const BOARD_TRUNCATION_SUFFIX: &str = "...";
+
+fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
+    let total = slot_width as usize;
+    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
+    let separator_total = BOARD_COLUMN_SEPARATOR.len() * 2;
+    let available = total.saturating_sub(marker + separator_total);
+
+    if available == 0 {
+        return BoardColumnWidths {
+            marker,
+            when: 0,
+            item: 0,
+            categories: 0,
+        };
+    }
+
+    let mut when = BOARD_WHEN_TARGET_WIDTH.min(available);
+    let mut categories = BOARD_CATEGORY_TARGET_WIDTH.min(available.saturating_sub(when));
+    let mut item = available.saturating_sub(when + categories);
+
+    let min_item = BOARD_ITEM_MIN_WIDTH.min(available);
+    if item < min_item {
+        let needed = min_item - item;
+        let min_categories = BOARD_CATEGORY_MIN_WIDTH.min(categories);
+        let category_shift = needed.min(categories.saturating_sub(min_categories));
+        categories -= category_shift;
+        item += category_shift;
+
+        let needed = min_item.saturating_sub(item);
+        let min_when = BOARD_WHEN_MIN_WIDTH.min(when);
+        let when_shift = needed.min(when.saturating_sub(min_when));
+        when -= when_shift;
+        item += when_shift;
+    }
+
+    if item == 0 && available > 0 {
+        if categories > 0 {
+            categories -= 1;
+            item += 1;
+        } else if when > 0 {
+            when -= 1;
+            item += 1;
+        }
+    }
+
+    let used = when + item + categories;
+    if used < available {
+        item += available - used;
+    }
+
+    BoardColumnWidths {
+        marker,
+        when,
+        item,
+        categories,
+    }
+}
+
+fn fit_board_cell(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let count = text.chars().count();
+    if count <= width {
+        return format!("{text:<width$}");
+    }
+    if width <= BOARD_TRUNCATION_SUFFIX.len() {
+        return ".".repeat(width);
+    }
+    let keep = width - BOARD_TRUNCATION_SUFFIX.len();
+    let prefix: String = text.chars().take(keep).collect();
+    format!("{prefix}{BOARD_TRUNCATION_SUFFIX}")
+}
+
+fn board_row_marker(is_selected: bool, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if is_selected {
+        let mut marker = ">".to_string();
+        marker.push_str(&" ".repeat(width.saturating_sub(1)));
+        marker
+    } else {
+        " ".repeat(width)
+    }
+}
+
+fn board_annotation_header(widths: BoardColumnWidths) -> String {
+    format!(
+        "{}{}{}{}{}{}",
+        " ".repeat(widths.marker),
+        fit_board_cell("When", widths.when),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell("Item", widths.item),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell("All Categories", widths.categories),
+    )
+}
+
+fn board_item_row(
+    is_selected: bool,
+    when: &str,
+    item: &str,
+    categories: &str,
+    widths: BoardColumnWidths,
+) -> String {
+    format!(
+        "{}{}{}{}{}{}",
+        board_row_marker(is_selected, widths.marker),
+        fit_board_cell(when, widths.when),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell(item, widths.item),
+        BOARD_COLUMN_SEPARATOR,
+        fit_board_cell(categories, widths.categories),
+    )
 }
 
 fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
@@ -3372,10 +3504,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, board_annotation_header, bucket_target_set_mut, build_category_rows,
-        build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
-        item_assignment_labels, should_render_unmatched_lane, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
+        add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
+        bucket_target_set_mut, build_category_rows, build_reparent_options,
+        category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
+        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3795,7 +3928,34 @@ mod tests {
     }
 
     #[test]
-    fn board_annotation_header_matches_v1_contract() {
-        assert_eq!(board_annotation_header(), "  When | Item | All Categories");
+    fn board_annotation_header_and_rows_share_grid_boundaries() {
+        let widths = board_column_widths(72);
+        let header = board_annotation_header(widths);
+        let row = board_item_row(
+            true,
+            "2026-02-17",
+            "alignment check",
+            "Home, SlotA, SlotB",
+            widths,
+        );
+
+        let header_pipes: Vec<usize> = header.match_indices('|').map(|(idx, _)| idx).collect();
+        let row_pipes: Vec<usize> = row.match_indices('|').map(|(idx, _)| idx).collect();
+        assert_eq!(header_pipes, row_pipes);
+    }
+
+    #[test]
+    fn board_item_row_truncates_to_slot_width() {
+        let widths = board_column_widths(44);
+        let row = board_item_row(
+            false,
+            "2026-02-17 14:00:00",
+            "very long item text that should truncate cleanly",
+            "one, two, three, four, five, six",
+            widths,
+        );
+
+        assert!(row.len() <= 44);
+        assert!(row.contains("..."));
     }
 }

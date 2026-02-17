@@ -110,11 +110,14 @@ Each section lane should include a visible header row for column labels.
 
 ## 6.2 Width Policy
 
-Initial policy:
+Initial policy (implemented in T079):
 
-- `When`: fixed width
-- `Item`: flexible dominant width
-- other columns: bounded width with truncation
+- Use a shared formatter for header and row cells so separators line up.
+- `When`: fixed target width (narrow, date-oriented).
+- `Item`: flexible dominant width.
+- `All Categories`: bounded width with truncation.
+- Selection marker (`>`) is a dedicated fixed-width prefix and does not shift
+  column boundaries.
 
 Fallback for narrow terminals:
 
