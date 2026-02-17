@@ -155,6 +155,7 @@ struct App {
     view_pending_name: Option<String>,
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
+    view_create_include_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
     view_editor_category_target: Option<CategoryEditTarget>,
     view_editor_bucket_target: Option<BucketEditTarget>,
@@ -189,6 +190,7 @@ impl Default for App {
             view_pending_name: None,
             view_pending_edit_name: None,
             view_category_index: 0,
+            view_create_include_selection: HashSet::new(),
             view_editor: None,
             view_editor_category_target: None,
             view_editor_bucket_target: None,
@@ -879,10 +881,12 @@ impl App {
                     self.view_pending_name = Some(name.clone());
                     self.view_category_index =
                         first_non_reserved_category_index(&self.category_rows);
+                    self.view_create_include_selection.clear();
                     self.mode = Mode::ViewCreateCategoryPicker;
                     self.clear_input();
-                    self.status =
-                        format!("Create view {name}: select include category and press Enter");
+                    self.status = format!(
+                        "Create view {name}: Space toggles include categories, Enter creates"
+                    );
                 }
             }
             _ if self.handle_text_input_key(code) => {}
@@ -900,6 +904,7 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
                 self.view_pending_name = None;
+                self.view_create_include_selection.clear();
                 self.status = "View create canceled".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -914,6 +919,13 @@ impl App {
                         next_index(self.view_category_index, self.category_rows.len(), -1);
                 }
             }
+            KeyCode::Char(' ') => {
+                if let Some(row) = self.category_rows.get(self.view_category_index) {
+                    if !self.view_create_include_selection.insert(row.id) {
+                        self.view_create_include_selection.remove(&row.id);
+                    }
+                }
+            }
             KeyCode::Enter => {
                 let Some(name) = self.view_pending_name.clone() else {
                     self.mode = Mode::ViewPicker;
@@ -922,8 +934,14 @@ impl App {
                 };
 
                 let mut view = View::new(name.clone());
-                if let Some(row) = self.category_rows.get(self.view_category_index) {
-                    view.criteria.include.insert(row.id);
+                if self.view_create_include_selection.is_empty() {
+                    if let Some(row) = self.category_rows.get(self.view_category_index) {
+                        view.criteria.include.insert(row.id);
+                    }
+                } else {
+                    view.criteria
+                        .include
+                        .extend(self.view_create_include_selection.iter().copied());
                 }
 
                 match agenda.store().create_view(&view) {
@@ -932,10 +950,16 @@ impl App {
                         self.set_view_selection_by_name(&view.name);
                         self.mode = Mode::Normal;
                         self.view_pending_name = None;
-                        self.status = format!("Created view {}", view.name);
+                        self.view_create_include_selection.clear();
+                        self.status = format!(
+                            "Created view {} (include categories={})",
+                            view.name,
+                            view.criteria.include.len()
+                        );
                     }
                     Err(err) => {
                         self.mode = Mode::ViewPicker;
+                        self.view_create_include_selection.clear();
                         self.status = format!("View create failed: {err}");
                     }
                 }
@@ -1467,8 +1491,7 @@ impl App {
                 let parent = self
                     .create_parent_name()
                     .unwrap_or_else(|| "top level".to_string());
-                self.status =
-                    format!("Create subcategory under {parent}: type name and Enter");
+                self.status = format!("Create subcategory under {parent}: type name and Enter");
             }
             KeyCode::Char('N') => {
                 self.mode = Mode::CategoryCreateInput;
@@ -2042,6 +2065,7 @@ impl App {
             .constraints(constraints)
             .split(area);
 
+        let category_names = category_name_map(&self.categories);
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
             let lines: Vec<Line<'_>> = if slot.items.is_empty() {
@@ -2061,7 +2085,16 @@ impl App {
                             .map(|dt| dt.to_string())
                             .unwrap_or_else(|| "-".to_string());
                         let done = if item.is_done { "[done] " } else { "" };
-                        Line::from(format!("{marker}{done}{} | {}", when, item.text))
+                        let categories = item_assignment_labels(item, &category_names);
+                        let categories_text = if categories.is_empty() {
+                            "-".to_string()
+                        } else {
+                            categories.join(", ")
+                        };
+                        Line::from(format!(
+                            "{marker}{done}{} | {} | {}",
+                            when, item.text, categories_text
+                        ))
                     })
                     .collect()
             };
@@ -2150,7 +2183,9 @@ impl App {
             Mode::ViewPicker => "j/k:select  Enter:switch  N:create  r:rename  e:edit view  Esc:cancel",
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
-            Mode::ViewCreateCategoryPicker => "j/k:select category  Enter:create view  Esc:cancel",
+            Mode::ViewCreateCategoryPicker => {
+                "j/k:select category  Space:toggle include  Enter:create view  Esc:cancel"
+            }
             Mode::ViewEditor => "+:include  -:exclude  [/] virtual  s:sections  u:unmatched  Enter:save  Esc:cancel",
             Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
             Mode::ViewEditorBucketPicker => "j/k:select bucket  Space:toggle  Enter/Esc:back",
@@ -2205,7 +2240,9 @@ impl App {
     fn render_view_category_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let mut lines = vec![Line::from("Choose include category for view")];
+        let mut lines = vec![Line::from(
+            "Choose include categories for new view (Space toggle, Enter create)",
+        )];
         if self.category_rows.is_empty() {
             lines.push(Line::from("(no categories available)"));
         } else {
@@ -2227,8 +2264,10 @@ impl App {
                 } else {
                     format!(" [{}]", flags.join(","))
                 };
+                let selected = self.view_create_include_selection.contains(&row.id);
+                let check = if selected { "[x]" } else { "[ ]" };
                 lines.push(Line::from(format!(
-                    "{marker}{}{}{}",
+                    "{marker}{check} {}{}{}",
                     "  ".repeat(row.depth),
                     row.name,
                     suffix
@@ -3110,6 +3149,24 @@ fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
         .collect()
 }
 
+fn item_assignment_labels(
+    item: &Item,
+    category_names: &HashMap<CategoryId, String>,
+) -> Vec<String> {
+    let mut labels: Vec<String> = item
+        .assignments
+        .keys()
+        .map(|category_id| {
+            category_names
+                .get(category_id)
+                .cloned()
+                .unwrap_or_else(|| category_id.to_string())
+        })
+        .collect();
+    labels.sort_by_key(|name| name.to_ascii_lowercase());
+    labels
+}
+
 fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
     let parent_by_id: HashMap<CategoryId, Option<CategoryId>> = categories
         .iter()
@@ -3257,8 +3314,8 @@ mod tests {
     use super::{
         add_capture_status_message, bucket_target_set_mut, build_category_rows,
         build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
-        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
-        CategoryEditTarget, CategoryListRow, Mode,
+        item_assignment_labels, should_render_unmatched_lane, when_bucket_options, App,
+        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
     use chrono::NaiveDate;
@@ -3578,5 +3635,36 @@ mod tests {
         assert!(options.contains(&WhenBucket::Today));
         assert!(options.contains(&WhenBucket::NoDate));
         assert_eq!(options.len(), 8);
+    }
+
+    #[test]
+    fn item_assignment_labels_are_sorted_and_human_readable() {
+        let category_a = CategoryId::new_v4();
+        let category_b = CategoryId::new_v4();
+        let mut item = Item::new("demo".to_string());
+        item.assignments.insert(
+            category_a,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: chrono::Utc::now(),
+                sticky: true,
+                origin: None,
+            },
+        );
+        item.assignments.insert(
+            category_b,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: chrono::Utc::now(),
+                sticky: true,
+                origin: None,
+            },
+        );
+        let names = HashMap::from([
+            (category_a, "slotB".to_string()),
+            (category_b, "garage".to_string()),
+        ]);
+        let labels = item_assignment_labels(&item, &names);
+        assert_eq!(labels, vec!["garage".to_string(), "slotB".to_string()]);
     }
 }
