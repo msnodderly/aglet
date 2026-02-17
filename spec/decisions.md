@@ -874,3 +874,24 @@ Scope implications:
 - `T021`-`T023` (minimal undo path) are out of scope unless this decision is
   revisited.
 - `T024` and `T025` become the active safety-contract implementation path.
+
+---
+
+## 34. TUI uses item-first assignment language and in-app view management
+
+**Date**: 2026-02-16
+**Relevant tasks**: bd-1tl, bd-1ns
+
+TUI terminology and workflows should align with user mental model:
+
+- prefer "assign item to category" over "assign category to item"
+- provide direct in-app assignment for selected item (`a`)
+- provide in-app view management from view picker (`F8`) for basic create,
+  rename, and include-category edit workflows
+
+Rationale:
+
+- This removes unnecessary CLI dependency for common daily-loop workflows
+  shown in existing demos (capturing, organizing, and reshaping focus views).
+- Item-first phrasing is clearer and more natural in interaction text and
+  status feedback.

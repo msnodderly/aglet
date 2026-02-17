@@ -89,9 +89,14 @@ enum Mode {
     AddInput,
     ItemEditInput,
     NoteEditInput,
+    ItemAssignCategoryPicker,
     InspectUnassignPicker,
     FilterInput,
     ViewPicker,
+    ViewCreateNameInput,
+    ViewCreateCategoryPicker,
+    ViewRenameInput,
+    ViewEditCategoryPicker,
     ConfirmDelete,
     CategoryManager,
     CategoryCreateInput,
@@ -110,6 +115,9 @@ struct App {
     views: Vec<View>,
     view_index: usize,
     picker_index: usize,
+    view_pending_name: Option<String>,
+    view_pending_edit_name: Option<String>,
+    view_category_index: usize,
 
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
@@ -117,6 +125,7 @@ struct App {
     category_create_parent: Option<CategoryId>,
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
+    item_assign_category_index: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
@@ -127,19 +136,25 @@ impl Default for App {
     fn default() -> Self {
         Self {
             mode: Mode::Normal,
-            status: "Press n to add, F8 to switch views, F9 for categories, q to quit".to_string(),
+            status:
+                "Press n to add, a to assign item to category, F8 to switch views, F9 for categories, q to quit"
+                    .to_string(),
             input: String::new(),
             filter: None,
             show_inspect: false,
             views: Vec::new(),
             view_index: 0,
             picker_index: 0,
+            view_pending_name: None,
+            view_pending_edit_name: None,
+            view_category_index: 0,
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
             category_create_parent: None,
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
+            item_assign_category_index: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
@@ -195,9 +210,14 @@ impl App {
             Mode::AddInput => self.handle_add_key(code, agenda),
             Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
             Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
+            Mode::ItemAssignCategoryPicker => self.handle_item_assign_category_key(code, agenda),
             Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
+            Mode::ViewCreateNameInput => self.handle_view_create_name_key(code),
+            Mode::ViewCreateCategoryPicker => self.handle_view_create_category_key(code, agenda),
+            Mode::ViewRenameInput => self.handle_view_rename_key(code, agenda),
+            Mode::ViewEditCategoryPicker => self.handle_view_edit_category_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
             Mode::CategoryManager => self.handle_category_manager_key(code, agenda),
             Mode::CategoryCreateInput => self.handle_category_create_key(code, agenda),
@@ -254,12 +274,28 @@ impl App {
             KeyCode::F(8) => {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
-                self.status = "View picker: Enter to switch, Esc to cancel".to_string();
+                self.status =
+                    "View picker: Enter switch, N create, r rename, e edit include, Esc cancel"
+                        .to_string();
             }
             KeyCode::F(9) => {
                 self.mode = Mode::CategoryManager;
                 self.status =
                     "Category manager: n child, N root, x delete, Esc to close".to_string();
+            }
+            KeyCode::Char('a') => {
+                if self.selected_item_id().is_none() {
+                    self.status = "No selected item to assign".to_string();
+                } else if self.category_rows.is_empty() {
+                    self.status = "No categories available".to_string();
+                } else {
+                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.item_assign_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.status =
+                        "Assign item to category: j/k select category, Enter assign, Esc cancel"
+                            .to_string();
+                }
             }
             KeyCode::Char('i') => {
                 self.show_inspect = !self.show_inspect;
@@ -463,6 +499,74 @@ impl App {
         Ok(false)
     }
 
+    fn handle_item_assign_category_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Assign canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.category_rows.is_empty() {
+                    self.item_assign_category_index =
+                        next_index(self.item_assign_category_index, self.category_rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.category_rows.is_empty() {
+                    self.item_assign_category_index = next_index(
+                        self.item_assign_category_index,
+                        self.category_rows.len(),
+                        -1,
+                    );
+                }
+            }
+            KeyCode::Enter => {
+                let Some(item_id) = self.selected_item_id() else {
+                    self.mode = Mode::Normal;
+                    self.status = "Assign failed: no selected item".to_string();
+                    return Ok(false);
+                };
+                let Some(row) = self
+                    .category_rows
+                    .get(self.item_assign_category_index)
+                    .cloned()
+                else {
+                    self.mode = Mode::Normal;
+                    self.status = "Assign failed: no category selected".to_string();
+                    return Ok(false);
+                };
+
+                if row.name.eq_ignore_ascii_case("Done") {
+                    agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                    self.refresh(agenda.store())?;
+                    self.set_item_selection_by_id(item_id);
+                    self.mode = Mode::Normal;
+                    self.status = "Assigned item to category Done (marked done)".to_string();
+                    return Ok(false);
+                }
+
+                let result = agenda
+                    .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
+                    .map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::Normal;
+                self.status = format!(
+                    "Assigned item to category {} (new_assignments={})",
+                    row.name,
+                    result.new_assignments.len()
+                );
+            }
+            _ => {}
+        }
+
+        Ok(false)
+    }
+
     fn handle_inspect_unassign_key(
         &mut self,
         code: KeyCode,
@@ -573,6 +677,36 @@ impl App {
                 }
                 self.mode = Mode::Normal;
             }
+            KeyCode::Char('N') => {
+                self.mode = Mode::ViewCreateNameInput;
+                self.input.clear();
+                self.view_pending_name = None;
+                self.view_pending_edit_name = None;
+                self.status = "Create view: type name and press Enter".to_string();
+            }
+            KeyCode::Char('r') => {
+                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    self.mode = Mode::ViewRenameInput;
+                    self.input = view.name.clone();
+                    self.view_pending_edit_name = Some(view.name.clone());
+                    self.status = format!("Rename view {}: type name and Enter", view.name);
+                } else {
+                    self.status = "No selected view to rename".to_string();
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    self.mode = Mode::ViewEditCategoryPicker;
+                    self.view_pending_edit_name = Some(view.name.clone());
+                    self.view_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.status =
+                        "Edit view include category: j/k select category, Enter save, Esc cancel"
+                            .to_string();
+                } else {
+                    self.status = "No selected view to edit".to_string();
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.views.is_empty() {
                     self.picker_index = (self.picker_index + 1) % self.views.len();
@@ -585,6 +719,242 @@ impl App {
                     } else {
                         self.picker_index - 1
                     };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_create_name_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewPicker;
+                self.input.clear();
+                self.view_pending_name = None;
+                self.status = "View create canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let name = self.input.trim().to_string();
+                if name.is_empty() {
+                    self.mode = Mode::ViewPicker;
+                    self.input.clear();
+                    self.view_pending_name = None;
+                    self.status = "View create canceled (empty name)".to_string();
+                } else {
+                    self.view_pending_name = Some(name.clone());
+                    self.view_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.mode = Mode::ViewCreateCategoryPicker;
+                    self.input.clear();
+                    self.status =
+                        format!("Create view {name}: select include category and press Enter");
+                }
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_create_category_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewPicker;
+                self.view_pending_name = None;
+                self.status = "View create canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.category_rows.is_empty() {
+                    self.view_category_index =
+                        next_index(self.view_category_index, self.category_rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.category_rows.is_empty() {
+                    self.view_category_index =
+                        next_index(self.view_category_index, self.category_rows.len(), -1);
+                }
+            }
+            KeyCode::Enter => {
+                let Some(name) = self.view_pending_name.clone() else {
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View create failed: missing name".to_string();
+                    return Ok(false);
+                };
+
+                let mut view = View::new(name.clone());
+                if let Some(row) = self.category_rows.get(self.view_category_index) {
+                    view.criteria.include.insert(row.id);
+                }
+
+                match agenda.store().create_view(&view) {
+                    Ok(()) => {
+                        self.refresh(agenda.store())?;
+                        self.set_view_selection_by_name(&view.name);
+                        self.mode = Mode::Normal;
+                        self.view_pending_name = None;
+                        self.status = format!("Created view {}", view.name);
+                    }
+                    Err(err) => {
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("View create failed: {err}");
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_rename_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewPicker;
+                self.input.clear();
+                self.view_pending_edit_name = None;
+                self.status = "View rename canceled".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(view_name) = self.view_pending_edit_name.clone() else {
+                    self.mode = Mode::ViewPicker;
+                    self.input.clear();
+                    self.status = "View rename failed: no selected view".to_string();
+                    return Ok(false);
+                };
+
+                let new_name = self.input.trim().to_string();
+                if new_name.is_empty() {
+                    self.mode = Mode::ViewPicker;
+                    self.input.clear();
+                    self.view_pending_edit_name = None;
+                    self.status = "View rename canceled (empty name)".to_string();
+                    return Ok(false);
+                }
+
+                let Some(mut view) = self
+                    .views
+                    .iter()
+                    .find(|view| view.name.eq_ignore_ascii_case(&view_name))
+                    .cloned()
+                else {
+                    self.mode = Mode::ViewPicker;
+                    self.input.clear();
+                    self.view_pending_edit_name = None;
+                    self.status = "View rename failed: selected view not found".to_string();
+                    return Ok(false);
+                };
+
+                if view.name == new_name {
+                    self.mode = Mode::ViewPicker;
+                    self.input.clear();
+                    self.view_pending_edit_name = None;
+                    self.status = "View rename canceled (unchanged)".to_string();
+                    return Ok(false);
+                }
+
+                view.name = new_name.clone();
+                match agenda.store().update_view(&view) {
+                    Ok(()) => {
+                        self.refresh(agenda.store())?;
+                        self.set_view_selection_by_name(&new_name);
+                        self.mode = Mode::ViewPicker;
+                        self.input.clear();
+                        self.view_pending_edit_name = None;
+                        self.status = format!("Renamed view to {}", new_name);
+                    }
+                    Err(err) => {
+                        self.mode = Mode::ViewPicker;
+                        self.input.clear();
+                        self.view_pending_edit_name = None;
+                        self.status = format!("View rename failed: {err}");
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_edit_category_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewPicker;
+                self.view_pending_edit_name = None;
+                self.status = "View edit canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.category_rows.is_empty() {
+                    self.view_category_index =
+                        next_index(self.view_category_index, self.category_rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.category_rows.is_empty() {
+                    self.view_category_index =
+                        next_index(self.view_category_index, self.category_rows.len(), -1);
+                }
+            }
+            KeyCode::Enter => {
+                let Some(view_name) = self.view_pending_edit_name.clone() else {
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View edit failed: no selected view".to_string();
+                    return Ok(false);
+                };
+                let Some(row) = self.category_rows.get(self.view_category_index).cloned() else {
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View edit failed: no category selected".to_string();
+                    return Ok(false);
+                };
+                let Some(mut view) = self
+                    .views
+                    .iter()
+                    .find(|view| view.name.eq_ignore_ascii_case(&view_name))
+                    .cloned()
+                else {
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View edit failed: selected view not found".to_string();
+                    return Ok(false);
+                };
+
+                view.criteria.include.clear();
+                view.criteria.include.insert(row.id);
+
+                match agenda.store().update_view(&view) {
+                    Ok(()) => {
+                        self.refresh(agenda.store())?;
+                        self.set_view_selection_by_name(&view.name);
+                        self.mode = Mode::ViewPicker;
+                        self.view_pending_edit_name = None;
+                        self.status = format!(
+                            "Updated view {} include category to {}",
+                            view.name, row.name
+                        );
+                    }
+                    Err(err) => {
+                        self.mode = Mode::ViewPicker;
+                        self.view_pending_edit_name = None;
+                        self.status = format!("View edit failed: {err}");
+                    }
                 }
             }
             _ => {}
@@ -1062,8 +1432,20 @@ impl App {
         let footer = self.render_footer();
         frame.render_widget(footer, layout[2]);
 
-        if self.mode == Mode::ViewPicker {
+        if matches!(
+            self.mode,
+            Mode::ViewPicker | Mode::ViewCreateNameInput | Mode::ViewRenameInput
+        ) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
+        }
+        if self.mode == Mode::ItemAssignCategoryPicker {
+            self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
+        }
+        if matches!(
+            self.mode,
+            Mode::ViewCreateCategoryPicker | Mode::ViewEditCategoryPicker
+        ) {
+            self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
         }
         if matches!(
             self.mode,
@@ -1210,10 +1592,15 @@ impl App {
             Mode::NoteEditInput => format!("Note> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
+            Mode::ViewCreateNameInput => format!("View create> {}", self.input),
+            Mode::ViewRenameInput => format!("View rename> {}", self.input),
+            Mode::ViewCreateCategoryPicker => "Select include category for new view".to_string(),
+            Mode::ViewEditCategoryPicker => "Select include category for selected view".to_string(),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
             Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
+            Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
             Mode::InspectUnassignPicker => "Select assignment to unassign".to_string(),
             _ => self.status.clone(),
         };
@@ -1225,12 +1612,17 @@ impl App {
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
             Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
-            Mode::ViewPicker => "j/k:select  Enter:switch  Esc:cancel",
+            Mode::ViewPicker => "j/k:select  Enter:switch  N:create  r:rename  e:edit include  Esc:cancel",
+            Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
+            Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
+            Mode::ViewCreateCategoryPicker => "j/k:select category  Enter:create view  Esc:cancel",
+            Mode::ViewEditCategoryPicker => "j/k:select category  Enter:update view  Esc:cancel",
+            Mode::ItemAssignCategoryPicker => "j/k:select category  Enter:assign item to category  Esc:cancel",
             Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a:assign-item  e:edit  m:note  u:unassign  [/]:filter  F8:views  F9:categories  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -1263,6 +1655,101 @@ impl App {
                     .title("Select View")
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Magenta)),
+            ),
+            area,
+        );
+    }
+
+    fn render_view_category_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+
+        let mut lines = vec![Line::from("Choose include category for view")];
+        if self.category_rows.is_empty() {
+            lines.push(Line::from("(no categories available)"));
+        } else {
+            for (index, row) in self.category_rows.iter().enumerate() {
+                let marker = if index == self.view_category_index {
+                    "> "
+                } else {
+                    "  "
+                };
+                let mut flags = Vec::new();
+                if row.is_reserved {
+                    flags.push("reserved");
+                }
+                if row.is_exclusive {
+                    flags.push("exclusive");
+                }
+                let suffix = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(","))
+                };
+                lines.push(Line::from(format!(
+                    "{marker}{}{}{}",
+                    "  ".repeat(row.depth),
+                    row.name,
+                    suffix
+                )));
+            }
+        }
+
+        let title = match self.mode {
+            Mode::ViewCreateCategoryPicker => "Create View Include",
+            Mode::ViewEditCategoryPicker => "Edit View Include",
+            _ => "View Include",
+        };
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Magenta)),
+            ),
+            area,
+        );
+    }
+
+    fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+
+        let mut lines = vec![Line::from("Assign selected item to category")];
+        if self.category_rows.is_empty() {
+            lines.push(Line::from("(no categories)"));
+        } else {
+            for (index, row) in self.category_rows.iter().enumerate() {
+                let marker = if index == self.item_assign_category_index {
+                    "> "
+                } else {
+                    "  "
+                };
+                let mut flags = Vec::new();
+                if row.is_reserved {
+                    flags.push("reserved");
+                }
+                if row.is_exclusive {
+                    flags.push("exclusive");
+                }
+                let suffix = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(","))
+                };
+                lines.push(Line::from(format!(
+                    "{marker}{}{}{}",
+                    "  ".repeat(row.depth),
+                    row.name,
+                    suffix
+                )));
+            }
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title("Assign Item")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
             ),
             area,
         );
@@ -1601,6 +2088,17 @@ impl App {
             }
         }
     }
+
+    fn set_view_selection_by_name(&mut self, view_name: &str) {
+        if let Some(index) = self
+            .views
+            .iter()
+            .position(|view| view.name.eq_ignore_ascii_case(view_name))
+        {
+            self.view_index = index;
+            self.picker_index = index;
+        }
+    }
 }
 
 fn generated_section(
@@ -1742,6 +2240,13 @@ fn is_reserved_category_name(name: &str) -> bool {
         || name.eq_ignore_ascii_case("Done")
 }
 
+fn first_non_reserved_category_index(category_rows: &[CategoryListRow]) -> usize {
+    category_rows
+        .iter()
+        .position(|row| !row.is_reserved)
+        .unwrap_or(0)
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -1764,7 +2269,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
-fn add_capture_status_message(parsed_when: Option<NaiveDateTime>, unknown_hashtags: &[String]) -> String {
+fn add_capture_status_message(
+    parsed_when: Option<NaiveDateTime>,
+    unknown_hashtags: &[String],
+) -> String {
     let warning = if unknown_hashtags.is_empty() {
         String::new()
     } else {
@@ -1780,7 +2288,10 @@ fn add_capture_status_message(parsed_when: Option<NaiveDateTime>, unknown_hashta
 mod tests {
     use std::collections::HashMap;
 
-    use super::{add_capture_status_message, build_category_rows, build_reparent_options};
+    use super::{
+        add_capture_status_message, build_category_rows, build_reparent_options,
+        first_non_reserved_category_index, CategoryListRow,
+    };
     use agenda_core::model::{Category, CategoryId};
     use chrono::NaiveDate;
 
@@ -1887,5 +2398,52 @@ mod tests {
         assert!(!options
             .iter()
             .any(|option| option.parent_id == Some(subproject.id)));
+    }
+
+    #[test]
+    fn first_non_reserved_category_index_prefers_non_reserved_row() {
+        let reserved = CategoryListRow {
+            id: CategoryId::new_v4(),
+            name: "Done".to_string(),
+            depth: 0,
+            is_reserved: true,
+            is_exclusive: false,
+            enable_implicit_string: false,
+        };
+        let user = CategoryListRow {
+            id: CategoryId::new_v4(),
+            name: "Work".to_string(),
+            depth: 0,
+            is_reserved: false,
+            is_exclusive: false,
+            enable_implicit_string: true,
+        };
+
+        assert_eq!(
+            first_non_reserved_category_index(&[reserved.clone(), user.clone()]),
+            1
+        );
+    }
+
+    #[test]
+    fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
+        let done = CategoryListRow {
+            id: CategoryId::new_v4(),
+            name: "Done".to_string(),
+            depth: 0,
+            is_reserved: true,
+            is_exclusive: false,
+            enable_implicit_string: false,
+        };
+        let when = CategoryListRow {
+            id: CategoryId::new_v4(),
+            name: "When".to_string(),
+            depth: 0,
+            is_reserved: true,
+            is_exclusive: false,
+            enable_implicit_string: false,
+        };
+
+        assert_eq!(first_non_reserved_category_index(&[done, when]), 0);
     }
 }
