@@ -3,6 +3,10 @@ The CLE version of this may end up being a replacement for BR. In fact, I want t
 ->Replacing bd/br is a checkpoint goal for this project.
 
 ---
+I just had the horrible thought that I'm reinventing half of Jira.  Be careful that this doesn't turn into an issue tracker. This is an information manager.
+
+A better thing to think about is VisiData. That is a nice model for how it should feel to use the application.
+---
 
 Deferred feature idea: item dependency graph (BR-style blockers)
 
