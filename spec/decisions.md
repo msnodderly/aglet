@@ -1056,3 +1056,29 @@ Rationale:
 - Makes implementation sequencing and acceptance criteria easier to execute.
 - Keeps keyboard model, update semantics, view-manager UX, and column evolution
   in one traceable place.
+
+---
+
+## 41. R3.6 executes as shell-first vertical slices with explicit checkpoints
+
+**Date**: 2026-02-17
+**Relevant tasks**: T089, T090, T091, T092
+
+Implementation strategy for the View Manager refactor is:
+
+1. Build and stabilize full-screen shell + navigation first (T089).
+2. Add boolean criteria authoring and validation next (T090).
+3. Integrate section authoring in the same surface (T091).
+4. Expand regression and smoke coverage after each slice (T092).
+
+Tracking and execution requirements:
+
+- keep a detailed task checklist in docs
+- update `spec/tasks.md` task state as work progresses
+- commit frequently at each vertical slice/test-passing checkpoint
+
+Rationale:
+
+- Reduces risk by isolating UI architecture concerns before complex editing logic.
+- Keeps the product testable throughout implementation, not only at the end.
+- Makes regressions easier to localize between shell, criteria, and section layers.
