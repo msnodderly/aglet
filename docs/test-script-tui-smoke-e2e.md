@@ -17,7 +17,7 @@ This script validates the TUI daily loop across:
 ## 1) Setup
 
 ```bash
-cd /Users/mds/src/aglet-bd-pmr
+cd /Users/mds/src/aglet
 DB="/tmp/aglet-tui-smoke-$(date +%s).ag"
 echo "$DB"
 ```

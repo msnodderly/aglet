@@ -9,7 +9,7 @@ workflow with TUI-first interaction where possible.
 ## 1) Setup
 
 ```bash
-cd /Users/mds/src/aglet-bd-2ak
+cd /Users/mds/src/aglet-bd-1ns
 DB="/tmp/aglet-tui-complete-walkthrough-$(date +%s).ag"
 echo "$DB"
 ```
@@ -52,6 +52,14 @@ Items:
 
 ### C. Perform recovery-relevant mutations
 
+- Select `Follow up with Sarah on Frabulator integration next Friday at 3pm`.
+- Press `a`, choose `Sarah`, Enter.
+- Press `a` again, choose `Frabulator`, Enter.
+- Press `F8`, then `N`, type `Work View`, Enter.
+- In include-category picker, choose `Work`, Enter.
+- Press `F8`, select `Work View`, press `r`, rename to `Work Board`, Enter.
+- Press `F8`, select `Work Board`, press `e`, choose `Project Y`, Enter.
+- Press `F8`, select `Work Board`, Enter to switch.
 - Select `Review Project Y architecture doc Monday` (use `j/k`).
 - Press `d` to mark done.
 - Press `x`, then `y` to delete the done item.
@@ -64,6 +72,10 @@ Use the same DB path:
 ```bash
 # Category hierarchy and reserved/system categories
 cargo run -q -p agenda-cli -- --db "$DB" category list
+
+# View create/rename/edit results
+cargo run -q -p agenda-cli -- --db "$DB" view list
+cargo run -q -p agenda-cli -- --db "$DB" view show "Work Board"
 
 # Item state after TUI done + delete
 cargo run -q -p agenda-cli -- --db "$DB" list --include-done
@@ -84,14 +96,12 @@ cargo run -q -p agenda-cli -- --db "$DB" list --include-done
 
 - All six capture entries are created via TUI.
 - Category hierarchy is created via TUI manager.
+- Item-to-category assignment works directly in TUI (`a`).
+- View create/rename/include-edit works directly in TUI (`F8`).
 - One item is marked done and deleted in TUI.
 - Item is recoverable from deletion log via CLI restore.
 
-## 5) Observed TUI Gaps During This Demo
+## 5) Remaining TUI Gaps During This Demo
 
-- No direct in-TUI "assign category to selected item" action equivalent to
-  `agenda-cli category assign`.
-- No in-TUI view create/edit flow for "Work View/Sarah View/Personal View" from
-  the complete CLI demo.
 - No in-TUI deletion-log browser/restore command; recovery requires CLI.
 - No undo (`Ctrl-Z`) by v1 decision; recovery is explicit via delete log + restore.
