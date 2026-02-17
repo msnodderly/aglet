@@ -109,6 +109,7 @@ struct App {
     mode: Mode,
     status: String,
     input: String,
+    input_cursor: usize,
     filter: Option<String>,
     show_inspect: bool,
 
@@ -140,6 +141,7 @@ impl Default for App {
                 "Press n to add, a to assign item to category, F8 to switch views, F9 for categories, q to quit"
                     .to_string(),
             input: String::new(),
+            input_cursor: 0,
             filter: None,
             show_inspect: false,
             views: Vec::new(),
@@ -191,7 +193,7 @@ impl App {
                 Ok(value) => value,
                 Err(err) => {
                     self.mode = Mode::Normal;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = format!("Error: {err}");
                     false
                 }
@@ -227,6 +229,99 @@ impl App {
         }
     }
 
+    fn set_input(&mut self, value: String) {
+        self.input = value;
+        self.input_cursor = self.input.chars().count();
+    }
+
+    fn clear_input(&mut self) {
+        self.input.clear();
+        self.input_cursor = 0;
+    }
+
+    fn input_len_chars(&self) -> usize {
+        self.input.chars().count()
+    }
+
+    fn clamped_input_cursor(&self) -> usize {
+        self.input_cursor.min(self.input_len_chars())
+    }
+
+    fn input_byte_index(&self, char_index: usize) -> usize {
+        if char_index == 0 {
+            return 0;
+        }
+        self.input
+            .char_indices()
+            .nth(char_index)
+            .map(|(byte_index, _)| byte_index)
+            .unwrap_or(self.input.len())
+    }
+
+    fn move_input_cursor_left(&mut self) {
+        let cursor = self.clamped_input_cursor();
+        self.input_cursor = cursor.saturating_sub(1);
+    }
+
+    fn move_input_cursor_right(&mut self) {
+        let cursor = self.clamped_input_cursor();
+        self.input_cursor = (cursor + 1).min(self.input_len_chars());
+    }
+
+    fn move_input_cursor_home(&mut self) {
+        self.input_cursor = 0;
+    }
+
+    fn move_input_cursor_end(&mut self) {
+        self.input_cursor = self.input_len_chars();
+    }
+
+    fn backspace_input_char(&mut self) {
+        let cursor = self.clamped_input_cursor();
+        if cursor == 0 {
+            return;
+        }
+        let start = self.input_byte_index(cursor - 1);
+        let end = self.input_byte_index(cursor);
+        self.input.replace_range(start..end, "");
+        self.input_cursor = cursor - 1;
+    }
+
+    fn delete_input_char(&mut self) {
+        let cursor = self.clamped_input_cursor();
+        if cursor >= self.input_len_chars() {
+            return;
+        }
+        let start = self.input_byte_index(cursor);
+        let end = self.input_byte_index(cursor + 1);
+        self.input.replace_range(start..end, "");
+        self.input_cursor = cursor;
+    }
+
+    fn insert_input_char(&mut self, c: char) {
+        if c.is_control() {
+            return;
+        }
+        let cursor = self.clamped_input_cursor();
+        let byte_index = self.input_byte_index(cursor);
+        self.input.insert(byte_index, c);
+        self.input_cursor = cursor + 1;
+    }
+
+    fn handle_text_input_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Left => self.move_input_cursor_left(),
+            KeyCode::Right => self.move_input_cursor_right(),
+            KeyCode::Home => self.move_input_cursor_home(),
+            KeyCode::End => self.move_input_cursor_end(),
+            KeyCode::Backspace => self.backspace_input_char(),
+            KeyCode::Delete => self.delete_input_char(),
+            KeyCode::Char(c) => self.insert_input_char(c),
+            _ => return false,
+        }
+        true
+    }
+
     fn handle_normal_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
         match code {
             KeyCode::Char('q') => return Ok(true),
@@ -236,14 +331,14 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') => self.move_slot_cursor(-1),
             KeyCode::Char('n') => {
                 self.mode = Mode::AddInput;
-                self.input.clear();
+                self.clear_input();
                 self.status = "Add item: type text and press Enter".to_string();
             }
             KeyCode::Char('e') => {
                 if let Some(item) = self.selected_item() {
                     let existing_text = item.text.clone();
                     self.mode = Mode::ItemEditInput;
-                    self.input = existing_text;
+                    self.set_input(existing_text);
                     self.status = "Edit item text: Enter to save, Esc to cancel".to_string();
                 } else {
                     self.status = "No selected item to edit".to_string();
@@ -253,7 +348,7 @@ impl App {
                 if let Some(item) = self.selected_item() {
                     let existing_note = item.note.clone().unwrap_or_default();
                     self.mode = Mode::NoteEditInput;
-                    self.input = existing_note;
+                    self.set_input(existing_note);
                     self.status =
                         "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
                 } else {
@@ -262,7 +357,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.mode = Mode::FilterInput;
-                self.input = self.filter.clone().unwrap_or_default();
+                self.set_input(self.filter.clone().unwrap_or_default());
                 self.status = "Filter: type query and press Enter (Esc clears)".to_string();
             }
             KeyCode::Esc => {
@@ -357,7 +452,7 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
                 self.status = "Add canceled".to_string();
             }
             KeyCode::Enter => {
@@ -376,12 +471,9 @@ impl App {
                     self.status = add_capture_status_message(parsed_when, &unknown_hashtags);
                 }
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -391,13 +483,13 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
                 self.status = "Edit canceled".to_string();
             }
             KeyCode::Enter => {
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Edit failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -405,7 +497,7 @@ impl App {
                 let updated_text = self.input.trim().to_string();
                 if updated_text.is_empty() {
                     self.mode = Mode::Normal;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Edit canceled: text cannot be empty".to_string();
                     return Ok(false);
                 }
@@ -416,7 +508,7 @@ impl App {
                     .map_err(|e| e.to_string())?;
                 if item.text == updated_text {
                     self.mode = Mode::Normal;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Edit canceled: no text change".to_string();
                     return Ok(false);
                 }
@@ -430,13 +522,10 @@ impl App {
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
                 self.status = "Item text updated".to_string();
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -446,13 +535,13 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
                 self.status = "Note edit canceled".to_string();
             }
             KeyCode::Enter => {
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Note edit failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -469,7 +558,7 @@ impl App {
                     .map_err(|e| e.to_string())?;
                 if item.note == new_note {
                     self.mode = Mode::Normal;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Note edit canceled: no note change".to_string();
                     return Ok(false);
                 }
@@ -483,17 +572,14 @@ impl App {
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
                 self.status = if item.note.is_some() {
                     "Note updated".to_string()
                 } else {
                     "Note cleared".to_string()
                 };
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -626,7 +712,7 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.filter = None;
-                self.input.clear();
+                self.clear_input();
                 self.refresh(agenda.store())?;
                 self.status = "Filter cleared".to_string();
             }
@@ -640,12 +726,9 @@ impl App {
                 } else {
                     "Filter cleared".to_string()
                 };
-                self.input.clear();
+                self.clear_input();
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -679,7 +762,7 @@ impl App {
             }
             KeyCode::Char('N') => {
                 self.mode = Mode::ViewCreateNameInput;
-                self.input.clear();
+                self.clear_input();
                 self.view_pending_name = None;
                 self.view_pending_edit_name = None;
                 self.status = "Create view: type name and press Enter".to_string();
@@ -687,7 +770,7 @@ impl App {
             KeyCode::Char('r') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
                     self.mode = Mode::ViewRenameInput;
-                    self.input = view.name.clone();
+                    self.set_input(view.name.clone());
                     self.view_pending_edit_name = Some(view.name.clone());
                     self.status = format!("Rename view {}: type name and Enter", view.name);
                 } else {
@@ -730,7 +813,7 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
-                self.input.clear();
+                self.clear_input();
                 self.view_pending_name = None;
                 self.status = "View create canceled".to_string();
             }
@@ -738,7 +821,7 @@ impl App {
                 let name = self.input.trim().to_string();
                 if name.is_empty() {
                     self.mode = Mode::ViewPicker;
-                    self.input.clear();
+                    self.clear_input();
                     self.view_pending_name = None;
                     self.status = "View create canceled (empty name)".to_string();
                 } else {
@@ -746,15 +829,12 @@ impl App {
                     self.view_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.mode = Mode::ViewCreateCategoryPicker;
-                    self.input.clear();
+                    self.clear_input();
                     self.status =
                         format!("Create view {name}: select include category and press Enter");
                 }
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -822,14 +902,14 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
-                self.input.clear();
+                self.clear_input();
                 self.view_pending_edit_name = None;
                 self.status = "View rename canceled".to_string();
             }
             KeyCode::Enter => {
                 let Some(view_name) = self.view_pending_edit_name.clone() else {
                     self.mode = Mode::ViewPicker;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "View rename failed: no selected view".to_string();
                     return Ok(false);
                 };
@@ -837,7 +917,7 @@ impl App {
                 let new_name = self.input.trim().to_string();
                 if new_name.is_empty() {
                     self.mode = Mode::ViewPicker;
-                    self.input.clear();
+                    self.clear_input();
                     self.view_pending_edit_name = None;
                     self.status = "View rename canceled (empty name)".to_string();
                     return Ok(false);
@@ -850,7 +930,7 @@ impl App {
                     .cloned()
                 else {
                     self.mode = Mode::ViewPicker;
-                    self.input.clear();
+                    self.clear_input();
                     self.view_pending_edit_name = None;
                     self.status = "View rename failed: selected view not found".to_string();
                     return Ok(false);
@@ -858,7 +938,7 @@ impl App {
 
                 if view.name == new_name {
                     self.mode = Mode::ViewPicker;
-                    self.input.clear();
+                    self.clear_input();
                     self.view_pending_edit_name = None;
                     self.status = "View rename canceled (unchanged)".to_string();
                     return Ok(false);
@@ -870,22 +950,19 @@ impl App {
                         self.refresh(agenda.store())?;
                         self.set_view_selection_by_name(&new_name);
                         self.mode = Mode::ViewPicker;
-                        self.input.clear();
+                        self.clear_input();
                         self.view_pending_edit_name = None;
                         self.status = format!("Renamed view to {}", new_name);
                     }
                     Err(err) => {
                         self.mode = Mode::ViewPicker;
-                        self.input.clear();
+                        self.clear_input();
                         self.view_pending_edit_name = None;
                         self.status = format!("View rename failed: {err}");
                     }
                 }
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -995,7 +1072,7 @@ impl App {
         match code {
             KeyCode::Esc | KeyCode::F(9) => {
                 self.mode = Mode::Normal;
-                self.input.clear();
+                self.clear_input();
                 self.category_create_parent = None;
                 self.category_reparent_options.clear();
                 self.category_reparent_index = 0;
@@ -1005,7 +1082,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
             KeyCode::Char('n') => {
                 self.mode = Mode::CategoryCreateInput;
-                self.input.clear();
+                self.clear_input();
                 self.category_create_parent = self.selected_category_id();
                 let parent = self
                     .create_parent_name()
@@ -1014,7 +1091,7 @@ impl App {
             }
             KeyCode::Char('N') => {
                 self.mode = Mode::CategoryCreateInput;
-                self.input.clear();
+                self.clear_input();
                 self.category_create_parent = None;
                 self.status = "Create top-level category: type name and Enter".to_string();
             }
@@ -1022,7 +1099,7 @@ impl App {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
                     self.mode = Mode::CategoryRenameInput;
-                    self.input = row_name.clone();
+                    self.set_input(row_name.clone());
                     self.status = format!("Rename category {}: type name and Enter", row_name);
                 }
             }
@@ -1102,7 +1179,7 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::CategoryManager;
-                self.input.clear();
+                self.clear_input();
                 self.category_create_parent = None;
                 self.status = "Category create canceled".to_string();
             }
@@ -1132,13 +1209,10 @@ impl App {
                     self.mode = Mode::CategoryManager;
                     self.status = "Category create canceled (empty name)".to_string();
                 }
-                self.input.clear();
+                self.clear_input();
                 self.category_create_parent = None;
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -1152,13 +1226,13 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::CategoryManager;
-                self.input.clear();
+                self.clear_input();
                 self.status = "Category rename canceled".to_string();
             }
             KeyCode::Enter => {
                 let Some(category_id) = self.selected_category_id() else {
                     self.mode = Mode::CategoryManager;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Category rename failed: no selection".to_string();
                     return Ok(false);
                 };
@@ -1166,7 +1240,7 @@ impl App {
                 let new_name = self.input.trim().to_string();
                 if new_name.is_empty() {
                     self.mode = Mode::CategoryManager;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Category rename canceled (empty name)".to_string();
                     return Ok(false);
                 }
@@ -1177,7 +1251,7 @@ impl App {
                     .map_err(|e| e.to_string())?;
                 if category.name == new_name {
                     self.mode = Mode::CategoryManager;
-                    self.input.clear();
+                    self.clear_input();
                     self.status = "Category rename canceled (unchanged)".to_string();
                     return Ok(false);
                 }
@@ -1189,16 +1263,13 @@ impl App {
                 self.refresh(agenda.store())?;
                 self.set_category_selection_by_id(category_id);
                 self.mode = Mode::CategoryManager;
-                self.input.clear();
+                self.clear_input();
                 self.status = format!(
                     "Renamed category to {} (processed_items={}, affected_items={})",
                     new_name, result.processed_items, result.affected_items
                 );
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
+            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -1430,7 +1501,11 @@ impl App {
         self.render_main(frame, layout[1]);
 
         let footer = self.render_footer();
-        frame.render_widget(footer, layout[2]);
+        let footer_area = layout[2];
+        frame.render_widget(footer, footer_area);
+        if let Some((x, y)) = self.input_cursor_position(footer_area) {
+            frame.set_cursor_position((x, y));
+        }
 
         if matches!(
             self.mode,
@@ -1457,6 +1532,42 @@ impl App {
         ) {
             self.render_category_manager(frame, centered_rect(72, 72, frame.area()));
         }
+    }
+
+    fn input_prompt_prefix(&self) -> Option<&'static str> {
+        match self.mode {
+            Mode::AddInput => Some("Add> "),
+            Mode::ItemEditInput => Some("Edit> "),
+            Mode::NoteEditInput => Some("Note> "),
+            Mode::FilterInput => Some("Filter> "),
+            Mode::ViewCreateNameInput => Some("View create> "),
+            Mode::ViewRenameInput => Some("View rename> "),
+            Mode::CategoryCreateInput => Some("Category create> "),
+            Mode::CategoryRenameInput => Some("Category rename> "),
+            _ => None,
+        }
+    }
+
+    fn input_cursor_position(&self, footer_area: Rect) -> Option<(u16, u16)> {
+        let prefix = self.input_prompt_prefix()?;
+        if footer_area.width < 3 || footer_area.height < 3 {
+            return None;
+        }
+
+        let inner_x = footer_area.x.saturating_add(1);
+        let inner_y = footer_area.y.saturating_add(1);
+        let max_inner_x = footer_area
+            .x
+            .saturating_add(footer_area.width.saturating_sub(2));
+
+        let input_chars = self.clamped_input_cursor().min(u16::MAX as usize) as u16;
+        let prefix_chars = prefix.chars().count().min(u16::MAX as usize) as u16;
+        let raw_x = inner_x
+            .saturating_add(prefix_chars)
+            .saturating_add(input_chars);
+        let cursor_x = raw_x.min(max_inner_x);
+
+        Some((cursor_x, inner_y))
     }
 
     fn render_header(&self) -> Paragraph<'_> {
@@ -2290,10 +2401,12 @@ mod tests {
 
     use super::{
         add_capture_status_message, build_category_rows, build_reparent_options,
-        first_non_reserved_category_index, CategoryListRow,
+        first_non_reserved_category_index, App, CategoryListRow, Mode,
     };
     use agenda_core::model::{Category, CategoryId};
     use chrono::NaiveDate;
+    use crossterm::event::KeyCode;
+    use ratatui::layout::Rect;
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
         rows.iter().map(|row| (row.id, row.depth)).collect()
@@ -2445,5 +2558,100 @@ mod tests {
         };
 
         assert_eq!(first_non_reserved_category_index(&[done, when]), 0);
+    }
+
+    #[test]
+    fn input_cursor_position_is_set_for_text_input_modes() {
+        let footer = Rect::new(10, 5, 40, 3);
+        let input = "abc";
+        let cases = [
+            (Mode::AddInput, "Add> "),
+            (Mode::ItemEditInput, "Edit> "),
+            (Mode::NoteEditInput, "Note> "),
+            (Mode::FilterInput, "Filter> "),
+            (Mode::ViewCreateNameInput, "View create> "),
+            (Mode::ViewRenameInput, "View rename> "),
+            (Mode::CategoryCreateInput, "Category create> "),
+            (Mode::CategoryRenameInput, "Category rename> "),
+        ];
+
+        for (mode, prefix) in cases {
+            let app = App {
+                mode,
+                input: input.to_string(),
+                input_cursor: input.len(),
+                ..App::default()
+            };
+            let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
+            assert_eq!(
+                app.input_cursor_position(footer),
+                Some((expected_x, footer.y + 1))
+            );
+        }
+    }
+
+    #[test]
+    fn input_cursor_position_is_hidden_for_non_input_modes() {
+        let footer = Rect::new(10, 5, 40, 3);
+        for mode in [
+            Mode::Normal,
+            Mode::ConfirmDelete,
+            Mode::ViewPicker,
+            Mode::CategoryManager,
+        ] {
+            let app = App {
+                mode,
+                input: "abc".to_string(),
+                ..App::default()
+            };
+            assert_eq!(app.input_cursor_position(footer), None);
+        }
+    }
+
+    #[test]
+    fn input_cursor_position_clamps_to_footer_inner_width() {
+        let footer = Rect::new(0, 0, 8, 3);
+        let app = App {
+            mode: Mode::AddInput,
+            input: "abcdefghijklmnopqrstuvwxyz".to_string(),
+            input_cursor: usize::MAX,
+            ..App::default()
+        };
+
+        assert_eq!(app.input_cursor_position(footer), Some((6, 1)));
+    }
+
+    #[test]
+    fn input_cursor_position_tracks_edit_cursor_not_just_input_end() {
+        let footer = Rect::new(0, 0, 40, 3);
+        let app = App {
+            mode: Mode::AddInput,
+            input: "abcd".to_string(),
+            input_cursor: 2,
+            ..App::default()
+        };
+
+        assert_eq!(app.input_cursor_position(footer), Some((8, 1)));
+    }
+
+    #[test]
+    fn text_input_editing_supports_navigation_insert_backspace_and_delete() {
+        let mut app = App::default();
+        app.set_input("ac".to_string());
+
+        assert!(app.handle_text_input_key(KeyCode::Left));
+        assert_eq!(app.input_cursor, 1);
+
+        assert!(app.handle_text_input_key(KeyCode::Char('b')));
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.input_cursor, 2);
+
+        assert!(app.handle_text_input_key(KeyCode::Backspace));
+        assert_eq!(app.input, "ac");
+        assert_eq!(app.input_cursor, 1);
+
+        assert!(app.handle_text_input_key(KeyCode::Delete));
+        assert_eq!(app.input, "a");
+        assert_eq!(app.input_cursor, 1);
     }
 }
