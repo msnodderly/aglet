@@ -41,7 +41,7 @@ Out of scope for this phase:
 
 ### 4.1 Layout
 
-- Board renders section lanes as horizontal columns.
+- Board renders sections as stacked lanes top-to-bottom.
 - Each lane shows:
   - lane title
   - item count
@@ -63,6 +63,7 @@ Out of scope for this phase:
   `All Categories` stay visually aligned as a grid.
 - When content exceeds available column width, truncate in-cell rather than
   shifting separator positions.
+- Row density is compact (single-line rows, no wrap-induced blank spacer lines).
 - This fixed annotation contract is intentionally model-free in this phase (UI behavior only).
 
 ### 4.3 Cursor Model

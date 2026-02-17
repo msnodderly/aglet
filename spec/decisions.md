@@ -922,3 +922,26 @@ Rationale:
   or store schema changes.
 - Truncation is preferable to wrap-driven misalignment for this board-first
   workflow.
+
+---
+
+## 36. Section lanes are stacked top-to-bottom for information density
+
+**Date**: 2026-02-17
+**Relevant tasks**: T084
+
+Board sections are rendered as vertically stacked lanes (top-to-bottom), not
+side-by-side columns.
+
+Chosen rendering behavior:
+
+- each section gets full lane width for annotation columns
+- rows are rendered as compact single lines
+- wrap-induced blank spacing between item rows is avoided
+
+Rationale:
+
+- Side-by-side lanes constrain width too aggressively once annotation columns
+  are visible (`When | Item | All Categories`), forcing hard truncation.
+- Stacked sections preserve readability of item text and category columns while
+  still keeping section boundaries explicit.

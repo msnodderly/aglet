@@ -2115,14 +2115,15 @@ impl App {
             .map(|_| Constraint::Percentage(pct))
             .collect();
         let columns = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(Direction::Vertical)
             .constraints(constraints)
             .split(area);
 
         let category_names = category_name_map(&self.categories);
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
-            let widths = board_column_widths(columns[slot_index].width);
+            let inner_width = columns[slot_index].width.saturating_sub(2);
+            let widths = board_column_widths(inner_width);
             let mut lines: Vec<Line<'_>> = vec![Line::from(board_annotation_header(widths))];
             if slot.items.is_empty() {
                 lines.push(Line::from("(no items)"));
@@ -2159,14 +2160,12 @@ impl App {
                 Color::Blue
             };
             frame.render_widget(
-                Paragraph::new(lines)
-                    .block(
-                        Block::default()
-                            .title(title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(border_color)),
-                    )
-                    .wrap(Wrap { trim: false }),
+                Paragraph::new(lines).block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(border_color)),
+                ),
                 columns[slot_index],
             );
         }
