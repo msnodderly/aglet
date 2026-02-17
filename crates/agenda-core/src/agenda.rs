@@ -181,6 +181,11 @@ impl<'a> Agenda<'a> {
     }
 
     pub fn mark_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        if !self.item_is_actionable(item_id)? {
+            return Err(AgendaError::InvalidOperation {
+                message: "selected item has no actionable categories".to_string(),
+            });
+        }
         let mut item = self.store.get_item(item_id)?;
         let now = Utc::now();
         let done_at = now
@@ -202,6 +207,21 @@ impl<'a> Agenda<'a> {
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
         process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn toggle_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let item = self.store.get_item(item_id)?;
+        if item.is_done {
+            let mut updated = item;
+            updated.is_done = false;
+            updated.done_date = None;
+            updated.modified_at = Utc::now();
+            self.store.update_item(&updated)?;
+            let done_category_id = self.done_category_id()?;
+            self.store.unassign_item(item_id, done_category_id)?;
+            return process_item(self.store, self.classifier, item_id);
+        }
+        self.mark_item_done(item_id)
     }
 
     pub fn delete_item(&self, item_id: ItemId, deleted_by: &str) -> Result<()> {
@@ -373,6 +393,22 @@ impl<'a> Agenda<'a> {
 
     fn done_category_id(&self) -> Result<CategoryId> {
         self.category_id_by_name("Done")
+    }
+
+    fn item_is_actionable(&self, item_id: ItemId) -> Result<bool> {
+        let categories_by_id: HashMap<CategoryId, Category> = self
+            .store
+            .get_hierarchy()?
+            .into_iter()
+            .map(|category| (category.id, category))
+            .collect();
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        Ok(assignments.keys().any(|category_id| {
+            categories_by_id
+                .get(category_id)
+                .map(|c| c.is_actionable)
+                .unwrap_or(false)
+        }))
     }
 
     fn category_id_by_name(&self, category_name: &str) -> Result<CategoryId> {
@@ -1389,8 +1425,13 @@ mod tests {
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
         let item = Item::new("Ship SLC".to_string());
         agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
 
         let _result = agenda.mark_item_done(item.id).unwrap();
         let loaded = store.get_item(item.id).unwrap();
@@ -1412,5 +1453,59 @@ mod tests {
                 .and_then(|assignment| assignment.origin.as_deref()),
             Some("manual:done")
         );
+    }
+
+    #[test]
+    fn mark_item_done_rejects_non_actionable_only_items() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut reference = category("Reference", false);
+        reference.is_actionable = false;
+        agenda.create_category(&reference).unwrap();
+
+        let item = Item::new("Read policy document".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, reference.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let err = agenda.mark_item_done(item.id).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn toggle_item_done_unsets_done_state_and_done_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+
+        let item = Item::new("Ship SLC".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        agenda.toggle_item_done(item.id).unwrap();
+        assert!(store.get_item(item.id).unwrap().is_done);
+
+        agenda.toggle_item_done(item.id).unwrap();
+        let loaded = store.get_item(item.id).unwrap();
+        assert!(!loaded.is_done);
+        assert!(loaded.done_date.is_none());
+
+        let done_category_id = store
+            .get_hierarchy()
+            .unwrap()
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category exists")
+            .id;
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&done_category_id));
     }
 }

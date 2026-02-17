@@ -66,6 +66,7 @@ struct CategoryListRow {
     depth: usize,
     is_reserved: bool,
     is_exclusive: bool,
+    is_actionable: bool,
     enable_implicit_string: bool,
 }
 
@@ -148,6 +149,7 @@ enum CategoryGridColumn {
     Name,
     Exclusive,
     NoImplicit,
+    Actionable,
 }
 
 struct App {
@@ -448,7 +450,7 @@ impl App {
                 self.mode = Mode::CategoryManager;
                 self.category_grid_column = CategoryGridColumn::Name;
                 self.status =
-                    "Category manager: Left/Right focus column, Space/Enter toggle checkbox, e=exclusive i=no-implicit".to_string();
+                    "Category manager: Left/Right focus column, Space/Enter toggle checkbox, e=exclusive i=no-implicit a=actionable".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, agenda)?;
@@ -505,11 +507,21 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('d') | KeyCode::Char('D') => {
                 if let Some(item_id) = self.selected_item_id() {
-                    agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                    let was_done = self
+                        .selected_item()
+                        .map(|item| item.is_done)
+                        .unwrap_or(false);
+                    agenda
+                        .toggle_item_done(item_id)
+                        .map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
-                    self.status = "Marked item done".to_string();
+                    self.status = if was_done {
+                        "Marked item not-done".to_string()
+                    } else {
+                        "Marked item done".to_string()
+                    };
                 }
             }
             KeyCode::Char('x') => {
@@ -567,6 +579,31 @@ impl App {
                 self.mode = Mode::Normal;
                 self.clear_input();
                 self.status = "Edit canceled".to_string();
+            }
+            KeyCode::F(2) => {
+                if let Some(item) = self.selected_item() {
+                    let existing_note = item.note.clone().unwrap_or_default();
+                    self.mode = Mode::NoteEditInput;
+                    self.set_input(existing_note);
+                    self.status =
+                        "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
+                } else {
+                    self.status = "No selected item to add/edit note".to_string();
+                }
+            }
+            KeyCode::F(3) => {
+                if self.selected_item_id().is_none() {
+                    self.status = "No selected item to edit categories".to_string();
+                } else if self.category_rows.is_empty() {
+                    self.status = "No categories available".to_string();
+                } else {
+                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.item_assign_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.status =
+                        "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                            .to_string();
+                }
             }
             KeyCode::Enter => {
                 let Some(item_id) = self.selected_item_id() else {
@@ -714,10 +751,20 @@ impl App {
                 };
 
                 if row.name.eq_ignore_ascii_case("Done") {
-                    agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                    let was_done = self
+                        .selected_item()
+                        .map(|item| item.is_done)
+                        .unwrap_or(false);
+                    agenda
+                        .toggle_item_done(item_id)
+                        .map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
-                    self.status = "Assigned item to category Done (marked done)".to_string();
+                    self.status = if was_done {
+                        "Removed category Done (marked not-done)".to_string()
+                    } else {
+                        "Assigned item to category Done (marked done)".to_string()
+                    };
                     return Ok(false);
                 }
 
@@ -1716,13 +1763,15 @@ impl App {
                     CategoryGridColumn::Name => CategoryGridColumn::Name,
                     CategoryGridColumn::Exclusive => CategoryGridColumn::Name,
                     CategoryGridColumn::NoImplicit => CategoryGridColumn::Exclusive,
+                    CategoryGridColumn::Actionable => CategoryGridColumn::NoImplicit,
                 };
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 self.category_grid_column = match self.category_grid_column {
                     CategoryGridColumn::Name => CategoryGridColumn::Exclusive,
                     CategoryGridColumn::Exclusive => CategoryGridColumn::NoImplicit,
-                    CategoryGridColumn::NoImplicit => CategoryGridColumn::NoImplicit,
+                    CategoryGridColumn::NoImplicit => CategoryGridColumn::Actionable,
+                    CategoryGridColumn::Actionable => CategoryGridColumn::Actionable,
                 };
             }
             KeyCode::Char('n') => {
@@ -1767,10 +1816,16 @@ impl App {
             KeyCode::Char('i') => {
                 self.toggle_selected_category_implicit(agenda)?;
             }
+            KeyCode::Char('a') => {
+                self.toggle_selected_category_actionable(agenda)?;
+            }
             KeyCode::Char(' ') | KeyCode::Enter => match self.category_grid_column {
                 CategoryGridColumn::Name => {}
                 CategoryGridColumn::Exclusive => self.toggle_selected_category_exclusive(agenda)?,
                 CategoryGridColumn::NoImplicit => self.toggle_selected_category_implicit(agenda)?,
+                CategoryGridColumn::Actionable => {
+                    self.toggle_selected_category_actionable(agenda)?
+                }
             },
             KeyCode::Char('x') => {
                 if let Some(row) = self.selected_category_row() {
@@ -1829,6 +1884,29 @@ impl App {
             !updated.enable_implicit_string,
             result.processed_items,
             result.affected_items
+        );
+        Ok(())
+    }
+
+    fn toggle_selected_category_actionable(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        category.is_actionable = !category.is_actionable;
+        let updated = category.clone();
+        let result = agenda
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} actionable={} (processed_items={}, affected_items={})",
+            updated.name, updated.is_actionable, result.processed_items, result.affected_items
         );
         Ok(())
     }
@@ -2178,6 +2256,13 @@ impl App {
         if let Some((x, y)) = self.input_cursor_position(footer_area) {
             frame.set_cursor_position((x, y));
         }
+        if self.mode == Mode::ItemEditInput {
+            let popup_area = item_edit_popup_area(frame.area());
+            self.render_item_edit_popup(frame, popup_area);
+            if let Some((x, y)) = self.item_edit_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
 
         if matches!(
             self.mode,
@@ -2236,7 +2321,6 @@ impl App {
     fn input_prompt_prefix(&self) -> Option<&'static str> {
         match self.mode {
             Mode::AddInput => Some("Add> "),
-            Mode::ItemEditInput => Some("Edit> "),
             Mode::NoteEditInput => Some("Note> "),
             Mode::FilterInput => Some("Filter> "),
             Mode::ViewCreateNameInput => Some("View create> "),
@@ -2270,6 +2354,28 @@ impl App {
         let cursor_x = raw_x.min(max_inner_x);
 
         Some((cursor_x, inner_y))
+    }
+
+    fn item_edit_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::ItemEditInput {
+            return None;
+        }
+        if popup_area.width < 3 || popup_area.height < 3 {
+            return None;
+        }
+        let prefix = "Edit> ";
+        let inner_x = popup_area.x.saturating_add(1);
+        let input_y = popup_area.y.saturating_add(3);
+        let max_inner_x = popup_area
+            .x
+            .saturating_add(popup_area.width.saturating_sub(2));
+        let input_chars = self.clamped_input_cursor().min(u16::MAX as usize) as u16;
+        let prefix_chars = prefix.chars().count().min(u16::MAX as usize) as u16;
+        let raw_x = inner_x
+            .saturating_add(prefix_chars)
+            .saturating_add(input_chars);
+        let cursor_x = raw_x.min(max_inner_x);
+        Some((cursor_x, input_y))
     }
 
     fn render_header(&self) -> Paragraph<'_> {
@@ -2424,7 +2530,7 @@ impl App {
     fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input),
-            Mode::ItemEditInput => format!("Edit> {}", self.input),
+            Mode::ItemEditInput => "Editing item text in popup".to_string(),
             Mode::NoteEditInput => format!("Note> {}", self.input),
             Mode::FilterInput => format!("Filter> {}", self.input),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
@@ -2447,7 +2553,7 @@ impl App {
         };
         let footer_title = match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  h/l:left/right column  Space/Enter:toggle focused checkbox  e:exclusive  i:no-implicit  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
+                "j/k:row  h/l:left/right column  Space/Enter:toggle focused checkbox  e:exclusive  i:no-implicit  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
             }
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
@@ -2472,15 +2578,37 @@ impl App {
             Mode::ViewUnmatchedLabelInput => "Type unmatched label, Enter:save, Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
-            Mode::ItemEditInput => "Edit selected item text, Enter:save, Esc:cancel",
+            Mode::ItemEditInput => "Edit popup: Enter:save  Esc:cancel  F2:note  F3:categories",
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
-                "n:add  a/u:item-categories  e:edit-item  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  J/K:inspect-scroll  q:quit"
+                "n:add  a/u:item-categories  e:edit-item  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d/D:done-toggle  x:delete  i:inspect  J/K:inspect-scroll  q:quit"
             }
         };
 
         Paragraph::new(prompt).block(Block::default().title(footer_title).borders(Borders::ALL))
+    }
+
+    fn render_item_edit_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let lines = vec![
+            Line::from("Edit selected item text"),
+            Line::from(""),
+            Line::from(format!("Edit> {}", self.input)),
+            Line::from(""),
+            Line::from("Enter save  Esc cancel  F2 edit note  F3 item categories"),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Edit Item")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                )
+                .wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2955,6 +3083,7 @@ impl App {
             CategoryGridColumn::Name => "Category",
             CategoryGridColumn::Exclusive => "Excl",
             CategoryGridColumn::NoImplicit => "NoImp",
+            CategoryGridColumn::Actionable => "Todo",
         };
         let mut lines = vec![Line::from(
             format!(
@@ -2965,9 +3094,11 @@ impl App {
         let marker_width = 2usize;
         let excl_width = 4usize;
         let noimpl_width = 7usize;
-        let separator_width = BOARD_COLUMN_SEPARATOR.len() * 2;
-        let name_width =
-            inner_width.saturating_sub(marker_width + excl_width + noimpl_width + separator_width);
+        let todo_width = 6usize;
+        let separator_width = BOARD_COLUMN_SEPARATOR.len() * 3;
+        let name_width = inner_width.saturating_sub(
+            marker_width + excl_width + noimpl_width + todo_width + separator_width,
+        );
         let category_header = if self.category_grid_column == CategoryGridColumn::Name {
             "Category*"
         } else {
@@ -2983,14 +3114,21 @@ impl App {
         } else {
             "NoImp"
         };
+        let todo_header = if self.category_grid_column == CategoryGridColumn::Actionable {
+            "Todo*"
+        } else {
+            "Todo"
+        };
         lines.push(Line::from(format!(
-            "{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}",
             " ".repeat(marker_width),
             fit_board_cell(category_header, name_width),
             BOARD_COLUMN_SEPARATOR,
             fit_board_cell(excl_header, excl_width),
             BOARD_COLUMN_SEPARATOR,
             fit_board_cell(noimp_header, noimpl_width),
+            BOARD_COLUMN_SEPARATOR,
+            fit_board_cell(todo_header, todo_width),
         )));
 
         let mut selected_line = None;
@@ -3014,6 +3152,7 @@ impl App {
                 } else {
                     "[ ]"
                 };
+                let todo = if row.is_actionable { "[x]" } else { "[ ]" };
                 if is_selected {
                     let row_style = selected_row_style();
                     let name_style = if self.category_grid_column == CategoryGridColumn::Name {
@@ -3032,6 +3171,12 @@ impl App {
                     } else {
                         row_style
                     };
+                    let todo_style = if self.category_grid_column == CategoryGridColumn::Actionable
+                    {
+                        focused_cell_style()
+                    } else {
+                        row_style
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(marker.to_string(), row_style),
                         Span::styled(fit_board_cell(&label, name_width), name_style),
@@ -3039,15 +3184,19 @@ impl App {
                         Span::styled(fit_board_cell(excl, excl_width), excl_style),
                         Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
                         Span::styled(fit_board_cell(noimp, noimpl_width), noimp_style),
+                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
+                        Span::styled(fit_board_cell(todo, todo_width), todo_style),
                     ]));
                 } else {
                     lines.push(Line::from(format!(
-                        "{marker}{}{}{}{}{}",
+                        "{marker}{}{}{}{}{}{}{}",
                         fit_board_cell(&label, name_width),
                         BOARD_COLUMN_SEPARATOR,
                         fit_board_cell(excl, excl_width),
                         BOARD_COLUMN_SEPARATOR,
                         fit_board_cell(noimp, noimpl_width),
+                        BOARD_COLUMN_SEPARATOR,
+                        fit_board_cell(todo, todo_width),
                     )));
                 }
             }
@@ -3807,6 +3956,7 @@ fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
             depth: category_depth(category.id, &parent_by_id, categories.len()),
             is_reserved: is_reserved_category_name(&category.name),
             is_exclusive: category.is_exclusive,
+            is_actionable: category.is_actionable,
             enable_implicit_string: category.enable_implicit_string,
         })
         .collect()
@@ -3918,6 +4068,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
+fn item_edit_popup_area(area: Rect) -> Rect {
+    centered_rect(72, 24, area)
+}
+
 fn add_capture_status_message(
     parsed_when: Option<NaiveDateTime>,
     unknown_hashtags: &[String],
@@ -3942,8 +4096,9 @@ mod tests {
         add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
         bucket_target_set_mut, build_category_rows, build_reparent_options,
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
-        list_scroll_for_selected_line, next_index, should_render_unmatched_lane,
-        when_bucket_options, App, BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
+        item_edit_popup_area, list_scroll_for_selected_line, next_index,
+        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4066,6 +4221,7 @@ mod tests {
             depth: 0,
             is_reserved: true,
             is_exclusive: false,
+            is_actionable: false,
             enable_implicit_string: false,
         };
         let user = CategoryListRow {
@@ -4074,6 +4230,7 @@ mod tests {
             depth: 0,
             is_reserved: false,
             is_exclusive: false,
+            is_actionable: true,
             enable_implicit_string: true,
         };
 
@@ -4091,6 +4248,7 @@ mod tests {
             depth: 0,
             is_reserved: true,
             is_exclusive: false,
+            is_actionable: false,
             enable_implicit_string: false,
         };
         let when = CategoryListRow {
@@ -4099,6 +4257,7 @@ mod tests {
             depth: 0,
             is_reserved: true,
             is_exclusive: false,
+            is_actionable: false,
             enable_implicit_string: false,
         };
 
@@ -4111,7 +4270,6 @@ mod tests {
         let input = "abc";
         let cases = [
             (Mode::AddInput, "Add> "),
-            (Mode::ItemEditInput, "Edit> "),
             (Mode::NoteEditInput, "Note> "),
             (Mode::FilterInput, "Filter> "),
             (Mode::ViewCreateNameInput, "View create> "),
@@ -4181,6 +4339,22 @@ mod tests {
         };
 
         assert_eq!(app.input_cursor_position(footer), Some((8, 1)));
+    }
+
+    #[test]
+    fn item_edit_cursor_position_uses_popup_area() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let popup = item_edit_popup_area(screen);
+        let app = App {
+            mode: Mode::ItemEditInput,
+            input: "abcd".to_string(),
+            input_cursor: 2,
+            ..App::default()
+        };
+        assert_eq!(
+            app.item_edit_cursor_position(popup),
+            Some((popup.x + 1 + "Edit> ".len() as u16 + 2, popup.y + 3))
+        );
     }
 
     #[test]
@@ -4361,6 +4535,42 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_d_toggles_done_state() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-d-toggle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .expect("assign actionable category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("d should mark done");
+        assert!(store.get_item(item.id).expect("load item").is_done);
+
+        app.handle_normal_key(KeyCode::Char('D'), &agenda)
+            .expect("D should clear done");
+        assert!(!store.get_item(item.id).expect("load item").is_done);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_create_category_picker_supports_include_and_exclude() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4425,6 +4635,7 @@ mod tests {
             depth: 0,
             is_reserved: false,
             is_exclusive: false,
+            is_actionable: true,
             enable_implicit_string: true,
         }];
         app.open_view_editor(View::new("Board".to_string()));
