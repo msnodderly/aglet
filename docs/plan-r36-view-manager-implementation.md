@@ -41,13 +41,13 @@ Legend:
 
 ### T090 - Boolean Criteria Builder + Preview
 
-- [ ] Introduce criteria draft row model (`sign`, `category_id`, `join`, `depth`).
-- [ ] Render criteria rows in center pane.
-- [ ] Implement row editing keys (`N`, `x`, `Space`, `a`, `o`, `(`, `)`, `c`).
+- [x] Introduce criteria draft row model (`sign`, `category_id`, `join`, `depth`).
+- [x] Render criteria rows in center pane.
+- [x] Implement row editing keys (`N`, `x`, `Space`, `a`, `o`, `(`, `)`, `c`).
 - [ ] Add category picker integration for current row.
-- [ ] Implement representability validation against current query model.
-- [ ] Add live preview summary row (matching count, delta).
-- [ ] Add tests for row edits, validation failures, and preview updates.
+- [~] Implement representability validation against current query model.
+- [x] Add live preview summary row (matching count, delta).
+- [~] Add tests for row edits, validation failures, and preview updates.
 
 ### T091 - Section Authoring Integration
 
@@ -72,7 +72,7 @@ Planned checkpoints (minimum):
 
 - [x] Commit A: T089 shell state + mode + empty render scaffold + tests.
 - [x] Commit B: T089 key routing + pane focus + entry path + tests.
-- [ ] Commit C: T090 criteria row model + rendering + edits + tests.
+- [~] Commit C: T090 criteria row model + rendering + edits + tests.
 - [ ] Commit D: T090 preview + validation + tests.
 - [ ] Commit E: T091 sections integration + tests.
 - [ ] Commit F: T092 smoke/docs updates.
@@ -92,3 +92,5 @@ Rule:
 - [x] Committed checkpoint A (`6a2e621`).
 - [x] Wired view-manager left-pane actions (`N/r/x/C`) with return-to-manager flows.
 - [x] Added tests for manager create-cancel, delete-cancel, and clone behavior.
+- [x] Started T090 with definition-pane criteria rows, row edits, and save path.
+- [x] Added tests for criteria toggle/save and add/remove/save flows.
