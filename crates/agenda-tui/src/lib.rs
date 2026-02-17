@@ -809,7 +809,8 @@ impl App {
                         .current_view()
                         .map(|view| view.name.clone())
                         .unwrap_or_else(|| "(none)".to_string());
-                    self.status = format!("Switched to view: {view_name}");
+                    self.status =
+                        format!("Switched to view: {view_name} (press v then e to edit view)");
                 } else {
                     self.status = "No views available".to_string();
                 }
@@ -1465,14 +1466,16 @@ impl App {
                 self.category_create_parent = self.selected_category_id();
                 let parent = self
                     .create_parent_name()
-                    .unwrap_or_else(|| "(root)".to_string());
-                self.status = format!("Create category under {parent}: type name and Enter");
+                    .unwrap_or_else(|| "top level".to_string());
+                self.status =
+                    format!("Create subcategory under {parent}: type name and Enter");
             }
             KeyCode::Char('N') => {
                 self.mode = Mode::CategoryCreateInput;
                 self.clear_input();
                 self.category_create_parent = None;
-                self.status = "Create top-level category: type name and Enter".to_string();
+                self.status =
+                    "Create top-level category (no parent): type name and Enter".to_string();
             }
             KeyCode::Char('r') => {
                 if let Some(row) = self.selected_category_row() {
@@ -1567,6 +1570,9 @@ impl App {
                 if !name.is_empty() {
                     let mut category = Category::new(name.clone());
                     category.parent = self.category_create_parent;
+                    let parent_label = self
+                        .create_parent_name()
+                        .unwrap_or_else(|| "top level".to_string());
                     let create_result =
                         agenda.create_category(&category).map_err(|e| e.to_string());
                     match create_result {
@@ -1575,8 +1581,11 @@ impl App {
                             self.set_category_selection_by_id(category.id);
                             self.mode = Mode::CategoryManager;
                             self.status = format!(
-                                "Created category {} (processed_items={}, affected_items={})",
-                                category.name, result.processed_items, result.affected_items
+                                "Created category {} under {} (processed_items={}, affected_items={})",
+                                category.name,
+                                parent_label,
+                                result.processed_items,
+                                result.affected_items
                             );
                         }
                         Err(err) => {
@@ -2132,7 +2141,7 @@ impl App {
         };
         let footer_title = match self.mode {
             Mode::CategoryManager => {
-                "j/k:select  n/N:create  r:rename  p:reparent  t:toggle-exclusive  i:toggle-implicit  x:delete  Esc/F9:close"
+                "j/k:select  n:create-subcategory  N:create-top-level  r:rename  p:reparent  t:toggle-exclusive  i:toggle-implicit  x:delete  Esc/F9:close"
             }
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
@@ -2155,7 +2164,7 @@ impl App {
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  a:assign-item  e:edit  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  ,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a:assign-item  e:edit-item  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  ,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -2531,7 +2540,7 @@ impl App {
         frame.render_widget(Clear, area);
 
         let mut lines = vec![Line::from(
-            "Categories are global. n/N create, r rename, p reparent, t/i toggle, x delete.",
+            "Categories are global. n=subcategory, N=top-level, r rename, p reparent, t/i toggle, x delete.",
         )];
 
         if self.category_rows.is_empty() {
@@ -2569,9 +2578,9 @@ impl App {
         if self.mode == Mode::CategoryCreateInput {
             let parent = self
                 .create_parent_name()
-                .unwrap_or_else(|| "(root)".to_string());
+                .unwrap_or_else(|| "(top level / no parent)".to_string());
             lines.push(Line::from(""));
-            lines.push(Line::from(format!("Create parent: {parent}")));
+            lines.push(Line::from(format!("New category location: under {parent}")));
         }
         if self.mode == Mode::CategoryRenameInput {
             let target = self
@@ -2886,7 +2895,7 @@ impl App {
             .current_view()
             .map(|view| view.name.clone())
             .unwrap_or_else(|| "(none)".to_string());
-        self.status = format!("Switched to view: {view_name}");
+        self.status = format!("Switched to view: {view_name} (press v then e to edit view)");
         Ok(())
     }
 }
