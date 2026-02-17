@@ -1,0 +1,76 @@
+
+The CLE version of this may end up being a replacement for BR. In fact, I want to consciously think of that as an acceptance criteria that I can use this as a task and bug tracking system database as well as have a slick way of editing it through a TUI. 
+->Replacing bd/br is a checkpoint goal for this project.
+
+---
+
+Deferred feature idea: item dependency graph (BR-style blockers)
+
+Status:
+- Deferred (do not implement during current SLC prototype pass).
+- Track for post-SLC implementation planning.
+
+Problem:
+- Current Aglet categories can represent labels like Blocked/Ready, but cannot encode directed dependencies (A blocks B).
+- For BR-style workflow replacement, we need true dependency edges and ready/unblocked computation.
+
+Proposed model:
+- First-class dependency relation between items:
+  - "Item A depends_on Item B" (or equivalently "Item B blocks Item A").
+- Derived states:
+  - Ready: item has zero open dependencies.
+  - Blocked: item has one or more open dependencies.
+  - Unblocks N: count of open items that depend on this item.
+
+CLI mockup:
+```bash
+# link items
+agenda dep add <item-id> --on <blocking-item-id>
+agenda dep remove <item-id> --on <blocking-item-id>
+agenda dep list <item-id>
+
+# list by derived state
+agenda list --ready
+agenda list --blocked
+agenda list --blocked-by <item-id>
+
+# inspect one item
+agenda show <item-id>
+# includes:
+# Depends on: <ids/titles>
+# Blocks: <ids/titles>
+# State: Ready|Blocked (N open deps)
+```
+
+TUI mockup:
+```text
+[ ] Draft IRB protocol              BLOCKED (2)
+[ ] Recruit participants            READY
+[ ] Submit budget request           READY  Unblocks: 3
+```
+
+Inspect panel mockup:
+```text
+Inspect: Draft IRB protocol
+Depends on
+- Submit budget request (open)
+- Legal review packet (open)
+
+Blocks
+- Start patient outreach
+- Prepare enrollment docs
+
+[ a ] add dependency   [ r ] remove dependency   [ g ] open dependency graph
+```
+
+Candidate views:
+- Ready Now (all open items with zero open deps)
+- Blocked (all open items with >=1 open deps)
+- Blocked by <item>
+- Critical Path Candidates (items unblocking many others)
+
+Why this should be first-class (not category-only):
+- Needs directional links.
+- Needs transitive graph reasoning and cycle detection.
+- Needs automatic state derivation (ready/blocked).
+- Categories should stay taxonomy, not workflow graph semantics.
