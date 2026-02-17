@@ -36,7 +36,7 @@ Legend:
 - [x] Add entry path from normal/view palette into full-screen manager.
 - [x] Render full-screen manager layout scaffold and footer hints.
 - [x] Implement core key routing (`Tab`, `Shift+Tab`, `j/k`, `Enter`, `Esc`, `s`, `q`) with status feedback.
-- [ ] Migrate basic view list actions into left pane (`N`, `r`, `x`, `C` stub if needed).
+- [x] Migrate basic view list actions into left pane (`N`, `r`, `x`, `C` stub if needed).
 - [x] Add tests for mode transitions and pane focus routing.
 
 ### T090 - Boolean Criteria Builder + Preview
@@ -71,7 +71,7 @@ Legend:
 Planned checkpoints (minimum):
 
 - [x] Commit A: T089 shell state + mode + empty render scaffold + tests.
-- [ ] Commit B: T089 key routing + pane focus + entry path + tests.
+- [x] Commit B: T089 key routing + pane focus + entry path + tests.
 - [ ] Commit C: T090 criteria row model + rendering + edits + tests.
 - [ ] Commit D: T090 preview + validation + tests.
 - [ ] Commit E: T091 sections integration + tests.
@@ -90,3 +90,5 @@ Rule:
 - [x] Began T089 coding.
 - [x] Implemented full-screen view manager shell scaffold and pane-navigation tests.
 - [x] Committed checkpoint A (`6a2e621`).
+- [x] Wired view-manager left-pane actions (`N/r/x/C`) with return-to-manager flows.
+- [x] Added tests for manager create-cancel, delete-cancel, and clone behavior.
