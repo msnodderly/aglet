@@ -44,7 +44,7 @@ Legend:
 - [x] Introduce criteria draft row model (`sign`, `category_id`, `join`, `depth`).
 - [x] Render criteria rows in center pane.
 - [x] Implement row editing keys (`N`, `x`, `Space`, `a`, `o`, `(`, `)`, `c`).
-- [ ] Add category picker integration for current row.
+- [x] Add category picker integration for current row.
 - [~] Implement representability validation against current query model.
 - [x] Add live preview summary row (matching count, delta).
 - [~] Add tests for row edits, validation failures, and preview updates.
@@ -94,3 +94,4 @@ Rule:
 - [x] Added tests for manager create-cancel, delete-cancel, and clone behavior.
 - [x] Started T090 with definition-pane criteria rows, row edits, and save path.
 - [x] Added tests for criteria toggle/save and add/remove/save flows.
+- [x] Added definition-pane category picker modal for criteria-row category selection.
