@@ -1034,3 +1034,25 @@ Rationale:
   contiguous flow.
 - A full-screen editor provides enough information density for criteria,
   sections, and preview without mode confusion.
+
+---
+
+## 40. TUI view workflow docs are consolidated into one implementation contract
+
+**Date**: 2026-02-17
+**Relevant tasks**: T070, T077, T087, T088
+
+All TUI view workflow documentation is consolidated into a single
+implementation contract:
+
+- `/Users/mds/src/aglet/spec/tui-view-workflow-implementation.md`
+
+Previously split docs remain as lightweight pointers for historical continuity,
+but implementation work should use the consolidated document.
+
+Rationale:
+
+- Reduces drift and contradictory behavior descriptions across multiple files.
+- Makes implementation sequencing and acceptance criteria easier to execute.
+- Keeps keyboard model, update semantics, view-manager UX, and column evolution
+  in one traceable place.
