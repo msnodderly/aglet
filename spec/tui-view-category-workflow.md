@@ -236,21 +236,15 @@ The TUI should favor the minimal logically consistent mutation for actions taken
 
 ## 9. Deferred Next Slice: Column Headings Inside Sections
 
-The next design slice should define a first-class "column heading" model for board presentation, based on category hierarchy:
+The next design slice is specified in:
 
-- heading category example: `Priority`
-  - values/subcolumns: `High`, `Medium`, `Low`
-- heading category example: `People`
-  - values/subcolumns: person categories
-- heading category example: `Department`
-  - values/subcolumns: `Sales`, `Marketing`, `Engineering`
+- `/Users/mds/src/aglet-experiments/spec/tui-view-column-workflow-design.md`
 
-Open design questions for that slice:
+Summary of target direction:
 
-- whether heading/value are view metadata vs derived from existing category parent-child relationships
-- how many heading categories can be active in one view
-- interaction between section criteria and heading-driven subcolumns
-- row/column rendering strategy in narrow terminal widths
+- column headings should usually map to category-family roots (for example `Priority`, `People`, `Department`)
+- column values should come from assigned categories in the selected heading subtree
+- column sets may eventually vary by section after experimentation and persistence-gate review
 
 ## 10. Acceptance Criteria
 
