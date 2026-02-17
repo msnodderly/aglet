@@ -895,3 +895,30 @@ Rationale:
   shown in existing demos (capturing, organizing, and reshaping focus views).
 - Item-first phrasing is clearer and more natural in interaction text and
   status feedback.
+
+---
+
+## 35. TUI annotation columns render as an aligned grid with truncation
+
+**Date**: 2026-02-17
+**Relevant tasks**: T078, T079
+
+For the V1 annotation contract (`When | Item | All Categories`), the board
+renderer uses a single width layout for both header and rows, so separators
+stay aligned inside each section lane.
+
+Chosen rendering policy:
+
+- fixed-width selection marker prefix
+- fixed target width for `When`
+- flexible dominant width for `Item`
+- bounded width for `All Categories`
+- truncation with suffix (`...`) when a cell exceeds available width
+
+Rationale:
+
+- Human scanning is materially better when separators do not drift across rows.
+- Grid alignment can be delivered entirely in TUI rendering code without model
+  or store schema changes.
+- Truncation is preferable to wrap-driven misalignment for this board-first
+  workflow.

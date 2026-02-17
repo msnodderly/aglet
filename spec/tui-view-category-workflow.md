@@ -59,6 +59,10 @@ Out of scope for this phase:
   - values sorted by category display name
   - rendered as a comma-separated list
   - empty when the item has no category assignments
+- Header and item rows use one shared width layout so `When`, `Item`, and
+  `All Categories` stay visually aligned as a grid.
+- When content exceeds available column width, truncate in-cell rather than
+  shifting separator positions.
 - This fixed annotation contract is intentionally model-free in this phase (UI behavior only).
 
 ### 4.3 Cursor Model
