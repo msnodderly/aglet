@@ -86,6 +86,7 @@ Out of scope for this phase:
 - `v` / `F8`: open view palette.
 - `c` / `F9`: open category manager.
 - `,` / `.`: previous/next view.
+- `Tab` / `Shift+Tab`: next/previous view.
 - `i`: toggle inspect panel.
 - `/`: filter input.
 - `q`: quit.
@@ -133,9 +134,10 @@ Step 1: name input
 Step 2: include-category picker
 
 - `j/k`: move category cursor.
-- `Space`: toggle category include selection.
-- `Enter`: create view from selected includes.
-  - If no toggles were selected, fallback is current highlighted category.
+- `+` (or `Space`): toggle include selection for highlighted category.
+- `-`: toggle exclude selection for highlighted category.
+- `Enter`: create view from selected include/exclude criteria.
+  - If both include and exclude sets are empty, fallback is current highlighted category as include.
 - `Esc`: cancel and return to palette.
 
 ### 6.3 View Rename Flow

@@ -77,6 +77,7 @@ Near-term experiments should not require immediate model/store schema changes.
 ## 5.1 View Editor Entry
 
 - `v` -> select view -> `e` to open view editor.
+- Normal mode supports `Tab`/`Shift+Tab` for quick next/previous view cycling.
 - Add a "column setup" entry point in view editor (proposed key: `o`).
 
 ## 5.2 Column Setup (Proposed)

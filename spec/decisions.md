@@ -945,3 +945,32 @@ Rationale:
   are visible (`When | Item | All Categories`), forcing hard truncation.
 - Stacked sections preserve readability of item text and category columns while
   still keeping section boundaries explicit.
+
+---
+
+## 37. View creation supports include/exclude picks and Tab view cycling
+
+**Date**: 2026-02-17
+**Relevant tasks**: T079, T085
+
+The view-create category picker now supports both include and exclude
+selection directly:
+
+- `+` (or `Space`) toggles include for the highlighted category
+- `-` toggles exclude for the highlighted category
+- include/exclude are mutually exclusive per category in the picker
+
+If no include or exclude categories are selected, create falls back to using
+the highlighted category as include (to preserve quick-create behavior).
+
+Normal mode also accepts:
+
+- `Tab`: next view
+- `Shift+Tab`: previous view
+
+Rationale:
+
+- Include-only create flow was insufficient for common "all except X" and
+  quick negative-filter workflows.
+- `Tab`/`Shift+Tab` provides faster cycling ergonomics on laptops than symbol
+  shortcuts alone.
