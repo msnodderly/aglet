@@ -1082,3 +1082,30 @@ Rationale:
 - Reduces risk by isolating UI architecture concerns before complex editing logic.
 - Keeps the product testable throughout implementation, not only at the end.
 - Makes regressions easier to localize between shell, criteria, and section layers.
+
+---
+
+## 42. T090 stage-1 criteria persistence is flat include/exclude while row metadata matures
+
+**Date**: 2026-02-17
+**Relevant tasks**: T090
+
+The View Manager Definition pane now uses row-shaped criteria editing (`sign`,
+`category_id`, `join`, `depth`), but stage-1 persistence writes only the
+representable subset to current model fields:
+
+- `include` categories
+- `exclude` categories
+
+Stage-1 behavior details:
+
+- `join` (`AND`/`OR`) and `depth` are editable UI metadata in this slice.
+- Save path currently maps rows to flat include/exclude sets.
+- Existing virtual include/exclude criteria remain preserved and unchanged.
+
+Rationale:
+
+- Delivers immediate in-manager criteria editing without model changes.
+- Keeps compatibility with current `Query` persistence surface.
+- Allows iterative addition of representability validation/conversion before
+  committing to a richer persisted expression model.
