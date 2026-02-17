@@ -124,6 +124,7 @@ enum Mode {
     InspectUnassignPicker,
     FilterInput,
     ViewPicker,
+    ViewManagerScreen,
     ViewCreateNameInput,
     ViewCreateCategoryPicker,
     ViewRenameInput,
@@ -142,6 +143,13 @@ enum Mode {
     CategoryRenameInput,
     CategoryReparentPicker,
     CategoryDeleteConfirm,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ViewManagerPane {
+    Views,
+    Definition,
+    Sections,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -176,6 +184,9 @@ struct App {
     view_pending_name: Option<String>,
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
+    view_manager_pane: ViewManagerPane,
+    view_manager_definition_index: usize,
+    view_manager_section_index: usize,
     view_create_include_selection: HashSet<CategoryId>,
     view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
@@ -218,6 +229,9 @@ impl Default for App {
             view_pending_name: None,
             view_pending_edit_name: None,
             view_category_index: 0,
+            view_manager_pane: ViewManagerPane::Views,
+            view_manager_definition_index: 0,
+            view_manager_section_index: 0,
             view_create_include_selection: HashSet::new(),
             view_create_exclude_selection: HashSet::new(),
             view_editor: None,
@@ -298,6 +312,7 @@ impl App {
             Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
+            Mode::ViewManagerScreen => self.handle_view_manager_key(code, agenda),
             Mode::ViewCreateNameInput => self.handle_view_create_name_key(code),
             Mode::ViewCreateCategoryPicker => self.handle_view_create_category_key(code, agenda),
             Mode::ViewRenameInput => self.handle_view_rename_key(code, agenda),
@@ -1222,6 +1237,19 @@ impl App {
                     self.status = "No selected view to edit".to_string();
                 }
             }
+            KeyCode::Char('V') => {
+                if self.views.is_empty() {
+                    self.status = "No views available".to_string();
+                } else {
+                    self.mode = Mode::ViewManagerScreen;
+                    self.view_manager_pane = ViewManagerPane::Views;
+                    self.view_manager_definition_index = 0;
+                    self.view_manager_section_index = 0;
+                    self.status =
+                        "View manager: Tab pane, j/k row, Enter action, s save, q/Esc back"
+                            .to_string();
+                }
+            }
             KeyCode::Char('x') => {
                 if let Some(view) = self.views.get(self.picker_index) {
                     self.mode = Mode::ViewDeleteConfirm;
@@ -1243,6 +1271,84 @@ impl App {
                         self.picker_index - 1
                     };
                 }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_manager_key(
+        &mut self,
+        code: KeyCode,
+        _agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::ViewPicker;
+                self.status = "Closed view manager".to_string();
+            }
+            KeyCode::Tab => {
+                self.view_manager_pane = match self.view_manager_pane {
+                    ViewManagerPane::Views => ViewManagerPane::Definition,
+                    ViewManagerPane::Definition => ViewManagerPane::Sections,
+                    ViewManagerPane::Sections => ViewManagerPane::Views,
+                };
+            }
+            KeyCode::BackTab => {
+                self.view_manager_pane = match self.view_manager_pane {
+                    ViewManagerPane::Views => ViewManagerPane::Sections,
+                    ViewManagerPane::Definition => ViewManagerPane::Views,
+                    ViewManagerPane::Sections => ViewManagerPane::Definition,
+                };
+            }
+            KeyCode::Down | KeyCode::Char('j') => match self.view_manager_pane {
+                ViewManagerPane::Views => {
+                    if !self.views.is_empty() {
+                        self.picker_index = next_index(self.picker_index, self.views.len(), 1);
+                    }
+                }
+                ViewManagerPane::Definition => {
+                    self.view_manager_definition_index =
+                        next_index(self.view_manager_definition_index, 4, 1);
+                }
+                ViewManagerPane::Sections => {
+                    let section_count = self
+                        .views
+                        .get(self.picker_index)
+                        .map(|view| view.sections.len().max(1))
+                        .unwrap_or(1);
+                    self.view_manager_section_index =
+                        next_index(self.view_manager_section_index, section_count, 1);
+                }
+            },
+            KeyCode::Up | KeyCode::Char('k') => match self.view_manager_pane {
+                ViewManagerPane::Views => {
+                    if !self.views.is_empty() {
+                        self.picker_index = next_index(self.picker_index, self.views.len(), -1);
+                    }
+                }
+                ViewManagerPane::Definition => {
+                    self.view_manager_definition_index =
+                        next_index(self.view_manager_definition_index, 4, -1);
+                }
+                ViewManagerPane::Sections => {
+                    let section_count = self
+                        .views
+                        .get(self.picker_index)
+                        .map(|view| view.sections.len().max(1))
+                        .unwrap_or(1);
+                    self.view_manager_section_index =
+                        next_index(self.view_manager_section_index, section_count, -1);
+                }
+            },
+            KeyCode::Enter => {
+                self.status =
+                    "View manager scaffold active (T089): actions will be wired in next slice"
+                        .to_string();
+            }
+            KeyCode::Char('s') => {
+                self.status =
+                    "View manager save is not wired yet (planned in T090/T091)".to_string();
             }
             _ => {}
         }
@@ -2639,6 +2745,10 @@ impl App {
     }
 
     fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if self.mode == Mode::ViewManagerScreen {
+            self.render_view_manager_screen(frame, area);
+            return;
+        }
         if self.show_inspect {
             let split = Layout::default()
                 .direction(Direction::Vertical)
@@ -2649,6 +2759,143 @@ impl App {
         } else {
             self.render_board_columns(frame, area);
         }
+    }
+
+    fn render_view_manager_screen(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(30),
+                Constraint::Percentage(40),
+                Constraint::Percentage(30),
+            ])
+            .split(area);
+
+        let selected_view = self.views.get(self.picker_index);
+        let views_lines: Vec<Line<'_>> = if self.views.is_empty() {
+            vec![Line::from("(no views)")]
+        } else {
+            self.views
+                .iter()
+                .enumerate()
+                .map(|(index, view)| {
+                    let text = format!("{}{}", if index == self.picker_index { "> " } else { "  " }, view.name);
+                    if index == self.picker_index {
+                        Line::styled(text, selected_row_style())
+                    } else {
+                        Line::from(text)
+                    }
+                })
+                .collect()
+        };
+        let views_border = if self.view_manager_pane == ViewManagerPane::Views {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        frame.render_widget(
+            Paragraph::new(views_lines).block(
+                Block::default()
+                    .title("Views")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(views_border)),
+            ),
+            panes[0],
+        );
+
+        let mut definition_lines = vec![
+            Line::from("Criteria (shell)"),
+            Line::from(""),
+        ];
+        if let Some(view) = selected_view {
+            definition_lines.push(Line::from(format!("View: {}", view.name)));
+            definition_lines.push(Line::from(format!(
+                "Include: {}  Exclude: {}",
+                view.criteria.include.len(),
+                view.criteria.exclude.len()
+            )));
+            definition_lines.push(Line::from(format!(
+                "Virtual +: {}  Virtual -: {}",
+                view.criteria.virtual_include.len(),
+                view.criteria.virtual_exclude.len()
+            )));
+            definition_lines.push(Line::from(format!(
+                "Selected row index: {}",
+                self.view_manager_definition_index
+            )));
+        } else {
+            definition_lines.push(Line::from("(no selected view)"));
+        }
+        let definition_border = if self.view_manager_pane == ViewManagerPane::Definition {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        frame.render_widget(
+            Paragraph::new(definition_lines).block(
+                Block::default()
+                    .title("Definition")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(definition_border)),
+            ),
+            panes[1],
+        );
+
+        let mut section_lines = vec![
+            Line::from("Sections (shell)"),
+            Line::from(""),
+        ];
+        if let Some(view) = selected_view {
+            if view.sections.is_empty() {
+                section_lines.push(Line::from("(no sections configured)"));
+            } else {
+                section_lines.extend(view.sections.iter().enumerate().map(|(index, section)| {
+                    let text = format!(
+                        "{}{}",
+                        if index == self.view_manager_section_index {
+                            "> "
+                        } else {
+                            "  "
+                        },
+                        section.title
+                    );
+                    if index == self.view_manager_section_index {
+                        Line::styled(text, selected_row_style())
+                    } else {
+                        Line::from(text)
+                    }
+                }));
+            }
+            section_lines.push(Line::from(""));
+            section_lines.push(Line::from(format!(
+                "Unmatched: {}",
+                if view.show_unmatched { "on" } else { "off" }
+            )));
+            section_lines.push(Line::from(format!(
+                "Label: {}",
+                if view.unmatched_label.trim().is_empty() {
+                    "Unassigned".to_string()
+                } else {
+                    view.unmatched_label.clone()
+                }
+            )));
+        } else {
+            section_lines.push(Line::from("(no selected view)"));
+        }
+        let section_border = if self.view_manager_pane == ViewManagerPane::Sections {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        frame.render_widget(
+            Paragraph::new(section_lines).block(
+                Block::default()
+                    .title("Sections")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(section_border)),
+            ),
+            panes[2],
+        );
     }
 
     fn render_board_columns(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2778,6 +3025,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "Set include/exclude categories for new view".to_string()
             }
+            Mode::ViewManagerScreen => "View manager (shell)".to_string(),
             Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
             Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
@@ -2808,7 +3056,10 @@ impl App {
             Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
             Mode::ViewPicker => {
-                "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  Esc:cancel"
+                "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
+            }
+            Mode::ViewManagerScreen => {
+                "Tab/Shift+Tab:pane  j/k:row  Enter:action  s:save(stub)  q/Esc:back"
             }
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
@@ -4413,7 +4664,7 @@ mod tests {
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index,
         should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
-        CategoryEditTarget, CategoryListRow, Mode,
+        CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4827,6 +5078,90 @@ mod tests {
             .expect("list views")
             .iter()
             .any(|view| view.name == "Keep Me"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_v_opens_view_manager_screen() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-open-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        store
+            .create_view(&View::new("Work Board".to_string()))
+            .expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = 0;
+
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open view manager shell");
+
+        assert_eq!(app.mode, Mode::ViewManagerScreen);
+        assert_eq!(app.view_manager_pane, ViewManagerPane::Views);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_tab_cycles_panes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-tabs-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewManagerScreen;
+        app.view_manager_pane = ViewManagerPane::Views;
+
+        app.handle_view_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
+
+        app.handle_view_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        assert_eq!(app.view_manager_pane, ViewManagerPane::Sections);
+
+        app.handle_view_manager_key(KeyCode::BackTab, &agenda)
+            .expect("backtab");
+        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_escape_returns_to_view_picker() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-esc-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewManagerScreen;
+
+        app.handle_view_manager_key(KeyCode::Esc, &agenda)
+            .expect("escape");
+        assert_eq!(app.mode, Mode::ViewPicker);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
