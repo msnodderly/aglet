@@ -157,6 +157,7 @@ struct App {
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
     view_create_include_selection: HashSet<CategoryId>,
+    view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
     view_editor_category_target: Option<CategoryEditTarget>,
     view_editor_bucket_target: Option<BucketEditTarget>,
@@ -192,6 +193,7 @@ impl Default for App {
             view_pending_edit_name: None,
             view_category_index: 0,
             view_create_include_selection: HashSet::new(),
+            view_create_exclude_selection: HashSet::new(),
             view_editor: None,
             view_editor_category_target: None,
             view_editor_bucket_target: None,
@@ -436,6 +438,12 @@ impl App {
             }
             KeyCode::Char('.') => {
                 self.cycle_view(1, agenda)?;
+            }
+            KeyCode::Tab => {
+                self.cycle_view(1, agenda)?;
+            }
+            KeyCode::BackTab => {
+                self.cycle_view(-1, agenda)?;
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -933,17 +941,31 @@ impl App {
                     self.view_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.view_create_include_selection.clear();
+                    self.view_create_exclude_selection.clear();
                     self.mode = Mode::ViewCreateCategoryPicker;
                     self.clear_input();
-                    self.status = format!(
-                        "Create view {name}: Space toggles include categories, Enter creates"
-                    );
+                    self.status =
+                        format!("Create view {name}: + include, - exclude, Enter creates");
                 }
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
+    }
+
+    fn toggle_view_create_include(&mut self, category_id: CategoryId) {
+        if !self.view_create_include_selection.insert(category_id) {
+            self.view_create_include_selection.remove(&category_id);
+        }
+        self.view_create_exclude_selection.remove(&category_id);
+    }
+
+    fn toggle_view_create_exclude(&mut self, category_id: CategoryId) {
+        if !self.view_create_exclude_selection.insert(category_id) {
+            self.view_create_exclude_selection.remove(&category_id);
+        }
+        self.view_create_include_selection.remove(&category_id);
     }
 
     fn handle_view_create_category_key(
@@ -956,6 +978,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.view_pending_name = None;
                 self.view_create_include_selection.clear();
+                self.view_create_exclude_selection.clear();
                 self.status = "View create canceled".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -970,11 +993,14 @@ impl App {
                         next_index(self.view_category_index, self.category_rows.len(), -1);
                 }
             }
-            KeyCode::Char(' ') => {
+            KeyCode::Char(' ') | KeyCode::Char('+') => {
                 if let Some(row) = self.category_rows.get(self.view_category_index) {
-                    if !self.view_create_include_selection.insert(row.id) {
-                        self.view_create_include_selection.remove(&row.id);
-                    }
+                    self.toggle_view_create_include(row.id);
+                }
+            }
+            KeyCode::Char('-') => {
+                if let Some(row) = self.category_rows.get(self.view_category_index) {
+                    self.toggle_view_create_exclude(row.id);
                 }
             }
             KeyCode::Enter => {
@@ -985,7 +1011,9 @@ impl App {
                 };
 
                 let mut view = View::new(name.clone());
-                if self.view_create_include_selection.is_empty() {
+                if self.view_create_include_selection.is_empty()
+                    && self.view_create_exclude_selection.is_empty()
+                {
                     if let Some(row) = self.category_rows.get(self.view_category_index) {
                         view.criteria.include.insert(row.id);
                     }
@@ -993,6 +1021,9 @@ impl App {
                     view.criteria
                         .include
                         .extend(self.view_create_include_selection.iter().copied());
+                    view.criteria
+                        .exclude
+                        .extend(self.view_create_exclude_selection.iter().copied());
                 }
 
                 match agenda.store().create_view(&view) {
@@ -1002,15 +1033,18 @@ impl App {
                         self.mode = Mode::Normal;
                         self.view_pending_name = None;
                         self.view_create_include_selection.clear();
+                        self.view_create_exclude_selection.clear();
                         self.status = format!(
-                            "Created view {} (include categories={})",
+                            "Created view {} (include={}, exclude={})",
                             view.name,
-                            view.criteria.include.len()
+                            view.criteria.include.len(),
+                            view.criteria.exclude.len()
                         );
                     }
                     Err(err) => {
                         self.mode = Mode::ViewPicker;
                         self.view_create_include_selection.clear();
+                        self.view_create_exclude_selection.clear();
                         self.status = format!("View create failed: {err}");
                     }
                 }
@@ -2215,7 +2249,9 @@ impl App {
             Mode::ViewCreateNameInput => format!("View create> {}", self.input),
             Mode::ViewRenameInput => format!("View rename> {}", self.input),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
-            Mode::ViewCreateCategoryPicker => "Select include category for new view".to_string(),
+            Mode::ViewCreateCategoryPicker => {
+                "Set include/exclude categories for new view".to_string()
+            }
             Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
             Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
             Mode::CategoryCreateInput => format!("Category create> {}", self.input),
@@ -2241,7 +2277,7 @@ impl App {
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewCreateCategoryPicker => {
-                "j/k:select category  Space:toggle include  Enter:create view  Esc:cancel"
+                "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
             Mode::ViewEditor => "+:include  -:exclude  [/] virtual  s:sections  u:unmatched  Enter:save  Esc:cancel",
             Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
@@ -2256,7 +2292,7 @@ impl App {
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:unassign  Esc:cancel",
             _ => {
-                "n:add  a:assign-item  e:edit-item  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  ,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
+                "n:add  a:assign-item  e:edit-item  m:note  u:unassign  [/]:filter  v/F8:views  c/F9:categories  Tab/,/.:view  []:move  r:remove  d:done  x:delete  i:inspect  q:quit"
             }
         };
 
@@ -2298,7 +2334,7 @@ impl App {
         frame.render_widget(Clear, area);
 
         let mut lines = vec![Line::from(
-            "Choose include categories for new view (Space toggle, Enter create)",
+            "Choose criteria for new view (+ include, - exclude, Enter create)",
         )];
         if self.category_rows.is_empty() {
             lines.push(Line::from("(no categories available)"));
@@ -2321,8 +2357,13 @@ impl App {
                 } else {
                     format!(" [{}]", flags.join(","))
                 };
-                let selected = self.view_create_include_selection.contains(&row.id);
-                let check = if selected { "[x]" } else { "[ ]" };
+                let check = if self.view_create_include_selection.contains(&row.id) {
+                    "[+]"
+                } else if self.view_create_exclude_selection.contains(&row.id) {
+                    "[-]"
+                } else {
+                    "[ ]"
+                };
                 lines.push(Line::from(format!(
                     "{marker}{check} {}{}{}",
                     "  ".repeat(row.depth),
@@ -2333,8 +2374,8 @@ impl App {
         }
 
         let title = match self.mode {
-            Mode::ViewCreateCategoryPicker => "Create View Include",
-            _ => "View Include",
+            Mode::ViewCreateCategoryPicker => "Create View Criteria",
+            _ => "View Criteria",
         };
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -3234,11 +3275,11 @@ struct BoardColumnWidths {
 
 const BOARD_ROW_MARKER_WIDTH: usize = 2;
 const BOARD_COLUMN_SEPARATOR: &str = " | ";
-const BOARD_WHEN_TARGET_WIDTH: usize = 10;
-const BOARD_WHEN_MIN_WIDTH: usize = 6;
+const BOARD_WHEN_TARGET_WIDTH: usize = 19;
+const BOARD_WHEN_MIN_WIDTH: usize = 10;
 const BOARD_ITEM_MIN_WIDTH: usize = 12;
-const BOARD_CATEGORY_TARGET_WIDTH: usize = 24;
-const BOARD_CATEGORY_MIN_WIDTH: usize = 10;
+const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
+const BOARD_CATEGORY_MIN_WIDTH: usize = 14;
 const BOARD_TRUNCATION_SUFFIX: &str = "...";
 
 fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
@@ -3506,7 +3547,7 @@ mod tests {
         add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
         bucket_target_set_mut, build_category_rows, build_reparent_options,
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
-        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        next_index, should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
         CategoryEditTarget, CategoryListRow, Mode,
     };
     use agenda_core::agenda::Agenda;
@@ -3803,6 +3844,107 @@ mod tests {
             .expect("list views")
             .iter()
             .any(|view| view.name == "Keep Me"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_tab_and_backtab_cycle_views() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-tab-cycle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        store
+            .create_view(&View::new("AAA".to_string()))
+            .expect("create first view");
+        store
+            .create_view(&View::new("BBB".to_string()))
+            .expect("create second view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("AAA");
+        app.mode = Mode::Normal;
+        let start_index = app.view_index;
+        let expected_next = app.views[next_index(start_index, app.views.len(), 1)]
+            .name
+            .clone();
+
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab should cycle view");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some(expected_next.as_str())
+        );
+
+        app.handle_normal_key(KeyCode::BackTab, &agenda)
+            .expect("backtab should cycle backwards");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("AAA")
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_create_category_picker_supports_include_and_exclude() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-create-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let include_cat = Category::new("ProjectY".to_string());
+        let exclude_cat = Category::new("Someday".to_string());
+        store
+            .create_category(&include_cat)
+            .expect("create include category");
+        store
+            .create_category(&exclude_cat)
+            .expect("create exclude category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewCreateCategoryPicker;
+        app.view_pending_name = Some("Mixed".to_string());
+        app.view_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == include_cat.id)
+            .expect("include row should exist");
+        app.handle_view_create_category_key(KeyCode::Char('+'), &agenda)
+            .expect("include toggle should work");
+
+        app.view_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == exclude_cat.id)
+            .expect("exclude row should exist");
+        app.handle_view_create_category_key(KeyCode::Char('-'), &agenda)
+            .expect("exclude toggle should work");
+
+        app.handle_view_create_category_key(KeyCode::Enter, &agenda)
+            .expect("view create should succeed");
+
+        let created = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Mixed")
+            .expect("created view exists");
+        assert!(created.criteria.include.contains(&include_cat.id));
+        assert!(created.criteria.exclude.contains(&exclude_cat.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
