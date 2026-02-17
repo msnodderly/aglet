@@ -680,33 +680,35 @@ Selection behavior after save:
 
 ---
 
-## 27. Inspect-panel unassign uses explicit picker mode
+## 27. Item category edits use a unified checkbox picker; inspect is informational
 
 **Date**: 2026-02-16
 **Relevant tasks**: T014
 
-Unassign from inspect is implemented as a dedicated picker mode triggered from
-normal mode with `u` (while inspect panel is open with `i`), rather than
-one-key "remove first assignment" behavior.
+Item category assignment and unassignment are handled in one editor flow
+triggered from normal mode with `a` (and `u` alias), using checkbox toggles.
+Inspect remains focused on provenance display and optional targeted operations.
 
 Interaction contract:
 
-- `i` toggles inspect panel visibility.
-- `u` enters unassign picker when assignments exist.
-- `j/k` selects assignment.
-- `Enter` unassigns selected category from selected item.
-- `Esc` cancels picker.
+- `a` or `u` opens item category editor.
+- `j/k` selects category.
+- `Space` toggles selected category assignment on/off.
+- `n` or `/` opens freeform category-name entry (assign existing or create-and-assign).
+- `Enter` exits editor.
+- `Esc` cancels editor.
 
-Why explicit picker:
+Why unified checkbox picker:
 
-- Inspect entries are sorted and can include many assignments; picker mode keeps
-  the action deterministic and avoids accidental removal.
-- It preserves existing item/section navigation keys in normal mode.
+- It removes the assign/unassign mode split and keeps one low-friction mental
+  model for item category edits.
+- It matches view/category picker interaction style (`j/k` + toggle).
 
 Current mutation path:
 
-- Unassign uses `Store::unassign_item(item_id, category_id)` directly, followed
-  by full UI refresh.
+- Assign uses `Agenda::assign_item_manual(...)`.
+- Unassign is validated through `Agenda::unassign_item_manual(...)` (see §38),
+  then persisted.
 - TUI restores selection to edited item ID where possible after refresh.
 
 ---
@@ -974,3 +976,31 @@ Rationale:
   quick negative-filter workflows.
 - `Tab`/`Shift+Tab` provides faster cycling ergonomics on laptops than symbol
   shortcuts alone.
+
+---
+
+## 38. Unassign preserves subsumption closure (no orphaned child assignment)
+
+**Date**: 2026-02-17  
+**Relevant tasks**: T086
+
+Manual unassign must preserve hierarchy consistency:
+
+- A category assignment cannot be removed while any assigned descendant
+  category remains on the same item.
+- Removal is blocked with an explicit error instructing the user to remove
+  descendant assignment(s) first.
+
+Example:
+
+- Hierarchy: `Person -> George`
+- Item assigned to `George` (therefore `Person` is present via subsumption)
+- Attempting to unassign `Person` directly is rejected until `George` is
+  removed.
+
+Rationale:
+
+- Subsumption defines a closure invariant: assigned descendants imply assigned
+  ancestors.
+- Allowing direct ancestor removal while descendants remain yields inconsistent
+  assignment sets and confusing view results.

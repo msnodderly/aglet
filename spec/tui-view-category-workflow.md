@@ -77,8 +77,7 @@ Out of scope for this phase:
 - `n`: add item in current lane context.
 - `e`: edit selected item text.
 - `m`: edit selected item note.
-- `a`: assign selected item to category.
-- `u`: unassign through inspect panel picker.
+- `a` / `u`: open item category editor (checkbox toggle assign/unassign).
 - `[` / `]`: move selected item between lanes.
 - `r`: remove selected item from current view.
 - `d`: mark selected item done.
@@ -90,6 +89,21 @@ Out of scope for this phase:
 - `i`: toggle inspect panel.
 - `/`: filter input.
 - `q`: quit.
+
+Item category editor behavior:
+
+- `j/k`: move category cursor.
+- `Space`: toggle assignment for highlighted category (`[x]`/`[ ]`).
+- `n` or `/`: freeform category text entry (assign existing; create-and-assign if missing).
+- `Enter`: close editor.
+- `Esc`: cancel editor.
+
+Hierarchy-consistency rule:
+
+- TUI must not allow removing a category assignment when any assigned descendant
+  category still depends on it by subsumption.
+- Example: if an item has `George` (child of `Person`), removing `Person`
+  directly is blocked until `George` is removed first.
 
 ## 5. Category Workflow
 
