@@ -2122,36 +2122,33 @@ impl App {
         let category_names = category_name_map(&self.categories);
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
-            let lines: Vec<Line<'_>> = if slot.items.is_empty() {
-                vec![Line::from("(no items)")]
+            let mut lines: Vec<Line<'_>> = vec![Line::from(board_annotation_header())];
+            if slot.items.is_empty() {
+                lines.push(Line::from("(no items)"));
             } else {
-                slot.items
-                    .iter()
-                    .enumerate()
-                    .map(|(item_index, item)| {
-                        let marker = if is_selected_slot && item_index == self.item_index {
-                            "> "
-                        } else {
-                            "  "
-                        };
-                        let when = item
-                            .when_date
-                            .map(|dt| dt.to_string())
-                            .unwrap_or_else(|| "-".to_string());
-                        let done = if item.is_done { "[done] " } else { "" };
-                        let categories = item_assignment_labels(item, &category_names);
-                        let categories_text = if categories.is_empty() {
-                            "-".to_string()
-                        } else {
-                            categories.join(", ")
-                        };
-                        Line::from(format!(
-                            "{marker}{done}{} | {} | {}",
-                            when, item.text, categories_text
-                        ))
-                    })
-                    .collect()
-            };
+                lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
+                    let marker = if is_selected_slot && item_index == self.item_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    let when = item
+                        .when_date
+                        .map(|dt| dt.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let done = if item.is_done { "[done] " } else { "" };
+                    let categories = item_assignment_labels(item, &category_names);
+                    let categories_text = if categories.is_empty() {
+                        "-".to_string()
+                    } else {
+                        categories.join(", ")
+                    };
+                    Line::from(format!(
+                        "{marker}{done}{} | {} | {}",
+                        when, item.text, categories_text
+                    ))
+                }));
+            }
             let title = format!("{} ({})", slot.title, slot.items.len());
             let border_color = if is_selected_slot {
                 Color::Cyan
@@ -3225,6 +3222,10 @@ fn item_assignment_labels(
     labels
 }
 
+fn board_annotation_header() -> &'static str {
+    "  When | Item | All Categories"
+}
+
 fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
     let parent_by_id: HashMap<CategoryId, Option<CategoryId>> = categories
         .iter()
@@ -3371,7 +3372,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, bucket_target_set_mut, build_category_rows,
+        add_capture_status_message, board_annotation_header, bucket_target_set_mut, build_category_rows,
         build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
         item_assignment_labels, should_render_unmatched_lane, when_bucket_options, App,
         BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
@@ -3791,5 +3792,10 @@ mod tests {
         ]);
         let labels = item_assignment_labels(&item, &names);
         assert_eq!(labels, vec!["garage".to_string(), "slotB".to_string()]);
+    }
+
+    #[test]
+    fn board_annotation_header_matches_v1_contract() {
+        assert_eq!(board_annotation_header(), "  When | Item | All Categories");
     }
 }
