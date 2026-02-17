@@ -1,143 +1,267 @@
-# TUI View + Category Workflow Spec
+# TUI View + Category Workflow Spec (Detailed)
 
-Date: 2026-02-17
-Status: Proposed for implementation
-Scope: TUI interaction model for view management, section layout, and category workflows.
+Date: 2026-02-17  
+Status: Active implementation contract  
+Scope: TUI interaction model for daily board use, category management, and view authoring.
 
-## 1. Problem Statement
+## 1. Goal
 
-Current TUI behavior creates workflow friction:
+Define a clear, low-friction workflow for:
 
-- Section navigation is split into a dedicated left column instead of being a board-like section layout.
-- View editing is limited to a single include category and does not support include/exclude composition.
-- High-friction function-key entry points (`F8`, `F9`) are awkward on laptop keyboards.
-- The unmatched/"Unassigned" section is over-prominent even when it adds little value.
+- navigating work as sections on a board
+- creating and managing categories
+- creating, editing, switching, renaming, and deleting views
+- keeping advanced configuration in-app (no CLI detour required for common work)
 
-This document defines the target interaction model for a streamlined daily loop.
+## 2. Scope and Non-Goals
 
-## 2. Design Goals
+In scope:
 
-- Keep "views are the interface" as the primary interaction model.
-- Make section-based triage visually direct and cursor-driven.
-- Support full query authoring for views (multi-include, multi-exclude, virtual filters).
-- Keep category evolution fast without leaving context.
-- Reduce keyboard friction on MacBooks while preserving compatibility.
+- TUI layout and interaction behavior
+- keyboard mapping and mode semantics
+- view criteria/sections/unmatched editing in TUI
+- phrasing and status-copy expectations
 
-## 3. Main Board Layout
+Out of scope for this phase:
 
-### 3.1 Section Presentation
+- core schema changes in `/Users/mds/src/aglet/crates/agenda-core/src/model.rs`
+- new store schema behavior in `/Users/mds/src/aglet/crates/agenda-core/src/store.rs`
+- CLI UX expansion for new editor workflows
+- persisted "always show unmatched when empty" pin-mode semantics
 
-- Sections are rendered as horizontal bands across the board area.
-- The board is the primary navigation surface; sections are not managed in a separate selector pane.
-- Each section shows:
-  - section title
+## 3. UX Principles
+
+- Item-first: the board and item actions are primary.
+- Mode clarity: each mode has explicit, short, action-oriented hints.
+- Destructive consistency: `x` is delete across TUI surfaces.
+- Laptop-first entry points: `v`, `c`, `,`, `.` are first-class; `F8`/`F9` remain aliases.
+- Local context: add/edit operations act on current section/view focus.
+
+## 4. Main Board Behavior
+
+### 4.1 Layout
+
+- Board renders section lanes as horizontal columns.
+- Each lane shows:
+  - lane title
   - item count
-  - rows of items
+  - item rows with annotation columns (`When | Item | All Categories`)
+- Inspect panel is optional secondary pane and does not act as a section selector.
 
-### 3.2 Cursor Model
+### 4.2 Annotation Contract (V1)
 
-- Cursor movement is spatial in the board:
-  - up/down: item navigation in current section
-  - left/right: adjacent section navigation
-- Add/edit/remove actions always apply to the currently focused section/item context.
+- For this phase, board annotation columns are fixed as:
+  - `When`
+  - `Item`
+  - `All Categories`
+- This applies to all views, including the default `All Items` view.
+- `All Categories` displays every assigned category for the item:
+  - values sorted by category display name
+  - rendered as a comma-separated list
+  - empty when the item has no category assignments
+- This fixed annotation contract is intentionally model-free in this phase (UI behavior only).
 
-## 4. Unmatched Section Policy
+### 4.3 Cursor Model
 
-- Unmatched semantics remain enabled as a safety net.
-- Items still appear in explicit sections OR unmatched, never both.
-- Default presentation policy:
-  - hide unmatched when empty
-  - show unmatched when it has items
-- View editor exposes unmatched options:
-  - show when empty (pin)
-  - hide when empty (default)
-  - rename unmatched label
+- `left/right` (`h/l`): move focused lane.
+- `up/down` (`j/k`): move focused item in current lane.
+- Selection is spatial and preserved across refresh where possible.
 
-Implementation note for current R3 slice:
+### 4.4 Normal Mode Keys
 
-- This phase keeps existing core model/store fields and ships hide-empty default
-  plus unmatched label/toggle configuration in TUI.
-- Persisted always-show-empty pin semantics are deferred to a later iteration.
+- `n`: add item in current lane context.
+- `e`: edit selected item text.
+- `m`: edit selected item note.
+- `a`: assign selected item to category.
+- `u`: unassign through inspect panel picker.
+- `[` / `]`: move selected item between lanes.
+- `r`: remove selected item from current view.
+- `d`: mark selected item done.
+- `x`: delete selected item (confirm).
+- `v` / `F8`: open view palette.
+- `c` / `F9`: open category manager.
+- `,` / `.`: previous/next view.
+- `i`: toggle inspect panel.
+- `/`: filter input.
+- `q`: quit.
 
-## 5. View Management Workflow
+## 5. Category Workflow
 
-## 5.1 View Palette
+### 5.1 Category Manager Keys
 
-The view palette supports:
+- `n`: create subcategory under selected category.
+- `N`: create top-level category (parent = root).
+- `r`: rename selected category.
+- `p`: reparent selected category.
+- `t`: toggle exclusive.
+- `i`: toggle implicit-string matching.
+- `x`: delete selected category (confirm).
+- `Esc` / `F9`: close manager.
 
-- switch view
-- create view
-- rename view
-- delete view
-- open view editor
+### 5.2 Required Copy Semantics
 
-## 5.2 View Editor
+- Creating with `n` must communicate parent explicitly:
+  - `Create subcategory under '<parent>'`
+- Creating with `N` must communicate root explicitly:
+  - `Create top-level category (root parent)`
+- Avoid ambiguous phrases like `create parent <name>`.
 
-View editor supports full criteria editing:
+## 6. View Workflow
 
-- include categories (multiple)
-- exclude categories (multiple)
-- virtual include buckets (e.g. `WhenBucket(today)`)
-- virtual exclude buckets
+### 6.1 View Palette Keys
 
-Authoring behavior:
+- `Enter`: switch active view.
+- `N`: create view.
+- `r`: rename selected view.
+- `x`: delete selected view (confirm).
+- `e`: open full view editor for selected view.
+- `Esc`: close palette.
 
-- category picker supports multi-select toggles
-- include/exclude can be modified incrementally without resetting existing criteria
-- live preview count shows expected matching items before save
+### 6.2 View Creation Flow
 
-## 5.3 Section Configuration
+Step 1: name input
 
-View editor supports explicit section definitions:
+- Enter `View create` mode from palette with `N`.
+- `Enter` proceeds to include-category picker.
+- `Esc` cancels.
 
-- add/remove/reorder sections
-- edit section criteria (full query fields)
-- edit `on_insert_assign` and `on_remove_unassign`
-- toggle `show_children` where criteria is compatible
+Step 2: include-category picker
 
-## 6. Category Workflow Integration
+- `j/k`: move category cursor.
+- `Space`: toggle category include selection.
+- `Enter`: create view from selected includes.
+  - If no toggles were selected, fallback is current highlighted category.
+- `Esc`: cancel and return to palette.
 
-- Category Manager remains the place for structural edits (create, rename, reparent, toggles, delete).
-- View editor and assignment flows provide inline category creation from search/matcher when no match exists.
-- Newly created categories can be immediately inserted into include/exclude sets without leaving the current workflow.
+### 6.3 View Rename Flow
 
-## 7. Keyboard Shortcut Model
+- Open with `r` on selected view.
+- `Enter` saves new name.
+- `Esc` cancels.
 
-## 7.1 Primary Shortcuts (Laptop Friendly)
+### 6.4 View Delete Flow
 
-- `v`: open view palette
-- `c`: open category manager
-- `,`: previous view
-- `.`: next view
+- Open with `x` on selected view.
+- Confirm mode behavior:
+  - `y`: delete selected view.
+  - `n` or `Esc`: cancel.
+- On successful delete:
+  - remain in view palette for cleanup/continued management
+  - keep selection on nearest valid row
+  - if active view was deleted, active index shifts to nearest surviving view
+- `d` is not used for view deletion (reserved for item done in normal mode).
 
-## 7.2 Compatibility Aliases
+### 6.5 View Editor Keys
 
-- `F8` remains an alias for view palette.
-- `F9` remains an alias for category manager.
+Entry: `v` -> select view -> `e`.
 
-## 7.3 Editor-Specific Shortcuts
+- `+`: manage include category set.
+- `-`: manage exclude category set.
+- `]`: manage virtual include buckets.
+- `[`: manage virtual exclude buckets.
+- `s`: section editor.
+- `u`: unmatched settings.
+- `Enter`: save draft to store.
+- `Esc`: cancel draft.
 
-Inside view editor:
+Editor picker behavior:
 
-- `+`: add/include category token
-- `-`: add/exclude category token
-- `s`: section editor
-- `u`: unmatched settings
-- `Enter`: save
-- `Esc`: cancel
+- Category picker: `j/k` + `Space` toggle + `Enter/Esc` back.
+- Bucket picker: `j/k` + `Space` toggle + `Enter/Esc` back.
+- Preview count updates from draft criteria before save.
 
-## 8. UX Language
+### 6.6 Section Editor and Detail
 
-- Use item-first phrasing consistently:
-  - "assign item to category"
-  - "remove item from view"
-  - "insert item in section"
-- Avoid implementation-oriented language in status text.
+Section list mode:
 
-## 9. Acceptance Criteria
+- `N`: add section.
+- `x`: remove section.
+- `[` / `]`: reorder section.
+- `Enter` or `e`: open section detail.
+- `Esc`: return to view editor.
 
-- Board displays sectioned content as horizontal section bands, not as a separate section list column.
-- User can create and edit views with multi-include and multi-exclude criteria entirely inside TUI.
-- Unmatched section behavior is configurable and non-intrusive by default.
-- Primary view/category entry points are usable without function keys on Mac keyboards.
-- Help/footer text reflects the new shortcut model and workflow terms.
+Section detail mode:
+
+- `t`: edit title.
+- `+` / `-`: section include/exclude categories.
+- `]` / `[`: section virtual include/exclude buckets.
+- `a`: edit `on_insert_assign`.
+- `r`: edit `on_remove_unassign`.
+- `h`: toggle `show_children`.
+- `Esc`: back to section list.
+
+### 6.7 Unmatched Settings
+
+- `t`: toggle `show_unmatched`.
+- `l`: edit `unmatched_label`.
+- `Esc`: back to view editor.
+
+Render policy for this phase:
+
+- If unmatched lane has zero items, do not render lane.
+- If unmatched lane has items, render lane.
+- No schema/model changes for "always show when empty" pin persistence.
+
+### 6.8 Update-Through-View Interpretation (V1)
+
+The TUI should favor the minimal logically consistent mutation for actions taken in a view:
+
+- Insert item (`n`) in a lane:
+  - creates item
+  - applies assignment semantics implied by the lane context (`on_insert_assign` or generated lane rules)
+  - if view/section criteria constrain assignment, apply the smallest assignment set that satisfies visible context
+- Remove from view (`r`) in a lane:
+  - unassign categories implied by `on_remove_unassign` / remove-from-view rules for the current view context
+  - does not delete the item from the database
+- Delete item (`x`) is explicit destructive removal from the database and must always require confirmation.
+- Move between lanes (`[` / `]`) is interpreted as:
+  - remove semantics from source lane, then insert semantics into destination lane
+  - with exclusivity rules enforced by category constraints.
+
+## 7. Mode-Specific `e` Semantics
+
+- In normal mode, `e` edits selected item text.
+- In view palette, `e` edits selected view definition.
+- Mode/footer copy must make this distinction explicit.
+
+## 8. Data Contract Constraints
+
+- Keep existing view fields and persistence paths:
+  - `show_unmatched`
+  - `unmatched_label`
+  - `criteria.*`
+  - `sections.*`
+- Persist via existing `store.update_view` / `store.create_view` / `store.delete_view`.
+- No new core schema fields in this phase.
+
+## 9. Deferred Next Slice: Column Headings Inside Sections
+
+The next design slice should define a first-class "column heading" model for board presentation, based on category hierarchy:
+
+- heading category example: `Priority`
+  - values/subcolumns: `High`, `Medium`, `Low`
+- heading category example: `People`
+  - values/subcolumns: person categories
+- heading category example: `Department`
+  - values/subcolumns: `Sales`, `Marketing`, `Engineering`
+
+Open design questions for that slice:
+
+- whether heading/value are view metadata vs derived from existing category parent-child relationships
+- how many heading categories can be active in one view
+- interaction between section criteria and heading-driven subcolumns
+- row/column rendering strategy in narrow terminal widths
+
+## 10. Acceptance Criteria
+
+- No dedicated section-selector pane remains.
+- Board rows use `When | Item | All Categories` annotation columns.
+- `All Items` view uses the same annotation contract by default.
+- View palette supports switch/create/rename/delete/edit.
+- View creation supports multi-category include toggles.
+- View editor supports include/exclude + virtual include/exclude edits without reset.
+- Section add/remove/reorder/detail editing is fully in TUI.
+- Unmatched lane is hidden when empty and configurable for label + enabled toggle.
+- `v`/`c`/`,`/`.` shortcuts work, with `F8`/`F9` aliases preserved.
+- Delete key consistency: `x` is delete action in view/category/item contexts.
+- Help/footer/status copy reflects mode-specific behavior.

@@ -124,6 +124,7 @@ enum Mode {
     ViewCreateNameInput,
     ViewCreateCategoryPicker,
     ViewRenameInput,
+    ViewDeleteConfirm,
     ViewEditor,
     ViewEditorCategoryPicker,
     ViewEditorBucketPicker,
@@ -263,6 +264,7 @@ impl App {
             Mode::ViewCreateNameInput => self.handle_view_create_name_key(code),
             Mode::ViewCreateCategoryPicker => self.handle_view_create_category_key(code, agenda),
             Mode::ViewRenameInput => self.handle_view_rename_key(code, agenda),
+            Mode::ViewDeleteConfirm => self.handle_view_delete_key(code, agenda),
             Mode::ViewEditor => self.handle_view_editor_key(code, agenda),
             Mode::ViewEditorCategoryPicker => self.handle_view_editor_category_key(code),
             Mode::ViewEditorBucketPicker => self.handle_view_editor_bucket_key(code),
@@ -421,7 +423,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =
-                    "View palette: Enter switch, N create, r rename, e edit view, Esc cancel"
+                    "View palette: Enter switch, N create, r rename, x delete, e edit view, Esc cancel"
                         .to_string();
             }
             KeyCode::F(9) | KeyCode::Char('c') => {
@@ -843,6 +845,14 @@ impl App {
                     self.status = "No selected view to edit".to_string();
                 }
             }
+            KeyCode::Char('x') => {
+                if let Some(view) = self.views.get(self.picker_index) {
+                    self.mode = Mode::ViewDeleteConfirm;
+                    self.status = format!("Delete view '{}' ? y/n", view.name);
+                } else {
+                    self.status = "No selected view to delete".to_string();
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.views.is_empty() {
                     self.picker_index = (self.picker_index + 1) % self.views.len();
@@ -856,6 +866,47 @@ impl App {
                         self.picker_index - 1
                     };
                 }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_view_delete_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') => {
+                let Some(view) = self.views.get(self.picker_index).cloned() else {
+                    self.mode = Mode::ViewPicker;
+                    self.status = "Delete failed: no selected view".to_string();
+                    return Ok(false);
+                };
+                let deleted_index = self.picker_index.min(self.views.len().saturating_sub(1));
+                match agenda.store().delete_view(view.id) {
+                    Ok(()) => {
+                        if self.view_index > deleted_index {
+                            self.view_index -= 1;
+                        } else if self.view_index == deleted_index {
+                            self.view_index = deleted_index.saturating_sub(1);
+                        }
+                        self.refresh(agenda.store())?;
+                        self.mode = Mode::ViewPicker;
+                        self.picker_index =
+                            self.picker_index.min(self.views.len().saturating_sub(1));
+                        self.status = format!("Deleted view: {}", view.name);
+                    }
+                    Err(err) => {
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("Delete failed: {err}");
+                    }
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                self.mode = Mode::ViewPicker;
+                self.status = "Delete canceled".to_string();
             }
             _ => {}
         }
@@ -1923,7 +1974,10 @@ impl App {
 
         if matches!(
             self.mode,
-            Mode::ViewPicker | Mode::ViewCreateNameInput | Mode::ViewRenameInput
+            Mode::ViewPicker
+                | Mode::ViewCreateNameInput
+                | Mode::ViewRenameInput
+                | Mode::ViewDeleteConfirm
         ) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
@@ -2161,6 +2215,7 @@ impl App {
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::ViewCreateNameInput => format!("View create> {}", self.input),
             Mode::ViewRenameInput => format!("View rename> {}", self.input),
+            Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategoryPicker => "Select include category for new view".to_string(),
             Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
             Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
@@ -2180,9 +2235,12 @@ impl App {
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
             Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
-            Mode::ViewPicker => "j/k:select  Enter:switch  N:create  r:rename  e:edit view  Esc:cancel",
+            Mode::ViewPicker => {
+                "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  Esc:cancel"
+            }
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
+            Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  Space:toggle include  Enter:create view  Esc:cancel"
             }
@@ -3310,6 +3368,7 @@ fn add_capture_status_message(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
         add_capture_status_message, bucket_target_set_mut, build_category_rows,
@@ -3317,7 +3376,10 @@ mod tests {
         item_assignment_labels, should_render_unmatched_lane, when_bucket_options, App,
         BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode,
     };
+    use agenda_core::agenda::Agenda;
+    use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
+    use agenda_core::store::Store;
     use chrono::NaiveDate;
     use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
@@ -3513,6 +3575,7 @@ mod tests {
             Mode::Normal,
             Mode::ConfirmDelete,
             Mode::ViewPicker,
+            Mode::ViewDeleteConfirm,
             Mode::CategoryManager,
         ] {
             let app = App {
@@ -3548,6 +3611,68 @@ mod tests {
         };
 
         assert_eq!(app.input_cursor_position(footer), Some((8, 1)));
+    }
+
+    #[test]
+    fn view_picker_delete_uses_x_and_removes_selected_view() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-delete-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let keep = View::new("Keep Me".to_string());
+        let remove = View::new("Remove Me".to_string());
+        store.create_view(&keep).expect("create keep view");
+        store.create_view(&remove).expect("create remove view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "Remove Me")
+            .expect("remove view should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('x'), &agenda)
+            .expect("open delete confirm");
+        assert_eq!(app.mode, Mode::ViewDeleteConfirm);
+
+        app.handle_view_delete_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm delete");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(!store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "Remove Me"));
+        assert!(store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "Keep Me"));
+
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "Keep Me")
+            .expect("keep view should exist");
+        app.handle_view_picker_key(KeyCode::Char('d'), &agenda)
+            .expect("d key should be ignored");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "Keep Me"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
