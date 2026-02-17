@@ -8,11 +8,11 @@ use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, Column, Condition, Item, ItemId,
-    DeletionLogEntry, Query, Section, View,
+    Action, Assignment, AssignmentSource, Category, CategoryId, Column, Condition,
+    DeletionLogEntry, Item, ItemId, Query, Section, View,
 };
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS categories (
     name                   TEXT NOT NULL UNIQUE COLLATE NOCASE,
     parent_id              TEXT REFERENCES categories(id),
     is_exclusive           INTEGER NOT NULL DEFAULT 0,
+    is_actionable          INTEGER NOT NULL DEFAULT 1,
     enable_implicit_string INTEGER NOT NULL DEFAULT 1,
     note                   TEXT,
     created_at             TEXT NOT NULL,
@@ -309,14 +310,15 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO categories (
-                    id, name, parent_id, is_exclusive, enable_implicit_string, note,
+                    id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
                     created_at, modified_at, sort_order, conditions_json, actions_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     category.id.to_string(),
                     category.name,
                     category.parent.map(|id| id.to_string()),
                     category.is_exclusive as i32,
+                    category.is_actionable as i32,
                     category.enable_implicit_string as i32,
                     category.note,
                     category.created_at.to_rfc3339(),
@@ -333,7 +335,7 @@ impl Store {
 
     pub fn get_category(&self, id: CategoryId) -> Result<Category> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_id, is_exclusive, enable_implicit_string, note,
+            "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
                     created_at, modified_at, conditions_json, actions_json, sort_order
              FROM categories WHERE id = ?1",
         )?;
@@ -394,16 +396,18 @@ impl Store {
                  SET name = ?1,
                      parent_id = ?2,
                      is_exclusive = ?3,
-                     enable_implicit_string = ?4,
-                     note = ?5,
-                     modified_at = ?6,
-                     conditions_json = ?7,
-                     actions_json = ?8
-                 WHERE id = ?9",
+                     is_actionable = ?4,
+                     enable_implicit_string = ?5,
+                     note = ?6,
+                     modified_at = ?7,
+                     conditions_json = ?8,
+                     actions_json = ?9
+                 WHERE id = ?10",
                 params![
                     category.name,
                     category.parent.map(|id| id.to_string()),
                     category.is_exclusive as i32,
+                    category.is_actionable as i32,
                     category.enable_implicit_string as i32,
                     category.note,
                     modified_at.to_rfc3339(),
@@ -448,7 +452,7 @@ impl Store {
 
     pub fn get_hierarchy(&self) -> Result<Vec<Category>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_id, is_exclusive, enable_implicit_string, note,
+            "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
                     created_at, modified_at, conditions_json, actions_json, sort_order
              FROM categories
              ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
@@ -812,12 +816,13 @@ impl Store {
         let id_str: String = row.get(0)?;
         let parent_id_str: Option<String> = row.get(2)?;
         let is_exclusive: i32 = row.get(3)?;
-        let enable_implicit_string: i32 = row.get(4)?;
-        let created_str: String = row.get(6)?;
-        let modified_str: String = row.get(7)?;
-        let conditions_json: String = row.get(8)?;
-        let actions_json: String = row.get(9)?;
-        let sort_order: i64 = row.get(10)?;
+        let is_actionable: i32 = row.get(4)?;
+        let enable_implicit_string: i32 = row.get(5)?;
+        let created_str: String = row.get(7)?;
+        let modified_str: String = row.get(8)?;
+        let conditions_json: String = row.get(9)?;
+        let actions_json: String = row.get(10)?;
+        let sort_order: i64 = row.get(11)?;
 
         let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
         let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
@@ -829,8 +834,9 @@ impl Store {
                 parent: parent_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
                 children: Vec::new(),
                 is_exclusive: is_exclusive != 0,
+                is_actionable: is_actionable != 0,
                 enable_implicit_string: enable_implicit_string != 0,
-                note: row.get(5)?,
+                note: row.get(6)?,
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_default(),
@@ -981,9 +987,9 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO categories (
-                    id, name, parent_id, is_exclusive, enable_implicit_string, note,
+                    id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
                     created_at, modified_at, sort_order, conditions_json, actions_json
-                 ) VALUES (?1, ?2, NULL, 0, 0, NULL, ?3, ?3, ?4, '[]', '[]')",
+                 ) VALUES (?1, ?2, NULL, 0, 0, 0, NULL, ?3, ?3, ?4, '[]', '[]')",
                 params![id.to_string(), name, now, sort_order],
             )
             .map_err(|err| Self::map_category_write_error(err, name))?;
@@ -1058,6 +1064,7 @@ impl Store {
                 .map_err(|e| AgendaError::StorageError {
                     source: Box::new(e),
                 })?;
+            self.apply_migrations(version)?;
             self.conn
                 .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
@@ -1067,12 +1074,42 @@ impl Store {
 
         Ok(())
     }
+
+    fn apply_migrations(&self, from_version: i32) -> Result<()> {
+        if from_version < 2 && !self.column_exists("categories", "is_actionable")? {
+            self.conn.execute_batch(
+                "ALTER TABLE categories ADD COLUMN is_actionable INTEGER NOT NULL DEFAULT 1;",
+            )?;
+            self.conn.execute(
+                "UPDATE categories
+                 SET is_actionable = 0
+                 WHERE name IN ('When', 'Entry', 'Done') COLLATE NOCASE",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let pragma = format!("PRAGMA table_info({table})");
+        let mut stmt = self.conn.prepare(&pragma)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name.eq_ignore_ascii_case(column) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Assignment, AssignmentSource, Category, Column, Item, Query, Section, View};
+    use crate::model::{
+        Assignment, AssignmentSource, Category, Column, Item, Query, Section, View,
+    };
     use chrono::{Duration, Utc};
     use rusqlite::params;
     use std::collections::HashSet;
@@ -1221,6 +1258,10 @@ mod tests {
                 !cat.enable_implicit_string,
                 "{name} should have enable_implicit_string = false"
             );
+            assert!(
+                !cat.is_actionable,
+                "{name} should have is_actionable = false"
+            );
         }
 
         let when_id = category_id_by_name(&store, "When");
@@ -1309,7 +1350,7 @@ mod tests {
                 "SELECT COUNT(*) FROM deletion_log WHERE item_id = ?1",
                 params![id.to_string()],
                 |row| row.get(0),
-        )
+            )
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -1392,7 +1433,10 @@ mod tests {
         store.create_item(&second).unwrap();
 
         let items = store.list_items().unwrap();
-        let duplicates: Vec<&Item> = items.iter().filter(|item| item.text == "Buy milk").collect();
+        let duplicates: Vec<&Item> = items
+            .iter()
+            .filter(|item| item.text == "Buy milk")
+            .collect();
         assert_eq!(duplicates.len(), 2);
         assert_ne!(duplicates[0].id, duplicates[1].id);
     }
