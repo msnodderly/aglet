@@ -132,6 +132,7 @@ enum Mode {
     ViewEditor,
     ViewEditorCategoryPicker,
     ViewEditorBucketPicker,
+    ViewManagerCategoryPicker,
     ViewSectionEditor,
     ViewSectionDetail,
     ViewSectionTitleInput,
@@ -206,6 +207,7 @@ struct App {
     view_manager_loaded_view_name: Option<String>,
     view_manager_preview_count: usize,
     view_manager_dirty: bool,
+    view_manager_category_row_index: Option<usize>,
     view_create_include_selection: HashSet<CategoryId>,
     view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
@@ -256,6 +258,7 @@ impl Default for App {
             view_manager_loaded_view_name: None,
             view_manager_preview_count: 0,
             view_manager_dirty: false,
+            view_manager_category_row_index: None,
             view_create_include_selection: HashSet::new(),
             view_create_exclude_selection: HashSet::new(),
             view_editor: None,
@@ -344,6 +347,7 @@ impl App {
             Mode::ViewEditor => self.handle_view_editor_key(code, agenda),
             Mode::ViewEditorCategoryPicker => self.handle_view_editor_category_key(code),
             Mode::ViewEditorBucketPicker => self.handle_view_editor_bucket_key(code),
+            Mode::ViewManagerCategoryPicker => self.handle_view_manager_category_picker_key(code),
             Mode::ViewSectionEditor => self.handle_view_section_editor_key(code),
             Mode::ViewSectionDetail => self.handle_view_section_detail_key(code),
             Mode::ViewSectionTitleInput => self.handle_view_section_title_key(code),
@@ -1612,28 +1616,28 @@ impl App {
                 if self.view_manager_pane == ViewManagerPane::Definition {
                     let Some(row) = self
                         .view_manager_rows
-                        .get_mut(self.view_manager_definition_index)
+                        .get(self.view_manager_definition_index)
                     else {
                         self.status = "No criteria row selected".to_string();
                         return Ok(false);
                     };
-                    let non_reserved: Vec<CategoryId> = self
+                    let Some(index) = self
                         .category_rows
                         .iter()
-                        .filter(|cat| !cat.is_reserved)
-                        .map(|cat| cat.id)
-                        .collect();
-                    if non_reserved.is_empty() {
+                        .position(|category| category.id == row.category_id)
+                    else {
+                        self.status = "Current row category is missing".to_string();
+                        return Ok(false);
+                    };
+                    if self.category_rows.is_empty() {
                         self.status = "No user categories available".to_string();
                         return Ok(false);
                     }
-                    let current_index = non_reserved
-                        .iter()
-                        .position(|id| *id == row.category_id)
-                        .unwrap_or(0);
-                    row.category_id = non_reserved[next_index(current_index, non_reserved.len(), 1)];
-                    self.view_manager_dirty = true;
-                    self.refresh_view_manager_preview();
+                    self.view_manager_category_row_index = Some(self.view_manager_definition_index);
+                    self.view_category_index = index;
+                    self.mode = Mode::ViewManagerCategoryPicker;
+                    self.status =
+                        "Pick category: j/k move, Enter choose, Esc cancel".to_string();
                 }
             }
             KeyCode::Char('C') => {
@@ -1682,6 +1686,55 @@ impl App {
             counter += 1;
         }
         candidate
+    }
+
+    fn handle_view_manager_category_picker_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::ViewManagerScreen;
+                self.view_manager_category_row_index = None;
+                self.status = "Category pick canceled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.category_rows.is_empty() {
+                    self.view_category_index =
+                        next_index(self.view_category_index, self.category_rows.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.category_rows.is_empty() {
+                    self.view_category_index =
+                        next_index(self.view_category_index, self.category_rows.len(), -1);
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let Some(target_row_index) = self.view_manager_category_row_index else {
+                    self.mode = Mode::ViewManagerScreen;
+                    self.status = "Category pick failed: no target row".to_string();
+                    return Ok(false);
+                };
+                let Some(selected_row) = self.category_rows.get(self.view_category_index) else {
+                    self.status = "Category pick failed: no category selected".to_string();
+                    return Ok(false);
+                };
+                let selected_category_id = selected_row.id;
+                let selected_category_name = selected_row.name.clone();
+                if selected_row.is_reserved {
+                    self.status = "Reserved categories cannot be used in criteria rows".to_string();
+                    return Ok(false);
+                }
+                if let Some(target_row) = self.view_manager_rows.get_mut(target_row_index) {
+                    target_row.category_id = selected_category_id;
+                    self.view_manager_dirty = true;
+                    self.refresh_view_manager_preview();
+                    self.status = format!("Set criteria row category to {}", selected_category_name);
+                }
+                self.view_manager_category_row_index = None;
+                self.mode = Mode::ViewManagerScreen;
+            }
+            _ => {}
+        }
+        Ok(false)
     }
 
     fn load_view_manager_rows_from_selected_view(&mut self) {
@@ -3084,6 +3137,9 @@ impl App {
         if self.mode == Mode::ViewEditorCategoryPicker {
             self.render_view_editor_category_picker(frame, centered_rect(72, 72, frame.area()));
         }
+        if self.mode == Mode::ViewManagerCategoryPicker {
+            self.render_view_manager_category_picker(frame, centered_rect(72, 72, frame.area()));
+        }
         if self.mode == Mode::ViewEditorBucketPicker {
             self.render_view_editor_bucket_picker(frame, centered_rect(60, 60, frame.area()));
         }
@@ -3534,6 +3590,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "Set include/exclude categories for new view".to_string()
             }
+            Mode::ViewManagerCategoryPicker => "Pick category for criteria row".to_string(),
             Mode::ViewManagerScreen => format!(
                 "View manager pane:{:?} preview:{}{}",
                 self.view_manager_pane,
@@ -3577,8 +3634,9 @@ impl App {
                 "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
             Mode::ViewManagerScreen => {
-                "Tab/Shift+Tab:pane  j/k:row  Enter/Space:toggle-sign  N:add  x:remove  a/o:join  (/):depth  c:next-category  s:save  q/Esc:back"
+                "Tab/Shift+Tab:pane  j/k:row  Enter/Space:toggle-sign  N:add  x:remove  a/o:join  (/):depth  c:pick-category  s:save  q/Esc:back"
             }
+            Mode::ViewManagerCategoryPicker => "j/k:select  Enter/Space:choose  Esc:cancel",
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
@@ -3897,6 +3955,62 @@ impl App {
                         .border_style(Style::default().fg(Color::Magenta)),
                 )
                 .wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_view_manager_category_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
+            vec![Line::from("(no categories)")]
+        } else {
+            self.category_rows
+                .iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    let marker = if index == self.view_category_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    let selected_flag = self
+                        .view_manager_category_row_index
+                        .and_then(|row_index| self.view_manager_rows.get(row_index))
+                        .map(|criteria_row| criteria_row.category_id == row.id)
+                        .unwrap_or(false);
+                    let check = if selected_flag { "[x]" } else { "[ ]" };
+                    let reserved = if row.is_reserved { " [reserved]" } else { "" };
+                    let text = format!(
+                        "{marker}{}{} {}{}",
+                        "  ".repeat(row.depth),
+                        check,
+                        row.name,
+                        reserved
+                    );
+                    if index == self.view_category_index {
+                        Line::styled(text, selected_row_style())
+                    } else {
+                        Line::from(text)
+                    }
+                })
+                .collect()
+        };
+        let scroll = list_scroll_for_selected_line(
+            area,
+            if self.category_rows.is_empty() {
+                None
+            } else {
+                Some(self.view_category_index)
+            },
+        );
+
+        frame.render_widget(
+            Paragraph::new(lines).scroll((scroll, 0)).block(
+                Block::default()
+                    .title("View Manager Category Picker")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Magenta)),
+            ),
             area,
         );
     }
@@ -5891,6 +6005,70 @@ mod tests {
             .find(|v| v.name == "FocusView")
             .expect("saved view");
         assert!(!saved_without_row.criteria.include.contains(&category.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_definition_c_opens_picker_and_applies_category() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-def-picker-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut view = View::new("PickerView".to_string());
+        view.criteria.include.insert(alpha.id);
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "PickerView")
+            .expect("view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.handle_view_manager_key(KeyCode::Tab, &agenda)
+            .expect("move to definition");
+        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
+
+        app.handle_view_manager_key(KeyCode::Char('c'), &agenda)
+            .expect("open picker");
+        assert_eq!(app.mode, Mode::ViewManagerCategoryPicker);
+
+        app.view_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == beta.id)
+            .expect("beta row");
+        app.handle_view_manager_category_picker_key(KeyCode::Enter)
+            .expect("apply picker selection");
+        assert_eq!(app.mode, Mode::ViewManagerScreen);
+        assert_eq!(app.view_manager_rows[0].category_id, beta.id);
+
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("save criteria");
+        let saved = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "PickerView")
+            .expect("saved view");
+        assert!(saved.criteria.include.contains(&beta.id));
+        assert!(!saved.criteria.include.contains(&alpha.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
