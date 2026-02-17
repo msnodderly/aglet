@@ -51,7 +51,7 @@ Why it matters:
 Current state:
 
 - TUI supports navigation/add/move/remove/done/delete/filter/inspect/view switching.
-- TUI supports in-app view create/rename/include-edit from view picker (`F8`).
+- TUI supports in-app view create/rename and full criteria/section/unmatched editing from view palette (`v` with `F8` alias).
 - TUI supports direct item-to-category assignment (`a`).
 - TUI supports category manager flows (create/rename/reparent/toggle/delete).
 - TUI supports inline text and note edits.
