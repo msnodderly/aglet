@@ -70,14 +70,21 @@ Inside TUI, run the following checklist.
 - Press `p`, choose `(root)`, Enter (reparent).
 - Press `F9` to close manager.
 
-2. Sectioned move/remove flow:
+2. View create/edit flow (`F8`):
+- Press `F8`.
+- Press `N`, type `Work Focus`, Enter.
+- In include-category picker, select `Work`, Enter.
+- Press `F8`, select `Work Focus`, press `r`, rename to `Work Board`, Enter.
+- Press `F8`, select `Work Board`, press `e`, select `Project X2`, Enter.
+
+3. Sectioned move/remove flow:
 - Press `F8`, switch to `Smoke Board`.
 - Ensure `Slot A` section is selected, press `n`, add: `smoke flow item`.
 - Press `]` to move to `Slot B`.
 - Press `r` to remove from view.
   - Expected: item disappears from `Smoke Board`.
 
-3. Edit/note/inspect-unassign flow:
+4. Edit/note/inspect-unassign flow:
 - Press `F8`, switch to `All Items`.
 - Select any non-done item.
 - Press `e`, append ` Foo`, Enter.
@@ -85,7 +92,7 @@ Inside TUI, run the following checklist.
 - Press `i` to open inspect panel.
 - Press `u`, choose assignment, Enter to unassign one category.
 
-4. Done/delete flow:
+5. Done/delete flow:
 - With selected item, press `d`.
 - Press `x`, then `y` to confirm delete.
 - Press `q` to exit.
@@ -95,6 +102,9 @@ Inside TUI, run the following checklist.
 ```bash
 # Category structure/toggles changed by TUI manager
 cargo run -q -p agenda-cli -- --db "$DB" category list
+
+# View create/edit persisted
+cargo run -q -p agenda-cli -- --db "$DB" view list
 
 # Note edit visible via search
 cargo run -q -p agenda-cli -- --db "$DB" search "smoke note"
@@ -110,6 +120,7 @@ cargo run -q -p agenda-cli -- --db "$DB" deleted
 
 - TUI remains stable through the full sequence (no crash/forced exit).
 - Category create/rename/reparent/toggle operations succeed and persist.
+- View create/rename/include-edit operations succeed and persist.
 - Item can be moved between `Slot A`/`Slot B` and removed from `Smoke Board`.
 - Inline text edit and note edit persist.
 - Inspect unassign removes selected assignment.
