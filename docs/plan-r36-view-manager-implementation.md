@@ -70,7 +70,7 @@ Legend:
 
 Planned checkpoints (minimum):
 
-- [ ] Commit A: T089 shell state + mode + empty render scaffold + tests.
+- [x] Commit A: T089 shell state + mode + empty render scaffold + tests.
 - [ ] Commit B: T089 key routing + pane focus + entry path + tests.
 - [ ] Commit C: T090 criteria row model + rendering + edits + tests.
 - [ ] Commit D: T090 preview + validation + tests.
@@ -89,3 +89,4 @@ Rule:
 - [x] Wrote detailed plan and TODO checklist.
 - [x] Began T089 coding.
 - [x] Implemented full-screen view manager shell scaffold and pane-navigation tests.
+- [x] Committed checkpoint A (`6a2e621`).
