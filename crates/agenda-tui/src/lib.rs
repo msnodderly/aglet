@@ -5426,9 +5426,9 @@ impl App {
         );
 
         let excl_text = if editor.is_exclusive {
-            "[x] Exclusive"
+            "[x] Exclusive Children"
         } else {
-            "[ ] Exclusive"
+            "[ ] Exclusive Children"
         };
         let noimp_text = if editor.enable_implicit_string {
             "[x] Match category name"
