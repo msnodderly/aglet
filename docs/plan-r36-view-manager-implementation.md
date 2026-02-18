@@ -63,8 +63,8 @@ Legend:
 - [ ] Add unit tests for complete view-manager key map routing.
 - [ ] Add tests for explicit save/cancel behavior and no-implicit-save guarantees.
 - [x] Add tests for representative invalid criteria structures.
-- [ ] Update `docs/test-script-tui-smoke-e2e.md` with R3.6 coverage steps.
-- [ ] Add a focused manual script for view-manager authoring path.
+- [x] Update `docs/test-script-tui-smoke-e2e.md` with R3.6 coverage steps.
+- [x] Add a focused manual script for view-manager authoring path.
 
 ## 4. Commit Strategy (Frequent)
 
@@ -104,3 +104,5 @@ Rule:
 - [x] Added first T091 integration slice:
   section add/remove/reorder in manager pane, unmatched settings entry from manager, and manager-return draft handoff from section editor.
 - [x] Added T091 tests for section pane mutations, editor return handoff, unmatched save path.
+- [x] Updated `docs/test-script-tui-smoke-e2e.md` with manager + preview flow coverage.
+- [x] Added focused manager test script: `docs/test-script-view-manager-r36.md`.

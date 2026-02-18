@@ -81,7 +81,7 @@ Goal: replace the clunky popup view flow with a full-screen manager for boolean 
 - [x] T089 Implement full-screen view manager shell with 3-pane navigation and explicit save/cancel.
 - [x] T090 Implement row-based boolean criteria builder (`+`/`-`, `AND`/`OR`, optional nesting) with validation + preview summary.
 - [~] T091 Integrate section authoring into the same screen (add/remove/reorder + section criteria + insert/remove assignment sets).
-- [ ] T092 Add regression/smoke coverage for view-manager flows and boolean-criteria edge cases.
+- [~] T092 Add regression/smoke coverage for view-manager flows and boolean-criteria edge cases.
 
 Checkpoint:
 

@@ -11,9 +11,9 @@ This script validates the TUI daily loop across:
 - delete (`x`)
 - inline text edit (`e`)
 - note create/edit (`m`)
-- inspect unassign (`i` + `u`)
+- preview provenance unassign (`p` + `o` + `Tab` + `u`)
 - category manager create/rename/reparent/toggle/delete (`c` / `F9`)
-- full view editor criteria/section/unmatched flows (`v` + `e`)
+- full view manager criteria/section/unmatched flows (`v` + `V`)
 
 ## 1) Setup
 
@@ -71,7 +71,7 @@ Inside TUI, run the following checklist.
 - Press `p`, choose `(root)`, Enter (reparent).
 - Press `Esc` (or `F9`) to close manager.
 
-2. View create/edit flow (`v` / `F8` + full editor):
+2. View create/edit flow (`v` / `F8` + full editor + manager):
 - Press `v`.
 - Press `N`, type `Work Focus`, Enter.
 - In include-category picker, select `Work`, Enter.
@@ -79,6 +79,18 @@ Inside TUI, run the following checklist.
 - Press `v`, press `N`, type `Temp Delete`, Enter; in include picker press Enter.
 - Select `Temp Delete`, press `x`, then `n` (cancel) and verify view remains.
 - Press `x`, then `y` and verify `Temp Delete` is removed.
+- Press `v`, select `Work Board`, press `V` to open View Manager.
+  - Press `Tab` to move to Definition pane.
+  - Press `N` to add a row.
+  - Press `o` (set row join OR), then press `s`.
+    - Expected: save is rejected with `Cannot save criteria...`.
+  - Press `a` (switch back to AND), then press `s`.
+    - Expected: save succeeds.
+  - Press `Tab` to move to Sections pane.
+  - Press `N` to add section, then `]` and `[` to reorder.
+  - Press `u` for unmatched settings, `t` to toggle unmatched, `Esc` back.
+  - Press `s` to persist manager changes.
+  - Press `Esc` to return to view palette.
 - Press `v`, select `Work Board`, press `e` to open view editor.
   - Press `+`, toggle `Project X2` with Space, press Enter.
   - Press `-`, toggle `Done` with Space (or another category), press Enter.
@@ -101,12 +113,14 @@ Inside TUI, run the following checklist.
 - Press `r` to remove from view.
   - Expected: item disappears from `Smoke Board`.
 
-4. Edit/note/inspect-unassign flow:
+4. Edit/note/preview-unassign flow:
 - Press `v`, switch to `All Items`.
 - Select any non-done item.
 - Press `e`, append ` Foo`, Enter.
 - Press `m`, type `smoke note`, Enter.
-- Press `i` to open inspect panel.
+- Press `p` to open preview pane.
+- Press `o` to switch to provenance mode.
+- Press `Tab` to focus preview pane.
 - Press `u`, choose assignment, Enter to unassign one category.
 
 5. Done/delete flow:
@@ -138,8 +152,10 @@ cargo run -q -p agenda-cli -- --db "$DB" deleted
 - TUI remains stable through the full sequence (no crash/forced exit).
 - Category create/rename/reparent/toggle operations succeed and persist.
 - View create/rename/full-editor operations succeed and persist.
+- View manager save gate blocks non-representable criteria (`OR`, nesting) and allows representable saves.
+- View manager sections pane can add/remove/reorder sections and edit unmatched settings, then persist with `s`.
 - View delete/cancel flow behaves correctly (`x` then `n`/`y`).
 - Item can be moved between `Slot A`/`Slot B` and removed from `Smoke Board`.
 - Inline text edit and note edit persist.
-- Inspect unassign removes selected assignment.
+- Preview provenance unassign removes selected assignment.
 - Done + delete flow succeeds and appears in deletion log.
