@@ -225,6 +225,7 @@ struct App {
     view_create_include_selection: HashSet<CategoryId>,
     view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
+    view_editor_return_to_manager: bool,
     view_editor_category_target: Option<CategoryEditTarget>,
     view_editor_bucket_target: Option<BucketEditTarget>,
 
@@ -280,6 +281,7 @@ impl Default for App {
             view_create_include_selection: HashSet::new(),
             view_create_exclude_selection: HashSet::new(),
             view_editor: None,
+            view_editor_return_to_manager: false,
             view_editor_category_target: None,
             view_editor_bucket_target: None,
             categories: Vec::new(),
@@ -1526,7 +1528,7 @@ impl App {
                                 .unwrap_or(false)
                         {
                             self.status =
-                                "Unsaved definition changes. Press s to save before switching view."
+                                "Unsaved manager changes. Press s to save before switching view."
                                     .to_string();
                         } else {
                             self.picker_index = next;
@@ -1566,7 +1568,7 @@ impl App {
                                 .unwrap_or(false)
                         {
                             self.status =
-                                "Unsaved definition changes. Press s to save before switching view."
+                                "Unsaved manager changes. Press s to save before switching view."
                                     .to_string();
                         } else {
                             self.picker_index = next;
@@ -1616,9 +1618,7 @@ impl App {
                         self.refresh_view_manager_preview();
                     }
                 } else {
-                    self.status =
-                        "View manager scaffold active (T089): detail actions are in next slice"
-                            .to_string();
+                    self.open_view_manager_section_editor();
                 }
             }
             KeyCode::Char('s') => {
@@ -1626,6 +1626,11 @@ impl App {
                     self.status = "No selected view to save".to_string();
                     return Ok(false);
                 };
+                let validation_errors = self.view_manager_representability_errors();
+                if !validation_errors.is_empty() {
+                    self.status = format!("Cannot save criteria: {}", validation_errors[0]);
+                    return Ok(false);
+                }
                 let mut updated = view.clone();
                 updated.criteria = self.view_manager_query_from_rows(&view);
                 match agenda.store().update_view(&updated) {
@@ -1676,7 +1681,23 @@ impl App {
                         self.refresh_view_manager_preview();
                         self.status = format!("Added criteria row for {}", category_row.name);
                     }
-                    ViewManagerPane::Sections => {}
+                    ViewManagerPane::Sections => {
+                        let Some(view) = self.views.get_mut(self.picker_index) else {
+                            self.status = "No selected view for section add".to_string();
+                            return Ok(false);
+                        };
+                        let next = view.sections.len() + 1;
+                        view.sections.push(Section {
+                            title: format!("Section {next}"),
+                            criteria: Query::default(),
+                            on_insert_assign: HashSet::new(),
+                            on_remove_unassign: HashSet::new(),
+                            show_children: false,
+                        });
+                        self.view_manager_section_index = view.sections.len().saturating_sub(1);
+                        self.view_manager_dirty = true;
+                        self.status = format!("Added Section {next}");
+                    }
                 }
             }
             KeyCode::Char('r') => {
@@ -1726,7 +1747,71 @@ impl App {
                             .unwrap_or_else(|| removed.category_id.to_string());
                         self.status = format!("Removed criteria row {}", category_name);
                     }
-                    ViewManagerPane::Sections => {}
+                    ViewManagerPane::Sections => {
+                        let Some(view) = self.views.get_mut(self.picker_index) else {
+                            self.status = "No selected view for section remove".to_string();
+                            return Ok(false);
+                        };
+                        if view.sections.is_empty() {
+                            self.status = "No section to remove".to_string();
+                            return Ok(false);
+                        }
+                        let remove_index = self
+                            .view_manager_section_index
+                            .min(view.sections.len().saturating_sub(1));
+                        let removed = view.sections.remove(remove_index);
+                        self.view_manager_section_index = self
+                            .view_manager_section_index
+                            .min(view.sections.len().saturating_sub(1));
+                        self.view_manager_dirty = true;
+                        self.status = format!("Removed section {}", removed.title);
+                    }
+                }
+            }
+            KeyCode::Char('[') => {
+                if self.view_manager_pane == ViewManagerPane::Sections {
+                    let Some(view) = self.views.get_mut(self.picker_index) else {
+                        self.status = "No selected view for section reorder".to_string();
+                        return Ok(false);
+                    };
+                    if view.sections.len() < 2 {
+                        self.status = "Need at least two sections to reorder".to_string();
+                        return Ok(false);
+                    }
+                    let current = self
+                        .view_manager_section_index
+                        .min(view.sections.len().saturating_sub(1));
+                    if current == 0 {
+                        return Ok(false);
+                    }
+                    let target = current - 1;
+                    view.sections.swap(current, target);
+                    self.view_manager_section_index = target;
+                    self.view_manager_dirty = true;
+                    self.status = "Moved section up".to_string();
+                }
+            }
+            KeyCode::Char(']') => {
+                if self.view_manager_pane == ViewManagerPane::Sections {
+                    let Some(view) = self.views.get_mut(self.picker_index) else {
+                        self.status = "No selected view for section reorder".to_string();
+                        return Ok(false);
+                    };
+                    if view.sections.len() < 2 {
+                        self.status = "Need at least two sections to reorder".to_string();
+                        return Ok(false);
+                    }
+                    let current = self
+                        .view_manager_section_index
+                        .min(view.sections.len().saturating_sub(1));
+                    if current + 1 >= view.sections.len() {
+                        return Ok(false);
+                    }
+                    let target = current + 1;
+                    view.sections.swap(current, target);
+                    self.view_manager_section_index = target;
+                    self.view_manager_dirty = true;
+                    self.status = "Moved section down".to_string();
                 }
             }
             KeyCode::Char(' ') => {
@@ -1814,6 +1899,11 @@ impl App {
                     self.mode = Mode::ViewManagerCategoryPicker;
                     self.status =
                         "Pick category: j/k move, Enter choose, Esc cancel".to_string();
+                }
+            }
+            KeyCode::Char('u') => {
+                if self.view_manager_pane == ViewManagerPane::Sections {
+                    self.open_view_manager_unmatched_settings();
                 }
             }
             KeyCode::Char('C') => {
@@ -1960,6 +2050,57 @@ impl App {
         self.view_manager_definition_index = 0;
         self.refresh_view_manager_preview();
         self.view_manager_dirty = false;
+    }
+
+    fn view_manager_category_label(&self, category_id: CategoryId) -> String {
+        self.category_rows
+            .iter()
+            .find(|row| row.id == category_id)
+            .map(|row| row.name.clone())
+            .unwrap_or_else(|| category_id.to_string())
+    }
+
+    fn view_manager_representability_errors(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        let mut seen: HashMap<CategoryId, (ViewCriteriaSign, usize)> = HashMap::new();
+        for (index, row) in self.view_manager_rows.iter().enumerate() {
+            let label = self.view_manager_category_label(row.category_id);
+            if index > 0 && row.join_is_or {
+                errors.push(format!(
+                    "Row {} ({}) uses OR; current persistence only supports AND.",
+                    index + 1,
+                    label
+                ));
+            }
+            if row.depth > 0 {
+                errors.push(format!(
+                    "Row {} ({}) uses nesting depth {}; only depth 0 is persistable.",
+                    index + 1,
+                    label,
+                    row.depth
+                ));
+            }
+            if let Some((prior_sign, prior_index)) = seen.get(&row.category_id).copied() {
+                if prior_sign == row.sign {
+                    errors.push(format!(
+                        "Row {} ({}) duplicates row {}.",
+                        index + 1,
+                        label,
+                        prior_index + 1
+                    ));
+                } else {
+                    errors.push(format!(
+                        "Row {} ({}) conflicts with row {} (+/- mismatch).",
+                        index + 1,
+                        label,
+                        prior_index + 1
+                    ));
+                }
+            } else {
+                seen.insert(row.category_id, (row.sign, index));
+            }
+        }
+        errors
     }
 
     fn view_manager_query_from_rows(&self, base_view: &View) -> Query {
@@ -2316,9 +2457,86 @@ impl App {
             action_index: 0,
             preview_count,
         });
+        self.view_editor_return_to_manager = false;
         self.view_editor_category_target = None;
         self.view_editor_bucket_target = None;
         self.mode = Mode::ViewEditor;
+    }
+
+    fn open_view_manager_section_editor(&mut self) {
+        let Some(view) = self.views.get(self.picker_index).cloned() else {
+            self.status = "No selected view for section editing".to_string();
+            return;
+        };
+        let preview_count = self.preview_count_for_query(&view.criteria);
+        self.view_editor = Some(ViewEditorState {
+            base_view_name: view.name.clone(),
+            draft: view.clone(),
+            category_index: first_non_reserved_category_index(&self.category_rows),
+            bucket_index: 0,
+            section_index: self
+                .view_manager_section_index
+                .min(view.sections.len().saturating_sub(1)),
+            action_index: 4,
+            preview_count,
+        });
+        self.view_editor_return_to_manager = true;
+        self.view_editor_category_target = None;
+        self.view_editor_bucket_target = None;
+        self.mode = Mode::ViewSectionEditor;
+        self.status = "Section editor: N/x/[/] and Enter detail, Esc return to manager"
+            .to_string();
+    }
+
+    fn open_view_manager_unmatched_settings(&mut self) {
+        let Some(view) = self.views.get(self.picker_index).cloned() else {
+            self.status = "No selected view for unmatched settings".to_string();
+            return;
+        };
+        let preview_count = self.preview_count_for_query(&view.criteria);
+        self.view_editor = Some(ViewEditorState {
+            base_view_name: view.name.clone(),
+            draft: view,
+            category_index: first_non_reserved_category_index(&self.category_rows),
+            bucket_index: 0,
+            section_index: 0,
+            action_index: 5,
+            preview_count,
+        });
+        self.view_editor_return_to_manager = true;
+        self.view_editor_category_target = None;
+        self.view_editor_bucket_target = None;
+        self.mode = Mode::ViewUnmatchedSettings;
+        self.status = "Unmatched settings: t toggle, l label, Esc return to manager".to_string();
+    }
+
+    fn apply_view_editor_draft_to_selected_view_manager_view(&mut self) {
+        if !self.view_editor_return_to_manager {
+            return;
+        }
+        let Some(editor) = &self.view_editor else {
+            return;
+        };
+        let Some(view) = self.views.get_mut(self.picker_index) else {
+            return;
+        };
+        view.sections = editor.draft.sections.clone();
+        view.show_unmatched = editor.draft.show_unmatched;
+        view.unmatched_label = editor.draft.unmatched_label.clone();
+        self.view_manager_section_index = self
+            .view_manager_section_index
+            .min(view.sections.len().saturating_sub(1));
+        self.view_manager_dirty = true;
+    }
+
+    fn finish_view_editor_return_to_manager(&mut self, status: &str) {
+        self.apply_view_editor_draft_to_selected_view_manager_view();
+        self.view_editor = None;
+        self.view_editor_return_to_manager = false;
+        self.view_editor_category_target = None;
+        self.view_editor_bucket_target = None;
+        self.mode = Mode::ViewManagerScreen;
+        self.status = status.to_string();
     }
 
     fn preview_count_for_query(&self, query: &Query) -> usize {
@@ -2344,6 +2562,7 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
                 self.view_editor = None;
+                self.view_editor_return_to_manager = false;
                 self.view_editor_category_target = None;
                 self.view_editor_bucket_target = None;
                 self.clear_input();
@@ -2361,6 +2580,7 @@ impl App {
                         self.set_view_selection_by_name(&editor.base_view_name);
                         self.mode = Mode::ViewPicker;
                         self.view_editor = None;
+                        self.view_editor_return_to_manager = false;
                         self.view_editor_category_target = None;
                         self.view_editor_bucket_target = None;
                         self.status = format!("Updated view {}", editor.base_view_name);
@@ -2541,68 +2761,93 @@ impl App {
     }
 
     fn handle_view_section_editor_key(&mut self, code: KeyCode) -> Result<bool, String> {
-        let Some(editor) = &mut self.view_editor else {
-            self.mode = Mode::ViewPicker;
+        if self.view_editor.is_none() {
+            if self.view_editor_return_to_manager {
+                self.mode = Mode::ViewManagerScreen;
+                self.view_editor_return_to_manager = false;
+            } else {
+                self.mode = Mode::ViewPicker;
+            }
             return Ok(false);
-        };
+        }
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::ViewEditor;
-                self.status = "View editor".to_string();
+                if self.view_editor_return_to_manager {
+                    self.finish_view_editor_return_to_manager(
+                        "Updated sections in manager draft (press s to persist)",
+                    );
+                } else {
+                    self.mode = Mode::ViewEditor;
+                    self.status = "View editor".to_string();
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !editor.draft.sections.is_empty() {
-                    editor.section_index =
-                        next_index(editor.section_index, editor.draft.sections.len(), 1);
+                if let Some(editor) = &mut self.view_editor {
+                    if !editor.draft.sections.is_empty() {
+                        editor.section_index =
+                            next_index(editor.section_index, editor.draft.sections.len(), 1);
+                    }
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if !editor.draft.sections.is_empty() {
-                    editor.section_index =
-                        next_index(editor.section_index, editor.draft.sections.len(), -1);
+                if let Some(editor) = &mut self.view_editor {
+                    if !editor.draft.sections.is_empty() {
+                        editor.section_index =
+                            next_index(editor.section_index, editor.draft.sections.len(), -1);
+                    }
                 }
             }
             KeyCode::Char('N') => {
-                let next = editor.draft.sections.len() + 1;
-                editor.draft.sections.push(Section {
-                    title: format!("Section {next}"),
-                    criteria: Query::default(),
-                    on_insert_assign: HashSet::new(),
-                    on_remove_unassign: HashSet::new(),
-                    show_children: false,
-                });
-                editor.section_index = editor.draft.sections.len().saturating_sub(1);
+                if let Some(editor) = &mut self.view_editor {
+                    let next = editor.draft.sections.len() + 1;
+                    editor.draft.sections.push(Section {
+                        title: format!("Section {next}"),
+                        criteria: Query::default(),
+                        on_insert_assign: HashSet::new(),
+                        on_remove_unassign: HashSet::new(),
+                        show_children: false,
+                    });
+                    editor.section_index = editor.draft.sections.len().saturating_sub(1);
+                }
             }
             KeyCode::Char('x') => {
-                if !editor.draft.sections.is_empty() {
-                    editor.draft.sections.remove(editor.section_index);
-                    editor.section_index = editor
-                        .section_index
-                        .min(editor.draft.sections.len().saturating_sub(1));
+                if let Some(editor) = &mut self.view_editor {
+                    if !editor.draft.sections.is_empty() {
+                        editor.draft.sections.remove(editor.section_index);
+                        editor.section_index = editor
+                            .section_index
+                            .min(editor.draft.sections.len().saturating_sub(1));
+                    }
                 }
             }
             KeyCode::Char('[') => {
-                if editor.section_index > 0 {
-                    editor
-                        .draft
-                        .sections
-                        .swap(editor.section_index, editor.section_index - 1);
-                    editor.section_index -= 1;
+                if let Some(editor) = &mut self.view_editor {
+                    if editor.section_index > 0 {
+                        editor
+                            .draft
+                            .sections
+                            .swap(editor.section_index, editor.section_index - 1);
+                        editor.section_index -= 1;
+                    }
                 }
             }
             KeyCode::Char(']') => {
-                if editor.section_index + 1 < editor.draft.sections.len() {
-                    editor
-                        .draft
-                        .sections
-                        .swap(editor.section_index, editor.section_index + 1);
-                    editor.section_index += 1;
+                if let Some(editor) = &mut self.view_editor {
+                    if editor.section_index + 1 < editor.draft.sections.len() {
+                        editor
+                            .draft
+                            .sections
+                            .swap(editor.section_index, editor.section_index + 1);
+                        editor.section_index += 1;
+                    }
                 }
             }
             KeyCode::Enter | KeyCode::Char('e') => {
-                if !editor.draft.sections.is_empty() {
-                    self.mode = Mode::ViewSectionDetail;
-                    self.status = "Section detail: t title, +/- categories, [/ ] virtual, a insert-set, r remove-set, h toggle children, Esc back".to_string();
+                if let Some(editor) = &self.view_editor {
+                    if !editor.draft.sections.is_empty() {
+                        self.mode = Mode::ViewSectionDetail;
+                        self.status = "Section detail: t title, +/- categories, [/ ] virtual, a insert-set, r remove-set, h toggle children, Esc back".to_string();
+                    }
                 }
             }
             _ => {}
@@ -2699,12 +2944,23 @@ impl App {
             .as_ref()
             .map(|editor| editor.draft.unmatched_label.clone());
         if label.is_none() {
-            self.mode = Mode::ViewPicker;
+            if self.view_editor_return_to_manager {
+                self.mode = Mode::ViewManagerScreen;
+                self.view_editor_return_to_manager = false;
+            } else {
+                self.mode = Mode::ViewPicker;
+            }
             return Ok(false);
         }
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::ViewEditor;
+                if self.view_editor_return_to_manager {
+                    self.finish_view_editor_return_to_manager(
+                        "Updated unmatched settings in manager draft (press s to persist)",
+                    );
+                } else {
+                    self.mode = Mode::ViewEditor;
+                }
             }
             KeyCode::Char('t') => {
                 if let Some(editor) = &mut self.view_editor {
@@ -3539,6 +3795,7 @@ impl App {
             Line::from(""),
         ];
         if let Some(view) = selected_view {
+            let validation_errors = self.view_manager_representability_errors();
             definition_lines.push(Line::from(format!("View: {}", view.name)));
             definition_lines.push(Line::from(format!(
                 "Rows: {}{}",
@@ -3549,6 +3806,18 @@ impl App {
                 "Preview matching: {}",
                 self.view_manager_preview_count
             )));
+            if validation_errors.is_empty() {
+                definition_lines.push(Line::from("Validation: ok"));
+            } else {
+                definition_lines.push(Line::styled(
+                    format!("Validation errors: {}", validation_errors.len()),
+                    Style::default().fg(Color::Red),
+                ));
+                definition_lines.push(Line::styled(
+                    format!("  - {}", validation_errors[0]),
+                    Style::default().fg(Color::Red),
+                ));
+            }
             definition_lines.push(Line::from(""));
             if self.view_manager_rows.is_empty() {
                 definition_lines.push(Line::from("(no criteria rows)"));
@@ -3608,7 +3877,7 @@ impl App {
         );
 
         let mut section_lines = vec![
-            Line::from("Sections (shell)"),
+            Line::from("Sections"),
             Line::from(""),
         ];
         if let Some(view) = selected_view {
@@ -3902,7 +4171,7 @@ impl App {
                 "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
             Mode::ViewManagerScreen => {
-                "Tab/Shift+Tab:pane  j/k:row  Enter/Space:toggle-sign  N:add  x:remove  a/o:join  (/):depth  c:pick-category  s:save  q/Esc:back"
+                "Tab/Shift+Tab:pane  j/k:row  Enter:activate  N:add  x:remove  [/] reorder  a/o:join  (/):depth  c:pick-category  u:unmatched  s:save  q/Esc:back"
             }
             Mode::ViewManagerCategoryPicker => "j/k:select  Enter/Space:choose  Esc:cancel",
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
@@ -6131,6 +6400,179 @@ mod tests {
     }
 
     #[test]
+    fn view_manager_sections_support_add_remove_and_reorder() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-sections-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "A".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        view.sections.push(Section {
+            title: "B".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "Board")
+            .expect("board view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.view_manager_pane = ViewManagerPane::Sections;
+
+        app.handle_view_manager_key(KeyCode::Char(']'), &agenda)
+            .expect("reorder down");
+        let selected = app.views.get(app.picker_index).expect("selected view");
+        assert_eq!(selected.sections[0].title, "B");
+        assert_eq!(selected.sections[1].title, "A");
+
+        app.handle_view_manager_key(KeyCode::Char('['), &agenda)
+            .expect("reorder up");
+        let selected = app.views.get(app.picker_index).expect("selected view");
+        assert_eq!(selected.sections[0].title, "A");
+        assert_eq!(selected.sections[1].title, "B");
+
+        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
+            .expect("add section");
+        let selected = app.views.get(app.picker_index).expect("selected view");
+        assert_eq!(selected.sections.len(), 3);
+
+        app.handle_view_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("remove section");
+        let selected = app.views.get(app.picker_index).expect("selected view");
+        assert_eq!(selected.sections.len(), 2);
+        assert!(app.view_manager_dirty);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_section_editor_returns_and_applies_draft_changes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-section-editor-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "A".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "Board")
+            .expect("board view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.view_manager_pane = ViewManagerPane::Sections;
+
+        app.handle_view_manager_key(KeyCode::Enter, &agenda)
+            .expect("open section editor");
+        assert_eq!(app.mode, Mode::ViewSectionEditor);
+
+        app.handle_view_section_editor_key(KeyCode::Char('N'))
+            .expect("add section in editor");
+        app.handle_view_section_editor_key(KeyCode::Esc)
+            .expect("return to manager");
+        assert_eq!(app.mode, Mode::ViewManagerScreen);
+
+        let selected = app.views.get(app.picker_index).expect("selected view");
+        assert_eq!(selected.sections.len(), 2);
+        assert!(app.view_manager_dirty);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_unmatched_settings_apply_and_persist_on_save() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-unmatched-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let view = View::new("Board".to_string());
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "Board")
+            .expect("board view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.view_manager_pane = ViewManagerPane::Sections;
+
+        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
+            .expect("add section");
+        app.handle_view_manager_key(KeyCode::Char('u'), &agenda)
+            .expect("open unmatched settings");
+        assert_eq!(app.mode, Mode::ViewUnmatchedSettings);
+        app.handle_view_unmatched_settings_key(KeyCode::Char('t'))
+            .expect("toggle unmatched");
+        app.handle_view_unmatched_settings_key(KeyCode::Esc)
+            .expect("return to manager");
+        assert_eq!(app.mode, Mode::ViewManagerScreen);
+
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("save manager changes");
+
+        let saved = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "Board")
+            .expect("saved board");
+        assert_eq!(saved.sections.len(), 1);
+        assert!(!saved.show_unmatched);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_manager_escape_returns_to_view_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6359,6 +6801,124 @@ mod tests {
             .find(|v| v.name == "FocusView")
             .expect("saved view");
         assert!(!saved_without_row.criteria.include.contains(&category.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_save_rejects_or_rows_as_not_representable() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-or-invalid-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut view = View::new("InvalidOr".to_string());
+        view.criteria.include.insert(alpha.id);
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "InvalidOr")
+            .expect("view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.view_manager_pane = ViewManagerPane::Definition;
+        app.view_manager_rows = vec![
+            super::ViewCriteriaRow {
+                sign: super::ViewCriteriaSign::Include,
+                category_id: alpha.id,
+                join_is_or: false,
+                depth: 0,
+            },
+            super::ViewCriteriaRow {
+                sign: super::ViewCriteriaSign::Include,
+                category_id: beta.id,
+                join_is_or: true,
+                depth: 0,
+            },
+        ];
+        app.view_manager_dirty = true;
+
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("attempt save");
+        assert!(app.status.starts_with("Cannot save criteria: "));
+
+        let saved = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "InvalidOr")
+            .expect("saved view");
+        assert!(saved.criteria.include.contains(&alpha.id));
+        assert!(!saved.criteria.include.contains(&beta.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_manager_save_rejects_nested_rows_as_not_representable() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-depth-invalid-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        store.create_category(&alpha).expect("create alpha");
+
+        let mut view = View::new("InvalidDepth".to_string());
+        view.criteria.include.insert(alpha.id);
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|v| v.name == "InvalidDepth")
+            .expect("view exists");
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open manager");
+        app.view_manager_pane = ViewManagerPane::Definition;
+        app.view_manager_rows = vec![super::ViewCriteriaRow {
+            sign: super::ViewCriteriaSign::Include,
+            category_id: alpha.id,
+            join_is_or: false,
+            depth: 1,
+        }];
+        app.view_manager_dirty = true;
+
+        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
+            .expect("attempt save");
+        assert!(app.status.starts_with("Cannot save criteria: "));
+
+        let saved = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "InvalidDepth")
+            .expect("saved view");
+        assert!(saved.criteria.include.contains(&alpha.id));
+        assert!(saved.criteria.exclude.is_empty());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
