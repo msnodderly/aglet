@@ -1171,6 +1171,8 @@ the full-screen manager:
   draft changes.
 - `u` from Sections opens unmatched settings and returns to manager with draft
   changes.
+- Exiting manager with `Esc`/`q` discards unsaved manager draft changes
+  (explicit `s` is required to persist).
 
 Rationale:
 
