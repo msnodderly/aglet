@@ -7,6 +7,63 @@ The CLE version of this may end up being a replacement for BR. In fact, I want t
 I just had the horrible thought that I'm reinventing half of Jira.  Be careful that this doesn't turn into an issue tracker. This is an information manager.
 
 A better thing to think about is VisiData. That is a nice model for how it should feel to use the application.
+
+Views: Utilities Show Command Menu
+
+
+MARKING ITEMS
+
+
+
+Views: Utilities Show Command Menu
+
+COMMAND            PURPOSE
+-----------------  -----------------------------------------------------------
+Match              Show items that contain a particular word or phrase
+
+Prereqs            Show items on which the current item depends (&)
+
+Depends            Show items that depend on (&) the current item
+
+ItemsDone          Show items that are marked done (!!)
+
+Circular           Show items caught in circular references (o)
+
+Alarm              Show items with pending or triggered alarms (@)
+
+Sched              Show items assigned to a particular date
+
+Every              Show all items in the current Agenda file
+
+SEE ALSO
+
+    Use a menu,   About show views,   » Index 
+
+Views: Utilities Show Prereqs Command Menu
+
+COMMAND            PURPOSE
+-----------------  -----------------------------------------------------------
+One Level          Show items immediately prerequisite to current item
+
+All Levels         Show entire chain of items prerequisite to current item
+
+Every Item         Show every item that has prerequisites (all dependent
+                   items)
+
+SEE ALSO
+
+    Use a menu,   About show views,   » Index 
+
+Views: Utilities Show Depends Command Menu
+
+COMMAND            PURPOSE
+-----------------  -----------------------------------------------------------
+One Level          Show items immediately dependent on current item
+
+All Levels         Show entire chain of items dependent on current item
+
+Every Item         Show every item on which other items are dependent
+
 ---
 
 
