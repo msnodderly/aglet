@@ -609,38 +609,41 @@ Example (local reference date Monday 2026-02-16):
 
 ---
 
-## 25. TUI category manager is modal-first with low-friction child/root create
+## 25. TUI category manager is full-screen with popup config editor
 
-**Date**: 2026-02-16
-**Relevant tasks**: T010
+**Date**: 2026-02-18
+**Relevant tasks**: T010, T011
 
-The TUI category manager enters as a modal (`F9`) over the active view
-instead of replacing the primary item board layout. This keeps the daily
-triage context visible while exposing category operations.
+The category manager (`F9`) now uses a dedicated full-screen surface in the
+main content area, with category configuration moved into a secondary popup
+editor opened via `Enter`.
 
-MVP interaction contract:
+Interaction contract:
 
 - `F9` opens/closes category manager.
-- Category list renders as a hierarchy (indented tree).
-- `n` creates a category under the selected category (fast child creation).
-- `N` creates a top-level category.
+- Category list renders as an always-expanded hierarchy (indented tree).
+- `Enter` opens category config popup for selected category.
+- Popup edits:
+  - `is_exclusive`
+  - `enable_implicit_string` (match category name)
+  - `is_actionable`
+  - category `note` (multiline)
+- Popup uses explicit `Save`/`Cancel`.
+- Quick toggles remain available from manager list:
+  - `e`: exclusive
+  - `i`: match category name
+  - `a`: actionable
+
+Reserved-category policy for config:
+
+- Reserved categories are read-only for config flags and category note.
+- Reserved categories remain protected by existing delete/rename invariants.
+
+Create/delete behavior remains low-friction:
+
+- `n` creates under selected category.
+- `N` creates top-level category.
 - `x` deletes selected category with explicit `y/n` confirmation.
-
-Why this shape:
-
-- It maps directly to low-friction CLI workflows in demo logs (rapid category
-  shaping before/alongside item triage) without forcing users to leave the TUI.
-- Child-create on selection matches the common "build branch now" flow
-  (`Work -> Project -> Subproject`) seen in demos.
-- Root-create remains one keypress away for global categories like `Priority`.
-
-Delete behavior intentionally uses existing core/store invariants:
-
-- Reserved categories cannot be deleted.
-- Categories with children cannot be deleted.
-
-The TUI surfaces these as operation errors in status text instead of adding
-UI-side duplicate validation logic in MVP.
 
 ---
 
@@ -742,14 +745,17 @@ No-view fallback policy:
 **Date**: 2026-02-16
 **Relevant tasks**: T011
 
-Structural category edits are handled directly in the category manager modal:
+Structural category edits are handled in manager context, with a dedicated
+config popup for field edits:
 
 - `r` rename selected category.
 - `p` reparent selected category.
-- `t` toggle `is_exclusive`.
+- `e` toggle `is_exclusive`.
 - `i` toggle `enable_implicit_string`.
+- `a` toggle `is_actionable`.
+- `Enter` open config popup for checkboxes + multiline category note.
 
-All four operations route through `Agenda::update_category(...)` so
+All config mutations route through `Agenda::update_category(...)` so
 retroactive evaluation behavior remains consistent with existing core rules.
 
 Reparent UX details:

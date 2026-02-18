@@ -121,11 +121,19 @@ Out of scope (for this slice):
 ### 5.6 Category Manager
 
 - global category hierarchy management
-- grid-style rows with toggles:
-  - exclusive
-  - no-implicit
-  - actionable/todo applicability
-- arrow key navigation across rows/columns
+- full-screen manager surface (replaces prior popup-style manager)
+- hierarchy list is always expanded (no collapse/expand state)
+- `Enter` opens a centered category-config popup for the selected category
+- config popup includes:
+  - exclusive checkbox
+  - match-category-name checkbox (`enable_implicit_string`)
+  - actionable/todo checkbox
+  - multiline category note editor
+- quick toggles remain available in manager context:
+  - `e`: exclusive
+  - `i`: match category name
+  - `a`: actionable
+- reserved categories are read-only for config fields and note
 - creation copy must be explicit:
   - `n`: subcategory under selected parent
   - `N`: top-level category (root parent)
