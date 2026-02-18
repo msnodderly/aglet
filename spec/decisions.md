@@ -1146,3 +1146,35 @@ Rationale:
   preserving advanced provenance operations.
 - Resolves keybinding conflict by reserving `Tab` for focus management rather
   than view cycling.
+
+---
+
+## 44. View Manager save is gated by representability; section/unmatched authoring is reachable from manager
+
+**Date**: 2026-02-18
+**Relevant tasks**: T090, T091
+
+Given current persistence is a flat `include`/`exclude` query set, the View
+Manager now blocks save when criteria rows are not representable.
+
+Current save gate rejects rows that use:
+
+- `OR` joins (beyond row 1)
+- nesting depth (`depth > 0`)
+- duplicate/conflicting category rows
+
+Additionally, section and unmatched authoring are now reachable directly from
+the full-screen manager:
+
+- Sections pane supports `N`/`x`/`[`/`]` for add/remove/reorder.
+- `Enter` from Sections opens section editor flow and returns to manager with
+  draft changes.
+- `u` from Sections opens unmatched settings and returns to manager with draft
+  changes.
+
+Rationale:
+
+- Prevents silently lossy saves for boolean row expressions that current model
+  cannot persist exactly.
+- Keeps section/unmatched workflows anchored in the manager instead of forcing a
+  separate top-level editor path.
