@@ -53,15 +53,15 @@ Legend:
 
 - [x] Render section list in right pane.
 - [x] Implement section add/remove/reorder (`N`, `x`, `[`, `]`).
-- [~] Implement section detail editor (`t`, row edits, `i`, `r`, `h`).
+- [x] Implement section detail editor (`t`, row edits, `i`, `r`, `h`).
 - [x] Wire section draft save path to existing store update flow.
 - [x] Ensure unmatched config entry is reachable in same screen (`u`).
 - [x] Add tests for section mutations and persistence handoff.
 
 ### T092 - Regression + Smoke Coverage
 
-- [ ] Add unit tests for complete view-manager key map routing.
-- [ ] Add tests for explicit save/cancel behavior and no-implicit-save guarantees.
+- [x] Add unit tests for complete view-manager key map routing.
+- [x] Add tests for explicit save/cancel behavior and no-implicit-save guarantees.
 - [x] Add tests for representative invalid criteria structures.
 - [x] Update `docs/test-script-tui-smoke-e2e.md` with R3.6 coverage steps.
 - [x] Add a focused manual script for view-manager authoring path.
@@ -74,8 +74,8 @@ Planned checkpoints (minimum):
 - [x] Commit B: T089 key routing + pane focus + entry path + tests.
 - [~] Commit C: T090 criteria row model + rendering + edits + tests.
 - [x] Commit D: T090 preview + validation + tests.
-- [~] Commit E: T091 sections integration + tests.
-- [ ] Commit F: T092 smoke/docs updates.
+- [x] Commit E: T091 sections integration + tests.
+- [x] Commit F: T092 smoke/docs updates.
 
 Rule:
 
@@ -106,3 +106,5 @@ Rule:
 - [x] Added T091 tests for section pane mutations, editor return handoff, unmatched save path.
 - [x] Updated `docs/test-script-tui-smoke-e2e.md` with manager + preview flow coverage.
 - [x] Added focused manager test script: `docs/test-script-view-manager-r36.md`.
+- [x] Added T092 save/cancel regression (`Esc` from manager discards unsaved draft changes).
+- [x] Added T091 section-detail regression for `h`, on-insert assign, and on-remove unassign in manager path.
