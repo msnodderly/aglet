@@ -1109,3 +1109,40 @@ Rationale:
 - Keeps compatibility with current `Query` persistence surface.
 - Allows iterative addition of representability validation/conversion before
   committing to a richer persisted expression model.
+
+---
+
+## 43. Item browsing uses one preview pane; `Tab` switches focus instead of cycling views
+
+**Date**: 2026-02-18
+**Relevant tasks**: T075, T076, T090
+
+For normal item browsing, the TUI now uses a single lower preview pane instead
+of separate top-level `inspect` and `item-details` panes.
+
+This supersedes the normal-mode `Tab`/`Shift+Tab` view-cycling portion of
+Decision 37.
+
+Chosen behavior:
+
+- `p` toggles the lower preview pane.
+- Preview defaults to `Summary` (categories + note content).
+- `o` toggles preview submode between `Summary` and `Provenance`.
+- `Tab`/`Shift+Tab` switches focus between board and preview when preview is open.
+- `j/k` acts on the focused pane (item selection on board, scroll in preview).
+- View switching in normal mode uses `,` and `.` (with existing F-key palette
+  entry points unchanged).
+
+Additional rule:
+
+- Unassign-from-provenance (`u`) is available when preview is focused in
+  `Provenance` mode; inspect provenance is still available but no longer
+  presented as a separate top-level pane.
+
+Rationale:
+
+- Reduces top-level mode clutter and keeps item context in one place.
+- Makes preview behavior discoverable (`p` to open, `o` to drill in) while
+  preserving advanced provenance operations.
+- Resolves keybinding conflict by reserving `Tab` for focus management rather
+  than view cycling.
