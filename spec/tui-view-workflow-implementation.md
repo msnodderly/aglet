@@ -50,7 +50,7 @@ Out of scope (for this slice):
 - Explicit save for high-impact editors.
 - Full-line highlight in grid/list modes.
 - `x` means delete everywhere destructive.
-- Laptop-first shortcuts (`v/c/,/.`, `Tab` cycling).
+- Laptop-first shortcuts (`v/c/,/.`) with explicit board/preview focus.
 - Smallest logically consistent mutation when editing through views.
 
 ## 5. Current Shipped Contract (Baseline)
@@ -65,24 +65,30 @@ Out of scope (for this slice):
   - `All Categories`
 - Header and rows share width layout for separator alignment.
 - Rows are compact single-line density.
-- Inspect pane is optional and scrollable; not a section selector.
+- Unified preview pane is optional and scrollable; it is not a section selector.
+- Preview defaults to `Summary` (categories + note) and can switch to
+  `Provenance` details in-pane.
 
 ### 5.2 Normal Mode Keys
 
 - `n`: add item in focused lane context
 - `Enter` / `e`: open item edit popup
 - `m`: note-only edit flow
-- `a` / `u`: item category assignment picker
+- `a`: item category assignment picker
+- `u`: category picker by default; in preview `Provenance` mode with preview
+  focus, opens provenance unassign picker
 - `[` / `]`: move item between lanes
 - `r`: remove item from current view context
 - `d` / `D`: done toggle
 - `x`: delete item (confirm)
 - `v` / `F8`: view palette
 - `c` / `F9`: category manager
-- `,` / `.` / `Tab` / `Shift+Tab`: view cycling
+- `,` / `.`: view cycling
 - `g`: hop to All Items view
 - `/`: filter
-- `i`: inspect panel toggle
+- `p`: preview pane toggle (combined item summary + inspect/provenance)
+- `o`: preview mode toggle (`Summary` / `Provenance`)
+- `Tab` / `Shift+Tab`: focus board vs preview pane (when preview is open)
 - `q`: quit
 
 ### 5.3 Done Toggle Rule

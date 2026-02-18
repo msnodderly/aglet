@@ -184,14 +184,27 @@ enum ItemEditFocus {
     CancelButton,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PreviewMode {
+    Summary,
+    Provenance,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NormalFocus {
+    Board,
+    Preview,
+}
+
 struct App {
     mode: Mode,
     status: String,
     input: String,
     input_cursor: usize,
     filter: Option<String>,
-    show_inspect: bool,
-    show_item_details: bool,
+    show_preview: bool,
+    preview_mode: PreviewMode,
+    normal_focus: NormalFocus,
     all_items: Vec<Item>,
 
     views: Vec<View>,
@@ -227,8 +240,8 @@ struct App {
     item_edit_focus: ItemEditFocus,
     item_edit_note: String,
     item_edit_note_cursor: usize,
-    inspect_scroll: usize,
-    item_details_scroll: usize,
+    preview_provenance_scroll: usize,
+    preview_summary_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     slot_index: usize,
@@ -239,13 +252,15 @@ impl Default for App {
     fn default() -> Self {
         Self {
             mode: Mode::Normal,
-            status: "Press n to add, v for view palette, c for category manager, q to quit"
-                .to_string(),
+            status:
+                "Press n to add, v for view palette, c for category manager, p for preview, q to quit"
+                    .to_string(),
             input: String::new(),
             input_cursor: 0,
             filter: None,
-            show_inspect: false,
-            show_item_details: false,
+            show_preview: false,
+            preview_mode: PreviewMode::Summary,
+            normal_focus: NormalFocus::Board,
             all_items: Vec::new(),
             views: Vec::new(),
             view_index: 0,
@@ -279,8 +294,8 @@ impl Default for App {
             item_edit_focus: ItemEditFocus::Text,
             item_edit_note: String::new(),
             item_edit_note_cursor: 0,
-            inspect_scroll: 0,
-            item_details_scroll: 0,
+            preview_provenance_scroll: 0,
+            preview_summary_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
             slot_index: 0,
@@ -612,11 +627,118 @@ impl App {
         };
     }
 
+    fn toggle_preview(&mut self) {
+        self.show_preview = !self.show_preview;
+        if self.show_preview {
+            self.preview_mode = PreviewMode::Summary;
+            self.normal_focus = NormalFocus::Board;
+            self.preview_summary_scroll = 0;
+            self.status = "Preview opened (Summary). Tab to focus pane, o for provenance"
+                .to_string();
+        } else {
+            self.normal_focus = NormalFocus::Board;
+            self.status = "Preview closed".to_string();
+        }
+    }
+
+    fn toggle_preview_mode(&mut self) {
+        if !self.show_preview {
+            self.status = "Preview is closed (press p to open)".to_string();
+            return;
+        }
+        self.preview_mode = match self.preview_mode {
+            PreviewMode::Summary => PreviewMode::Provenance,
+            PreviewMode::Provenance => PreviewMode::Summary,
+        };
+        self.status = match self.preview_mode {
+            PreviewMode::Summary => "Preview mode: Summary".to_string(),
+            PreviewMode::Provenance => "Preview mode: Provenance".to_string(),
+        };
+    }
+
+    fn toggle_normal_focus(&mut self) {
+        if !self.show_preview {
+            self.status = "Preview is closed (press p to open)".to_string();
+            return;
+        }
+        self.normal_focus = match self.normal_focus {
+            NormalFocus::Board => NormalFocus::Preview,
+            NormalFocus::Preview => NormalFocus::Board,
+        };
+        self.status = match self.normal_focus {
+            NormalFocus::Board => "Focus: Board".to_string(),
+            NormalFocus::Preview => "Focus: Preview".to_string(),
+        };
+    }
+
+    fn scroll_preview(&mut self, delta: i32) {
+        if !self.show_preview {
+            return;
+        }
+        match self.preview_mode {
+            PreviewMode::Summary => {
+                if delta > 0 {
+                    self.preview_summary_scroll = self.preview_summary_scroll.saturating_add(1);
+                } else {
+                    self.preview_summary_scroll = self.preview_summary_scroll.saturating_sub(1);
+                }
+            }
+            PreviewMode::Provenance => {
+                if delta > 0 {
+                    self.preview_provenance_scroll =
+                        self.preview_provenance_scroll.saturating_add(1);
+                } else {
+                    self.preview_provenance_scroll =
+                        self.preview_provenance_scroll.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    fn open_provenance_unassign_picker(&mut self) {
+        if !self.show_preview {
+            self.status = "Preview is closed (press p to open)".to_string();
+            return;
+        }
+        if self.normal_focus != NormalFocus::Preview {
+            self.status = "Focus preview pane to unassign from provenance (Tab)".to_string();
+            return;
+        }
+        if self.preview_mode != PreviewMode::Provenance {
+            self.status = "Switch preview to Provenance mode (o) to unassign".to_string();
+            return;
+        }
+        let Some(item) = self.selected_item() else {
+            self.status = "No selected item to unassign".to_string();
+            return;
+        };
+        let rows = self.inspect_assignment_rows_for_item(item);
+        if rows.is_empty() {
+            self.status = "No assignments available to unassign".to_string();
+            return;
+        }
+        self.mode = Mode::InspectUnassignPicker;
+        self.inspect_assignment_index = self.inspect_assignment_index.min(rows.len() - 1);
+        self.status = "Select assignment to unassign (j/k, Enter, Esc)".to_string();
+    }
+
     fn handle_normal_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> Result<bool, String> {
         match code {
             KeyCode::Char('q') => return Ok(true),
-            KeyCode::Down | KeyCode::Char('j') => self.move_item_cursor(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_item_cursor(-1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.show_preview && self.normal_focus == NormalFocus::Preview {
+                    self.scroll_preview(1);
+                } else {
+                    self.move_item_cursor(1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.show_preview && self.normal_focus == NormalFocus::Preview {
+                    self.scroll_preview(-1);
+                } else {
+                    self.move_item_cursor(-1);
+                }
+            }
             KeyCode::Right | KeyCode::Char('l') => self.move_slot_cursor(1),
             KeyCode::Left | KeyCode::Char('h') => self.move_slot_cursor(-1),
             KeyCode::Char('n') => {
@@ -671,16 +793,11 @@ impl App {
             KeyCode::Char('.') => {
                 self.cycle_view(1, agenda)?;
             }
-            KeyCode::Tab => {
-                self.cycle_view(1, agenda)?;
-            }
-            KeyCode::BackTab => {
-                self.cycle_view(-1, agenda)?;
-            }
+            KeyCode::Tab | KeyCode::BackTab => self.toggle_normal_focus(),
             KeyCode::Char('g') => {
                 self.jump_to_all_items_view(agenda)?;
             }
-            KeyCode::Char('a') | KeyCode::Char('u') => {
+            KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
                     self.status = "No selected item to edit categories".to_string();
                 } else if self.category_rows.is_empty() {
@@ -696,39 +813,36 @@ impl App {
                             .to_string();
                 }
             }
-            KeyCode::Char('i') => {
-                self.show_inspect = !self.show_inspect;
-                if self.show_inspect {
-                    self.show_item_details = false;
-                    self.status = "Inspect pane opened".to_string();
+            KeyCode::Char('u') => {
+                if self.show_preview
+                    && self.normal_focus == NormalFocus::Preview
+                    && self.preview_mode == PreviewMode::Provenance
+                {
+                    self.open_provenance_unassign_picker();
                 } else {
-                    self.status = "Inspect pane closed".to_string();
+                    if self.selected_item_id().is_none() {
+                        self.status = "No selected item to edit categories".to_string();
+                    } else if self.category_rows.is_empty() {
+                        self.status = "No categories available".to_string();
+                    } else {
+                        self.mode = Mode::ItemAssignCategoryPicker;
+                        self.item_assign_return_to_item_edit = false;
+                        self.item_assign_category_index =
+                            first_non_reserved_category_index(&self.category_rows);
+                        self.clear_input();
+                        self.status =
+                            "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                                .to_string();
+                    }
                 }
-                self.inspect_scroll = 0;
             }
-            KeyCode::Char('I') => {
-                self.show_item_details = !self.show_item_details;
-                if self.show_item_details {
-                    self.show_inspect = false;
-                    self.status = "Item details pane opened".to_string();
-                } else {
-                    self.status = "Item details pane closed".to_string();
-                }
-                self.item_details_scroll = 0;
-            }
+            KeyCode::Char('p') => self.toggle_preview(),
+            KeyCode::Char('o') => self.toggle_preview_mode(),
             KeyCode::Char('J') => {
-                if self.show_inspect {
-                    self.inspect_scroll = self.inspect_scroll.saturating_add(1);
-                } else if self.show_item_details {
-                    self.item_details_scroll = self.item_details_scroll.saturating_add(1);
-                }
+                self.scroll_preview(1);
             }
             KeyCode::Char('K') => {
-                if self.show_inspect {
-                    self.inspect_scroll = self.inspect_scroll.saturating_sub(1);
-                } else if self.show_item_details {
-                    self.item_details_scroll = self.item_details_scroll.saturating_sub(1);
-                }
+                self.scroll_preview(-1);
             }
             KeyCode::Char('r') => {
                 if let Some(item_id) = self.selected_item_id() {
@@ -3134,19 +3248,23 @@ impl App {
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
-        let inspect_len = self
+        let provenance_len = self
             .selected_item()
             .map(|item| self.inspect_assignment_rows_for_item(item).len())
             .unwrap_or(0);
-        let details_len = self
+        let summary_len = self
             .selected_item()
             .map(|item| self.item_details_lines_for_item(item).len())
             .unwrap_or(0);
         self.inspect_assignment_index = self
             .inspect_assignment_index
-            .min(inspect_len.saturating_sub(1));
-        self.inspect_scroll = self.inspect_scroll.min(inspect_len.saturating_sub(1));
-        self.item_details_scroll = self.item_details_scroll.min(details_len.saturating_sub(1));
+            .min(provenance_len.saturating_sub(1));
+        self.preview_provenance_scroll = self
+            .preview_provenance_scroll
+            .min(provenance_len.saturating_sub(1));
+        self.preview_summary_scroll = self
+            .preview_summary_scroll
+            .min(summary_len.saturating_sub(1));
 
         Ok(())
     }
@@ -3361,17 +3479,13 @@ impl App {
             self.render_view_manager_screen(frame, area);
             return;
         }
-        if self.show_inspect || self.show_item_details {
+        if self.show_preview {
             let split = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
                 .split(area);
             self.render_board_columns(frame, split[0]);
-            if self.show_inspect {
-                frame.render_widget(self.render_inspect_panel(), split[1]);
-            } else {
-                frame.render_widget(self.render_item_details_panel(), split[1]);
-            }
+            frame.render_widget(self.render_preview_panel(), split[1]);
         } else {
             self.render_board_columns(frame, area);
         }
@@ -3627,10 +3741,10 @@ impl App {
         }
     }
 
-    fn render_inspect_panel(&self) -> Paragraph<'_> {
+    fn render_preview_provenance_panel(&self) -> Paragraph<'_> {
         let mut lines = vec![
-            Line::from("Assignment provenance"),
-            Line::from("J/K scroll"),
+            Line::from("Provenance"),
+            Line::from("Tab focus | j/k or J/K scroll | o summary | u unassign"),
         ];
         if let Some(item) = self.selected_item() {
             let rows = self.inspect_assignment_rows_for_item(item);
@@ -3657,11 +3771,15 @@ impl App {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Inspect (i)")
+                    .title("Preview: Provenance")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow)),
+                    .border_style(Style::default().fg(if self.normal_focus == NormalFocus::Preview {
+                        Color::Cyan
+                    } else {
+                        Color::Yellow
+                    })),
             )
-            .scroll((self.inspect_scroll.min(u16::MAX as usize) as u16, 0))
+            .scroll((self.preview_provenance_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
     }
 
@@ -3669,8 +3787,8 @@ impl App {
         let category_names = category_name_map(&self.categories);
         let categories = item_assignment_labels(item, &category_names);
         let mut lines = vec![
-            Line::from("Item details"),
-            Line::from("J/K scroll"),
+            Line::from("Summary"),
+            Line::from("Tab focus | j/k or J/K scroll | o provenance"),
             Line::from(""),
             Line::from("Categories"),
         ];
@@ -3694,13 +3812,13 @@ impl App {
         lines
     }
 
-    fn render_item_details_panel(&self) -> Paragraph<'_> {
+    fn render_preview_summary_panel(&self) -> Paragraph<'_> {
         let lines = if let Some(item) = self.selected_item() {
             self.item_details_lines_for_item(item)
         } else {
             vec![
-                Line::from("Item details"),
-                Line::from("J/K scroll"),
+                Line::from("Summary"),
+                Line::from("Tab focus | j/k or J/K scroll | o provenance"),
                 Line::from(""),
                 Line::from("(no selected item)"),
             ]
@@ -3709,12 +3827,23 @@ impl App {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Item Details (I)")
+                    .title("Preview: Summary")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow)),
+                    .border_style(Style::default().fg(if self.normal_focus == NormalFocus::Preview {
+                        Color::Cyan
+                    } else {
+                        Color::Yellow
+                    })),
             )
-            .scroll((self.item_details_scroll.min(u16::MAX as usize) as u16, 0))
+            .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
+    }
+
+    fn render_preview_panel(&self) -> Paragraph<'_> {
+        match self.preview_mode {
+            PreviewMode::Summary => self.render_preview_summary_panel(),
+            PreviewMode::Provenance => self.render_preview_provenance_panel(),
+        }
     }
 
     fn render_footer(&self) -> Paragraph<'_> {
@@ -3798,7 +3927,7 @@ impl App {
             Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
-                "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  Tab/,/.:view  []:move  r:remove  d/D:done-toggle  x:delete  i:inspect  I:item-details  J/K:pane-scroll  q:quit"
+                "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  ,/.:view  p:preview  o:preview-mode  Tab:board/preview focus  []:move  r:remove  d/D:done-toggle  x:delete  J/K:preview-scroll  q:quit"
             }
         };
 
@@ -6300,12 +6429,12 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_tab_and_backtab_cycle_views() {
+    fn normal_mode_comma_and_dot_cycle_views() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-tab-cycle-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-symbol-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6326,15 +6455,15 @@ mod tests {
             .name
             .clone();
 
-        app.handle_normal_key(KeyCode::Tab, &agenda)
-            .expect("tab should cycle view");
+        app.handle_normal_key(KeyCode::Char('.'), &agenda)
+            .expect("dot should cycle view");
         assert_eq!(
             app.current_view().map(|view| view.name.as_str()),
             Some(expected_next.as_str())
         );
 
-        app.handle_normal_key(KeyCode::BackTab, &agenda)
-            .expect("backtab should cycle backwards");
+        app.handle_normal_key(KeyCode::Char(','), &agenda)
+            .expect("comma should cycle backwards");
         assert_eq!(
             app.current_view().map(|view| view.name.as_str()),
             Some("AAA")
@@ -6375,45 +6504,46 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_i_and_shift_i_toggle_side_panes_exclusively() {
+    fn normal_mode_u_in_preview_provenance_opens_unassign_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-side-pane-toggle-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-u-provenance-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, category.id, Some("manual:test".to_string()))
+            .expect("assign category");
+
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
+        app.show_preview = true;
+        app.normal_focus = super::NormalFocus::Preview;
+        app.preview_mode = super::PreviewMode::Provenance;
 
-        app.handle_normal_key(KeyCode::Char('i'), &agenda)
-            .expect("toggle inspect on");
-        assert!(app.show_inspect);
-        assert!(!app.show_item_details);
-
-        app.handle_normal_key(KeyCode::Char('I'), &agenda)
-            .expect("toggle item details on");
-        assert!(!app.show_inspect);
-        assert!(app.show_item_details);
-
-        app.handle_normal_key(KeyCode::Char('I'), &agenda)
-            .expect("toggle item details off");
-        assert!(!app.show_item_details);
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("open unassign picker from preview provenance");
+        assert_eq!(app.mode, Mode::InspectUnassignPicker);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn normal_mode_jk_scrolls_item_details_pane() {
+    fn normal_mode_tab_toggles_focus_when_preview_is_open() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-item-details-scroll-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-preview-focus-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6421,15 +6551,86 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
-        app.show_item_details = true;
 
-        app.handle_normal_key(KeyCode::Char('J'), &agenda)
-            .expect("scroll down");
-        assert_eq!(app.item_details_scroll, 1);
+        app.handle_normal_key(KeyCode::Char('p'), &agenda)
+            .expect("open preview");
+        assert_eq!(app.normal_focus, super::NormalFocus::Board);
+        assert!(app.show_preview);
 
-        app.handle_normal_key(KeyCode::Char('K'), &agenda)
-            .expect("scroll up");
-        assert_eq!(app.item_details_scroll, 0);
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab focuses preview");
+        assert_eq!(app.normal_focus, super::NormalFocus::Preview);
+
+        app.handle_normal_key(KeyCode::BackTab, &agenda)
+            .expect("backtab focuses board");
+        assert_eq!(app.normal_focus, super::NormalFocus::Board);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_p_and_o_manage_preview_modes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-preview-toggle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        assert!(!app.show_preview);
+
+        app.handle_normal_key(KeyCode::Char('p'), &agenda)
+            .expect("open preview");
+        assert!(app.show_preview);
+        assert_eq!(app.preview_mode, super::PreviewMode::Summary);
+
+        app.handle_normal_key(KeyCode::Char('o'), &agenda)
+            .expect("switch to provenance");
+        assert_eq!(app.preview_mode, super::PreviewMode::Provenance);
+
+        app.handle_normal_key(KeyCode::Char('o'), &agenda)
+            .expect("switch to summary");
+        assert_eq!(app.preview_mode, super::PreviewMode::Summary);
+
+        app.handle_normal_key(KeyCode::Char('p'), &agenda)
+            .expect("close preview");
+        assert!(!app.show_preview);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_jk_scrolls_preview_when_preview_is_focused() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-preview-scroll-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.show_preview = true;
+        app.normal_focus = super::NormalFocus::Preview;
+        app.preview_mode = super::PreviewMode::Summary;
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("scroll summary down");
+        assert_eq!(app.preview_summary_scroll, 1);
+
+        app.handle_normal_key(KeyCode::Char('k'), &agenda)
+            .expect("scroll summary up");
+        assert_eq!(app.preview_summary_scroll, 0);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
