@@ -67,7 +67,8 @@ Inside TUI, run the following checklist.
 - Press `N`, create `Work`.
 - Select `Work`, press `n`, create `Project X`.
 - Select `Project X`, press `r`, rename to `Project X2`.
-- With `Project X2` selected, press `t` (toggle exclusive) and `i` (toggle implicit).
+- With `Project X2` selected, press `Enter` to open category config popup.
+- In popup, toggle `exclusive` (`e`) and `match category name` (`i`), add a short note, then save.
 - Press `p`, choose `(root)`, Enter (reparent).
 - Press `Esc` (or `F9`) to close manager.
 

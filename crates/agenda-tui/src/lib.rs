@@ -144,6 +144,7 @@ enum Mode {
     CategoryRenameInput,
     CategoryReparentPicker,
     CategoryDeleteConfirm,
+    CategoryConfigEditor,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -167,12 +168,26 @@ struct ViewCriteriaRow {
     depth: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CategoryGridColumn {
-    Name,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CategoryConfigFocus {
     Exclusive,
     NoImplicit,
     Actionable,
+    Note,
+    SaveButton,
+    CancelButton,
+}
+
+#[derive(Clone)]
+struct CategoryConfigEditorState {
+    category_id: CategoryId,
+    category_name: String,
+    is_exclusive: bool,
+    is_actionable: bool,
+    enable_implicit_string: bool,
+    note: String,
+    note_cursor: usize,
+    focus: CategoryConfigFocus,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -232,10 +247,10 @@ struct App {
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
-    category_grid_column: CategoryGridColumn,
     category_create_parent: Option<CategoryId>,
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
+    category_config_editor: Option<CategoryConfigEditorState>,
     item_assign_category_index: usize,
     item_assign_return_to_item_edit: bool,
     item_edit_focus: ItemEditFocus,
@@ -287,10 +302,10 @@ impl Default for App {
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
-            category_grid_column: CategoryGridColumn::Name,
             category_create_parent: None,
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
+            category_config_editor: None,
             item_assign_category_index: 0,
             item_assign_return_to_item_edit: false,
             item_edit_focus: ItemEditFocus::Text,
@@ -380,6 +395,7 @@ impl App {
             Mode::CategoryRenameInput => self.handle_category_rename_key(code, agenda),
             Mode::CategoryReparentPicker => self.handle_category_reparent_key(code, agenda),
             Mode::CategoryDeleteConfirm => self.handle_category_delete_key(code, agenda),
+            Mode::CategoryConfigEditor => self.handle_category_config_editor_key(code, agenda),
         }
     }
 
@@ -492,7 +508,8 @@ impl App {
     }
 
     fn clamped_item_edit_note_cursor(&self) -> usize {
-        self.item_edit_note_cursor.min(self.item_edit_note_len_chars())
+        self.item_edit_note_cursor
+            .min(self.item_edit_note_len_chars())
     }
 
     fn move_item_edit_note_cursor_left(&mut self) {
@@ -614,6 +631,202 @@ impl App {
         }
     }
 
+    fn selected_category_is_reserved(&self) -> bool {
+        self.selected_category_row()
+            .map(|row| row.is_reserved)
+            .unwrap_or(false)
+    }
+
+    fn category_config_note_cursor(&self) -> Option<usize> {
+        self.category_config_editor
+            .as_ref()
+            .map(|editor| editor.note_cursor.min(editor.note.chars().count()))
+    }
+
+    fn move_category_config_note_cursor_left(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.note_cursor = editor.note_cursor.saturating_sub(1);
+        }
+    }
+
+    fn move_category_config_note_cursor_right(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            let max = editor.note.chars().count();
+            editor.note_cursor = (editor.note_cursor + 1).min(max);
+        }
+    }
+
+    fn move_category_config_note_cursor_home(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.note_cursor = 0;
+        }
+    }
+
+    fn move_category_config_note_cursor_end(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.note_cursor = editor.note.chars().count();
+        }
+    }
+
+    fn move_category_config_note_cursor_vertical(&mut self, delta: i32) {
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        let cursor = editor.note_cursor.min(editor.note.chars().count());
+        let (line, col) = note_cursor_line_col(&editor.note, cursor);
+        let line_starts = note_line_start_chars(&editor.note);
+        if line_starts.is_empty() {
+            editor.note_cursor = 0;
+            return;
+        }
+        let target_line = if delta < 0 {
+            line.saturating_sub(1)
+        } else {
+            (line + 1).min(line_starts.len().saturating_sub(1))
+        };
+        if target_line == line {
+            return;
+        }
+        let target_start = line_starts[target_line];
+        let note_len = editor.note.chars().count();
+        let target_end = if target_line + 1 < line_starts.len() {
+            line_starts[target_line + 1].saturating_sub(1)
+        } else {
+            note_len
+        };
+        let target_len = target_end.saturating_sub(target_start);
+        editor.note_cursor = target_start + col.min(target_len);
+    }
+
+    fn move_category_config_note_cursor_up(&mut self) {
+        self.move_category_config_note_cursor_vertical(-1);
+    }
+
+    fn move_category_config_note_cursor_down(&mut self) {
+        self.move_category_config_note_cursor_vertical(1);
+    }
+
+    fn backspace_category_config_note_char(&mut self) {
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        let cursor = editor.note_cursor.min(editor.note.chars().count());
+        if cursor == 0 {
+            return;
+        }
+        let start = string_byte_index(&editor.note, cursor - 1);
+        let end = string_byte_index(&editor.note, cursor);
+        editor.note.replace_range(start..end, "");
+        editor.note_cursor = cursor - 1;
+    }
+
+    fn delete_category_config_note_char(&mut self) {
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        let cursor = editor.note_cursor.min(editor.note.chars().count());
+        if cursor >= editor.note.chars().count() {
+            return;
+        }
+        let start = string_byte_index(&editor.note, cursor);
+        let end = string_byte_index(&editor.note, cursor + 1);
+        editor.note.replace_range(start..end, "");
+        editor.note_cursor = cursor;
+    }
+
+    fn insert_category_config_note_char(&mut self, c: char) {
+        if c.is_control() {
+            return;
+        }
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        let cursor = editor.note_cursor.min(editor.note.chars().count());
+        let byte_index = string_byte_index(&editor.note, cursor);
+        editor.note.insert(byte_index, c);
+        editor.note_cursor = cursor + 1;
+    }
+
+    fn insert_category_config_note_newline(&mut self) {
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        let cursor = editor.note_cursor.min(editor.note.chars().count());
+        let byte_index = string_byte_index(&editor.note, cursor);
+        editor.note.insert(byte_index, '\n');
+        editor.note_cursor = cursor + 1;
+    }
+
+    fn handle_category_config_note_input_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Left => self.move_category_config_note_cursor_left(),
+            KeyCode::Right => self.move_category_config_note_cursor_right(),
+            KeyCode::Up => self.move_category_config_note_cursor_up(),
+            KeyCode::Down => self.move_category_config_note_cursor_down(),
+            KeyCode::Home => self.move_category_config_note_cursor_home(),
+            KeyCode::End => self.move_category_config_note_cursor_end(),
+            KeyCode::Backspace => self.backspace_category_config_note_char(),
+            KeyCode::Delete => self.delete_category_config_note_char(),
+            KeyCode::Enter => self.insert_category_config_note_newline(),
+            KeyCode::Char(c) => self.insert_category_config_note_char(c),
+            _ => return false,
+        }
+        true
+    }
+
+    fn cycle_category_config_focus(&mut self, delta: i32) {
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        editor.focus = match (editor.focus, delta.signum()) {
+            (CategoryConfigFocus::Exclusive, d) if d >= 0 => CategoryConfigFocus::NoImplicit,
+            (CategoryConfigFocus::NoImplicit, d) if d >= 0 => CategoryConfigFocus::Actionable,
+            (CategoryConfigFocus::Actionable, d) if d >= 0 => CategoryConfigFocus::Note,
+            (CategoryConfigFocus::Note, d) if d >= 0 => CategoryConfigFocus::SaveButton,
+            (CategoryConfigFocus::SaveButton, d) if d >= 0 => CategoryConfigFocus::CancelButton,
+            (CategoryConfigFocus::CancelButton, d) if d >= 0 => CategoryConfigFocus::Exclusive,
+            (CategoryConfigFocus::Exclusive, _) => CategoryConfigFocus::CancelButton,
+            (CategoryConfigFocus::NoImplicit, _) => CategoryConfigFocus::Exclusive,
+            (CategoryConfigFocus::Actionable, _) => CategoryConfigFocus::NoImplicit,
+            (CategoryConfigFocus::Note, _) => CategoryConfigFocus::Actionable,
+            (CategoryConfigFocus::SaveButton, _) => CategoryConfigFocus::Note,
+            (CategoryConfigFocus::CancelButton, _) => CategoryConfigFocus::SaveButton,
+        };
+    }
+
+    fn move_category_config_checkbox_focus(&mut self, delta: i32) {
+        let Some(editor) = &mut self.category_config_editor else {
+            return;
+        };
+        editor.focus = match (editor.focus, delta.signum()) {
+            (CategoryConfigFocus::Exclusive, d) if d >= 0 => CategoryConfigFocus::NoImplicit,
+            (CategoryConfigFocus::NoImplicit, d) if d >= 0 => CategoryConfigFocus::Actionable,
+            (CategoryConfigFocus::Actionable, d) if d >= 0 => CategoryConfigFocus::Actionable,
+            (CategoryConfigFocus::Actionable, _) => CategoryConfigFocus::NoImplicit,
+            (CategoryConfigFocus::NoImplicit, _) => CategoryConfigFocus::Exclusive,
+            (CategoryConfigFocus::Exclusive, _) => CategoryConfigFocus::Exclusive,
+            (focus, _) => focus,
+        };
+    }
+
+    fn toggle_category_config_exclusive(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.is_exclusive = !editor.is_exclusive;
+        }
+    }
+
+    fn toggle_category_config_no_implicit(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.enable_implicit_string = !editor.enable_implicit_string;
+        }
+    }
+
+    fn toggle_category_config_actionable(&mut self) {
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.is_actionable = !editor.is_actionable;
+        }
+    }
+
     fn cycle_item_edit_focus(&mut self, delta: i32) {
         self.item_edit_focus = match (self.item_edit_focus, delta.signum()) {
             (ItemEditFocus::Text, d) if d >= 0 => ItemEditFocus::Note,
@@ -635,8 +848,8 @@ impl App {
             self.preview_mode = PreviewMode::Summary;
             self.normal_focus = NormalFocus::Board;
             self.preview_summary_scroll = 0;
-            self.status = "Preview opened (Summary). Tab to focus pane, o for provenance"
-                .to_string();
+            self.status =
+                "Preview opened (Summary). Tab to focus pane, o for provenance".to_string();
         } else {
             self.normal_focus = NormalFocus::Board;
             self.status = "Preview closed".to_string();
@@ -785,9 +998,9 @@ impl App {
             }
             KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
-                self.category_grid_column = CategoryGridColumn::Name;
+                self.category_config_editor = None;
                 self.status =
-                    "Category manager: Left/Right focus column, Space/Enter toggle checkbox, e=exclusive i=no-implicit a=actionable".to_string();
+                    "Category manager: Enter config popup, e/i/a quick toggles (exclusive/match-name/actionable), n/N create, r rename, p reparent, x delete".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, agenda)?;
@@ -869,7 +1082,9 @@ impl App {
                                 .to_string();
                         return Ok(false);
                     }
-                    agenda.toggle_item_done(item_id).map_err(|e| e.to_string())?;
+                    agenda
+                        .toggle_item_done(item_id)
+                        .map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
                     self.status = if was_done {
                         "Marked item not-done".to_string()
@@ -965,30 +1180,28 @@ impl App {
                 self.item_edit_focus = ItemEditFocus::CategoriesButton;
                 self.open_item_assign_picker_from_item_edit();
             }
-            KeyCode::Enter => {
-                match self.item_edit_focus {
-                    ItemEditFocus::Text => {
-                        self.cycle_item_edit_focus(1);
-                    }
-                    ItemEditFocus::Note => {
-                        self.insert_item_edit_note_newline();
-                    }
-                    ItemEditFocus::CategoriesButton => {
-                        self.open_item_assign_picker_from_item_edit();
-                    }
-                    ItemEditFocus::SaveButton => {
-                        self.save_item_edit(agenda)?;
-                    }
-                    ItemEditFocus::CancelButton => {
-                        self.mode = Mode::Normal;
-                        self.clear_input();
-                        self.item_edit_note.clear();
-                        self.item_edit_note_cursor = 0;
-                        self.item_edit_focus = ItemEditFocus::Text;
-                        self.status = "Edit canceled".to_string();
-                    }
+            KeyCode::Enter => match self.item_edit_focus {
+                ItemEditFocus::Text => {
+                    self.cycle_item_edit_focus(1);
                 }
-            }
+                ItemEditFocus::Note => {
+                    self.insert_item_edit_note_newline();
+                }
+                ItemEditFocus::CategoriesButton => {
+                    self.open_item_assign_picker_from_item_edit();
+                }
+                ItemEditFocus::SaveButton => {
+                    self.save_item_edit(agenda)?;
+                }
+                ItemEditFocus::CancelButton => {
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.item_edit_note.clear();
+                    self.item_edit_note_cursor = 0;
+                    self.item_edit_focus = ItemEditFocus::Text;
+                    self.status = "Edit canceled".to_string();
+                }
+            },
             _ if self.handle_item_edit_field_input_key(code) => {}
             _ => {}
         }
@@ -1034,7 +1247,10 @@ impl App {
             Some(self.item_edit_note.clone())
         };
 
-        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+        let mut item = agenda
+            .store()
+            .get_item(item_id)
+            .map_err(|e| e.to_string())?;
         if item.text == updated_text && item.note == updated_note {
             self.mode = Mode::Normal;
             self.clear_input();
@@ -1274,7 +1490,8 @@ impl App {
                 {
                     existing.id
                 } else {
-                    let category = Category::new(name.clone());
+                    let mut category = Category::new(name.clone());
+                    category.enable_implicit_string = true;
                     agenda
                         .store()
                         .create_category(&category)
@@ -1662,58 +1879,55 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('N') => {
-                match self.view_manager_pane {
-                    ViewManagerPane::Views => {
-                        self.mode = Mode::ViewCreateNameInput;
-                        self.clear_input();
-                        self.view_pending_name = None;
-                        self.view_pending_edit_name = None;
-                        self.view_return_to_manager = true;
-                        self.status = "Create view: type name and press Enter".to_string();
-                    }
-                    ViewManagerPane::Definition => {
-                        let Some(category_row) = self
-                            .category_rows
-                            .iter()
-                            .find(|row| !row.is_reserved)
-                            .cloned()
-                        else {
-                            self.status = "No user categories available for criteria rows"
-                                .to_string();
-                            return Ok(false);
-                        };
-                        self.view_manager_rows.push(ViewCriteriaRow {
-                            sign: ViewCriteriaSign::Include,
-                            category_id: category_row.id,
-                            join_is_or: false,
-                            depth: 0,
-                        });
-                        self.view_manager_definition_index =
-                            self.view_manager_rows.len().saturating_sub(1);
-                        self.view_manager_dirty = true;
-                        self.refresh_view_manager_preview();
-                        self.status = format!("Added criteria row for {}", category_row.name);
-                    }
-                    ViewManagerPane::Sections => {
-                        let Some(view) = self.views.get_mut(self.picker_index) else {
-                            self.status = "No selected view for section add".to_string();
-                            return Ok(false);
-                        };
-                        let next = view.sections.len() + 1;
-                        view.sections.push(Section {
-                            title: format!("Section {next}"),
-                            criteria: Query::default(),
-                            on_insert_assign: HashSet::new(),
-                            on_remove_unassign: HashSet::new(),
-                            show_children: false,
-                        });
-                        self.view_manager_section_index = view.sections.len().saturating_sub(1);
-                        self.view_manager_dirty = true;
-                        self.status = format!("Added Section {next}");
-                    }
+            KeyCode::Char('N') => match self.view_manager_pane {
+                ViewManagerPane::Views => {
+                    self.mode = Mode::ViewCreateNameInput;
+                    self.clear_input();
+                    self.view_pending_name = None;
+                    self.view_pending_edit_name = None;
+                    self.view_return_to_manager = true;
+                    self.status = "Create view: type name and press Enter".to_string();
                 }
-            }
+                ViewManagerPane::Definition => {
+                    let Some(category_row) = self
+                        .category_rows
+                        .iter()
+                        .find(|row| !row.is_reserved)
+                        .cloned()
+                    else {
+                        self.status = "No user categories available for criteria rows".to_string();
+                        return Ok(false);
+                    };
+                    self.view_manager_rows.push(ViewCriteriaRow {
+                        sign: ViewCriteriaSign::Include,
+                        category_id: category_row.id,
+                        join_is_or: false,
+                        depth: 0,
+                    });
+                    self.view_manager_definition_index =
+                        self.view_manager_rows.len().saturating_sub(1);
+                    self.view_manager_dirty = true;
+                    self.refresh_view_manager_preview();
+                    self.status = format!("Added criteria row for {}", category_row.name);
+                }
+                ViewManagerPane::Sections => {
+                    let Some(view) = self.views.get_mut(self.picker_index) else {
+                        self.status = "No selected view for section add".to_string();
+                        return Ok(false);
+                    };
+                    let next = view.sections.len() + 1;
+                    view.sections.push(Section {
+                        title: format!("Section {next}"),
+                        criteria: Query::default(),
+                        on_insert_assign: HashSet::new(),
+                        on_remove_unassign: HashSet::new(),
+                        show_children: false,
+                    });
+                    self.view_manager_section_index = view.sections.len().saturating_sub(1);
+                    self.view_manager_dirty = true;
+                    self.status = format!("Added Section {next}");
+                }
+            },
             KeyCode::Char('r') => {
                 if self.view_manager_pane == ViewManagerPane::Views {
                     if let Some(view) = self.views.get(self.picker_index).cloned() {
@@ -1727,61 +1941,58 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('x') => {
-                match self.view_manager_pane {
-                    ViewManagerPane::Views => {
-                        if let Some(view) = self.views.get(self.picker_index) {
-                            self.mode = Mode::ViewDeleteConfirm;
-                            self.view_return_to_manager = true;
-                            self.status = format!("Delete view '{}' ? y/n", view.name);
-                        } else {
-                            self.status = "No selected view to delete".to_string();
-                        }
-                    }
-                    ViewManagerPane::Definition => {
-                        if self.view_manager_rows.is_empty() {
-                            self.status = "No criteria row to remove".to_string();
-                            return Ok(false);
-                        }
-                        let removed = self
-                            .view_manager_rows
-                            .remove(self.view_manager_definition_index.min(
-                                self.view_manager_rows.len().saturating_sub(1),
-                            ));
-                        self.view_manager_definition_index = self
-                            .view_manager_definition_index
-                            .min(self.view_manager_rows.len().saturating_sub(1));
-                        self.view_manager_dirty = true;
-                        self.refresh_view_manager_preview();
-                        let category_name = self
-                            .category_rows
-                            .iter()
-                            .find(|row| row.id == removed.category_id)
-                            .map(|row| row.name.clone())
-                            .unwrap_or_else(|| removed.category_id.to_string());
-                        self.status = format!("Removed criteria row {}", category_name);
-                    }
-                    ViewManagerPane::Sections => {
-                        let Some(view) = self.views.get_mut(self.picker_index) else {
-                            self.status = "No selected view for section remove".to_string();
-                            return Ok(false);
-                        };
-                        if view.sections.is_empty() {
-                            self.status = "No section to remove".to_string();
-                            return Ok(false);
-                        }
-                        let remove_index = self
-                            .view_manager_section_index
-                            .min(view.sections.len().saturating_sub(1));
-                        let removed = view.sections.remove(remove_index);
-                        self.view_manager_section_index = self
-                            .view_manager_section_index
-                            .min(view.sections.len().saturating_sub(1));
-                        self.view_manager_dirty = true;
-                        self.status = format!("Removed section {}", removed.title);
+            KeyCode::Char('x') => match self.view_manager_pane {
+                ViewManagerPane::Views => {
+                    if let Some(view) = self.views.get(self.picker_index) {
+                        self.mode = Mode::ViewDeleteConfirm;
+                        self.view_return_to_manager = true;
+                        self.status = format!("Delete view '{}' ? y/n", view.name);
+                    } else {
+                        self.status = "No selected view to delete".to_string();
                     }
                 }
-            }
+                ViewManagerPane::Definition => {
+                    if self.view_manager_rows.is_empty() {
+                        self.status = "No criteria row to remove".to_string();
+                        return Ok(false);
+                    }
+                    let removed = self.view_manager_rows.remove(
+                        self.view_manager_definition_index
+                            .min(self.view_manager_rows.len().saturating_sub(1)),
+                    );
+                    self.view_manager_definition_index = self
+                        .view_manager_definition_index
+                        .min(self.view_manager_rows.len().saturating_sub(1));
+                    self.view_manager_dirty = true;
+                    self.refresh_view_manager_preview();
+                    let category_name = self
+                        .category_rows
+                        .iter()
+                        .find(|row| row.id == removed.category_id)
+                        .map(|row| row.name.clone())
+                        .unwrap_or_else(|| removed.category_id.to_string());
+                    self.status = format!("Removed criteria row {}", category_name);
+                }
+                ViewManagerPane::Sections => {
+                    let Some(view) = self.views.get_mut(self.picker_index) else {
+                        self.status = "No selected view for section remove".to_string();
+                        return Ok(false);
+                    };
+                    if view.sections.is_empty() {
+                        self.status = "No section to remove".to_string();
+                        return Ok(false);
+                    }
+                    let remove_index = self
+                        .view_manager_section_index
+                        .min(view.sections.len().saturating_sub(1));
+                    let removed = view.sections.remove(remove_index);
+                    self.view_manager_section_index = self
+                        .view_manager_section_index
+                        .min(view.sections.len().saturating_sub(1));
+                    self.view_manager_dirty = true;
+                    self.status = format!("Removed section {}", removed.title);
+                }
+            },
             KeyCode::Char('[') => {
                 if self.view_manager_pane == ViewManagerPane::Sections {
                     let Some(view) = self.views.get_mut(self.picker_index) else {
@@ -1911,8 +2122,7 @@ impl App {
                     self.view_manager_category_row_index = Some(self.view_manager_definition_index);
                     self.view_category_index = index;
                     self.mode = Mode::ViewManagerCategoryPicker;
-                    self.status =
-                        "Pick category: j/k move, Enter choose, Esc cancel".to_string();
+                    self.status = "Pick category: j/k move, Enter choose, Esc cancel".to_string();
                 }
             }
             KeyCode::Char('u') => {
@@ -2007,7 +2217,8 @@ impl App {
                     target_row.category_id = selected_category_id;
                     self.view_manager_dirty = true;
                     self.refresh_view_manager_preview();
-                    self.status = format!("Set criteria row category to {}", selected_category_name);
+                    self.status =
+                        format!("Set criteria row category to {}", selected_category_name);
                 }
                 self.view_manager_category_row_index = None;
                 self.mode = Mode::ViewManagerScreen;
@@ -2038,12 +2249,17 @@ impl App {
                 join_is_or: false,
                 depth: 0,
             })
-            .chain(view.criteria.exclude.iter().map(|category_id| ViewCriteriaRow {
-                sign: ViewCriteriaSign::Exclude,
-                category_id: *category_id,
-                join_is_or: false,
-                depth: 0,
-            }))
+            .chain(
+                view.criteria
+                    .exclude
+                    .iter()
+                    .map(|category_id| ViewCriteriaRow {
+                        sign: ViewCriteriaSign::Exclude,
+                        category_id: *category_id,
+                        join_is_or: false,
+                        depth: 0,
+                    }),
+            )
             .collect();
         rows.sort_by(|a, b| {
             let a_name = category_names
@@ -2498,8 +2714,7 @@ impl App {
         self.view_editor_category_target = None;
         self.view_editor_bucket_target = None;
         self.mode = Mode::ViewSectionEditor;
-        self.status = "Section editor: N/x/[/] and Enter detail, Esc return to manager"
-            .to_string();
+        self.status = "Section editor: N/x/[/] and Enter detail, Esc return to manager".to_string();
     }
 
     fn open_view_manager_unmatched_settings(&mut self) {
@@ -3049,26 +3264,11 @@ impl App {
                 self.category_create_parent = None;
                 self.category_reparent_options.clear();
                 self.category_reparent_index = 0;
+                self.category_config_editor = None;
                 self.status = "Category manager closed".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.category_grid_column = match self.category_grid_column {
-                    CategoryGridColumn::Name => CategoryGridColumn::Name,
-                    CategoryGridColumn::Exclusive => CategoryGridColumn::Name,
-                    CategoryGridColumn::NoImplicit => CategoryGridColumn::Exclusive,
-                    CategoryGridColumn::Actionable => CategoryGridColumn::NoImplicit,
-                };
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.category_grid_column = match self.category_grid_column {
-                    CategoryGridColumn::Name => CategoryGridColumn::Exclusive,
-                    CategoryGridColumn::Exclusive => CategoryGridColumn::NoImplicit,
-                    CategoryGridColumn::NoImplicit => CategoryGridColumn::Actionable,
-                    CategoryGridColumn::Actionable => CategoryGridColumn::Actionable,
-                };
-            }
             KeyCode::Char('n') => {
                 self.mode = Mode::CategoryCreateInput;
                 self.clear_input();
@@ -3114,14 +3314,9 @@ impl App {
             KeyCode::Char('a') => {
                 self.toggle_selected_category_actionable(agenda)?;
             }
-            KeyCode::Char(' ') | KeyCode::Enter => match self.category_grid_column {
-                CategoryGridColumn::Name => {}
-                CategoryGridColumn::Exclusive => self.toggle_selected_category_exclusive(agenda)?,
-                CategoryGridColumn::NoImplicit => self.toggle_selected_category_implicit(agenda)?,
-                CategoryGridColumn::Actionable => {
-                    self.toggle_selected_category_actionable(agenda)?
-                }
-            },
+            KeyCode::Enter => {
+                self.open_category_config_editor(agenda)?;
+            }
             KeyCode::Char('x') => {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
@@ -3134,7 +3329,202 @@ impl App {
         Ok(false)
     }
 
+    fn open_category_config_editor(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(row) = self.selected_category_row() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        if row.is_reserved {
+            self.status = format!("Category {} is reserved and cannot be edited", row.name);
+            return Ok(());
+        }
+
+        let category = agenda
+            .store()
+            .get_category(row.id)
+            .map_err(|e| e.to_string())?;
+        let note = category.note.clone().unwrap_or_default();
+        self.category_config_editor = Some(CategoryConfigEditorState {
+            category_id: category.id,
+            category_name: category.name.clone(),
+            is_exclusive: category.is_exclusive,
+            is_actionable: category.is_actionable,
+            enable_implicit_string: category.enable_implicit_string,
+            note_cursor: note.chars().count(),
+            note,
+            focus: CategoryConfigFocus::Exclusive,
+        });
+        self.mode = Mode::CategoryConfigEditor;
+        self.status = format!(
+            "Edit category config for {}: Space toggles, Enter saves (except note field)",
+            category.name
+        );
+        Ok(())
+    }
+
+    fn save_category_config_editor(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(editor) = self.category_config_editor.clone() else {
+            self.mode = Mode::CategoryManager;
+            self.status = "Category config editor closed".to_string();
+            return Ok(());
+        };
+
+        let mut category = agenda
+            .store()
+            .get_category(editor.category_id)
+            .map_err(|e| e.to_string())?;
+        if is_reserved_category_name(&category.name) {
+            self.mode = Mode::CategoryManager;
+            self.category_config_editor = None;
+            self.status = format!(
+                "Category {} is reserved and cannot be edited",
+                category.name
+            );
+            return Ok(());
+        }
+
+        let next_note = if editor.note.trim().is_empty() {
+            None
+        } else {
+            Some(editor.note.clone())
+        };
+        if category.is_exclusive == editor.is_exclusive
+            && category.is_actionable == editor.is_actionable
+            && category.enable_implicit_string == editor.enable_implicit_string
+            && category.note == next_note
+        {
+            self.mode = Mode::CategoryManager;
+            self.category_config_editor = None;
+            self.status = "Category config canceled: no changes".to_string();
+            return Ok(());
+        }
+
+        category.is_exclusive = editor.is_exclusive;
+        category.is_actionable = editor.is_actionable;
+        category.enable_implicit_string = editor.enable_implicit_string;
+        category.note = next_note;
+        let result = agenda
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category.id);
+        self.mode = Mode::CategoryManager;
+        self.category_config_editor = None;
+        self.status = format!(
+            "Updated {} (processed_items={}, affected_items={})",
+            category.name, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
+    fn handle_category_config_editor_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        if self.category_config_editor.is_none() {
+            self.mode = Mode::CategoryManager;
+            self.status = "Category config editor closed".to_string();
+            return Ok(false);
+        }
+        let focus = self
+            .category_config_editor
+            .as_ref()
+            .map(|editor| editor.focus)
+            .unwrap_or(CategoryConfigFocus::Exclusive);
+        let category_name = self
+            .category_config_editor
+            .as_ref()
+            .map(|editor| editor.category_name.clone())
+            .unwrap_or_else(|| "(unknown)".to_string());
+
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::CategoryManager;
+                self.category_config_editor = None;
+                self.status = format!("Canceled config changes for {}", category_name);
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.cycle_category_config_focus(if matches!(code, KeyCode::BackTab) {
+                    -1
+                } else {
+                    1
+                });
+            }
+            KeyCode::Left => {
+                self.move_category_config_checkbox_focus(-1);
+            }
+            KeyCode::Right => {
+                self.move_category_config_checkbox_focus(1);
+            }
+            KeyCode::Char('h') => {
+                if !matches!(focus, CategoryConfigFocus::Note) {
+                    self.move_category_config_checkbox_focus(-1);
+                } else {
+                    self.insert_category_config_note_char('h');
+                }
+            }
+            KeyCode::Char('l') => {
+                if !matches!(focus, CategoryConfigFocus::Note) {
+                    self.move_category_config_checkbox_focus(1);
+                } else {
+                    self.insert_category_config_note_char('l');
+                }
+            }
+            KeyCode::Char('e') => {
+                if !matches!(focus, CategoryConfigFocus::Note) {
+                    self.toggle_category_config_exclusive();
+                } else {
+                    self.insert_category_config_note_char('e');
+                }
+            }
+            KeyCode::Char('i') => {
+                if !matches!(focus, CategoryConfigFocus::Note) {
+                    self.toggle_category_config_no_implicit();
+                } else {
+                    self.insert_category_config_note_char('i');
+                }
+            }
+            KeyCode::Char('a') => {
+                if !matches!(focus, CategoryConfigFocus::Note) {
+                    self.toggle_category_config_actionable();
+                } else {
+                    self.insert_category_config_note_char('a');
+                }
+            }
+            KeyCode::Char(' ') => match focus {
+                CategoryConfigFocus::Exclusive => self.toggle_category_config_exclusive(),
+                CategoryConfigFocus::NoImplicit => self.toggle_category_config_no_implicit(),
+                CategoryConfigFocus::Actionable => self.toggle_category_config_actionable(),
+                CategoryConfigFocus::Note => self.insert_category_config_note_char(' '),
+                CategoryConfigFocus::SaveButton | CategoryConfigFocus::CancelButton => {}
+            },
+            KeyCode::Enter => match focus {
+                CategoryConfigFocus::Exclusive
+                | CategoryConfigFocus::NoImplicit
+                | CategoryConfigFocus::Actionable => self.save_category_config_editor(agenda)?,
+                CategoryConfigFocus::Note => self.insert_category_config_note_newline(),
+                CategoryConfigFocus::SaveButton => self.save_category_config_editor(agenda)?,
+                CategoryConfigFocus::CancelButton => {
+                    self.mode = Mode::CategoryManager;
+                    self.category_config_editor = None;
+                    self.status = "Category config canceled".to_string();
+                }
+            },
+            _ => {
+                if matches!(focus, CategoryConfigFocus::Note) {
+                    let _ = self.handle_category_config_note_input_key(code);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     fn toggle_selected_category_exclusive(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
         let Some(category_id) = self.selected_category_id() else {
             self.status = "No selected category".to_string();
             return Ok(());
@@ -3158,6 +3548,10 @@ impl App {
     }
 
     fn toggle_selected_category_implicit(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
         let Some(category_id) = self.selected_category_id() else {
             self.status = "No selected category".to_string();
             return Ok(());
@@ -3174,9 +3568,9 @@ impl App {
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
-            "{} no-implicit={} (processed_items={}, affected_items={})",
+            "{} match-category-name={} (processed_items={}, affected_items={})",
             updated.name,
-            !updated.enable_implicit_string,
+            updated.enable_implicit_string,
             result.processed_items,
             result.affected_items
         );
@@ -3184,6 +3578,10 @@ impl App {
     }
 
     fn toggle_selected_category_actionable(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
         let Some(category_id) = self.selected_category_id() else {
             self.status = "No selected category".to_string();
             return Ok(());
@@ -3222,6 +3620,7 @@ impl App {
                 let name = self.input.trim().to_string();
                 if !name.is_empty() {
                     let mut category = Category::new(name.clone());
+                    category.enable_implicit_string = true;
                     category.parent = self.category_create_parent;
                     let parent_label = self
                         .create_parent_name()
@@ -3567,6 +3966,13 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::CategoryConfigEditor {
+            let popup_area = category_config_popup_area(frame.area());
+            self.render_category_config_editor(frame, popup_area);
+            if let Some((x, y)) = self.category_config_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
 
         if matches!(
             self.mode,
@@ -3612,16 +4018,6 @@ impl App {
             Mode::ViewUnmatchedSettings | Mode::ViewUnmatchedLabelInput
         ) {
             self.render_view_unmatched_settings(frame, centered_rect(60, 40, frame.area()));
-        }
-        if matches!(
-            self.mode,
-            Mode::CategoryManager
-                | Mode::CategoryCreateInput
-                | Mode::CategoryRenameInput
-                | Mode::CategoryReparentPicker
-                | Mode::CategoryDeleteConfirm
-        ) {
-            self.render_category_manager(frame, centered_rect(72, 72, frame.area()));
         }
     }
 
@@ -3723,6 +4119,49 @@ impl App {
         }
     }
 
+    fn category_config_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryConfigEditor {
+            return None;
+        }
+        let Some(editor) = &self.category_config_editor else {
+            return None;
+        };
+        if popup_area.width < 3 || popup_area.height < 3 {
+            return None;
+        }
+        let regions = category_config_popup_regions(popup_area)?;
+        if editor.focus != CategoryConfigFocus::Note {
+            return None;
+        }
+        if regions.note_inner.width == 0 || regions.note_inner.height == 0 {
+            return None;
+        }
+
+        let cursor = self.category_config_note_cursor().unwrap_or(0);
+        let (line, col) = note_cursor_line_col(&editor.note, cursor);
+        let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
+        let visible_line = line.saturating_sub(scroll);
+        let max_x = regions
+            .note_inner
+            .x
+            .saturating_add(regions.note_inner.width.saturating_sub(1));
+        let max_y = regions
+            .note_inner
+            .y
+            .saturating_add(regions.note_inner.height.saturating_sub(1));
+        let cursor_x = regions
+            .note_inner
+            .x
+            .saturating_add(col.min(u16::MAX as usize) as u16)
+            .min(max_x);
+        let cursor_y = regions
+            .note_inner
+            .y
+            .saturating_add(visible_line.min(u16::MAX as usize) as u16)
+            .min(max_y);
+        Some((cursor_x, cursor_y))
+    }
+
     fn render_header(&self) -> Paragraph<'_> {
         let view_name = self
             .current_view()
@@ -3747,6 +4186,18 @@ impl App {
     fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         if self.mode == Mode::ViewManagerScreen {
             self.render_view_manager_screen(frame, area);
+            return;
+        }
+        if matches!(
+            self.mode,
+            Mode::CategoryManager
+                | Mode::CategoryCreateInput
+                | Mode::CategoryRenameInput
+                | Mode::CategoryReparentPicker
+                | Mode::CategoryDeleteConfirm
+                | Mode::CategoryConfigEditor
+        ) {
+            self.render_category_manager(frame, area);
             return;
         }
         if self.show_preview {
@@ -3780,7 +4231,15 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(index, view)| {
-                    let text = format!("{}{}", if index == self.picker_index { "> " } else { "  " }, view.name);
+                    let text = format!(
+                        "{}{}",
+                        if index == self.picker_index {
+                            "> "
+                        } else {
+                            "  "
+                        },
+                        view.name
+                    );
                     if index == self.picker_index {
                         Line::styled(text, selected_row_style())
                     } else {
@@ -3804,17 +4263,18 @@ impl App {
             panes[0],
         );
 
-        let mut definition_lines = vec![
-            Line::from("Criteria (shell)"),
-            Line::from(""),
-        ];
+        let mut definition_lines = vec![Line::from("Criteria (shell)"), Line::from("")];
         if let Some(view) = selected_view {
             let validation_errors = self.view_manager_representability_errors();
             definition_lines.push(Line::from(format!("View: {}", view.name)));
             definition_lines.push(Line::from(format!(
                 "Rows: {}{}",
                 self.view_manager_rows.len(),
-                if self.view_manager_dirty { "  *unsaved*" } else { "" }
+                if self.view_manager_dirty {
+                    "  *unsaved*"
+                } else {
+                    ""
+                }
             )));
             definition_lines.push(Line::from(format!(
                 "Preview matching: {}",
@@ -3890,10 +4350,7 @@ impl App {
             panes[1],
         );
 
-        let mut section_lines = vec![
-            Line::from("Sections"),
-            Line::from(""),
-        ];
+        let mut section_lines = vec![Line::from("Sections"), Line::from("")];
         if let Some(view) = selected_view {
             if view.sections.is_empty() {
                 section_lines.push(Line::from("(no sections configured)"));
@@ -4056,13 +4513,18 @@ impl App {
                 Block::default()
                     .title("Preview: Provenance")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(if self.normal_focus == NormalFocus::Preview {
-                        Color::Cyan
-                    } else {
-                        Color::Yellow
-                    })),
+                    .border_style(Style::default().fg(
+                        if self.normal_focus == NormalFocus::Preview {
+                            Color::Cyan
+                        } else {
+                            Color::Yellow
+                        },
+                    )),
             )
-            .scroll((self.preview_provenance_scroll.min(u16::MAX as usize) as u16, 0))
+            .scroll((
+                self.preview_provenance_scroll.min(u16::MAX as usize) as u16,
+                0,
+            ))
             .wrap(Wrap { trim: false })
     }
 
@@ -4112,11 +4574,13 @@ impl App {
                 Block::default()
                     .title("Preview: Summary")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(if self.normal_focus == NormalFocus::Preview {
-                        Color::Cyan
-                    } else {
-                        Color::Yellow
-                    })),
+                    .border_style(Style::default().fg(
+                        if self.normal_focus == NormalFocus::Preview {
+                            Color::Cyan
+                        } else {
+                            Color::Yellow
+                        },
+                    )),
             )
             .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
@@ -4158,6 +4622,13 @@ impl App {
             Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
+            Mode::CategoryConfigEditor => {
+                if let Some(editor) = &self.category_config_editor {
+                    format!("Edit category config (focus: {:?})", editor.focus)
+                } else {
+                    "Edit category config".to_string()
+                }
+            }
             Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignCategoryInput => format!("Category> {}", self.input),
             Mode::InspectUnassignPicker => "Select assignment".to_string(),
@@ -4175,12 +4646,15 @@ impl App {
         };
         let footer_title = match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  h/l:left/right column  Space/Enter:toggle focused checkbox  e:exclusive  i:no-implicit  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
+                "j/k:row  Enter:config popup  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
             }
             Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
             Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
             Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
+            Mode::CategoryConfigEditor => {
+                "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  Enter:save (except note)  e/i/a:quick toggle  Esc:cancel"
+            }
             Mode::ViewPicker => {
                 "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
@@ -4269,11 +4743,8 @@ impl App {
         } else {
             "Note (editable)"
         };
-        let note_cursor_line = note_cursor_line_col(
-            &self.item_edit_note,
-            self.clamped_item_edit_note_cursor(),
-        )
-        .0;
+        let note_cursor_line =
+            note_cursor_line_col(&self.item_edit_note, self.clamped_item_edit_note_cursor()).0;
         let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
         frame.render_widget(
             Paragraph::new(note_lines)
@@ -4295,7 +4766,9 @@ impl App {
             regions.buttons,
         );
         frame.render_widget(
-            Paragraph::new("Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories"),
+            Paragraph::new(
+                "Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories",
+            ),
             regions.help,
         );
     }
@@ -4822,18 +5295,8 @@ impl App {
     }
 
     fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-
-        let focus_label = match self.category_grid_column {
-            CategoryGridColumn::Name => "Category",
-            CategoryGridColumn::Exclusive => "Excl",
-            CategoryGridColumn::NoImplicit => "NoImp",
-            CategoryGridColumn::Actionable => "Todo",
-        };
         let mut lines = vec![Line::from(
-            format!(
-                "Categories are global. Focus={focus_label}. Left/Right changes column; Space/Enter toggles focused checkbox."
-            ),
+            "Categories are global. Enter opens config popup (checkboxes + note).",
         )];
         let inner_width = area.width.saturating_sub(2) as usize;
         let marker_width = 2usize;
@@ -4844,38 +5307,17 @@ impl App {
         let name_width = inner_width.saturating_sub(
             marker_width + excl_width + noimpl_width + todo_width + separator_width,
         );
-        let category_header = if self.category_grid_column == CategoryGridColumn::Name {
-            "Category*"
-        } else {
-            "Category"
-        };
-        let excl_header = if self.category_grid_column == CategoryGridColumn::Exclusive {
-            "Excl*"
-        } else {
-            "Excl"
-        };
-        let noimp_header = if self.category_grid_column == CategoryGridColumn::NoImplicit {
-            "NoImp*"
-        } else {
-            "NoImp"
-        };
-        let todo_header = if self.category_grid_column == CategoryGridColumn::Actionable {
-            "Todo*"
-        } else {
-            "Todo"
-        };
         lines.push(Line::from(format!(
             "{}{}{}{}{}{}{}{}",
             " ".repeat(marker_width),
-            fit_board_cell(category_header, name_width),
+            fit_board_cell("Category", name_width),
             BOARD_COLUMN_SEPARATOR,
-            fit_board_cell(excl_header, excl_width),
+            fit_board_cell("Excl", excl_width),
             BOARD_COLUMN_SEPARATOR,
-            fit_board_cell(noimp_header, noimpl_width),
+            fit_board_cell("Match", noimpl_width),
             BOARD_COLUMN_SEPARATOR,
-            fit_board_cell(todo_header, todo_width),
+            fit_board_cell("Todo", todo_width),
         )));
-
         let mut selected_line = None;
         if self.category_rows.is_empty() {
             lines.push(Line::from("(no categories)"));
@@ -4892,57 +5334,26 @@ impl App {
                     label.push_str(" [reserved]");
                 }
                 let excl = if row.is_exclusive { "[x]" } else { "[ ]" };
-                let noimp = if !row.enable_implicit_string {
+                let noimp = if row.enable_implicit_string {
                     "[x]"
                 } else {
                     "[ ]"
                 };
                 let todo = if row.is_actionable { "[x]" } else { "[ ]" };
+                let text = format!(
+                    "{marker}{}{}{}{}{}{}{}",
+                    fit_board_cell(&label, name_width),
+                    BOARD_COLUMN_SEPARATOR,
+                    fit_board_cell(excl, excl_width),
+                    BOARD_COLUMN_SEPARATOR,
+                    fit_board_cell(noimp, noimpl_width),
+                    BOARD_COLUMN_SEPARATOR,
+                    fit_board_cell(todo, todo_width),
+                );
                 if is_selected {
-                    let row_style = selected_row_style();
-                    let name_style = if self.category_grid_column == CategoryGridColumn::Name {
-                        focused_cell_style()
-                    } else {
-                        row_style
-                    };
-                    let excl_style = if self.category_grid_column == CategoryGridColumn::Exclusive {
-                        focused_cell_style()
-                    } else {
-                        row_style
-                    };
-                    let noimp_style = if self.category_grid_column == CategoryGridColumn::NoImplicit
-                    {
-                        focused_cell_style()
-                    } else {
-                        row_style
-                    };
-                    let todo_style = if self.category_grid_column == CategoryGridColumn::Actionable
-                    {
-                        focused_cell_style()
-                    } else {
-                        row_style
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled(marker.to_string(), row_style),
-                        Span::styled(fit_board_cell(&label, name_width), name_style),
-                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
-                        Span::styled(fit_board_cell(excl, excl_width), excl_style),
-                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
-                        Span::styled(fit_board_cell(noimp, noimpl_width), noimp_style),
-                        Span::styled(BOARD_COLUMN_SEPARATOR.to_string(), row_style),
-                        Span::styled(fit_board_cell(todo, todo_width), todo_style),
-                    ]));
+                    lines.push(Line::styled(text, selected_row_style()));
                 } else {
-                    lines.push(Line::from(format!(
-                        "{marker}{}{}{}{}{}{}{}",
-                        fit_board_cell(&label, name_width),
-                        BOARD_COLUMN_SEPARATOR,
-                        fit_board_cell(excl, excl_width),
-                        BOARD_COLUMN_SEPARATOR,
-                        fit_board_cell(noimp, noimpl_width),
-                        BOARD_COLUMN_SEPARATOR,
-                        fit_board_cell(todo, todo_width),
-                    )));
+                    lines.push(Line::from(text));
                 }
             }
         }
@@ -4992,6 +5403,119 @@ impl App {
                     .border_style(Style::default().fg(Color::Green)),
             ),
             area,
+        );
+    }
+
+    fn render_category_config_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title("Category Config")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green));
+        frame.render_widget(block, area);
+
+        let Some(editor) = &self.category_config_editor else {
+            return;
+        };
+        let Some(regions) = category_config_popup_regions(area) else {
+            return;
+        };
+        frame.render_widget(
+            Paragraph::new(format!("Editing: {}", editor.category_name)),
+            regions.heading,
+        );
+
+        let excl_text = if editor.is_exclusive {
+            "[x] Exclusive"
+        } else {
+            "[ ] Exclusive"
+        };
+        let noimp_text = if editor.enable_implicit_string {
+            "[x] Match category name"
+        } else {
+            "[ ] Match category name"
+        };
+        let actionable_text = if editor.is_actionable {
+            "[x] Actionable"
+        } else {
+            "[ ] Actionable"
+        };
+        let excl_style = if editor.focus == CategoryConfigFocus::Exclusive {
+            focused_cell_style()
+        } else {
+            Style::default()
+        };
+        let noimp_style = if editor.focus == CategoryConfigFocus::NoImplicit {
+            focused_cell_style()
+        } else {
+            Style::default()
+        };
+        let actionable_style = if editor.focus == CategoryConfigFocus::Actionable {
+            focused_cell_style()
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!(" {} ", excl_text), excl_style),
+                Span::raw("  "),
+                Span::styled(format!(" {} ", noimp_text), noimp_style),
+                Span::raw("  "),
+                Span::styled(format!(" {} ", actionable_text), actionable_style),
+            ])),
+            regions.toggles,
+        );
+
+        let note_lines: Vec<Line<'_>> = if editor.note.is_empty() {
+            vec![Line::from("")]
+        } else {
+            editor.note.lines().map(Line::from).collect()
+        };
+        let note_border_color = if editor.focus == CategoryConfigFocus::Note {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        let note_title = if editor.focus == CategoryConfigFocus::Note {
+            "Note (> editable)"
+        } else {
+            "Note (editable)"
+        };
+        let note_cursor = self.category_config_note_cursor().unwrap_or(0);
+        let note_cursor_line = note_cursor_line_col(&editor.note, note_cursor).0;
+        let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
+        frame.render_widget(
+            Paragraph::new(note_lines)
+                .scroll((note_scroll, 0))
+                .block(
+                    Block::default()
+                        .title(note_title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(note_border_color)),
+                )
+                .wrap(Wrap { trim: false }),
+            regions.note,
+        );
+
+        let save_button = if editor.focus == CategoryConfigFocus::SaveButton {
+            "[> Save <]"
+        } else {
+            "[Save]"
+        };
+        let cancel_button = if editor.focus == CategoryConfigFocus::CancelButton {
+            "[> Cancel <]"
+        } else {
+            "[Cancel]"
+        };
+        frame.render_widget(
+            Paragraph::new(format!("  {}  {}", save_button, cancel_button)),
+            regions.buttons,
+        );
+        frame.render_widget(
+            Paragraph::new(
+                "Tab focus  h/l checkbox focus  Space toggle  Enter saves (except note)  e/i/a quick toggle  Esc cancel",
+            ),
+            regions.help,
         );
     }
 
@@ -5830,9 +6354,22 @@ fn item_edit_popup_area(area: Rect) -> Rect {
     centered_rect(84, 70, area)
 }
 
+fn category_config_popup_area(area: Rect) -> Rect {
+    centered_rect(84, 76, area)
+}
+
 struct ItemEditPopupRegions {
     heading: Rect,
     text: Rect,
+    note: Rect,
+    note_inner: Rect,
+    buttons: Rect,
+    help: Rect,
+}
+
+struct CategoryConfigPopupRegions {
+    heading: Rect,
+    toggles: Rect,
     note: Rect,
     note_inner: Rect,
     buttons: Rect,
@@ -5877,6 +6414,57 @@ fn item_edit_popup_regions(area: Rect) -> Option<ItemEditPopupRegions> {
         buttons: chunks[3],
         help: chunks[4],
     })
+}
+
+fn category_config_popup_regions(area: Rect) -> Option<CategoryConfigPopupRegions> {
+    if area.width < 3 || area.height < 3 {
+        return None;
+    }
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    if inner.width == 0 || inner.height < 5 {
+        return None;
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(4),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let note = chunks[2];
+    let note_inner = Rect {
+        x: note.x.saturating_add(1),
+        y: note.y.saturating_add(1),
+        width: note.width.saturating_sub(2),
+        height: note.height.saturating_sub(2),
+    };
+    Some(CategoryConfigPopupRegions {
+        heading: chunks[0],
+        toggles: chunks[1],
+        note,
+        note_inner,
+        buttons: chunks[3],
+        help: chunks[4],
+    })
+}
+
+fn string_byte_index(value: &str, char_index: usize) -> usize {
+    if char_index == 0 {
+        return 0;
+    }
+    value
+        .char_indices()
+        .nth(char_index)
+        .map(|(byte_index, _)| byte_index)
+        .unwrap_or(value.len())
 }
 
 fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
@@ -6244,7 +6832,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-item-edit-multiline-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-item-edit-multiline-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6419,7 +7008,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-sections-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-sections-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6757,7 +7347,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-create-cancel-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-create-cancel-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6784,7 +7375,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-delete-cancel-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-delete-cancel-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6816,7 +7408,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-clone-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-clone-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6968,7 +7561,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-or-invalid-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-or-invalid-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7032,7 +7626,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-depth-invalid-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-manager-depth-invalid-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7373,7 +7968,12 @@ mod tests {
         let lines = app.item_details_lines_for_item(&item);
         let plain: Vec<String> = lines
             .iter()
-            .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect())
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
             .collect();
         assert!(plain
             .iter()
@@ -7391,6 +7991,135 @@ mod tests {
 
         app.move_item_edit_note_cursor_down();
         assert_eq!(app.item_edit_note_cursor, "first\nse".chars().count());
+    }
+
+    #[test]
+    fn category_manager_enter_opens_config_editor_for_non_reserved_category() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-config-open-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::CategoryManager;
+        app.category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == category.id)
+            .expect("work category row should exist");
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open config editor");
+
+        assert_eq!(app.mode, Mode::CategoryConfigEditor);
+        assert_eq!(
+            app.category_config_editor
+                .as_ref()
+                .map(|editor| editor.category_name.as_str()),
+            Some("Work")
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_enter_refuses_reserved_category_config_edit() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-config-reserved-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::CategoryManager;
+        app.category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.is_reserved)
+            .expect("reserved row should exist");
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("attempt open reserved editor");
+
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(app.status.contains("reserved"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_config_editor_save_updates_category_flags_and_note() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-config-save-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::CategoryManager;
+        app.category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == category.id)
+            .expect("work category row should exist");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open category config");
+        assert_eq!(app.mode, Mode::CategoryConfigEditor);
+
+        app.handle_category_config_editor_key(KeyCode::Char('e'), &agenda)
+            .expect("toggle exclusive");
+        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
+            .expect("focus no implicit");
+        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
+            .expect("focus actionable");
+        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
+            .expect("focus note");
+        for c in "line1".chars() {
+            app.handle_category_config_editor_key(KeyCode::Char(c), &agenda)
+                .expect("type note line1");
+        }
+        app.handle_category_config_editor_key(KeyCode::Enter, &agenda)
+            .expect("insert newline");
+        for c in "line2".chars() {
+            app.handle_category_config_editor_key(KeyCode::Char(c), &agenda)
+                .expect("type note line2");
+        }
+        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
+            .expect("focus save");
+        app.handle_category_config_editor_key(KeyCode::Enter, &agenda)
+            .expect("save config");
+
+        assert_eq!(app.mode, Mode::CategoryManager);
+        let saved = store.get_category(category.id).expect("load category");
+        assert!(saved.is_exclusive);
+        assert_eq!(saved.note.as_deref(), Some("line1\nline2"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
