@@ -65,6 +65,7 @@ struct CategoryListRow {
     name: String,
     depth: usize,
     is_reserved: bool,
+    has_note: bool,
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
@@ -2286,7 +2287,7 @@ impl App {
         self.category_rows
             .iter()
             .find(|row| row.id == category_id)
-            .map(|row| row.name.clone())
+            .map(|row| with_note_marker(row.name.clone(), row.has_note))
             .unwrap_or_else(|| category_id.to_string())
     }
 
@@ -4223,7 +4224,6 @@ impl App {
             .split(area);
 
         let selected_view = self.views.get(self.picker_index);
-        let category_names = category_name_map(&self.categories);
         let views_lines: Vec<Line<'_>> = if self.views.is_empty() {
             vec![Line::from("(no views)")]
         } else {
@@ -4314,10 +4314,7 @@ impl App {
                             ViewCriteriaSign::Include => '+',
                             ViewCriteriaSign::Exclude => '-',
                         };
-                        let category_name = category_names
-                            .get(&row.category_id)
-                            .cloned()
-                            .unwrap_or_else(|| row.category_id.to_string());
+                        let category_name = self.view_manager_category_label(row.category_id);
                         let text = format!(
                             "{marker}{join} {}{} {}",
                             "  ".repeat(row.depth),
@@ -4442,11 +4439,7 @@ impl App {
                         .when_date
                         .map(|dt| dt.to_string())
                         .unwrap_or_else(|| "-".to_string());
-                    let item_text = if item.is_done {
-                        format!("[done] {}", item.text)
-                    } else {
-                        item.text.clone()
-                    };
+                    let item_text = board_item_label(item);
                     let categories = item_assignment_labels(item, &category_names);
                     let categories_text = if categories.is_empty() {
                         "-".to_string()
@@ -4848,10 +4841,11 @@ impl App {
                 } else {
                     "[ ]"
                 };
+                let category_name = with_note_marker(row.name.clone(), row.has_note);
                 let text = format!(
                     "{marker}{check} {}{}{}",
                     "  ".repeat(row.depth),
-                    row.name,
+                    category_name,
                     suffix
                 );
                 if index == self.view_category_index {
@@ -4977,7 +4971,12 @@ impl App {
             let selected =
                 category_target_contains(&editor.draft, editor.section_index, target, row.id);
             let check = if selected { "[x]" } else { "[ ]" };
-            let text = format!("{marker}{check} {}{}", "  ".repeat(row.depth), row.name);
+            let category_name = with_note_marker(row.name.clone(), row.has_note);
+            let text = format!(
+                "{marker}{check} {}{}",
+                "  ".repeat(row.depth),
+                category_name
+            );
             if index == editor.category_index {
                 lines.push(Line::styled(text, selected_row_style()));
             } else {
@@ -5027,11 +5026,12 @@ impl App {
                         .unwrap_or(false);
                     let check = if selected_flag { "[x]" } else { "[ ]" };
                     let reserved = if row.is_reserved { " [reserved]" } else { "" };
+                    let category_name = with_note_marker(row.name.clone(), row.has_note);
                     let text = format!(
                         "{marker}{}{} {}{}",
                         "  ".repeat(row.depth),
                         check,
-                        row.name,
+                        category_name,
                         reserved
                     );
                     if index == self.view_category_index {
@@ -5261,10 +5261,11 @@ impl App {
                 } else {
                     "[ ]"
                 };
+                let category_name = with_note_marker(row.name.clone(), row.has_note);
                 let text = format!(
                     "{marker}{assigned} {}{}{}",
                     "  ".repeat(row.depth),
-                    row.name,
+                    category_name,
                     suffix
                 );
                 if index == self.item_assign_category_index {
@@ -5330,6 +5331,7 @@ impl App {
                 }
                 let indent = "  ".repeat(row.depth);
                 let mut label = format!("{indent}{}", row.name);
+                label = with_note_marker(label, row.has_note);
                 if row.is_reserved {
                     label.push_str(" [reserved]");
                 }
@@ -6090,12 +6092,34 @@ struct BoardColumnWidths {
 
 const BOARD_ROW_MARKER_WIDTH: usize = 2;
 const BOARD_COLUMN_SEPARATOR: &str = " | ";
+const NOTE_MARKER_SYMBOL: &str = "♪";
 const BOARD_WHEN_TARGET_WIDTH: usize = 19;
 const BOARD_WHEN_MIN_WIDTH: usize = 10;
 const BOARD_ITEM_MIN_WIDTH: usize = 12;
 const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
 const BOARD_CATEGORY_MIN_WIDTH: usize = 14;
 const BOARD_TRUNCATION_SUFFIX: &str = "...";
+
+fn has_note_text(note: Option<&str>) -> bool {
+    note.map(|text| !text.trim().is_empty()).unwrap_or(false)
+}
+
+fn with_note_marker(label: String, has_note: bool) -> String {
+    if has_note {
+        format!("{label} {NOTE_MARKER_SYMBOL}")
+    } else {
+        label
+    }
+}
+
+fn board_item_label(item: &Item) -> String {
+    let base = if item.is_done {
+        format!("[done] {}", item.text)
+    } else {
+        item.text.clone()
+    };
+    with_note_marker(base, has_note_text(item.note.as_deref()))
+}
 
 fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
     let total = slot_width as usize;
@@ -6237,6 +6261,7 @@ fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
             name: category.name.clone(),
             depth: category_depth(category.id, &parent_by_id, categories.len()),
             is_reserved: is_reserved_category_name(&category.name),
+            has_note: has_note_text(category.note.as_deref()),
             is_exclusive: category.is_exclusive,
             is_actionable: category.is_actionable,
             enable_implicit_string: category.enable_implicit_string,
@@ -6514,12 +6539,12 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, board_annotation_header, board_column_widths, board_item_row,
-        bucket_target_set_mut, build_category_rows, build_reparent_options,
+        add_capture_status_message, board_annotation_header, board_column_widths, board_item_label,
+        board_item_row, bucket_target_set_mut, build_category_rows, build_reparent_options,
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index,
         should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
-        CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
+        CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane, NOTE_MARKER_SYMBOL,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -6566,6 +6591,7 @@ mod tests {
         let mut work = Category::new("Work".to_string());
         let mut project = Category::new("Project Y".to_string());
         project.parent = Some(work.id);
+        project.note = Some("roadmap details".to_string());
         let mut frabulator = Category::new("Frabulator".to_string());
         frabulator.parent = Some(project.id);
         let done = Category::new("Done".to_string());
@@ -6590,6 +6616,13 @@ mod tests {
             .find(|row| row.id == done.id)
             .expect("done row present");
         assert!(done_row.is_reserved);
+        assert!(!done_row.has_note);
+
+        let project_row = rows
+            .iter()
+            .find(|row| row.id == project.id)
+            .expect("project row present");
+        assert!(project_row.has_note);
     }
 
     #[test]
@@ -6643,6 +6676,7 @@ mod tests {
             name: "Done".to_string(),
             depth: 0,
             is_reserved: true,
+            has_note: false,
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
@@ -6652,6 +6686,7 @@ mod tests {
             name: "Work".to_string(),
             depth: 0,
             is_reserved: false,
+            has_note: false,
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
@@ -6670,6 +6705,7 @@ mod tests {
             name: "Done".to_string(),
             depth: 0,
             is_reserved: true,
+            has_note: false,
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
@@ -6679,6 +6715,7 @@ mod tests {
             name: "When".to_string(),
             depth: 0,
             is_reserved: true,
+            has_note: false,
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
@@ -8292,6 +8329,7 @@ mod tests {
             name: "Work".to_string(),
             depth: 0,
             is_reserved: false,
+            has_note: false,
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
@@ -8452,6 +8490,16 @@ mod tests {
         let header_pipes: Vec<usize> = header.match_indices('|').map(|(idx, _)| idx).collect();
         let row_pipes: Vec<usize> = row.match_indices('|').map(|(idx, _)| idx).collect();
         assert_eq!(header_pipes, row_pipes);
+    }
+
+    #[test]
+    fn board_item_label_appends_note_marker_when_note_exists() {
+        let mut item = Item::new("alignment check".to_string());
+        item.note = Some("detail".to_string());
+        assert_eq!(
+            board_item_label(&item),
+            format!("alignment check {NOTE_MARKER_SYMBOL}")
+        );
     }
 
     #[test]
