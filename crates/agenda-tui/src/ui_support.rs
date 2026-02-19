@@ -830,17 +830,6 @@ pub(super) fn category_config_popup_regions(area: Rect) -> Option<CategoryConfig
     })
 }
 
-pub(super) fn string_byte_index(value: &str, char_index: usize) -> usize {
-    if char_index == 0 {
-        return 0;
-    }
-    value
-        .char_indices()
-        .nth(char_index)
-        .map(|(byte_index, _)| byte_index)
-        .unwrap_or(value.len())
-}
-
 pub(super) fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
     let mut line = 0usize;
     let mut col = 0usize;

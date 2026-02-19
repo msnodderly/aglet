@@ -21,6 +21,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Terminal;
+use tui_textarea::{CursorMove, TextArea};
 
 mod app;
 mod input;

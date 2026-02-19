@@ -52,6 +52,89 @@ impl App {
         self.input_cursor = 0;
     }
 
+    fn single_line_textarea(value: &str, cursor: usize) -> TextArea<'static> {
+        let mut textarea = TextArea::new(vec![value.to_string()]);
+        let col = cursor.min(value.chars().count()).min(u16::MAX as usize) as u16;
+        textarea.move_cursor(CursorMove::Jump(0, col));
+        textarea
+    }
+
+    fn multiline_textarea(value: &str, cursor: usize) -> TextArea<'static> {
+        let mut textarea = TextArea::new(value.split('\n').map(str::to_string).collect());
+        let (line, col) = note_cursor_line_col(value, cursor.min(value.chars().count()));
+        let row = line.min(u16::MAX as usize) as u16;
+        let col = col.min(u16::MAX as usize) as u16;
+        textarea.move_cursor(CursorMove::Jump(row, col));
+        textarea
+    }
+
+    fn char_index_from_line_col(value: &str, row: usize, col: usize) -> usize {
+        let line_starts = note_line_start_chars(value);
+        if line_starts.is_empty() {
+            return 0;
+        }
+
+        let line_index = row.min(line_starts.len().saturating_sub(1));
+        let line_start = line_starts[line_index];
+        let value_len = value.chars().count();
+        let line_end = if line_index + 1 < line_starts.len() {
+            line_starts[line_index + 1].saturating_sub(1)
+        } else {
+            value_len
+        };
+        line_start + col.min(line_end.saturating_sub(line_start))
+    }
+
+    fn textarea_value_and_cursor(textarea: TextArea<'static>) -> (String, usize) {
+        let (row, col) = textarea.cursor();
+        let value = textarea.into_lines().join("\n");
+        let cursor = Self::char_index_from_line_col(&value, row, col);
+        (value, cursor)
+    }
+
+    fn with_input_textarea<F>(&mut self, edit: F)
+    where
+        F: FnOnce(&mut TextArea<'static>),
+    {
+        let mut textarea = Self::single_line_textarea(&self.input, self.clamped_input_cursor());
+        edit(&mut textarea);
+        let (value, cursor) = Self::textarea_value_and_cursor(textarea);
+        self.input = value;
+        self.input_cursor = cursor.min(self.input_len_chars());
+    }
+
+    fn with_item_edit_note_textarea<F>(&mut self, edit: F)
+    where
+        F: FnOnce(&mut TextArea<'static>),
+    {
+        let mut textarea =
+            Self::multiline_textarea(&self.item_edit_note, self.clamped_item_edit_note_cursor());
+        edit(&mut textarea);
+        let (value, cursor) = Self::textarea_value_and_cursor(textarea);
+        self.item_edit_note = value;
+        self.item_edit_note_cursor = cursor.min(self.item_edit_note_len_chars());
+    }
+
+    fn with_category_config_note_textarea<F>(&mut self, edit: F)
+    where
+        F: FnOnce(&mut TextArea<'static>),
+    {
+        let Some((note, note_cursor)) = self
+            .category_config_editor
+            .as_ref()
+            .map(|editor| (editor.note.clone(), editor.note_cursor))
+        else {
+            return;
+        };
+        let mut textarea = Self::multiline_textarea(&note, note_cursor);
+        edit(&mut textarea);
+        let (value, cursor) = Self::textarea_value_and_cursor(textarea);
+        if let Some(editor) = &mut self.category_config_editor {
+            editor.note = value;
+            editor.note_cursor = cursor.min(editor.note.chars().count());
+        }
+    }
+
     pub(crate) fn input_len_chars(&self) -> usize {
         self.input.chars().count()
     }
@@ -60,65 +143,39 @@ impl App {
         self.input_cursor.min(self.input_len_chars())
     }
 
-    pub(crate) fn input_byte_index(&self, char_index: usize) -> usize {
-        if char_index == 0 {
-            return 0;
-        }
-        self.input
-            .char_indices()
-            .nth(char_index)
-            .map(|(byte_index, _)| byte_index)
-            .unwrap_or(self.input.len())
-    }
-
     pub(crate) fn move_input_cursor_left(&mut self) {
-        let cursor = self.clamped_input_cursor();
-        self.input_cursor = cursor.saturating_sub(1);
+        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::Back));
     }
 
     pub(crate) fn move_input_cursor_right(&mut self) {
-        let cursor = self.clamped_input_cursor();
-        self.input_cursor = (cursor + 1).min(self.input_len_chars());
+        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::Forward));
     }
 
     pub(crate) fn move_input_cursor_home(&mut self) {
-        self.input_cursor = 0;
+        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::Head));
     }
 
     pub(crate) fn move_input_cursor_end(&mut self) {
-        self.input_cursor = self.input_len_chars();
+        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::End));
     }
 
     pub(crate) fn backspace_input_char(&mut self) {
-        let cursor = self.clamped_input_cursor();
-        if cursor == 0 {
-            return;
-        }
-        let start = self.input_byte_index(cursor - 1);
-        let end = self.input_byte_index(cursor);
-        self.input.replace_range(start..end, "");
-        self.input_cursor = cursor - 1;
+        self.with_input_textarea(|textarea| {
+            let _ = textarea.delete_char();
+        });
     }
 
     pub(crate) fn delete_input_char(&mut self) {
-        let cursor = self.clamped_input_cursor();
-        if cursor >= self.input_len_chars() {
-            return;
-        }
-        let start = self.input_byte_index(cursor);
-        let end = self.input_byte_index(cursor + 1);
-        self.input.replace_range(start..end, "");
-        self.input_cursor = cursor;
+        self.with_input_textarea(|textarea| {
+            let _ = textarea.delete_next_char();
+        });
     }
 
     pub(crate) fn insert_input_char(&mut self, c: char) {
         if c.is_control() {
             return;
         }
-        let cursor = self.clamped_input_cursor();
-        let byte_index = self.input_byte_index(cursor);
-        self.input.insert(byte_index, c);
-        self.input_cursor = cursor + 1;
+        self.with_input_textarea(|textarea| textarea.insert_char(c));
     }
 
     pub(crate) fn handle_text_input_key(&mut self, code: KeyCode) -> bool {
@@ -139,38 +196,25 @@ impl App {
         self.item_edit_note.chars().count()
     }
 
-    pub(crate) fn item_edit_note_byte_index(&self, char_index: usize) -> usize {
-        if char_index == 0 {
-            return 0;
-        }
-        self.item_edit_note
-            .char_indices()
-            .nth(char_index)
-            .map(|(byte_index, _)| byte_index)
-            .unwrap_or(self.item_edit_note.len())
-    }
-
     pub(crate) fn clamped_item_edit_note_cursor(&self) -> usize {
         self.item_edit_note_cursor
             .min(self.item_edit_note_len_chars())
     }
 
     pub(crate) fn move_item_edit_note_cursor_left(&mut self) {
-        let cursor = self.clamped_item_edit_note_cursor();
-        self.item_edit_note_cursor = cursor.saturating_sub(1);
+        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::Back));
     }
 
     pub(crate) fn move_item_edit_note_cursor_right(&mut self) {
-        let cursor = self.clamped_item_edit_note_cursor();
-        self.item_edit_note_cursor = (cursor + 1).min(self.item_edit_note_len_chars());
+        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::Forward));
     }
 
     pub(crate) fn move_item_edit_note_cursor_home(&mut self) {
-        self.item_edit_note_cursor = 0;
+        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::Head));
     }
 
     pub(crate) fn move_item_edit_note_cursor_end(&mut self) {
-        self.item_edit_note_cursor = self.item_edit_note_len_chars();
+        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::End));
     }
 
     pub(crate) fn move_item_edit_note_cursor_up(&mut self) {
@@ -182,69 +226,35 @@ impl App {
     }
 
     pub(crate) fn move_item_edit_note_cursor_vertical(&mut self, delta: i32) {
-        let cursor = self.clamped_item_edit_note_cursor();
-        let (line, col) = note_cursor_line_col(&self.item_edit_note, cursor);
-        let line_starts = note_line_start_chars(&self.item_edit_note);
-        if line_starts.is_empty() {
-            self.item_edit_note_cursor = 0;
-            return;
-        }
-        let target_line = if delta < 0 {
-            line.saturating_sub(1)
+        let movement = if delta < 0 {
+            CursorMove::Up
         } else {
-            (line + 1).min(line_starts.len().saturating_sub(1))
+            CursorMove::Down
         };
-        if target_line == line {
-            return;
-        }
-        let target_start = line_starts[target_line];
-        let note_len = self.item_edit_note_len_chars();
-        let target_end = if target_line + 1 < line_starts.len() {
-            line_starts[target_line + 1].saturating_sub(1)
-        } else {
-            note_len
-        };
-        let target_len = target_end.saturating_sub(target_start);
-        self.item_edit_note_cursor = target_start + col.min(target_len);
+        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(movement));
     }
 
     pub(crate) fn backspace_item_edit_note_char(&mut self) {
-        let cursor = self.clamped_item_edit_note_cursor();
-        if cursor == 0 {
-            return;
-        }
-        let start = self.item_edit_note_byte_index(cursor - 1);
-        let end = self.item_edit_note_byte_index(cursor);
-        self.item_edit_note.replace_range(start..end, "");
-        self.item_edit_note_cursor = cursor - 1;
+        self.with_item_edit_note_textarea(|textarea| {
+            let _ = textarea.delete_char();
+        });
     }
 
     pub(crate) fn delete_item_edit_note_char(&mut self) {
-        let cursor = self.clamped_item_edit_note_cursor();
-        if cursor >= self.item_edit_note_len_chars() {
-            return;
-        }
-        let start = self.item_edit_note_byte_index(cursor);
-        let end = self.item_edit_note_byte_index(cursor + 1);
-        self.item_edit_note.replace_range(start..end, "");
-        self.item_edit_note_cursor = cursor;
+        self.with_item_edit_note_textarea(|textarea| {
+            let _ = textarea.delete_next_char();
+        });
     }
 
     pub(crate) fn insert_item_edit_note_char(&mut self, c: char) {
         if c.is_control() {
             return;
         }
-        let cursor = self.clamped_item_edit_note_cursor();
-        let byte_index = self.item_edit_note_byte_index(cursor);
-        self.item_edit_note.insert(byte_index, c);
-        self.item_edit_note_cursor = cursor + 1;
+        self.with_item_edit_note_textarea(|textarea| textarea.insert_char(c));
     }
 
     pub(crate) fn insert_item_edit_note_newline(&mut self) {
-        let cursor = self.clamped_item_edit_note_cursor();
-        let byte_index = self.item_edit_note_byte_index(cursor);
-        self.item_edit_note.insert(byte_index, '\n');
-        self.item_edit_note_cursor = cursor + 1;
+        self.with_item_edit_note_textarea(|textarea| textarea.insert_newline());
     }
 
     pub(crate) fn handle_item_edit_note_input_key(&mut self, code: KeyCode) -> bool {
@@ -287,58 +297,30 @@ impl App {
     }
 
     pub(crate) fn move_category_config_note_cursor_left(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.note_cursor = editor.note_cursor.saturating_sub(1);
-        }
+        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(CursorMove::Back));
     }
 
     pub(crate) fn move_category_config_note_cursor_right(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            let max = editor.note.chars().count();
-            editor.note_cursor = (editor.note_cursor + 1).min(max);
-        }
+        self.with_category_config_note_textarea(|textarea| {
+            textarea.move_cursor(CursorMove::Forward);
+        });
     }
 
     pub(crate) fn move_category_config_note_cursor_home(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.note_cursor = 0;
-        }
+        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(CursorMove::Head));
     }
 
     pub(crate) fn move_category_config_note_cursor_end(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.note_cursor = editor.note.chars().count();
-        }
+        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(CursorMove::End));
     }
 
     pub(crate) fn move_category_config_note_cursor_vertical(&mut self, delta: i32) {
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        let cursor = editor.note_cursor.min(editor.note.chars().count());
-        let (line, col) = note_cursor_line_col(&editor.note, cursor);
-        let line_starts = note_line_start_chars(&editor.note);
-        if line_starts.is_empty() {
-            editor.note_cursor = 0;
-            return;
-        }
-        let target_line = if delta < 0 {
-            line.saturating_sub(1)
+        let movement = if delta < 0 {
+            CursorMove::Up
         } else {
-            (line + 1).min(line_starts.len().saturating_sub(1))
+            CursorMove::Down
         };
-        if target_line == line {
-            return;
-        }
-        let target_start = line_starts[target_line];
-        let note_len = editor.note.chars().count();
-        let target_end = if target_line + 1 < line_starts.len() {
-            line_starts[target_line + 1].saturating_sub(1)
-        } else {
-            note_len
-        };
-        let target_len = target_end.saturating_sub(target_start);
-        editor.note_cursor = target_start + col.min(target_len);
+        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(movement));
     }
 
     pub(crate) fn move_category_config_note_cursor_up(&mut self) {
@@ -350,54 +332,26 @@ impl App {
     }
 
     pub(crate) fn backspace_category_config_note_char(&mut self) {
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        let cursor = editor.note_cursor.min(editor.note.chars().count());
-        if cursor == 0 {
-            return;
-        }
-        let start = string_byte_index(&editor.note, cursor - 1);
-        let end = string_byte_index(&editor.note, cursor);
-        editor.note.replace_range(start..end, "");
-        editor.note_cursor = cursor - 1;
+        self.with_category_config_note_textarea(|textarea| {
+            let _ = textarea.delete_char();
+        });
     }
 
     pub(crate) fn delete_category_config_note_char(&mut self) {
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        let cursor = editor.note_cursor.min(editor.note.chars().count());
-        if cursor >= editor.note.chars().count() {
-            return;
-        }
-        let start = string_byte_index(&editor.note, cursor);
-        let end = string_byte_index(&editor.note, cursor + 1);
-        editor.note.replace_range(start..end, "");
-        editor.note_cursor = cursor;
+        self.with_category_config_note_textarea(|textarea| {
+            let _ = textarea.delete_next_char();
+        });
     }
 
     pub(crate) fn insert_category_config_note_char(&mut self, c: char) {
         if c.is_control() {
             return;
         }
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        let cursor = editor.note_cursor.min(editor.note.chars().count());
-        let byte_index = string_byte_index(&editor.note, cursor);
-        editor.note.insert(byte_index, c);
-        editor.note_cursor = cursor + 1;
+        self.with_category_config_note_textarea(|textarea| textarea.insert_char(c));
     }
 
     pub(crate) fn insert_category_config_note_newline(&mut self) {
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        let cursor = editor.note_cursor.min(editor.note.chars().count());
-        let byte_index = string_byte_index(&editor.note, cursor);
-        editor.note.insert(byte_index, '\n');
-        editor.note_cursor = cursor + 1;
+        self.with_category_config_note_textarea(|textarea| textarea.insert_newline());
     }
 
     pub(crate) fn handle_category_config_note_input_key(&mut self, code: KeyCode) -> bool {
