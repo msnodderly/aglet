@@ -2540,14 +2540,23 @@ mod tests {
 
         let slot_width = 64u16;
         let dynamic = compute_board_layout(&columns, &categories, &names, "Item", slot_width);
-        let dynamic_used =
-            dynamic.item + dynamic.columns.iter().map(|column| column.width).sum::<usize>();
+        let dynamic_used = dynamic.marker
+            + dynamic.note
+            + dynamic.item
+            + dynamic
+                .columns
+                .iter()
+                .map(|column| column.width)
+                .sum::<usize>();
         assert!(dynamic_used <= slot_width as usize);
         assert!(dynamic.item >= 1);
         assert!(dynamic.columns.iter().all(|column| column.width >= 8));
 
         let legacy = board_column_widths(slot_width);
-        assert!(legacy.when + legacy.item + legacy.categories <= slot_width as usize);
+        assert!(
+            legacy.marker + legacy.note + legacy.when + legacy.item + legacy.categories
+                <= slot_width as usize
+        );
         assert!(legacy.item >= 1);
     }
 

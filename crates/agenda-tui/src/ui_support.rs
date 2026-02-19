@@ -259,11 +259,15 @@ pub(super) fn item_assignment_labels(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct BoardColumnWidths {
+    pub(super) marker: usize,
+    pub(super) note: usize,
     pub(super) when: usize,
     pub(super) item: usize,
     pub(super) categories: usize,
 }
 
+pub(super) const BOARD_ROW_MARKER_WIDTH: usize = 2;
+pub(super) const BOARD_NOTE_MARKER_WIDTH: usize = 2;
 pub(super) const NOTE_MARKER_SYMBOL: &str = "♪";
 pub(super) const BOARD_WHEN_TARGET_WIDTH: usize = 19;
 pub(super) const BOARD_WHEN_MIN_WIDTH: usize = 10;
@@ -274,6 +278,8 @@ pub(super) const BOARD_DYNAMIC_ITEM_MIN_WIDTH: usize = 12;
 
 #[derive(Clone, Debug)]
 pub(super) struct BoardColumnLayout {
+    pub(super) marker: usize,
+    pub(super) note: usize,
     pub(super) item: usize,
     pub(super) item_label: String,
     pub(super) columns: Vec<BoardColumnSpec>,
@@ -295,7 +301,9 @@ pub(super) fn compute_board_layout(
     slot_width: u16,
 ) -> BoardColumnLayout {
     let total = slot_width as usize;
-    let available = total;
+    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
+    let note = BOARD_NOTE_MARKER_WIDTH.min(total.saturating_sub(marker));
+    let available = total.saturating_sub(marker + note);
 
     let cat_by_id: HashMap<CategoryId, &Category> = categories.iter().map(|c| (c.id, c)).collect();
 
@@ -353,6 +361,8 @@ pub(super) fn compute_board_layout(
         .collect();
 
     BoardColumnLayout {
+        marker,
+        note,
         item: item_width,
         item_label: item_label.to_string(),
         columns,
@@ -403,10 +413,14 @@ pub(super) fn board_item_label(item: &Item) -> String {
 
 pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
     let total = slot_width as usize;
-    let available = total;
+    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
+    let note = BOARD_NOTE_MARKER_WIDTH.min(total.saturating_sub(marker));
+    let available = total.saturating_sub(marker + note);
 
     if available == 0 {
         return BoardColumnWidths {
+            marker,
+            note,
             when: 0,
             item: 0,
             categories: 0,
@@ -448,6 +462,8 @@ pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
     }
 
     BoardColumnWidths {
+        marker,
+        note,
         when,
         item,
         categories,
