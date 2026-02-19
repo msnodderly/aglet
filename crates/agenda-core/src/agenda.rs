@@ -142,6 +142,7 @@ impl<'a> Agenda<'a> {
         section: &Section,
     ) -> Result<ProcessItemResult> {
         let mut targets = section.on_insert_assign.clone();
+        targets.extend(section.criteria.include.iter().copied());
         targets.extend(view.criteria.include.iter().copied());
 
         self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
@@ -1066,6 +1067,34 @@ mod tests {
             assignments
                 .get(&urgent.id)
                 .and_then(|a| a.origin.as_deref()),
+            Some("edit:section.insert")
+        );
+    }
+
+    #[test]
+    fn insert_item_in_section_assigns_section_criteria_include_categories() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let p0 = category("P0", false);
+        store.create_category(&p0).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+
+        let current_view = view("Board");
+        let mut current_section = section("P0");
+        current_section.criteria.include.insert(p0.id);
+
+        agenda
+            .insert_item_in_section(item.id, &current_view, &current_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&p0.id));
+        assert_eq!(
+            assignments.get(&p0.id).and_then(|a| a.origin.as_deref()),
             Some("edit:section.insert")
         );
     }
