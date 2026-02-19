@@ -18,7 +18,7 @@ This proposal redesigns the interaction model without changing the data model (`
 
 ## 2. Design Principles
 
-**P1. Esc always means "go back one level."** Every mode has exactly one parent. Esc returns to that parent. No conditional branching on flags. **Exception**: in Normal mode (the root), Esc clears the active filter if one is set. This is the only mode where Esc performs a contextual action rather than navigating to a parent, because Normal has no parent to return to.
+**P1. Esc always means "go back one level."** Every mode has exactly one parent. Esc returns to that parent. No conditional branching on flags. **Exception**: in Normal mode (the root), Esc clears the current section's text filter if one is set (see §10). This is the only mode where Esc performs a contextual action rather than navigating to a parent, because Normal has no parent to return to.
 
 **P2. One editing surface per concept.** Views are edited in one place, not two. Categories are edited in one place.
 
@@ -71,11 +71,11 @@ Every mode has a **fixed** parent. No flags.
 
 | Mode | Esc goes to | Rationale |
 |------|-------------|-----------|
-| Normal | clears filter if set, else no-op | P1 exception: Normal is the root mode with no parent. Esc clears filter as a convenience. |
+| Normal | clears current section's filter if set, else no-op | P1 exception: Normal is the root mode with no parent. Esc clears the focused section's filter (see §10). |
 | AddInput | Normal | Unchanged |
 | ItemEdit | Normal | Unchanged (discards unsaved edits) |
 | NoteEdit | Normal | Unchanged |
-| FilterInput | Normal (preserves existing filter) | **Changed**: Esc = cancel input, not clear filter. Enter = apply. Esc from Normal still clears. |
+| FilterInput | Normal (preserves existing section filter) | **Changed**: Esc = cancel input, not clear filter. Enter = apply to current section (§10). Esc from Normal clears current section's filter. |
 | ViewPicker | Normal | Unchanged |
 | ViewEdit | ViewPicker | **New unified mode** (replaces ViewEditor + ViewManagerScreen) |
 | ViewEdit > picker overlay | ViewEdit (closes overlay) | Pickers are overlays *within* ViewEdit, not separate modes |
@@ -437,7 +437,7 @@ Consistent meanings across all contexts:
 | `S` | Save (in ViewEdit) |
 | `s` | Not used in ViewEdit (avoids collision with lowercase action keys) |
 | `q` | Quit (from Normal mode only) |
-| `/` | Open filter |
+| `/` | Open filter for current section (§10) |
 | `v` | Open view picker |
 | `c` | Open category manager |
 | `p` | Toggle preview |
@@ -485,7 +485,89 @@ The status line sits above the hint bar and shows transient messages (action res
 └─────────────────────────────────────────────────────┘
 ```
 
-## 10. Implementation Sequence
+## 10. Per-Section Text Filters
+
+### 10.1 Motivation
+
+The current TUI has a single view-wide text filter (`/`). Since sections already partition items by criteria, the natural next step is scoping the text filter to the section the cursor is in. This lets users search within "Open" without hiding items in "Closed", or filter two sections differently at the same time.
+
+### 10.2 State Representation
+
+Replace the single `filter: Option<String>` with per-section state:
+
+```rust
+struct App {
+    // Replaces: filter: Option<String>
+    section_filters: Vec<Option<String>>,  // indexed by rendered section position
+    filter_target_section: usize,          // which section FilterInput is editing
+}
+```
+
+`section_filters` is rebuilt whenever the board layout changes (view switch, section add/remove). Its length matches the number of rendered sections (including the unmatched section when visible).
+
+### 10.3 Key Behavior
+
+| Context | Key | Action |
+|---------|-----|--------|
+| Normal | `/` | Open FilterInput for the **current section** (the section containing the cursor) |
+| Normal | `Esc` | Clear the **current section's** filter. If already clear, no-op. |
+| FilterInput | `Enter` | Apply filter text to `section_filters[filter_target_section]`. Empty input clears. Return to Normal. |
+| FilterInput | `Esc` | Cancel input, preserve existing filter for that section. Return to Normal. |
+
+There is no view-wide "clear all filters" key. The user clears filters one section at a time via `Esc` while the cursor is in that section. This is consistent with P1 (Esc means "undo one thing") and avoids needing a multi-action key.
+
+### 10.4 FilterInput Mode Change
+
+FilterInput gains awareness of its target section:
+
+```rust
+// On entering FilterInput:
+self.filter_target_section = self.current_section_index();
+self.set_input(self.section_filters[self.filter_target_section].clone().unwrap_or_default());
+```
+
+The mode itself is unchanged — it's still a single text input with Enter/Esc. The only difference is where the result is stored.
+
+### 10.5 Rendering
+
+Each section header shows its active filter when set:
+
+```
+▸ Open (3)  filter:bug                    ← section has active filter
+  Priority   Type     Item         Status
+  ─────────────────────────────────────────
+  high       bug      Fix login timeout   open
+─────────────────────────────────────────────
+▾ Closed (5)                               ← no filter, shows all items
+```
+
+The header format is: `▸ Title (count)  filter:<needle>`. The filter tag is dimmed or styled distinctly so it doesn't look like part of the title. The count reflects the post-filter item count.
+
+### 10.6 Item Filtering Logic
+
+Filtering is applied after section criteria evaluation and before rendering:
+
+```
+view criteria → view_items
+  section criteria → section_items
+    text filter → displayed_items (per section)
+```
+
+The existing `filter` text match logic (case-insensitive substring on item text) is reused unchanged; it just runs per-section instead of once for the whole view.
+
+### 10.7 Esc Transition Map Update
+
+The Esc behavior for Normal mode (section 3.2) is refined:
+
+| Mode | Esc goes to | Rationale |
+|------|-------------|-----------|
+| Normal | Clears **current section's** filter if set, else no-op | P1 exception refined: scoped to focused section |
+
+### 10.8 Interaction with Section Navigation
+
+When `Tab`/`Shift-Tab` moves the cursor to a different section, the user is now in the context of that section's filter. Pressing `/` edits that section's filter; pressing `Esc` clears that section's filter. No mode change is needed — the section context is implicit from cursor position.
+
+## 11. Implementation Sequence
 
 ### Phase 1: TextBuffer extraction
 1. Create `text_buffer.rs` with `TextBuffer` struct
@@ -506,18 +588,27 @@ The status line sits above the hint bar and shows transient messages (action res
 8. Delete `view_editor_return_to_manager`, `view_editor_category_target`, `view_editor_bucket_target` flags (these are subsumed by ViewEditState.overlay). Delete `view_return_to_manager` flag (ViewCreateName/ViewRename/ViewDeleteConfirm always return to ViewPicker). Delete `item_assign_return_to_item_edit` flag (ItemAssignPicker always returns to Normal).
 9. All existing tests must pass (adapt mode assertions)
 
-### Phase 3: Esc consistency (remaining fixes after Phase 2)
-Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `view_editor_return_to_manager`, `item_assign_return_to_item_edit`). This phase fixes the remaining Esc inconsistencies that are independent of the view editor unification:
+### Phase 3: Per-section text filters
+1. Replace `filter: Option<String>` with `section_filters: Vec<Option<String>>` and `filter_target_section: usize`
+2. Rebuild `section_filters` on view switch, section add/remove (length = rendered section count)
+3. `/` in Normal sets `filter_target_section` to the current section before entering FilterInput
+4. FilterInput Enter stores result in `section_filters[filter_target_section]`
+5. Esc in Normal clears current section's filter (not all filters)
+6. Render per-section filter indicator in section headers
+7. Apply text filter per-section after section criteria evaluation, before rendering
 
-1. Fix FilterInput: Esc cancels the input and returns to Normal, preserving the existing filter (if any). Currently Esc clears the filter; this changes so that only Esc *from Normal mode* clears the filter.
+### Phase 4: Esc consistency (remaining fixes after Phases 2–3)
+Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `view_editor_return_to_manager`, `item_assign_return_to_item_edit`). Phase 3 refines FilterInput to be section-scoped. This phase fixes the remaining Esc inconsistencies:
+
+1. Fix FilterInput: Esc cancels the input and returns to Normal, preserving the existing filter for that section. Currently Esc clears the filter; this changes so that only Esc *from Normal mode* clears the current section's filter.
 2. Fix ViewCreateCategoryPicker: Esc returns to ViewPicker (fixed parent, unconditional).
 
-### Phase 4: Footer hint bar
+### Phase 5: Footer hint bar
 1. Add persistent hint bar to footer layout
 2. Compute hint text from current mode + sub-state
 3. Separate status messages from hints
 
-## 11. What This Proposal Does NOT Change
+## 12. What This Proposal Does NOT Change
 
 - Data model: `View`, `Section`, `Column`, `Query`, `Category`, `Item` are unchanged
 - Persistence: `Store` API is unchanged
@@ -526,7 +617,7 @@ Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `v
 - Item editing: same popup, same field cycling, same save behavior
 - CLI: untouched
 
-## 12. Migration Notes for Existing Users
+## 13. Migration Notes for Existing Users
 
 Key binding changes that existing users will notice:
 
