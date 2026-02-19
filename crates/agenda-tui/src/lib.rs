@@ -334,8 +334,7 @@ struct App {
     item_assign_category_index: usize,
     item_assign_return_to_item_edit: bool,
     item_edit_focus: ItemEditFocus,
-    item_edit_note: String,
-    item_edit_note_cursor: usize,
+    item_edit_note: text_buffer::TextBuffer,
     preview_provenance_scroll: usize,
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
@@ -392,8 +391,7 @@ impl Default for App {
             item_assign_category_index: 0,
             item_assign_return_to_item_edit: false,
             item_edit_focus: ItemEditFocus::Text,
-            item_edit_note: String::new(),
-            item_edit_note_cursor: 0,
+            item_edit_note: text_buffer::TextBuffer::empty(),
             preview_provenance_scroll: 0,
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
@@ -2017,14 +2015,14 @@ mod tests {
     #[test]
     fn item_edit_note_up_down_moves_cursor_between_lines() {
         let mut app = App::default();
-        app.item_edit_note = "first\nsecond".to_string();
-        app.item_edit_note_cursor = "first\nse".chars().count();
+        app.item_edit_note =
+            text_buffer::TextBuffer::with_cursor("first\nsecond".to_string(), "first\nse".chars().count());
 
-        app.move_item_edit_note_cursor_up();
-        assert_eq!(app.item_edit_note_cursor, "fi".chars().count());
+        app.handle_item_edit_note_input_key(KeyCode::Up);
+        assert_eq!(app.item_edit_note.cursor(), "fi".chars().count());
 
-        app.move_item_edit_note_cursor_down();
-        assert_eq!(app.item_edit_note_cursor, "first\nse".chars().count());
+        app.handle_item_edit_note_input_key(KeyCode::Down);
+        assert_eq!(app.item_edit_note.cursor(), "first\nse".chars().count());
     }
 
     #[test]

@@ -90,18 +90,6 @@ impl App {
         (value, cursor)
     }
 
-fn with_item_edit_note_textarea<F>(&mut self, edit: F)
-    where
-        F: FnOnce(&mut TextArea<'static>),
-    {
-        let mut textarea =
-            Self::multiline_textarea(&self.item_edit_note, self.clamped_item_edit_note_cursor());
-        edit(&mut textarea);
-        let (value, cursor) = Self::textarea_value_and_cursor(textarea);
-        self.item_edit_note = value;
-        self.item_edit_note_cursor = cursor.min(self.item_edit_note_len_chars());
-    }
-
     fn with_category_config_note_textarea<F>(&mut self, edit: F)
     where
         F: FnOnce(&mut TextArea<'static>),
@@ -134,86 +122,12 @@ fn with_item_edit_note_textarea<F>(&mut self, edit: F)
         self.input.handle_key(code, false)
     }
 
-    pub(crate) fn item_edit_note_len_chars(&self) -> usize {
-        self.item_edit_note.chars().count()
-    }
-
     pub(crate) fn clamped_item_edit_note_cursor(&self) -> usize {
-        self.item_edit_note_cursor
-            .min(self.item_edit_note_len_chars())
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_left(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::Back));
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_right(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::Forward));
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_home(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::Head));
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_end(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(CursorMove::End));
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_up(&mut self) {
-        self.move_item_edit_note_cursor_vertical(-1);
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_down(&mut self) {
-        self.move_item_edit_note_cursor_vertical(1);
-    }
-
-    pub(crate) fn move_item_edit_note_cursor_vertical(&mut self, delta: i32) {
-        let movement = if delta < 0 {
-            CursorMove::Up
-        } else {
-            CursorMove::Down
-        };
-        self.with_item_edit_note_textarea(|textarea| textarea.move_cursor(movement));
-    }
-
-    pub(crate) fn backspace_item_edit_note_char(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| {
-            let _ = textarea.delete_char();
-        });
-    }
-
-    pub(crate) fn delete_item_edit_note_char(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| {
-            let _ = textarea.delete_next_char();
-        });
-    }
-
-    pub(crate) fn insert_item_edit_note_char(&mut self, c: char) {
-        if c.is_control() {
-            return;
-        }
-        self.with_item_edit_note_textarea(|textarea| textarea.insert_char(c));
-    }
-
-    pub(crate) fn insert_item_edit_note_newline(&mut self) {
-        self.with_item_edit_note_textarea(|textarea| textarea.insert_newline());
+        self.item_edit_note.cursor()
     }
 
     pub(crate) fn handle_item_edit_note_input_key(&mut self, code: KeyCode) -> bool {
-        match code {
-            KeyCode::Left => self.move_item_edit_note_cursor_left(),
-            KeyCode::Right => self.move_item_edit_note_cursor_right(),
-            KeyCode::Up => self.move_item_edit_note_cursor_up(),
-            KeyCode::Down => self.move_item_edit_note_cursor_down(),
-            KeyCode::Home => self.move_item_edit_note_cursor_home(),
-            KeyCode::End => self.move_item_edit_note_cursor_end(),
-            KeyCode::Backspace => self.backspace_item_edit_note_char(),
-            KeyCode::Delete => self.delete_item_edit_note_char(),
-            KeyCode::Enter => self.insert_item_edit_note_newline(),
-            KeyCode::Char(c) => self.insert_item_edit_note_char(c),
-            _ => return false,
-        }
-        true
+        self.item_edit_note.handle_key(code, true)
     }
 
     pub(crate) fn handle_item_edit_field_input_key(&mut self, code: KeyCode) -> bool {
