@@ -3,7 +3,9 @@ use std::io;
 
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
-use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, Section, View, WhenBucket};
+use agenda_core::model::{
+    Category, CategoryId, Column, ColumnKind, Item, ItemId, Query, Section, View, WhenBucket,
+};
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use chrono::{Local, NaiveDateTime, Utc};
@@ -155,6 +157,12 @@ enum ViewManagerPane {
     Sections,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DefinitionSubTab {
+    Criteria,
+    Columns,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ViewCriteriaSign {
     Include,
@@ -238,6 +246,10 @@ struct App {
     view_manager_preview_count: usize,
     view_manager_dirty: bool,
     view_manager_category_row_index: Option<usize>,
+    view_manager_definition_sub_tab: DefinitionSubTab,
+    view_manager_column_index: usize,
+    view_manager_column_picker_target: bool,
+    view_manager_column_width_input: bool,
     view_create_include_selection: HashSet<CategoryId>,
     view_create_exclude_selection: HashSet<CategoryId>,
     view_editor: Option<ViewEditorState>,
@@ -294,6 +306,10 @@ impl Default for App {
             view_manager_preview_count: 0,
             view_manager_dirty: false,
             view_manager_category_row_index: None,
+            view_manager_definition_sub_tab: DefinitionSubTab::Criteria,
+            view_manager_column_index: 0,
+            view_manager_column_picker_target: false,
+            view_manager_column_width_input: false,
             view_create_include_selection: HashSet::new(),
             view_create_exclude_selection: HashSet::new(),
             view_editor: None,
@@ -1710,6 +1726,29 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        // Width input mode intercept
+        if self.view_manager_column_width_input {
+            match code {
+                KeyCode::Esc => {
+                    self.view_manager_column_width_input = false;
+                    self.clear_input();
+                    self.status = "Width input canceled".to_string();
+                    return Ok(false);
+                }
+                KeyCode::Backspace => {
+                    self.input.pop();
+                    return Ok(false);
+                }
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    self.input.push(c);
+                    return Ok(false);
+                }
+                KeyCode::Enter => {
+                    // Fall through to Enter handler below
+                }
+                _ => return Ok(false),
+            }
+        }
         match code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 let selected_name = self
@@ -1769,9 +1808,20 @@ impl App {
                     }
                 }
                 ViewManagerPane::Definition => {
-                    let count = self.view_manager_rows.len().max(1);
-                    self.view_manager_definition_index =
-                        next_index(self.view_manager_definition_index, count, 1);
+                    if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns {
+                        let count = self
+                            .views
+                            .get(self.picker_index)
+                            .map(|v| v.columns.len())
+                            .unwrap_or(0)
+                            .max(1);
+                        self.view_manager_column_index =
+                            next_index(self.view_manager_column_index, count, 1);
+                    } else {
+                        let count = self.view_manager_rows.len().max(1);
+                        self.view_manager_definition_index =
+                            next_index(self.view_manager_definition_index, count, 1);
+                    }
                 }
                 ViewManagerPane::Sections => {
                     let section_count = self
@@ -1809,9 +1859,20 @@ impl App {
                     }
                 }
                 ViewManagerPane::Definition => {
-                    let count = self.view_manager_rows.len().max(1);
-                    self.view_manager_definition_index =
-                        next_index(self.view_manager_definition_index, count, -1);
+                    if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns {
+                        let count = self
+                            .views
+                            .get(self.picker_index)
+                            .map(|v| v.columns.len())
+                            .unwrap_or(0)
+                            .max(1);
+                        self.view_manager_column_index =
+                            next_index(self.view_manager_column_index, count, -1);
+                    } else {
+                        let count = self.view_manager_rows.len().max(1);
+                        self.view_manager_definition_index =
+                            next_index(self.view_manager_definition_index, count, -1);
+                    }
                 }
                 ViewManagerPane::Sections => {
                     let section_count = self
@@ -1824,7 +1885,23 @@ impl App {
                 }
             },
             KeyCode::Enter => {
-                if self.view_manager_pane == ViewManagerPane::Views {
+                if self.view_manager_column_width_input {
+                    if let Ok(w) = self.input.trim().parse::<u16>() {
+                        let w = w.max(4);
+                        if let Some(view) = self.views.get_mut(self.picker_index) {
+                            if let Some(col) = view.columns.get_mut(self.view_manager_column_index)
+                            {
+                                col.width = w;
+                                self.view_manager_dirty = true;
+                                self.status = format!("Column width set to {w}");
+                            }
+                        }
+                    } else {
+                        self.status = "Invalid width number".to_string();
+                    }
+                    self.view_manager_column_width_input = false;
+                    self.clear_input();
+                } else if self.view_manager_pane == ViewManagerPane::Views {
                     if !self.views.is_empty() {
                         self.view_index = self.picker_index.min(self.views.len() - 1);
                         self.slot_index = 0;
@@ -1838,7 +1915,23 @@ impl App {
                         self.load_view_manager_rows_from_selected_view();
                     }
                 } else if self.view_manager_pane == ViewManagerPane::Definition {
-                    if let Some(row) = self
+                    if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns {
+                        // Change heading of selected column via picker
+                        let col_count = self
+                            .views
+                            .get(self.picker_index)
+                            .map(|v| v.columns.len())
+                            .unwrap_or(0);
+                        if col_count > 0 && !self.category_rows.is_empty() {
+                            self.view_manager_column_picker_target = true;
+                            self.view_manager_category_row_index =
+                                Some(self.view_manager_column_index);
+                            self.view_category_index = 0;
+                            self.mode = Mode::ViewManagerCategoryPicker;
+                            self.status =
+                                "Pick new heading category: j/k move, Enter choose".to_string();
+                        }
+                    } else if let Some(row) = self
                         .view_manager_rows
                         .get_mut(self.view_manager_definition_index)
                     {
@@ -1890,26 +1983,41 @@ impl App {
                     self.status = "Create view: type name and press Enter".to_string();
                 }
                 ViewManagerPane::Definition => {
-                    let Some(category_row) = self
-                        .category_rows
-                        .iter()
-                        .find(|row| !row.is_reserved)
-                        .cloned()
-                    else {
-                        self.status = "No user categories available for criteria rows".to_string();
-                        return Ok(false);
-                    };
-                    self.view_manager_rows.push(ViewCriteriaRow {
-                        sign: ViewCriteriaSign::Include,
-                        category_id: category_row.id,
-                        join_is_or: false,
-                        depth: 0,
-                    });
-                    self.view_manager_definition_index =
-                        self.view_manager_rows.len().saturating_sub(1);
-                    self.view_manager_dirty = true;
-                    self.refresh_view_manager_preview();
-                    self.status = format!("Added criteria row for {}", category_row.name);
+                    if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns {
+                        if self.category_rows.is_empty() {
+                            self.status = "No categories available".to_string();
+                            return Ok(false);
+                        }
+                        self.view_manager_column_picker_target = true;
+                        self.view_manager_category_row_index = None;
+                        self.view_category_index = 0;
+                        self.mode = Mode::ViewManagerCategoryPicker;
+                        self.status =
+                            "Pick heading category for new column: j/k move, Enter choose"
+                                .to_string();
+                    } else {
+                        let Some(category_row) = self
+                            .category_rows
+                            .iter()
+                            .find(|row| !row.is_reserved)
+                            .cloned()
+                        else {
+                            self.status =
+                                "No user categories available for criteria rows".to_string();
+                            return Ok(false);
+                        };
+                        self.view_manager_rows.push(ViewCriteriaRow {
+                            sign: ViewCriteriaSign::Include,
+                            category_id: category_row.id,
+                            join_is_or: false,
+                            depth: 0,
+                        });
+                        self.view_manager_definition_index =
+                            self.view_manager_rows.len().saturating_sub(1);
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
+                        self.status = format!("Added criteria row for {}", category_row.name);
+                    }
                 }
                 ViewManagerPane::Sections => {
                     let Some(view) = self.views.get_mut(self.picker_index) else {
@@ -1953,26 +2061,46 @@ impl App {
                     }
                 }
                 ViewManagerPane::Definition => {
-                    if self.view_manager_rows.is_empty() {
-                        self.status = "No criteria row to remove".to_string();
-                        return Ok(false);
+                    if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns {
+                        let Some(view) = self.views.get_mut(self.picker_index) else {
+                            self.status = "No selected view".to_string();
+                            return Ok(false);
+                        };
+                        if view.columns.is_empty() {
+                            self.status = "No column to remove".to_string();
+                            return Ok(false);
+                        }
+                        let idx = self
+                            .view_manager_column_index
+                            .min(view.columns.len().saturating_sub(1));
+                        view.columns.remove(idx);
+                        self.view_manager_column_index = self
+                            .view_manager_column_index
+                            .min(view.columns.len().saturating_sub(1));
+                        self.view_manager_dirty = true;
+                        self.status = "Removed column".to_string();
+                    } else {
+                        if self.view_manager_rows.is_empty() {
+                            self.status = "No criteria row to remove".to_string();
+                            return Ok(false);
+                        }
+                        let removed = self.view_manager_rows.remove(
+                            self.view_manager_definition_index
+                                .min(self.view_manager_rows.len().saturating_sub(1)),
+                        );
+                        self.view_manager_definition_index = self
+                            .view_manager_definition_index
+                            .min(self.view_manager_rows.len().saturating_sub(1));
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
+                        let category_name = self
+                            .category_rows
+                            .iter()
+                            .find(|row| row.id == removed.category_id)
+                            .map(|row| row.name.clone())
+                            .unwrap_or_else(|| removed.category_id.to_string());
+                        self.status = format!("Removed criteria row {}", category_name);
                     }
-                    let removed = self.view_manager_rows.remove(
-                        self.view_manager_definition_index
-                            .min(self.view_manager_rows.len().saturating_sub(1)),
-                    );
-                    self.view_manager_definition_index = self
-                        .view_manager_definition_index
-                        .min(self.view_manager_rows.len().saturating_sub(1));
-                    self.view_manager_dirty = true;
-                    self.refresh_view_manager_preview();
-                    let category_name = self
-                        .category_rows
-                        .iter()
-                        .find(|row| row.id == removed.category_id)
-                        .map(|row| row.name.clone())
-                        .unwrap_or_else(|| removed.category_id.to_string());
-                    self.status = format!("Removed criteria row {}", category_name);
                 }
                 ViewManagerPane::Sections => {
                     let Some(view) = self.views.get_mut(self.picker_index) else {
@@ -1995,7 +2123,26 @@ impl App {
                 }
             },
             KeyCode::Char('[') => {
-                if self.view_manager_pane == ViewManagerPane::Sections {
+                if self.view_manager_pane == ViewManagerPane::Definition
+                    && self.view_manager_definition_sub_tab == DefinitionSubTab::Columns
+                {
+                    let Some(view) = self.views.get_mut(self.picker_index) else {
+                        return Ok(false);
+                    };
+                    if view.columns.len() < 2 {
+                        return Ok(false);
+                    }
+                    let current = self
+                        .view_manager_column_index
+                        .min(view.columns.len().saturating_sub(1));
+                    if current == 0 {
+                        return Ok(false);
+                    }
+                    view.columns.swap(current, current - 1);
+                    self.view_manager_column_index = current - 1;
+                    self.view_manager_dirty = true;
+                    self.status = "Moved column up".to_string();
+                } else if self.view_manager_pane == ViewManagerPane::Sections {
                     let Some(view) = self.views.get_mut(self.picker_index) else {
                         self.status = "No selected view for section reorder".to_string();
                         return Ok(false);
@@ -2018,7 +2165,26 @@ impl App {
                 }
             }
             KeyCode::Char(']') => {
-                if self.view_manager_pane == ViewManagerPane::Sections {
+                if self.view_manager_pane == ViewManagerPane::Definition
+                    && self.view_manager_definition_sub_tab == DefinitionSubTab::Columns
+                {
+                    let Some(view) = self.views.get_mut(self.picker_index) else {
+                        return Ok(false);
+                    };
+                    if view.columns.len() < 2 {
+                        return Ok(false);
+                    }
+                    let current = self
+                        .view_manager_column_index
+                        .min(view.columns.len().saturating_sub(1));
+                    if current + 1 >= view.columns.len() {
+                        return Ok(false);
+                    }
+                    view.columns.swap(current, current + 1);
+                    self.view_manager_column_index = current + 1;
+                    self.view_manager_dirty = true;
+                    self.status = "Moved column down".to_string();
+                } else if self.view_manager_pane == ViewManagerPane::Sections {
                     let Some(view) = self.views.get_mut(self.picker_index) else {
                         self.status = "No selected view for section reorder".to_string();
                         return Ok(false);
@@ -2052,6 +2218,41 @@ impl App {
                         };
                         self.view_manager_dirty = true;
                         self.refresh_view_manager_preview();
+                    }
+                }
+            }
+            KeyCode::Char('t') => {
+                if self.view_manager_pane == ViewManagerPane::Definition {
+                    self.view_manager_definition_sub_tab =
+                        match self.view_manager_definition_sub_tab {
+                            DefinitionSubTab::Criteria => DefinitionSubTab::Columns,
+                            DefinitionSubTab::Columns => DefinitionSubTab::Criteria,
+                        };
+                    self.status = format!(
+                        "Definition sub-tab: {:?}",
+                        self.view_manager_definition_sub_tab
+                    );
+                }
+            }
+            KeyCode::Char('w') => {
+                if self.view_manager_pane == ViewManagerPane::Definition
+                    && self.view_manager_definition_sub_tab == DefinitionSubTab::Columns
+                {
+                    let col_count = self
+                        .views
+                        .get(self.picker_index)
+                        .map(|v| v.columns.len())
+                        .unwrap_or(0);
+                    if col_count > 0 {
+                        self.view_manager_column_width_input = true;
+                        let current_width = self
+                            .views
+                            .get(self.picker_index)
+                            .and_then(|v| v.columns.get(self.view_manager_column_index))
+                            .map(|c| c.width)
+                            .unwrap_or(20);
+                        self.set_input(current_width.to_string());
+                        self.status = "Type width and press Enter".to_string();
                     }
                 }
             }
@@ -2146,6 +2347,7 @@ impl App {
                     clone.show_unmatched = view.show_unmatched;
                     clone.unmatched_label = view.unmatched_label.clone();
                     clone.remove_from_view_unassign = view.remove_from_view_unassign.clone();
+                    clone.item_column_label = view.item_column_label.clone();
                     match agenda.store().create_view(&clone) {
                         Ok(()) => {
                             self.refresh(agenda.store())?;
@@ -2184,6 +2386,7 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::ViewManagerScreen;
                 self.view_manager_category_row_index = None;
+                self.view_manager_column_picker_target = false;
                 self.status = "Category pick canceled".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -2199,30 +2402,76 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                let Some(target_row_index) = self.view_manager_category_row_index else {
-                    self.mode = Mode::ViewManagerScreen;
-                    self.status = "Category pick failed: no target row".to_string();
-                    return Ok(false);
-                };
                 let Some(selected_row) = self.category_rows.get(self.view_category_index) else {
                     self.status = "Category pick failed: no category selected".to_string();
                     return Ok(false);
                 };
                 let selected_category_id = selected_row.id;
                 let selected_category_name = selected_row.name.clone();
-                if selected_row.is_reserved {
-                    self.status = "Reserved categories cannot be used in criteria rows".to_string();
-                    return Ok(false);
+                let is_reserved = selected_row.is_reserved;
+
+                if self.view_manager_column_picker_target {
+                    // Column picker: adding or editing a column heading
+                    let is_when =
+                        selected_category_name.eq_ignore_ascii_case("When");
+                    let kind = if is_when {
+                        ColumnKind::When
+                    } else {
+                        ColumnKind::Standard
+                    };
+                    if let Some(target_index) = self.view_manager_category_row_index {
+                        // Editing existing column heading
+                        if let Some(view) = self.views.get_mut(self.picker_index) {
+                            if let Some(col) = view.columns.get_mut(target_index) {
+                                col.heading = selected_category_id;
+                                col.kind = kind;
+                                self.view_manager_dirty = true;
+                                self.status = format!(
+                                    "Changed column heading to {}",
+                                    selected_category_name
+                                );
+                            }
+                        }
+                    } else {
+                        // Adding new column
+                        if let Some(view) = self.views.get_mut(self.picker_index) {
+                            view.columns.push(Column {
+                                kind,
+                                heading: selected_category_id,
+                                width: 20,
+                            });
+                            self.view_manager_column_index =
+                                view.columns.len().saturating_sub(1);
+                            self.view_manager_dirty = true;
+                            self.status =
+                                format!("Added column: {}", selected_category_name);
+                        }
+                    }
+                    self.view_manager_column_picker_target = false;
+                    self.view_manager_category_row_index = None;
+                    self.mode = Mode::ViewManagerScreen;
+                } else {
+                    // Criteria row picker (original behavior)
+                    let Some(target_row_index) = self.view_manager_category_row_index else {
+                        self.mode = Mode::ViewManagerScreen;
+                        self.status = "Category pick failed: no target row".to_string();
+                        return Ok(false);
+                    };
+                    if is_reserved {
+                        self.status =
+                            "Reserved categories cannot be used in criteria rows".to_string();
+                        return Ok(false);
+                    }
+                    if let Some(target_row) = self.view_manager_rows.get_mut(target_row_index) {
+                        target_row.category_id = selected_category_id;
+                        self.view_manager_dirty = true;
+                        self.refresh_view_manager_preview();
+                        self.status =
+                            format!("Set criteria row category to {}", selected_category_name);
+                    }
+                    self.view_manager_category_row_index = None;
+                    self.mode = Mode::ViewManagerScreen;
                 }
-                if let Some(target_row) = self.view_manager_rows.get_mut(target_row_index) {
-                    target_row.category_id = selected_category_id;
-                    self.view_manager_dirty = true;
-                    self.refresh_view_manager_preview();
-                    self.status =
-                        format!("Set criteria row category to {}", selected_category_name);
-                }
-                self.view_manager_category_row_index = None;
-                self.mode = Mode::ViewManagerScreen;
             }
             _ => {}
         }
@@ -2279,6 +2528,7 @@ impl App {
         self.view_manager_rows = rows;
         self.view_manager_loaded_view_name = Some(view.name.clone());
         self.view_manager_definition_index = 0;
+        self.view_manager_column_index = 0;
         self.refresh_view_manager_preview();
         self.view_manager_dirty = false;
     }
@@ -4263,71 +4513,135 @@ impl App {
             panes[0],
         );
 
-        let mut definition_lines = vec![Line::from("Criteria (shell)"), Line::from("")];
+        let criteria_tab_label = if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
+            "[Criteria]"
+        } else {
+            " Criteria "
+        };
+        let columns_tab_label = if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns {
+            "[Columns]"
+        } else {
+            " Columns "
+        };
+        let mut definition_lines = vec![
+            Line::from(format!("  {criteria_tab_label}  {columns_tab_label}    t:toggle")),
+            Line::from(""),
+        ];
         if let Some(view) = selected_view {
-            let validation_errors = self.view_manager_representability_errors();
-            definition_lines.push(Line::from(format!("View: {}", view.name)));
-            definition_lines.push(Line::from(format!(
-                "Rows: {}{}",
-                self.view_manager_rows.len(),
-                if self.view_manager_dirty {
-                    "  *unsaved*"
+            if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
+                let validation_errors = self.view_manager_representability_errors();
+                definition_lines.push(Line::from(format!("View: {}", view.name)));
+                definition_lines.push(Line::from(format!(
+                    "Rows: {}{}",
+                    self.view_manager_rows.len(),
+                    if self.view_manager_dirty {
+                        "  *unsaved*"
+                    } else {
+                        ""
+                    }
+                )));
+                definition_lines.push(Line::from(format!(
+                    "Preview matching: {}",
+                    self.view_manager_preview_count
+                )));
+                if validation_errors.is_empty() {
+                    definition_lines.push(Line::from("Validation: ok"));
                 } else {
-                    ""
+                    definition_lines.push(Line::styled(
+                        format!("Validation errors: {}", validation_errors.len()),
+                        Style::default().fg(Color::Red),
+                    ));
+                    definition_lines.push(Line::styled(
+                        format!("  - {}", validation_errors[0]),
+                        Style::default().fg(Color::Red),
+                    ));
                 }
-            )));
-            definition_lines.push(Line::from(format!(
-                "Preview matching: {}",
-                self.view_manager_preview_count
-            )));
-            if validation_errors.is_empty() {
-                definition_lines.push(Line::from("Validation: ok"));
+                definition_lines.push(Line::from(""));
+                if self.view_manager_rows.is_empty() {
+                    definition_lines.push(Line::from("(no criteria rows)"));
+                } else {
+                    definition_lines.extend(self.view_manager_rows.iter().enumerate().map(
+                        |(index, row)| {
+                            let marker = if index == self.view_manager_definition_index {
+                                "> "
+                            } else {
+                                "  "
+                            };
+                            let join = if index == 0 {
+                                "  "
+                            } else if row.join_is_or {
+                                "OR"
+                            } else {
+                                "AND"
+                            };
+                            let sign = match row.sign {
+                                ViewCriteriaSign::Include => '+',
+                                ViewCriteriaSign::Exclude => '-',
+                            };
+                            let category_name = self.view_manager_category_label(row.category_id);
+                            let text = format!(
+                                "{marker}{join} {}{} {}",
+                                "  ".repeat(row.depth),
+                                sign,
+                                category_name
+                            );
+                            if index == self.view_manager_definition_index {
+                                Line::styled(text, selected_row_style())
+                            } else {
+                                Line::from(text)
+                            }
+                        },
+                    ));
+                }
             } else {
-                definition_lines.push(Line::styled(
-                    format!("Validation errors: {}", validation_errors.len()),
-                    Style::default().fg(Color::Red),
-                ));
-                definition_lines.push(Line::styled(
-                    format!("  - {}", validation_errors[0]),
-                    Style::default().fg(Color::Red),
-                ));
-            }
-            definition_lines.push(Line::from(""));
-            if self.view_manager_rows.is_empty() {
-                definition_lines.push(Line::from("(no criteria rows)"));
-            } else {
-                definition_lines.extend(self.view_manager_rows.iter().enumerate().map(
-                    |(index, row)| {
-                        let marker = if index == self.view_manager_definition_index {
+                // Columns sub-tab
+                let category_names = category_name_map(&self.categories);
+                definition_lines.push(Line::from(format!("View: {}", view.name)));
+                definition_lines.push(Line::from(format!(
+                    "Columns: {}{}",
+                    view.columns.len(),
+                    if self.view_manager_dirty {
+                        "  *unsaved*"
+                    } else {
+                        ""
+                    }
+                )));
+                definition_lines.push(Line::from(""));
+                if view.columns.is_empty() {
+                    definition_lines.push(Line::from("(no columns — legacy rendering)"));
+                } else {
+                    for (index, col) in view.columns.iter().enumerate() {
+                        let marker = if index == self.view_manager_column_index {
                             "> "
                         } else {
                             "  "
                         };
-                        let join = if index == 0 {
-                            "  "
-                        } else if row.join_is_or {
-                            "OR"
-                        } else {
-                            "AND"
+                        let label = category_names
+                            .get(&col.heading)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string());
+                        let kind_tag = match col.kind {
+                            ColumnKind::When => " [When]",
+                            ColumnKind::Standard => "",
                         };
-                        let sign = match row.sign {
-                            ViewCriteriaSign::Include => '+',
-                            ViewCriteriaSign::Exclude => '-',
-                        };
-                        let category_name = self.view_manager_category_label(row.category_id);
                         let text = format!(
-                            "{marker}{join} {}{} {}",
-                            "  ".repeat(row.depth),
-                            sign,
-                            category_name
+                            "{marker}{label}{kind_tag}  w:{}",
+                            col.width
                         );
-                        if index == self.view_manager_definition_index {
-                            Line::styled(text, selected_row_style())
+                        if index == self.view_manager_column_index {
+                            definition_lines.push(Line::styled(text, selected_row_style()));
                         } else {
-                            Line::from(text)
+                            definition_lines.push(Line::from(text));
                         }
-                    },
-                ));
+                    }
+                }
+                definition_lines.push(Line::from(""));
+                if self.view_manager_column_width_input {
+                    definition_lines.push(Line::from(format!("Width> {}", self.input)));
+                } else {
+                    definition_lines
+                        .push(Line::from("N:add  x:del  [/]:move  w:width  Enter:heading"));
+                }
             }
         } else {
             definition_lines.push(Line::from("(no selected view)"));
@@ -4426,35 +4740,77 @@ impl App {
             .split(area);
 
         let category_names = category_name_map(&self.categories);
+        let view_columns = self
+            .current_view()
+            .map(|v| v.columns.as_slice())
+            .unwrap_or(&[]);
+        let use_dynamic = !view_columns.is_empty();
+        let view_item_label = self
+            .current_view()
+            .and_then(|v| v.item_column_label.clone())
+            .unwrap_or_default();
+        // Clone view_columns so we don't hold a borrow on self
+        let view_columns_owned: Vec<Column> = view_columns.to_vec();
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
             let inner_width = columns[slot_index].width.saturating_sub(2);
-            let widths = board_column_widths(inner_width);
-            let mut lines: Vec<Line<'_>> = vec![Line::from(board_annotation_header(widths))];
-            if slot.items.is_empty() {
-                lines.push(Line::from("(no items)"));
+            let mut lines: Vec<Line<'_>>;
+            if use_dynamic {
+                let layout = compute_board_layout(
+                    &view_columns_owned,
+                    &self.categories,
+                    &category_names,
+                    &view_item_label,
+                    inner_width,
+                );
+                lines = vec![Line::from(board_dynamic_header(&layout))];
+                if slot.items.is_empty() {
+                    lines.push(Line::from("(no items)"));
+                } else {
+                    lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
+                        let is_selected = is_selected_slot && item_index == self.item_index;
+                        let row_text =
+                            board_dynamic_row(is_selected, item, &layout, &category_names);
+                        if is_selected {
+                            Line::styled(row_text, selected_row_style())
+                        } else {
+                            Line::from(row_text)
+                        }
+                    }));
+                }
             } else {
-                lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
-                    let when = item
-                        .when_date
-                        .map(|dt| dt.to_string())
-                        .unwrap_or_else(|| "-".to_string());
-                    let item_text = board_item_label(item);
-                    let categories = item_assignment_labels(item, &category_names);
-                    let categories_text = if categories.is_empty() {
-                        "-".to_string()
-                    } else {
-                        categories.join(", ")
-                    };
-                    let is_selected = is_selected_slot && item_index == self.item_index;
-                    let row_text =
-                        board_item_row(is_selected, &when, &item_text, &categories_text, widths);
-                    if is_selected {
-                        Line::styled(row_text, selected_row_style())
-                    } else {
-                        Line::from(row_text)
-                    }
-                }));
+                let widths = board_column_widths(inner_width);
+                lines = vec![Line::from(board_annotation_header(widths))];
+                if slot.items.is_empty() {
+                    lines.push(Line::from("(no items)"));
+                } else {
+                    lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
+                        let when = item
+                            .when_date
+                            .map(|dt| dt.to_string())
+                            .unwrap_or_else(|| "-".to_string());
+                        let item_text = board_item_label(item);
+                        let categories = item_assignment_labels(item, &category_names);
+                        let categories_text = if categories.is_empty() {
+                            "-".to_string()
+                        } else {
+                            categories.join(", ")
+                        };
+                        let is_selected = is_selected_slot && item_index == self.item_index;
+                        let row_text = board_item_row(
+                            is_selected,
+                            &when,
+                            &item_text,
+                            &categories_text,
+                            widths,
+                        );
+                        if is_selected {
+                            Line::styled(row_text, selected_row_style())
+                        } else {
+                            Line::from(row_text)
+                        }
+                    }));
+                }
             }
             let title = format!("{} ({})", slot.title, slot.items.len());
             let border_color = if is_selected_slot {
@@ -6099,6 +6455,155 @@ const BOARD_ITEM_MIN_WIDTH: usize = 12;
 const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
 const BOARD_CATEGORY_MIN_WIDTH: usize = 14;
 const BOARD_TRUNCATION_SUFFIX: &str = "...";
+const BOARD_DYNAMIC_ITEM_MIN_WIDTH: usize = 12;
+
+#[derive(Clone, Debug)]
+struct BoardColumnLayout {
+    marker: usize,
+    item: usize,
+    item_label: String,
+    columns: Vec<BoardColumnSpec>,
+}
+
+#[derive(Clone, Debug)]
+struct BoardColumnSpec {
+    label: String,
+    width: usize,
+    kind: ColumnKind,
+    child_ids: Vec<CategoryId>,
+}
+
+fn compute_board_layout(
+    view_columns: &[Column],
+    categories: &[Category],
+    category_names: &HashMap<CategoryId, String>,
+    item_label: &str,
+    slot_width: u16,
+) -> BoardColumnLayout {
+    let total = slot_width as usize;
+    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
+    let sep_count = view_columns.len();
+    let separator_total = BOARD_COLUMN_SEPARATOR.len() * sep_count;
+    let available = total.saturating_sub(marker + separator_total);
+
+    let cat_by_id: HashMap<CategoryId, &Category> =
+        categories.iter().map(|c| (c.id, c)).collect();
+
+    let mut configured_widths: Vec<usize> = view_columns
+        .iter()
+        .map(|col| (col.width as usize).max(8))
+        .collect();
+    let configured_total: usize = configured_widths.iter().sum();
+    let mut item_width = available.saturating_sub(configured_total);
+
+    if item_width < BOARD_DYNAMIC_ITEM_MIN_WIDTH && !configured_widths.is_empty() {
+        let deficit = BOARD_DYNAMIC_ITEM_MIN_WIDTH.saturating_sub(item_width);
+        let shrinkable: usize = configured_widths.iter().map(|w| w.saturating_sub(8)).sum();
+        let actual_shrink = deficit.min(shrinkable);
+        if actual_shrink > 0 {
+            let mut remaining = actual_shrink;
+            for w in configured_widths.iter_mut().rev() {
+                let can_take = w.saturating_sub(8);
+                let take = can_take.min(remaining);
+                *w -= take;
+                remaining -= take;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+        let new_total: usize = configured_widths.iter().sum();
+        item_width = available.saturating_sub(new_total);
+    }
+
+    item_width = item_width.max(if available > 0 { 1 } else { 0 });
+
+    let columns: Vec<BoardColumnSpec> = view_columns
+        .iter()
+        .zip(configured_widths.iter())
+        .map(|(col, &width)| {
+            let label = category_names
+                .get(&col.heading)
+                .cloned()
+                .unwrap_or_else(|| "(deleted)".to_string());
+            let child_ids = match col.kind {
+                ColumnKind::Standard => cat_by_id
+                    .get(&col.heading)
+                    .map(|c| c.children.clone())
+                    .unwrap_or_default(),
+                ColumnKind::When => Vec::new(),
+            };
+            BoardColumnSpec {
+                label,
+                width,
+                kind: col.kind,
+                child_ids,
+            }
+        })
+        .collect();
+
+    BoardColumnLayout {
+        marker,
+        item: item_width,
+        item_label: item_label.to_string(),
+        columns,
+    }
+}
+
+fn board_dynamic_header(layout: &BoardColumnLayout) -> String {
+    let mut out = " ".repeat(layout.marker);
+    out.push_str(&fit_board_cell(&layout.item_label, layout.item));
+    for col in &layout.columns {
+        out.push_str(BOARD_COLUMN_SEPARATOR);
+        out.push_str(&fit_board_cell(&col.label, col.width));
+    }
+    out
+}
+
+fn board_dynamic_row(
+    is_selected: bool,
+    item: &Item,
+    layout: &BoardColumnLayout,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    let mut out = board_row_marker(is_selected, layout.marker);
+    let item_text = board_item_label(item);
+    out.push_str(&fit_board_cell(&item_text, layout.item));
+    for col in &layout.columns {
+        out.push_str(BOARD_COLUMN_SEPARATOR);
+        let cell = match col.kind {
+            ColumnKind::When => item
+                .when_date
+                .map(|dt| dt.to_string())
+                .unwrap_or_else(|| "\u{2013}".to_string()),
+            ColumnKind::Standard => standard_column_value(item, &col.child_ids, category_names),
+        };
+        out.push_str(&fit_board_cell(&cell, col.width));
+    }
+    out
+}
+
+fn standard_column_value(
+    item: &Item,
+    child_ids: &[CategoryId],
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    let mut matches: Vec<String> = child_ids
+        .iter()
+        .filter(|cid| item.assignments.contains_key(cid))
+        .map(|cid| {
+            category_names
+                .get(cid)
+                .cloned()
+                .unwrap_or_else(|| cid.to_string())
+        })
+        .collect();
+    if matches.is_empty() {
+        return "\u{2013}".to_string();
+    }
+    matches.sort_by_key(|n| n.to_ascii_lowercase());
+    matches.join(", ")
+}
 
 fn has_note_text(note: Option<&str>) -> bool {
     note.map(|text| !text.trim().is_empty()).unwrap_or(false)
