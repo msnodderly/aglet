@@ -411,16 +411,18 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, board_item_label, bucket_target_set_mut, build_category_rows,
-        build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
-        item_assignment_labels, item_edit_popup_area, list_scroll_for_selected_line, next_index,
-        next_index_clamped, should_render_unmatched_lane, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
+        add_capture_status_message, board_column_widths, board_item_label, bucket_target_set_mut,
+        build_category_rows, build_reparent_options, category_name_map, category_target_set_mut,
+        compute_board_layout, first_non_reserved_category_index, item_assignment_labels,
+        item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
+        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
+        CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Assignment, AssignmentSource, Category, CategoryId, Item, Query, Section, View, WhenBucket,
+        Assignment, AssignmentSource, Category, CategoryId, Column, ColumnKind, Item, Query,
+        Section, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -1760,6 +1762,58 @@ mod tests {
     }
 
     #[test]
+    fn inspect_unassign_picker_jk_tracks_assignment_rows() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-unassign-nav-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let home = Category::new("Home".to_string());
+        store.create_category(&work).expect("create work");
+        store.create_category(&home).expect("create home");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .expect("assign work");
+        agenda
+            .assign_item_manual(item.id, home.id, Some("manual:test".to_string()))
+            .expect("assign home");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.show_preview = true;
+        app.normal_focus = super::NormalFocus::Preview;
+        app.preview_mode = super::PreviewMode::Provenance;
+
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("open unassign picker from preview provenance");
+        assert_eq!(app.mode, Mode::InspectUnassignPicker);
+        assert_eq!(app.inspect_assignment_index, 0);
+
+        app.handle_inspect_unassign_key(KeyCode::Char('j'), &agenda)
+            .expect("j moves to next assignment");
+        assert_eq!(app.inspect_assignment_index, 1);
+
+        app.handle_inspect_unassign_key(KeyCode::Char('j'), &agenda)
+            .expect("j wraps around");
+        assert_eq!(app.inspect_assignment_index, 0);
+
+        app.handle_inspect_unassign_key(KeyCode::Char('k'), &agenda)
+            .expect("k wraps backwards");
+        assert_eq!(app.inspect_assignment_index, 1);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn normal_mode_f_toggles_focus_when_preview_is_open() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2107,6 +2161,48 @@ mod tests {
     }
 
     #[test]
+    fn category_reparent_picker_preselects_current_parent() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-reparent-select-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Parent".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut child = Category::new("Child".to_string());
+        child.parent = Some(parent.id);
+        store.create_category(&child).expect("create child");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::CategoryManager;
+        app.category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == child.id)
+            .expect("child category row should exist");
+
+        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
+            .expect("open reparent picker");
+        assert_eq!(app.mode, Mode::CategoryReparentPicker);
+        assert!(!app.category_reparent_options.is_empty());
+
+        let selected_parent = app
+            .category_reparent_options
+            .get(app.category_reparent_index)
+            .and_then(|option| option.parent_id);
+        assert_eq!(selected_parent, Some(parent.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn normal_mode_g_jumps_to_all_items_view() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2420,6 +2516,39 @@ mod tests {
         ]);
         let labels = item_assignment_labels(&item, &names);
         assert_eq!(labels, vec!["garage".to_string(), "slotB".to_string()]);
+    }
+
+    #[test]
+    fn board_layout_helpers_fit_columns_within_slot_width() {
+        let parent = Category::new("Parent".to_string());
+        let mut child = Category::new("Child".to_string());
+        child.parent = Some(parent.id);
+        let categories = vec![parent.clone(), child.clone()];
+        let names = category_name_map(&categories);
+        let columns = vec![
+            Column {
+                kind: ColumnKind::When,
+                heading: parent.id,
+                width: 24,
+            },
+            Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 24,
+            },
+        ];
+
+        let slot_width = 64u16;
+        let dynamic = compute_board_layout(&columns, &categories, &names, "Item", slot_width);
+        let dynamic_used =
+            dynamic.item + dynamic.columns.iter().map(|column| column.width).sum::<usize>();
+        assert!(dynamic_used <= slot_width as usize);
+        assert!(dynamic.item >= 1);
+        assert!(dynamic.columns.iter().all(|column| column.width >= 8));
+
+        let legacy = board_column_widths(slot_width);
+        assert!(legacy.when + legacy.item + legacy.categories <= slot_width as usize);
+        assert!(legacy.item >= 1);
     }
 
     #[test]
