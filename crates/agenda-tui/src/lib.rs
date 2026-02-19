@@ -4818,13 +4818,21 @@ impl App {
             } else {
                 Color::Blue
             };
+            let selected_line = if is_selected_slot && !slot.items.is_empty() {
+                Some(1 + self.item_index.min(slot.items.len().saturating_sub(1)))
+            } else {
+                None
+            };
+            let scroll = list_scroll_for_selected_line(columns[slot_index], selected_line);
             frame.render_widget(
-                Paragraph::new(lines).block(
-                    Block::default()
-                        .title(title)
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(border_color)),
-                ),
+                Paragraph::new(lines)
+                    .block(
+                        Block::default()
+                            .title(title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(border_color)),
+                    )
+                    .scroll((scroll, 0)),
                 columns[slot_index],
             );
         }
