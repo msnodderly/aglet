@@ -296,30 +296,24 @@ impl App {
                 .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
                 .split(area);
             self.render_board_columns(frame, split[0]);
-            frame.render_widget(self.render_preview_panel(), split[1]);
-            let (content_len, scroll_position) = match self.preview_mode {
+            match self.preview_mode {
                 PreviewMode::Summary => {
-                    let lines = self
+                    frame.render_widget(self.render_preview_summary_panel(), split[1]);
+                    let content_len = self
                         .selected_item()
                         .map(|item| self.item_details_lines_for_item(item).len())
                         .unwrap_or(4);
-                    (lines, self.preview_summary_scroll)
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        split[1],
+                        content_len,
+                        self.preview_summary_scroll,
+                    );
                 }
                 PreviewMode::Provenance => {
-                    let lines = if let Some(item) = self.selected_item() {
-                        let row_count = self.inspect_assignment_rows_for_item(item).len();
-                        if row_count == 0 {
-                            3
-                        } else {
-                            2 + row_count
-                        }
-                    } else {
-                        3
-                    };
-                    (lines, self.preview_provenance_scroll)
+                    self.render_preview_provenance_panel(frame, split[1]);
                 }
-            };
-            Self::render_vertical_scrollbar(frame, split[1], content_len, scroll_position);
+            }
         } else {
             self.render_board_columns(frame, area);
         }
@@ -795,51 +789,61 @@ impl App {
         }
     }
 
-    pub(crate) fn render_preview_provenance_panel(&self) -> Paragraph<'_> {
-        let mut lines = vec![
-            Line::from("Provenance"),
-            Line::from("f focus | j/k or J/K scroll | o summary | u unassign"),
+    pub(crate) fn render_preview_provenance_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+    ) {
+        let mut items = vec![
+            ListItem::new(Line::from("Provenance")),
+            ListItem::new(Line::from(
+                "f focus | j/k or J/K scroll | o summary | u unassign",
+            )),
         ];
+        let mut selected_line = None;
         if let Some(item) = self.selected_item() {
             let rows = self.inspect_assignment_rows_for_item(item);
             if rows.is_empty() {
-                lines.push(Line::from("(no assignments)"));
+                items.push(ListItem::new(Line::from("(no assignments)")));
             } else {
-                let is_picker_mode = self.mode == Mode::InspectUnassignPicker;
+                let row_start = items.len();
+                let picker_mode = self.mode == Mode::InspectUnassignPicker;
                 for (index, row) in rows.iter().enumerate() {
-                    let marker = if is_picker_mode && index == self.inspect_assignment_index {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    lines.push(Line::from(format!(
-                        "{marker}{} | source={} | origin={}",
+                    items.push(ListItem::new(Line::from(format!(
+                        "{} | source={} | origin={}",
                         row.category_name, row.source_label, row.origin_label
-                    )));
+                    ))));
+                    if picker_mode && index == self.inspect_assignment_index {
+                        selected_line = Some(row_start + index);
+                    }
                 }
             }
         } else {
-            lines.push(Line::from("(no selected item)"));
+            items.push(ListItem::new(Line::from("(no selected item)")));
         }
-
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title("Preview: Provenance")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(
-                        if self.normal_focus == NormalFocus::Preview {
-                            Color::Cyan
-                        } else {
-                            Color::Yellow
-                        },
-                    )),
-            )
-            .scroll((
-                self.preview_provenance_scroll.min(u16::MAX as usize) as u16,
-                0,
-            ))
-            .wrap(Wrap { trim: false })
+        let item_count = items.len();
+        let mut state = Self::list_state_for(area, selected_line);
+        *state.offset_mut() = self.preview_provenance_scroll;
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("Preview: Provenance")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(
+                            if self.normal_focus == NormalFocus::Preview {
+                                Color::Cyan
+                            } else {
+                                Color::Yellow
+                            },
+                        )),
+                ),
+            area,
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
     pub(crate) fn item_details_lines_for_item(&self, item: &Item) -> Vec<Line<'_>> {
@@ -898,13 +902,6 @@ impl App {
             )
             .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
-    }
-
-    pub(crate) fn render_preview_panel(&self) -> Paragraph<'_> {
-        match self.preview_mode {
-            PreviewMode::Summary => self.render_preview_summary_panel(),
-            PreviewMode::Provenance => self.render_preview_provenance_panel(),
-        }
     }
 
     pub(crate) fn render_footer(&self) -> Paragraph<'_> {
