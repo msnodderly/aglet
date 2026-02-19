@@ -1,3 +1,182 @@
+board should showing two horizontal sections ("Open" and "Closed"), each with columns for Priority, Type, and Status, filtered to the respective status values.
+
+Keystroke-by-Keystroke: Creating a View with Columns and Two Filtered Sections
+
+There are two paths. I'll walk you through the View Manager path since it's the most direct for your use case.
+
+Phase 1: Create the View
+
+v — Open the View Picker from normal mode
+N (capital) — Start "Create view"
+Type your view name, e.g. My Status View
+Enter — Advance to the category picker
+Use j/k to navigate to the category you want as the top-level view criteria (this filters which items appear in the view at all — you probably want to include a broad parent category, or just hit Enter with the cursor on whatever default makes sense)
+Enter — Creates the view and switches to it
+
+Phase 2: Open the View Manager & Add Columns
+
+v — Open the View Picker again
+V (capital) — Enter the View Manager (3-pane screen: Views | Definition | Sections)
+Your new view should be selected in the left pane. If not, j/k to highlight it, then Enter to focus it.
+Tab — Move focus to the Definition pane (middle)
+t — Toggle from the "Criteria" sub-tab to the "Columns" sub-tab
+N (capital) — Add a column → opens a category picker
+j/k to navigate to Priority, then Enter to select it as the column heading
+N again — Add another column
+j/k to Type, then Enter
+N again — Add a third column
+j/k to Status, then Enter
+
+
+Phase 3: Add Section 1 (filtered on Status/open)
+
+Tab — Move focus to the Sections pane (right)
+N (capital) — Creates "Section 1"
+Enter — Opens section detail editor (via the section editor → section detail flow)
+t — Edit section title
+Type Open (or whatever you want), then Enter
++ — Open category picker for section include criteria
+j/k to navigate to the Status/open category (the child "open" under "Status")
+Space — Toggle it on (selected)
+Enter (or Esc) — Close the category picker
+Esc — Back to section editor
+
+Phase 4: Add Section 2 (filtered on Status/closed)
+
+N (capital) — Creates "Section 2"
+j/k to select Section 2
+Enter — Open section detail
+t — Edit title
+Type Closed, then Enter
++ — Include category picker
+j/k to Status/closed
+Space — Toggle on
+Enter — Close picker
+Esc — Back to section editor
+
+Phase 5: Save and Exit
+
+Esc — Back to the View Manager (you'll see "press s to persist" in the status bar if sections changed)
+s — Save the view definition
+Esc or q — Exit View Manager back to View Picker
+Enter or Esc — Switch to the view / return to board
+
+Your board should now show two horizontal sections ("Open" and "Closed"), each with columns for Priority, Type, and Status, filtered to the respective status values.
+
+
+
+
+Path 2: View Editor Walkthrough (Keystroke-by-Keystroke)
+
+This path is useful if you already have a view and just want to edit its criteria and sections (but not columns).
+
+Phase 1: Open the View Editor
+
+v — Open the View Picker from normal mode
+j/k — Navigate to the view you want to edit (or create one first with N as described in the other walkthrough)
+e — Open the View Editor
+
+You now see a full-screen overlay:
+
+Editing view: My Status View
+Preview matches: 42
+
+> Include categories (1)
+  Exclude categories (0)
+  Virtual include buckets (0)
+  Virtual exclude buckets (0)
+  Sections (0)
+  Unmatched settings (enabled=true label=)
+
+Use j/k then o/right to open selected editor.
+Quick keys: + include  - exclude  ] v-include  [ v-exclude
+            s sections  u unmatched  Enter save  Esc cancel
+
+Phase 2: Edit View-Level Criteria (what items appear in this view at all)
+
+The cursor starts on "Include categories". Press o (or Right) to open the category picker.
+Alternatively, press + as a shortcut from anywhere.
+j/k — Navigate to the category you want to include
+Space — Toggle it on (an [x] appears)
+You can toggle multiple categories on/off
+Enter (or Esc) — Close the picker, return to the action list
+
+To exclude categories:
+9. j — Move cursor down to "Exclude categories"
+10. o — Open the exclude picker (or press - as shortcut)
+11. j/k + Space to toggle, then Enter to close
+
+Phase 3: Add Section 1 (Status/open)
+
+s — Jump directly to the Section Editor (or j down to "Sections" row and press o)
+
+You see:
+
+Sections in current view draft:
+(no sections)
+
+N add  x remove  [/] reorder  Enter edit  Esc back
+
+N (capital) — Creates "Section 1"
+Enter — Open Section Detail for this section
+
+You see:
+
+Section: Section 1
+criteria include=0 exclude=0 v_include=0 v_exclude=0
+...
+t title  +/- categories  [/] virtual  a insert-set  r remove-set  h toggle children  Esc back
+
+t — Edit the title
+Type Open, then Enter
++ — Open the include category picker for this section
+j/k — Navigate to Status/open (the child "open" under the "Status" parent)
+Space — Toggle it on
+Enter — Close the picker
+Esc — Back to the Section Editor list
+Phase 4: Add Section 2 (Status/closed)
+
+N (capital) — Creates "Section 2"
+j — Move cursor to Section 2
+Enter — Open Section Detail
+t — Edit title
+Type Closed, then Enter
++ — Include picker
+j/k to Status/closed
+Space — Toggle on
+Enter — Close picker
+Esc — Back to Section Editor
+
+Phase 5: Save
+
+Esc — Back to the View Editor main screen
+Enter — Saves the entire view (criteria + sections) in one shot and returns you to the View Picker
+Esc — Close the View Picker, return to the board
+
+
+What You're Missing
+
+At this point you have sections but no columns configured. The board will use legacy rendering (no column headers). To add columns, you'd need to:
+
+v — Open View Picker
+V (capital) — Enter the View Manager
+Tab — Focus the Definition pane
+t — Switch to the Columns sub-tab
+N → pick Priority → Enter
+N → pick Type → Enter
+N → pick Status → Enter
+s — Save
+Esc — Exit
+
+---
+
+Summary
+
+View Manager (v → V): One-stop shop — handles criteria, columns, and sections all in one place. Use this path for your use case.
+View Editor (v → e): Simpler overlay for criteria and sections only. Faster for quick tweaks, but you'll have to drop into the View Manager anyway if you need columns.
+
+
+----
 
 
 The CLE version of this may end up being a replacement for BR. In fact, I want to consciously think of that as an acceptance criteria that I can use this as a task and bug tracking system database as well as have a slick way of editing it through a TUI. 
