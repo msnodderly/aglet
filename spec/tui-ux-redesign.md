@@ -142,6 +142,34 @@ The unified View Editor is a **full-screen mode** (replaces the board, not an ov
 - The focused region has a highlighted border
 - Within each region, `j`/`k` navigates items
 
+### 4.3.1 Criteria Region Rendering
+
+Each row displays a `ViewCriteriaRow` with the same format as the current ViewManagerScreen Definition pane:
+
+```
+CRITERIA ──────────────────────────────────────────────────────────
+   +Work                                    ← first row, no join prefix
+ AND +Project                               ← AND join, include
+ OR  -Done                                  ← OR join, exclude
+   When: Overdue, Today, ThisWeek           ← virtual includes (collapsed into one line)
+   When (excl): Future                      ← virtual excludes (collapsed into one line)
+```
+
+Category criteria rows (`ViewCriteriaRow`) render as: `{join} {indent}{sign}{category_name}`, where join is blank for row 0, otherwise `AND`/`OR`; sign is `+`/`-`; indent is `"  " * depth`.
+
+Virtual (When bucket) criteria are **not** individual rows — they are a summary line at the bottom of the Criteria region showing `When: {comma-separated buckets}`. The `]`/`[` keys open a `BucketPicker` overlay to add/remove from the virtual include/exclude sets. This matches the current ViewManagerScreen behavior where virtual criteria are displayed but not individually selectable in the criteria row list.
+
+### 4.3.2 Columns Region Rendering
+
+```
+COLUMNS ────────────────────────────────────────────────────────────
+  1. When          w:16  [When]             ← ColumnKind::When tagged
+  2. Priority      w:12
+  3. Status        w:12
+```
+
+Each row: `{index}. {category_name}  w:{width}  {kind_tag}`, where `kind_tag` is `[When]` for `ColumnKind::When` and blank for `ColumnKind::Standard`. The category name is resolved from `col.heading` via the category name map; deleted categories show `(deleted)`.
+
 ### 4.4 Per-Region Keys
 
 **Criteria region:**
@@ -266,6 +294,40 @@ enum Mode {
 **30 modes → 21 modes.** The 10 eliminated view-editing modes (ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput) become sub-states of the single new ViewEdit mode.
 
 ### 5.2 ViewEdit Sub-State
+
+The following types already exist in the codebase and are reused by ViewEdit:
+
+```rust
+// Existing — lib.rs. Used by ViewManagerScreen today; reused by ViewEdit's Criteria region.
+enum ViewCriteriaSign { Include, Exclude }
+
+struct ViewCriteriaRow {
+    sign: ViewCriteriaSign,
+    category_id: CategoryId,
+    join_is_or: bool,    // AND vs OR between rows
+    depth: usize,        // indent level for child categories
+}
+
+// Existing — lib.rs. Identifies which HashSet<CategoryId> a picker overlay is editing.
+enum CategoryEditTarget {
+    ViewInclude,
+    ViewExclude,
+    SectionCriteriaInclude,
+    SectionCriteriaExclude,
+    SectionOnInsertAssign,
+    SectionOnRemoveUnassign,
+}
+
+// Existing — lib.rs. Identifies which HashSet<WhenBucket> a picker overlay is editing.
+enum BucketEditTarget {
+    ViewVirtualInclude,
+    ViewVirtualExclude,
+    SectionVirtualInclude,
+    SectionVirtualExclude,
+}
+```
+
+New types introduced for ViewEdit:
 
 ```rust
 enum ViewEditRegion {
@@ -449,6 +511,7 @@ Consistent meanings across all contexts:
 - Current ViewManagerScreen uses `s` to save criteria only (not columns/sections). ViewEdit uses `S` (capital) to save everything. This avoids conflict with `s` being used for "sections" in the View Editor.
 - Current ViewEditor uses `s` to open section editor. In ViewEdit, sections are a visible region — no key needed to "open" them, just Tab to the region.
 - `[`/`]` is overloaded: reorder in editing contexts, move item in board context. This is OK because they never coexist (you're either in ViewEdit or on the board).
+- `h` is overloaded: cursor left globally (§7), but toggles `show_children` in ViewEdit's expanded section detail (§4.4). This is OK because ViewEdit has no left/right cursor movement — navigation is vertical within regions and Tab between them.
 
 ## 8. Status Bar Messages
 
@@ -503,7 +566,12 @@ struct App {
 }
 ```
 
-`section_filters` is rebuilt whenever the board layout changes (view switch, section add/remove). Its length matches the number of rendered sections (including the unmatched section when visible).
+`section_filters` is rebuilt (reset to all-`None`) whenever the board's section structure changes. Rebuild triggers:
+- View switch (different view selected from ViewPicker)
+- Returning from ViewEdit after saving (sections may have been added, removed, or reordered)
+- Store reload / external data change
+
+Its length matches the number of rendered sections (including the unmatched section when visible). Filters are **not** rebuilt when merely entering/exiting ViewEdit without saving — the board layout hasn't changed.
 
 ### 10.3 Key Behavior
 
@@ -575,27 +643,46 @@ When `Tab`/`Shift-Tab` moves the cursor to a different section, the user is now 
 3. Replace `item_edit_note` + `item_edit_note_cursor` with `TextBuffer`
 4. Replace `CategoryConfigEditorState.note` + `note_cursor` with `TextBuffer`
 5. Delete duplicated cursor methods from `input/mod.rs`
-6. All existing tests must pass
+6. **New tests**: TextBuffer unit tests for single-line ops (insert, backspace, move left/right/home/end), multi-line ops (move up/down, insert newline), edge cases (empty buffer, cursor at boundaries), `handle_key` with multiline true/false
+7. All existing tests must pass
 
 ### Phase 2: Unified ViewEdit mode
+
+Split into sub-phases to keep each commit testable. The old modes remain functional until Phase 2c deletes them, so existing tests pass throughout.
+
+**Phase 2a: Build ViewEdit alongside old modes**
 1. Create `ViewEditState` struct with region/overlay/inline_input sub-states
-2. Implement ViewEdit key dispatch (inline_input → overlay → region precedence, per section 5.2)
-3. Implement ViewEdit rendering (four regions with focus highlight)
-4. Implement picker overlay rendering (right-aligned panel)
-5. Implement inline text input within regions
-6. Wire up save (`S`) to persist full view via `store.update_view()`
-7. Delete old modes: ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput
-8. Delete `view_editor_return_to_manager`, `view_editor_category_target`, `view_editor_bucket_target` flags (these are subsumed by ViewEditState.overlay). Delete `view_return_to_manager` flag (ViewCreateName/ViewRename/ViewDeleteConfirm always return to ViewPicker). Delete `item_assign_return_to_item_edit` flag (ItemAssignPicker always returns to Normal).
-9. All existing tests must pass (adapt mode assertions)
+2. Add `Mode::ViewEdit` variant to the Mode enum (old variants remain)
+3. Implement ViewEdit key dispatch (inline_input → overlay → region precedence, per section 5.2)
+4. Implement ViewEdit rendering (four regions with focus highlight, §4.3.1–4.3.2)
+5. Implement picker overlay rendering (right-aligned panel)
+6. Implement inline text input within regions
+7. Wire up save (`S`) to persist full view via `store.update_view()`
+8. Wire entry point: ViewPicker `e` enters ViewEdit instead of ViewManagerScreen/ViewEditor
+9. **New tests**: ViewEdit region cycling, key dispatch precedence (inline > overlay > region), save round-trip, Esc returns to ViewPicker
+
+**Phase 2b: Migrate remaining entry points**
+1. ViewPicker `N` (new view) opens ViewEdit after creation
+2. All ViewCreate*/ViewRename*/ViewDeleteConfirm modes return to ViewPicker unconditionally (delete `view_return_to_manager` flag)
+3. ItemAssignPicker always returns to Normal (delete `item_assign_return_to_item_edit` flag)
+4. Adapt existing mode-transition tests for new Esc targets
+
+**Phase 2c: Delete old modes**
+1. Delete old modes: ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput
+2. Delete `view_editor_return_to_manager`, `view_editor_category_target`, `view_editor_bucket_target` fields (subsumed by ViewEditState.overlay)
+3. Delete `ViewEditorState` struct (subsumed by `ViewEditState`)
+4. Delete rendering code for the old modes
+5. All tests must pass
 
 ### Phase 3: Per-section text filters
 1. Replace `filter: Option<String>` with `section_filters: Vec<Option<String>>` and `filter_target_section: usize`
-2. Rebuild `section_filters` on view switch, section add/remove (length = rendered section count)
+2. Rebuild `section_filters` on view switch, returning from ViewEdit after save, store reload (length = rendered section count; see §10.2)
 3. `/` in Normal sets `filter_target_section` to the current section before entering FilterInput
 4. FilterInput Enter stores result in `section_filters[filter_target_section]`
 5. Esc in Normal clears current section's filter (not all filters)
 6. Render per-section filter indicator in section headers
 7. Apply text filter per-section after section criteria evaluation, before rendering
+8. **New tests**: per-section filter isolation (filter in section A doesn't affect section B), filter rebuild on view switch clears all filters, Esc-from-Normal clears only the focused section's filter, `/` targets the correct section
 
 ### Phase 4: Esc consistency (remaining fixes after Phases 2–3)
 Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `view_editor_return_to_manager`, `item_assign_return_to_item_edit`). Phase 3 refines FilterInput to be section-scoped. This phase fixes the remaining Esc inconsistencies:
