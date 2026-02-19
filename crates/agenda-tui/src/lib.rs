@@ -291,8 +291,7 @@ enum NormalFocus {
 struct App {
     mode: Mode,
     status: String,
-    input: String,
-    input_cursor: usize,
+    input: text_buffer::TextBuffer,
     filter: Option<String>,
     show_preview: bool,
     preview_mode: PreviewMode,
@@ -352,8 +351,7 @@ impl Default for App {
             status:
                 "Press n to add, v for view palette, c for category manager, p for preview, q to quit"
                     .to_string(),
-            input: String::new(),
-            input_cursor: 0,
+            input: text_buffer::TextBuffer::empty(),
             filter: None,
             show_preview: false,
             preview_mode: PreviewMode::Summary,
@@ -417,7 +415,7 @@ mod tests {
         compute_board_layout, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
+        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane, text_buffer,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -618,8 +616,7 @@ mod tests {
         for (mode, prefix) in cases {
             let app = App {
                 mode,
-                input: input.to_string(),
-                input_cursor: input.len(),
+                input: text_buffer::TextBuffer::new(input.to_string()),
                 ..App::default()
             };
             let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
@@ -642,7 +639,7 @@ mod tests {
         ] {
             let app = App {
                 mode,
-                input: "abc".to_string(),
+                input: text_buffer::TextBuffer::new("abc".to_string()),
                 ..App::default()
             };
             assert_eq!(app.input_cursor_position(footer), None);
@@ -652,10 +649,10 @@ mod tests {
     #[test]
     fn input_cursor_position_clamps_to_footer_inner_width() {
         let footer = Rect::new(0, 0, 8, 3);
+        // cursor clamps to text length (26), which overflows the 8-wide footer → x=6
         let app = App {
             mode: Mode::AddInput,
-            input: "abcdefghijklmnopqrstuvwxyz".to_string(),
-            input_cursor: usize::MAX,
+            input: text_buffer::TextBuffer::new("abcdefghijklmnopqrstuvwxyz".to_string()),
             ..App::default()
         };
 
@@ -667,8 +664,7 @@ mod tests {
         let footer = Rect::new(0, 0, 40, 3);
         let app = App {
             mode: Mode::AddInput,
-            input: "abcd".to_string(),
-            input_cursor: 2,
+            input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
             ..App::default()
         };
 
@@ -681,8 +677,7 @@ mod tests {
         let popup = item_edit_popup_area(screen);
         let app = App {
             mode: Mode::ItemEditInput,
-            input: "abcd".to_string(),
-            input_cursor: 2,
+            input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
             ..App::default()
         };
         assert_eq!(
@@ -2407,19 +2402,19 @@ mod tests {
         app.set_input("ac".to_string());
 
         assert!(app.handle_text_input_key(KeyCode::Left));
-        assert_eq!(app.input_cursor, 1);
+        assert_eq!(app.input.cursor(), 1);
 
         assert!(app.handle_text_input_key(KeyCode::Char('b')));
-        assert_eq!(app.input, "abc");
-        assert_eq!(app.input_cursor, 2);
+        assert_eq!(app.input.text(), "abc");
+        assert_eq!(app.input.cursor(), 2);
 
         assert!(app.handle_text_input_key(KeyCode::Backspace));
-        assert_eq!(app.input, "ac");
-        assert_eq!(app.input_cursor, 1);
+        assert_eq!(app.input.text(), "ac");
+        assert_eq!(app.input.cursor(), 1);
 
         assert!(app.handle_text_input_key(KeyCode::Delete));
-        assert_eq!(app.input, "a");
-        assert_eq!(app.input_cursor, 1);
+        assert_eq!(app.input.text(), "a");
+        assert_eq!(app.input.cursor(), 1);
     }
 
     #[test]

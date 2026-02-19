@@ -381,7 +381,7 @@ impl App {
                 self.status = "Category create canceled".to_string();
             }
             KeyCode::Enter => {
-                let name = self.input.trim().to_string();
+                let name = self.input.trimmed().to_string();
                 if !name.is_empty() {
                     let mut category = Category::new(name.clone());
                     category.enable_implicit_string = true;
@@ -441,7 +441,7 @@ impl App {
                     return Ok(false);
                 };
 
-                let new_name = self.input.trim().to_string();
+                let new_name = self.input.trimmed().to_string();
                 if new_name.is_empty() {
                     self.mode = Mode::CategoryManager;
                     self.clear_input();

@@ -110,11 +110,11 @@ impl App {
                     return Ok(false);
                 }
                 KeyCode::Backspace => {
-                    self.input.pop();
+                    self.input.handle_key(KeyCode::Backspace, false);
                     return Ok(false);
                 }
                 KeyCode::Char(c) if c.is_ascii_digit() => {
-                    self.input.push(c);
+                    self.input.handle_key(KeyCode::Char(c), false);
                     return Ok(false);
                 }
                 KeyCode::Enter => {
@@ -260,7 +260,7 @@ impl App {
             },
             KeyCode::Enter => {
                 if self.view_manager_column_width_input {
-                    if let Ok(w) = self.input.trim().parse::<u16>() {
+                    if let Ok(w) = self.input.trimmed().parse::<u16>() {
                         let w = w.max(4);
                         if let Some(view) = self.views.get_mut(self.picker_index) {
                             if let Some(col) = view.columns.get_mut(self.view_manager_column_index)
@@ -1058,7 +1058,7 @@ impl App {
                 self.status = "View create canceled".to_string();
             }
             KeyCode::Enter => {
-                let name = self.input.trim().to_string();
+                let name = self.input.trimmed().to_string();
                 if name.is_empty() {
                     self.mode = return_mode;
                     self.clear_input();
@@ -1237,7 +1237,7 @@ impl App {
                     return Ok(false);
                 };
 
-                let new_name = self.input.trim().to_string();
+                let new_name = self.input.trimmed().to_string();
                 if new_name.is_empty() {
                     self.mode = return_mode;
                     self.clear_input();
@@ -1820,7 +1820,7 @@ impl App {
             KeyCode::Enter => {
                 if let Some(editor) = &mut self.view_editor {
                     if let Some(section) = editor.draft.sections.get_mut(editor.section_index) {
-                        let title = self.input.trim().to_string();
+                        let title = self.input.trimmed().to_string();
                         if !title.is_empty() {
                             section.title = title;
                         }
@@ -1887,7 +1887,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(editor) = &mut self.view_editor {
-                    let label = self.input.trim().to_string();
+                    let label = self.input.trimmed().to_string();
                     if !label.is_empty() {
                         editor.draft.unmatched_label = label;
                     }

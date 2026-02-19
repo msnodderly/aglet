@@ -490,7 +490,7 @@ impl App {
                 definition_items.push(ListItem::new(Line::from("")));
                 if self.view_manager_column_width_input {
                     definition_items
-                        .push(ListItem::new(Line::from(format!("Width> {}", self.input))));
+                        .push(ListItem::new(Line::from(format!("Width> {}", self.input.text()))));
                 } else {
                     definition_items.push(ListItem::new(Line::from(
                         "N:add  x:del  [/]:move  w:width  Enter:heading",
@@ -982,12 +982,12 @@ impl App {
 
     pub(crate) fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
-            Mode::AddInput => format!("Add> {}", self.input),
-            Mode::NoteEditInput => format!("Note> {}", self.input),
-            Mode::FilterInput => format!("Filter> {}", self.input),
+            Mode::AddInput => format!("Add> {}", self.input.text()),
+            Mode::NoteEditInput => format!("Note> {}", self.input.text()),
+            Mode::FilterInput => format!("Filter> {}", self.input.text()),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
-            Mode::ViewCreateNameInput => format!("View create> {}", self.input),
-            Mode::ViewRenameInput => format!("View rename> {}", self.input),
+            Mode::ViewCreateNameInput => format!("View create> {}", self.input.text()),
+            Mode::ViewRenameInput => format!("View rename> {}", self.input.text()),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategoryPicker => {
                 "Set include/exclude categories for new view".to_string()
@@ -1003,10 +1003,10 @@ impl App {
                     ""
                 }
             ),
-            Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
-            Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
-            Mode::CategoryCreateInput => format!("Category create> {}", self.input),
-            Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
+            Mode::ViewSectionTitleInput => format!("Section title> {}", self.input.text()),
+            Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input.text()),
+            Mode::CategoryCreateInput => format!("Category create> {}", self.input.text()),
+            Mode::CategoryRenameInput => format!("Category rename> {}", self.input.text()),
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
             Mode::CategoryConfigEditor => {
@@ -1017,7 +1017,7 @@ impl App {
                 }
             }
             Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
-            Mode::ItemAssignCategoryInput => format!("Category> {}", self.input),
+            Mode::ItemAssignCategoryInput => format!("Category> {}", self.input.text()),
             Mode::InspectUnassignPicker => "Select assignment".to_string(),
             Mode::ItemEditInput => format!(
                 "Edit item fields in popup (focus: {})",
@@ -1111,7 +1111,7 @@ impl App {
 
         frame.render_widget(Paragraph::new("Edit selected item"), regions.heading);
         frame.render_widget(
-            Paragraph::new(format!("{text_marker} Text> {}", self.input)),
+            Paragraph::new(format!("{text_marker} Text> {}", self.input.text())),
             regions.text,
         );
 
