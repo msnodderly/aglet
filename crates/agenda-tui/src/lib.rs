@@ -19,7 +19,10 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Table, TableState, Tabs, Wrap,
+};
 use ratatui::Terminal;
 use tui_textarea::{CursorMove, TextArea};
 
@@ -408,12 +411,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, board_annotation_header, board_column_widths, board_item_label,
-        board_item_row, bucket_target_set_mut, build_category_rows, build_reparent_options,
-        category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
-        item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
-        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
-        CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane, NOTE_MARKER_SYMBOL,
+        add_capture_status_message, board_item_label, bucket_target_set_mut, build_category_rows,
+        build_reparent_options, category_target_set_mut, first_non_reserved_category_index,
+        item_assignment_labels, item_edit_popup_area, list_scroll_for_selected_line, next_index,
+        next_index_clamped, should_render_unmatched_lane, when_bucket_options, App,
+        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2421,68 +2423,9 @@ mod tests {
     }
 
     #[test]
-    fn board_annotation_header_and_rows_share_grid_boundaries() {
-        let widths = board_column_widths(72);
-        let header = board_annotation_header(widths);
-        let row = board_item_row(
-            true,
-            "2026-02-17",
-            "alignment check",
-            "Home, SlotA, SlotB",
-            true,
-            widths,
-        );
-
-        let header_pipes: Vec<usize> = header
-            .chars()
-            .enumerate()
-            .filter_map(|(idx, ch)| (ch == '|').then_some(idx))
-            .collect();
-        let row_pipes: Vec<usize> = row
-            .chars()
-            .enumerate()
-            .filter_map(|(idx, ch)| (ch == '|').then_some(idx))
-            .collect();
-        assert_eq!(header_pipes, row_pipes);
-    }
-
-    #[test]
     fn board_item_label_does_not_inline_note_marker() {
         let mut item = Item::new("alignment check".to_string());
         item.note = Some("detail".to_string());
         assert_eq!(board_item_label(&item), "alignment check");
-    }
-
-    #[test]
-    fn board_item_row_renders_note_symbol_in_pseudo_column() {
-        let widths = board_column_widths(72);
-        let row_with_note =
-            board_item_row(false, "2026-02-17", "alignment check", "Home", true, widths);
-        let row_without_note = board_item_row(
-            false,
-            "2026-02-17",
-            "alignment check",
-            "Home",
-            false,
-            widths,
-        );
-        assert!(row_with_note.contains(&format!(" | {NOTE_MARKER_SYMBOL}")));
-        assert!(row_without_note.contains(" |   "));
-    }
-
-    #[test]
-    fn board_item_row_truncates_to_slot_width() {
-        let widths = board_column_widths(44);
-        let row = board_item_row(
-            false,
-            "2026-02-17 14:00:00",
-            "very long item text that should truncate cleanly",
-            "one, two, three, four, five, six",
-            false,
-            widths,
-        );
-
-        assert!(row.len() <= 44);
-        assert!(row.contains("..."));
     }
 }

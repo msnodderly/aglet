@@ -259,40 +259,32 @@ pub(super) fn item_assignment_labels(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct BoardColumnWidths {
-    marker: usize,
-    note: usize,
-    when: usize,
-    item: usize,
-    categories: usize,
+    pub(super) when: usize,
+    pub(super) item: usize,
+    pub(super) categories: usize,
 }
 
-pub(super) const BOARD_ROW_MARKER_WIDTH: usize = 2;
-pub(super) const BOARD_NOTE_MARKER_WIDTH: usize = 2;
-pub(super) const BOARD_COLUMN_SEPARATOR: &str = " | ";
 pub(super) const NOTE_MARKER_SYMBOL: &str = "♪";
 pub(super) const BOARD_WHEN_TARGET_WIDTH: usize = 19;
 pub(super) const BOARD_WHEN_MIN_WIDTH: usize = 10;
 pub(super) const BOARD_ITEM_MIN_WIDTH: usize = 12;
 pub(super) const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
 pub(super) const BOARD_CATEGORY_MIN_WIDTH: usize = 14;
-pub(super) const BOARD_TRUNCATION_SUFFIX: &str = "...";
 pub(super) const BOARD_DYNAMIC_ITEM_MIN_WIDTH: usize = 12;
 
 #[derive(Clone, Debug)]
 pub(super) struct BoardColumnLayout {
-    marker: usize,
-    note: usize,
-    item: usize,
-    item_label: String,
-    columns: Vec<BoardColumnSpec>,
+    pub(super) item: usize,
+    pub(super) item_label: String,
+    pub(super) columns: Vec<BoardColumnSpec>,
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct BoardColumnSpec {
-    label: String,
-    width: usize,
-    kind: ColumnKind,
-    child_ids: Vec<CategoryId>,
+    pub(super) label: String,
+    pub(super) width: usize,
+    pub(super) kind: ColumnKind,
+    pub(super) child_ids: Vec<CategoryId>,
 }
 
 pub(super) fn compute_board_layout(
@@ -303,11 +295,7 @@ pub(super) fn compute_board_layout(
     slot_width: u16,
 ) -> BoardColumnLayout {
     let total = slot_width as usize;
-    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
-    let note = BOARD_NOTE_MARKER_WIDTH.min(total.saturating_sub(marker));
-    let sep_count = view_columns.len();
-    let separator_total = BOARD_COLUMN_SEPARATOR.len() * sep_count;
-    let available = total.saturating_sub(marker + note + separator_total);
+    let available = total;
 
     let cat_by_id: HashMap<CategoryId, &Category> = categories.iter().map(|c| (c.id, c)).collect();
 
@@ -365,50 +353,10 @@ pub(super) fn compute_board_layout(
         .collect();
 
     BoardColumnLayout {
-        marker,
-        note,
         item: item_width,
         item_label: item_label.to_string(),
         columns,
     }
-}
-
-pub(super) fn board_dynamic_header(layout: &BoardColumnLayout) -> String {
-    let mut out = " ".repeat(layout.marker);
-    out.push_str(&" ".repeat(layout.note));
-    out.push_str(&fit_board_cell(&layout.item_label, layout.item));
-    for col in &layout.columns {
-        out.push_str(BOARD_COLUMN_SEPARATOR);
-        out.push_str(&fit_board_cell(&col.label, col.width));
-    }
-    out
-}
-
-pub(super) fn board_dynamic_row(
-    is_selected: bool,
-    item: &Item,
-    layout: &BoardColumnLayout,
-    category_names: &HashMap<CategoryId, String>,
-) -> String {
-    let mut out = board_row_marker(is_selected, layout.marker);
-    out.push_str(&board_note_cell(
-        has_note_text(item.note.as_deref()),
-        layout.note,
-    ));
-    let item_text = board_item_label(item);
-    out.push_str(&fit_board_cell(&item_text, layout.item));
-    for col in &layout.columns {
-        out.push_str(BOARD_COLUMN_SEPARATOR);
-        let cell = match col.kind {
-            ColumnKind::When => item
-                .when_date
-                .map(|dt| dt.to_string())
-                .unwrap_or_else(|| "\u{2013}".to_string()),
-            ColumnKind::Standard => standard_column_value(item, &col.child_ids, category_names),
-        };
-        out.push_str(&fit_board_cell(&cell, col.width));
-    }
-    out
 }
 
 pub(super) fn standard_column_value(
@@ -453,25 +401,12 @@ pub(super) fn board_item_label(item: &Item) -> String {
     }
 }
 
-pub(super) fn board_note_cell(has_note: bool, width: usize) -> String {
-    if has_note {
-        fit_board_cell(NOTE_MARKER_SYMBOL, width)
-    } else {
-        " ".repeat(width)
-    }
-}
-
 pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
     let total = slot_width as usize;
-    let marker = BOARD_ROW_MARKER_WIDTH.min(total);
-    let note = BOARD_NOTE_MARKER_WIDTH.min(total.saturating_sub(marker));
-    let separator_total = BOARD_COLUMN_SEPARATOR.len() * 2;
-    let available = total.saturating_sub(marker + note + separator_total);
+    let available = total;
 
     if available == 0 {
         return BoardColumnWidths {
-            marker,
-            note,
             when: 0,
             item: 0,
             categories: 0,
@@ -513,74 +448,10 @@ pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
     }
 
     BoardColumnWidths {
-        marker,
-        note,
         when,
         item,
         categories,
     }
-}
-
-pub(super) fn fit_board_cell(text: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    let count = text.chars().count();
-    if count <= width {
-        return format!("{text:<width$}");
-    }
-    if width <= BOARD_TRUNCATION_SUFFIX.len() {
-        return ".".repeat(width);
-    }
-    let keep = width - BOARD_TRUNCATION_SUFFIX.len();
-    let prefix: String = text.chars().take(keep).collect();
-    format!("{prefix}{BOARD_TRUNCATION_SUFFIX}")
-}
-
-pub(super) fn board_row_marker(is_selected: bool, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if is_selected {
-        let mut marker = ">".to_string();
-        marker.push_str(&" ".repeat(width.saturating_sub(1)));
-        marker
-    } else {
-        " ".repeat(width)
-    }
-}
-
-pub(super) fn board_annotation_header(widths: BoardColumnWidths) -> String {
-    format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(widths.marker),
-        fit_board_cell("When", widths.when),
-        BOARD_COLUMN_SEPARATOR,
-        " ".repeat(widths.note),
-        fit_board_cell("Item", widths.item),
-        BOARD_COLUMN_SEPARATOR,
-        fit_board_cell("All Categories", widths.categories),
-    )
-}
-
-pub(super) fn board_item_row(
-    is_selected: bool,
-    when: &str,
-    item: &str,
-    categories: &str,
-    has_note: bool,
-    widths: BoardColumnWidths,
-) -> String {
-    format!(
-        "{}{}{}{}{}{}{}",
-        board_row_marker(is_selected, widths.marker),
-        fit_board_cell(when, widths.when),
-        BOARD_COLUMN_SEPARATOR,
-        board_note_cell(has_note, widths.note),
-        fit_board_cell(item, widths.item),
-        BOARD_COLUMN_SEPARATOR,
-        fit_board_cell(categories, widths.categories),
-    )
 }
 
 pub(super) fn selected_row_style() -> Style {

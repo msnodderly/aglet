@@ -1,6 +1,33 @@
 use crate::*;
 
 impl App {
+    fn list_state_for(area: Rect, selected_line: Option<usize>) -> ListState {
+        let mut state = ListState::default().with_selected(selected_line);
+        *state.offset_mut() = list_scroll_for_selected_line(area, selected_line) as usize;
+        state
+    }
+
+    fn table_state_for(area: Rect, selected_row: Option<usize>) -> TableState {
+        let mut state = TableState::default().with_selected(selected_row);
+        *state.offset_mut() = list_scroll_for_selected_line(area, selected_row) as usize;
+        state
+    }
+
+    fn render_vertical_scrollbar(
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        content_len: usize,
+        position: usize,
+    ) {
+        let mut scrollbar_state = ScrollbarState::new(content_len.max(1))
+            .position(position.min(content_len.saturating_sub(1)));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            area,
+            &mut scrollbar_state,
+        );
+    }
+
     pub(crate) fn draw(&self, frame: &mut ratatui::Frame<'_>) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -270,6 +297,29 @@ impl App {
                 .split(area);
             self.render_board_columns(frame, split[0]);
             frame.render_widget(self.render_preview_panel(), split[1]);
+            let (content_len, scroll_position) = match self.preview_mode {
+                PreviewMode::Summary => {
+                    let lines = self
+                        .selected_item()
+                        .map(|item| self.item_details_lines_for_item(item).len())
+                        .unwrap_or(4);
+                    (lines, self.preview_summary_scroll)
+                }
+                PreviewMode::Provenance => {
+                    let lines = if let Some(item) = self.selected_item() {
+                        let row_count = self.inspect_assignment_rows_for_item(item).len();
+                        if row_count == 0 {
+                            3
+                        } else {
+                            2 + row_count
+                        }
+                    } else {
+                        3
+                    };
+                    (lines, self.preview_provenance_scroll)
+                }
+            };
+            Self::render_vertical_scrollbar(frame, split[1], content_len, scroll_position);
         } else {
             self.render_board_columns(frame, area);
         }
@@ -286,28 +336,12 @@ impl App {
             .split(area);
 
         let selected_view = self.views.get(self.picker_index);
-        let views_lines: Vec<Line<'_>> = if self.views.is_empty() {
-            vec![Line::from("(no views)")]
+        let views_items: Vec<ListItem<'_>> = if self.views.is_empty() {
+            vec![ListItem::new(Line::from("(no views)"))]
         } else {
             self.views
                 .iter()
-                .enumerate()
-                .map(|(index, view)| {
-                    let text = format!(
-                        "{}{}",
-                        if index == self.picker_index {
-                            "> "
-                        } else {
-                            "  "
-                        },
-                        view.name
-                    );
-                    if index == self.picker_index {
-                        Line::styled(text, selected_row_style())
-                    } else {
-                        Line::from(text)
-                    }
-                })
+                .map(|view| ListItem::new(Line::from(view.name.clone())))
                 .collect()
         };
         let views_border = if self.view_manager_pane == ViewManagerPane::Views {
@@ -315,39 +349,55 @@ impl App {
         } else {
             Color::Blue
         };
-        frame.render_widget(
-            Paragraph::new(views_lines).block(
-                Block::default()
-                    .title("Views")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(views_border)),
-            ),
+        let mut views_state = Self::list_state_for(
             panes[0],
+            if self.views.is_empty() {
+                None
+            } else {
+                Some(self.picker_index)
+            },
+        );
+        frame.render_stateful_widget(
+            List::new(views_items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("Views")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(views_border)),
+                ),
+            panes[0],
+            &mut views_state,
+        );
+        Self::render_vertical_scrollbar(frame, panes[0], self.views.len(), views_state.offset());
+
+        let definition_panes = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(panes[1]);
+        let tab_index = if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
+            0
+        } else {
+            1
+        };
+        frame.render_widget(
+            Tabs::new(["Criteria", "Columns"])
+                .select(tab_index)
+                .highlight_style(selected_row_style())
+                .divider(" ")
+                .padding("", "")
+                .block(Block::default().title("t:toggle")),
+            definition_panes[0],
         );
 
-        let criteria_tab_label =
-            if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
-                "[Criteria]"
-            } else {
-                " Criteria "
-            };
-        let columns_tab_label = if self.view_manager_definition_sub_tab == DefinitionSubTab::Columns
-        {
-            "[Columns]"
-        } else {
-            " Columns "
-        };
-        let mut definition_lines = vec![
-            Line::from(format!(
-                "  {criteria_tab_label}  {columns_tab_label}    t:toggle"
-            )),
-            Line::from(""),
-        ];
+        let mut definition_items = vec![ListItem::new(Line::from(""))];
+        let mut definition_selected_line = None;
         if let Some(view) = selected_view {
             if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
                 let validation_errors = self.view_manager_representability_errors();
-                definition_lines.push(Line::from(format!("View: {}", view.name)));
-                definition_lines.push(Line::from(format!(
+                definition_items.push(ListItem::new(Line::from(format!("View: {}", view.name))));
+                definition_items.push(ListItem::new(Line::from(format!(
                     "Rows: {}{}",
                     self.view_manager_rows.len(),
                     if self.view_manager_dirty {
@@ -355,34 +405,30 @@ impl App {
                     } else {
                         ""
                     }
-                )));
-                definition_lines.push(Line::from(format!(
+                ))));
+                definition_items.push(ListItem::new(Line::from(format!(
                     "Preview matching: {}",
                     self.view_manager_preview_count
-                )));
+                ))));
                 if validation_errors.is_empty() {
-                    definition_lines.push(Line::from("Validation: ok"));
+                    definition_items.push(ListItem::new(Line::from("Validation: ok")));
                 } else {
-                    definition_lines.push(Line::styled(
+                    definition_items.push(ListItem::new(Line::styled(
                         format!("Validation errors: {}", validation_errors.len()),
                         Style::default().fg(Color::Red),
-                    ));
-                    definition_lines.push(Line::styled(
+                    )));
+                    definition_items.push(ListItem::new(Line::styled(
                         format!("  - {}", validation_errors[0]),
                         Style::default().fg(Color::Red),
-                    ));
+                    )));
                 }
-                definition_lines.push(Line::from(""));
+                definition_items.push(ListItem::new(Line::from("")));
                 if self.view_manager_rows.is_empty() {
-                    definition_lines.push(Line::from("(no criteria rows)"));
+                    definition_items.push(ListItem::new(Line::from("(no criteria rows)")));
                 } else {
-                    definition_lines.extend(self.view_manager_rows.iter().enumerate().map(
+                    let row_start = definition_items.len();
+                    definition_items.extend(self.view_manager_rows.iter().enumerate().map(
                         |(index, row)| {
-                            let marker = if index == self.view_manager_definition_index {
-                                "> "
-                            } else {
-                                "  "
-                            };
                             let join = if index == 0 {
                                 "  "
                             } else if row.join_is_or {
@@ -396,24 +442,25 @@ impl App {
                             };
                             let category_name = self.view_manager_category_label(row.category_id);
                             let text = format!(
-                                "{marker}{join} {}{} {}",
+                                "{join} {}{} {}",
                                 "  ".repeat(row.depth),
                                 sign,
                                 category_name
                             );
-                            if index == self.view_manager_definition_index {
-                                Line::styled(text, selected_row_style())
-                            } else {
-                                Line::from(text)
-                            }
+                            ListItem::new(Line::from(text))
                         },
                     ));
+                    definition_selected_line = Some(
+                        row_start
+                            + self
+                                .view_manager_definition_index
+                                .min(self.view_manager_rows.len().saturating_sub(1)),
+                    );
                 }
             } else {
-                // Columns sub-tab
                 let category_names = category_name_map(&self.categories);
-                definition_lines.push(Line::from(format!("View: {}", view.name)));
-                definition_lines.push(Line::from(format!(
+                definition_items.push(ListItem::new(Line::from(format!("View: {}", view.name))));
+                definition_items.push(ListItem::new(Line::from(format!(
                     "Columns: {}{}",
                     view.columns.len(),
                     if self.view_manager_dirty {
@@ -421,17 +468,14 @@ impl App {
                     } else {
                         ""
                     }
-                )));
-                definition_lines.push(Line::from(""));
+                ))));
+                definition_items.push(ListItem::new(Line::from("")));
                 if view.columns.is_empty() {
-                    definition_lines.push(Line::from("(no columns — legacy rendering)"));
+                    definition_items
+                        .push(ListItem::new(Line::from("(no columns — legacy rendering)")));
                 } else {
-                    for (index, col) in view.columns.iter().enumerate() {
-                        let marker = if index == self.view_manager_column_index {
-                            "> "
-                        } else {
-                            "  "
-                        };
+                    let row_start = definition_items.len();
+                    definition_items.extend(view.columns.iter().map(|col| {
                         let label = category_names
                             .get(&col.heading)
                             .cloned()
@@ -440,91 +484,116 @@ impl App {
                             ColumnKind::When => " [When]",
                             ColumnKind::Standard => "",
                         };
-                        let text = format!("{marker}{label}{kind_tag}  w:{}", col.width);
-                        if index == self.view_manager_column_index {
-                            definition_lines.push(Line::styled(text, selected_row_style()));
-                        } else {
-                            definition_lines.push(Line::from(text));
-                        }
-                    }
+                        ListItem::new(Line::from(format!("{label}{kind_tag}  w:{}", col.width)))
+                    }));
+                    definition_selected_line = Some(
+                        row_start
+                            + self
+                                .view_manager_column_index
+                                .min(view.columns.len().saturating_sub(1)),
+                    );
                 }
-                definition_lines.push(Line::from(""));
+                definition_items.push(ListItem::new(Line::from("")));
                 if self.view_manager_column_width_input {
-                    definition_lines.push(Line::from(format!("Width> {}", self.input)));
+                    definition_items
+                        .push(ListItem::new(Line::from(format!("Width> {}", self.input))));
                 } else {
-                    definition_lines
-                        .push(Line::from("N:add  x:del  [/]:move  w:width  Enter:heading"));
+                    definition_items.push(ListItem::new(Line::from(
+                        "N:add  x:del  [/]:move  w:width  Enter:heading",
+                    )));
                 }
             }
         } else {
-            definition_lines.push(Line::from("(no selected view)"));
+            definition_items.push(ListItem::new(Line::from("(no selected view)")));
         }
         let definition_border = if self.view_manager_pane == ViewManagerPane::Definition {
             Color::Cyan
         } else {
             Color::Blue
         };
-        frame.render_widget(
-            Paragraph::new(definition_lines).block(
-                Block::default()
-                    .title("Definition")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(definition_border)),
-            ),
-            panes[1],
+        let definition_item_count = definition_items.len();
+        let mut definition_state =
+            Self::list_state_for(definition_panes[1], definition_selected_line);
+        frame.render_stateful_widget(
+            List::new(definition_items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("Definition")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(definition_border)),
+                ),
+            definition_panes[1],
+            &mut definition_state,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            definition_panes[1],
+            definition_item_count,
+            definition_state.offset(),
         );
 
-        let mut section_lines = vec![Line::from("Sections"), Line::from("")];
+        let mut section_items = vec![ListItem::new(Line::from(""))];
+        let mut section_selected_line = None;
         if let Some(view) = selected_view {
             if view.sections.is_empty() {
-                section_lines.push(Line::from("(no sections configured)"));
+                section_items.push(ListItem::new(Line::from("(no sections configured)")));
             } else {
-                section_lines.extend(view.sections.iter().enumerate().map(|(index, section)| {
-                    let text = format!(
-                        "{}{}",
-                        if index == self.view_manager_section_index {
-                            "> "
-                        } else {
-                            "  "
-                        },
-                        section.title
-                    );
-                    if index == self.view_manager_section_index {
-                        Line::styled(text, selected_row_style())
-                    } else {
-                        Line::from(text)
-                    }
-                }));
+                let row_start = section_items.len();
+                section_items.extend(
+                    view.sections
+                        .iter()
+                        .map(|section| ListItem::new(Line::from(section.title.clone()))),
+                );
+                section_selected_line = Some(
+                    row_start
+                        + self
+                            .view_manager_section_index
+                            .min(view.sections.len().saturating_sub(1)),
+                );
             }
-            section_lines.push(Line::from(""));
-            section_lines.push(Line::from(format!(
+            section_items.push(ListItem::new(Line::from("")));
+            section_items.push(ListItem::new(Line::from(format!(
                 "Unmatched: {}",
                 if view.show_unmatched { "on" } else { "off" }
-            )));
-            section_lines.push(Line::from(format!(
+            ))));
+            section_items.push(ListItem::new(Line::from(format!(
                 "Label: {}",
                 if view.unmatched_label.trim().is_empty() {
                     "Unassigned".to_string()
                 } else {
                     view.unmatched_label.clone()
                 }
-            )));
+            ))));
         } else {
-            section_lines.push(Line::from("(no selected view)"));
+            section_items.push(ListItem::new(Line::from("(no selected view)")));
         }
         let section_border = if self.view_manager_pane == ViewManagerPane::Sections {
             Color::Cyan
         } else {
             Color::Blue
         };
-        frame.render_widget(
-            Paragraph::new(section_lines).block(
-                Block::default()
-                    .title("Sections")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(section_border)),
-            ),
+        let section_item_count = section_items.len();
+        let mut section_state = Self::list_state_for(panes[2], section_selected_line);
+        frame.render_stateful_widget(
+            List::new(section_items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("Sections")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(section_border)),
+                ),
             panes[2],
+            &mut section_state,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            panes[2],
+            section_item_count,
+            section_state.offset(),
         );
     }
 
@@ -562,12 +631,21 @@ impl App {
             .current_view()
             .and_then(|v| v.item_column_label.clone())
             .unwrap_or_default();
-        // Clone view_columns so we don't hold a borrow on self
         let view_columns_owned: Vec<Column> = view_columns.to_vec();
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
             let inner_width = columns[slot_index].width.saturating_sub(2);
-            let mut lines: Vec<Line<'_>>;
+            let selected_row = if is_selected_slot && !slot.items.is_empty() {
+                Some(self.item_index.min(slot.items.len().saturating_sub(1)))
+            } else {
+                None
+            };
+            let title = format!("{} ({})", slot.title, slot.items.len());
+            let border_color = if is_selected_slot {
+                Color::Cyan
+            } else {
+                Color::Blue
+            };
             if use_dynamic {
                 let layout = compute_board_layout(
                     &view_columns_owned,
@@ -576,80 +654,144 @@ impl App {
                     &view_item_label,
                     inner_width,
                 );
-                lines = vec![Line::from(board_dynamic_header(&layout))];
-                if slot.items.is_empty() {
-                    lines.push(Line::from("(no items)"));
+                let mut constraints =
+                    vec![Constraint::Length(layout.item.min(u16::MAX as usize) as u16)];
+                constraints.extend(
+                    layout.columns.iter().map(|column| {
+                        Constraint::Length(column.width.min(u16::MAX as usize) as u16)
+                    }),
+                );
+                let mut header_cells = vec![Cell::from(layout.item_label.clone())];
+                header_cells.extend(
+                    layout
+                        .columns
+                        .iter()
+                        .map(|column| Cell::from(column.label.clone())),
+                );
+
+                let rows: Vec<Row<'_>> = if slot.items.is_empty() {
+                    let mut cells = vec![Cell::from("(no items)")];
+                    cells.extend(layout.columns.iter().map(|_| Cell::from(String::new())));
+                    vec![Row::new(cells)]
                 } else {
-                    lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
-                        let is_selected = is_selected_slot && item_index == self.item_index;
-                        let row_text =
-                            board_dynamic_row(is_selected, item, &layout, &category_names);
-                        if is_selected {
-                            Line::styled(row_text, selected_row_style())
-                        } else {
-                            Line::from(row_text)
-                        }
-                    }));
-                }
+                    slot.items
+                        .iter()
+                        .map(|item| {
+                            let mut cells = vec![Cell::from(with_note_marker(
+                                board_item_label(item),
+                                has_note_text(item.note.as_deref()),
+                            ))];
+                            cells.extend(layout.columns.iter().map(|column| {
+                                let value = match column.kind {
+                                    ColumnKind::When => item
+                                        .when_date
+                                        .map(|dt| dt.to_string())
+                                        .unwrap_or_else(|| "\u{2013}".to_string()),
+                                    ColumnKind::Standard => standard_column_value(
+                                        item,
+                                        &column.child_ids,
+                                        &category_names,
+                                    ),
+                                };
+                                Cell::from(value)
+                            }));
+                            Row::new(cells)
+                        })
+                        .collect()
+                };
+
+                let mut state = Self::table_state_for(columns[slot_index], selected_row);
+                frame.render_stateful_widget(
+                    Table::new(rows, constraints)
+                        .header(
+                            Row::new(header_cells)
+                                .style(Style::default().add_modifier(Modifier::BOLD)),
+                        )
+                        .highlight_symbol("> ")
+                        .row_highlight_style(selected_row_style())
+                        .block(
+                            Block::default()
+                                .title(title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(border_color)),
+                        ),
+                    columns[slot_index],
+                    &mut state,
+                );
+                Self::render_vertical_scrollbar(
+                    frame,
+                    columns[slot_index],
+                    slot.items.len(),
+                    state.offset(),
+                );
             } else {
                 let widths = board_column_widths(inner_width);
-                lines = vec![Line::from(board_annotation_header(widths))];
-                if slot.items.is_empty() {
-                    lines.push(Line::from("(no items)"));
+                let constraints = vec![
+                    Constraint::Length(widths.when.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.item.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.categories.min(u16::MAX as usize) as u16),
+                ];
+                let rows: Vec<Row<'_>> = if slot.items.is_empty() {
+                    vec![Row::new(vec![
+                        Cell::from("(no items)"),
+                        Cell::from(String::new()),
+                        Cell::from(String::new()),
+                    ])]
                 } else {
-                    lines.extend(slot.items.iter().enumerate().map(|(item_index, item)| {
-                        let when = item
-                            .when_date
-                            .map(|dt| dt.to_string())
-                            .unwrap_or_else(|| "-".to_string());
-                        let item_text = board_item_label(item);
-                        let categories = item_assignment_labels(item, &category_names);
-                        let categories_text = if categories.is_empty() {
-                            "-".to_string()
-                        } else {
-                            categories.join(", ")
-                        };
-                        let has_note = has_note_text(item.note.as_deref());
-                        let is_selected = is_selected_slot && item_index == self.item_index;
-                        let row_text = board_item_row(
-                            is_selected,
-                            &when,
-                            &item_text,
-                            &categories_text,
-                            has_note,
-                            widths,
-                        );
-                        if is_selected {
-                            Line::styled(row_text, selected_row_style())
-                        } else {
-                            Line::from(row_text)
-                        }
-                    }));
-                }
+                    slot.items
+                        .iter()
+                        .map(|item| {
+                            let when = item
+                                .when_date
+                                .map(|dt| dt.to_string())
+                                .unwrap_or_else(|| "-".to_string());
+                            let item_text = with_note_marker(
+                                board_item_label(item),
+                                has_note_text(item.note.as_deref()),
+                            );
+                            let categories = item_assignment_labels(item, &category_names);
+                            let categories_text = if categories.is_empty() {
+                                "-".to_string()
+                            } else {
+                                categories.join(", ")
+                            };
+                            Row::new(vec![
+                                Cell::from(when),
+                                Cell::from(item_text),
+                                Cell::from(categories_text),
+                            ])
+                        })
+                        .collect()
+                };
+                let mut state = Self::table_state_for(columns[slot_index], selected_row);
+                frame.render_stateful_widget(
+                    Table::new(rows, constraints)
+                        .header(
+                            Row::new(vec![
+                                Cell::from("When"),
+                                Cell::from("Item"),
+                                Cell::from("All Categories"),
+                            ])
+                            .style(Style::default().add_modifier(Modifier::BOLD)),
+                        )
+                        .highlight_symbol("> ")
+                        .row_highlight_style(selected_row_style())
+                        .block(
+                            Block::default()
+                                .title(title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(border_color)),
+                        ),
+                    columns[slot_index],
+                    &mut state,
+                );
+                Self::render_vertical_scrollbar(
+                    frame,
+                    columns[slot_index],
+                    slot.items.len(),
+                    state.offset(),
+                );
             }
-            let title = format!("{} ({})", slot.title, slot.items.len());
-            let border_color = if is_selected_slot {
-                Color::Cyan
-            } else {
-                Color::Blue
-            };
-            let selected_line = if is_selected_slot && !slot.items.is_empty() {
-                Some(1 + self.item_index.min(slot.items.len().saturating_sub(1)))
-            } else {
-                None
-            };
-            let scroll = list_scroll_for_selected_line(columns[slot_index], selected_line);
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .block(
-                        Block::default()
-                            .title(title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(border_color)),
-                    )
-                    .scroll((scroll, 0)),
-                columns[slot_index],
-            );
         }
     }
 
@@ -930,6 +1072,12 @@ impl App {
                 .wrap(Wrap { trim: false }),
             regions.note,
         );
+        Self::render_vertical_scrollbar(
+            frame,
+            regions.note,
+            self.item_edit_note.lines().count().max(1),
+            note_scroll as usize,
+        );
         frame.render_widget(
             Paragraph::new(format!(
                 "  {}  {}  {}",
@@ -948,25 +1096,15 @@ impl App {
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let lines: Vec<Line<'_>> = if self.views.is_empty() {
-            vec![Line::from("(no views configured)")]
+        let items: Vec<ListItem<'_>> = if self.views.is_empty() {
+            vec![ListItem::new(Line::from("(no views configured)"))]
         } else {
             self.views
                 .iter()
-                .enumerate()
-                .map(|(index, view)| {
-                    let is_selected = index == self.picker_index;
-                    let marker = if is_selected { "> " } else { "  " };
-                    let text = format!("{marker}{}", view.name);
-                    if is_selected {
-                        Line::styled(text, selected_row_style())
-                    } else {
-                        Line::from(text)
-                    }
-                })
+                .map(|view| ListItem::new(Line::from(view.name.clone())))
                 .collect()
         };
-        let scroll = list_scroll_for_selected_line(
+        let mut state = Self::list_state_for(
             area,
             if self.views.is_empty() {
                 None
@@ -974,88 +1112,100 @@ impl App {
                 Some(self.picker_index)
             },
         );
+        let item_count = items.len();
 
-        frame.render_widget(
-            Paragraph::new(lines).scroll((scroll, 0)).block(
-                Block::default()
-                    .title("View Palette")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Magenta)),
-            ),
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("View Palette")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                ),
             area,
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
     pub(crate) fn render_view_category_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let mut lines = vec![Line::from(
-            "Choose criteria for new view (+ include, - exclude, Enter create)",
-        )];
-        if self.category_rows.is_empty() {
-            lines.push(Line::from("(no categories available)"));
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+        frame.render_widget(
+            Paragraph::new("Choose criteria for new view (+ include, - exclude, Enter create)"),
+            chunks[0],
+        );
+
+        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
+            vec![ListItem::new(Line::from("(no categories available)"))]
         } else {
-            for (index, row) in self.category_rows.iter().enumerate() {
-                let marker = if index == self.view_category_index {
-                    "> "
-                } else {
-                    "  "
-                };
-                let mut flags = Vec::new();
-                if row.is_reserved {
-                    flags.push("reserved");
-                }
-                if row.is_exclusive {
-                    flags.push("exclusive");
-                }
-                let suffix = if flags.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{}]", flags.join(","))
-                };
-                let check = if self.view_create_include_selection.contains(&row.id) {
-                    "[+]"
-                } else if self.view_create_exclude_selection.contains(&row.id) {
-                    "[-]"
-                } else {
-                    "[ ]"
-                };
-                let category_name = with_note_marker(row.name.clone(), row.has_note);
-                let text = format!(
-                    "{marker}{check} {}{}{}",
-                    "  ".repeat(row.depth),
-                    category_name,
-                    suffix
-                );
-                if index == self.view_category_index {
-                    lines.push(Line::styled(text, selected_row_style()));
-                } else {
-                    lines.push(Line::from(text));
-                }
-            }
-        }
+            self.category_rows
+                .iter()
+                .map(|row| {
+                    let mut flags = Vec::new();
+                    if row.is_reserved {
+                        flags.push("reserved");
+                    }
+                    if row.is_exclusive {
+                        flags.push("exclusive");
+                    }
+                    let suffix = if flags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", flags.join(","))
+                    };
+                    let check = if self.view_create_include_selection.contains(&row.id) {
+                        "[+]"
+                    } else if self.view_create_exclude_selection.contains(&row.id) {
+                        "[-]"
+                    } else {
+                        "[ ]"
+                    };
+                    let category_name = with_note_marker(row.name.clone(), row.has_note);
+                    let text = format!(
+                        "{check} {}{}{}",
+                        "  ".repeat(row.depth),
+                        category_name,
+                        suffix
+                    );
+                    ListItem::new(Line::from(text))
+                })
+                .collect()
+        };
 
         let title = match self.mode {
             Mode::ViewCreateCategoryPicker => "Create View Criteria",
             _ => "View Criteria",
         };
-        let scroll = list_scroll_for_selected_line(
-            area,
+        let mut state = Self::list_state_for(
+            chunks[1],
             if self.category_rows.is_empty() {
                 None
             } else {
-                Some(1 + self.view_category_index)
+                Some(self.view_category_index)
             },
         );
-        frame.render_widget(
-            Paragraph::new(lines).scroll((scroll, 0)).block(
-                Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Magenta)),
-            ),
-            area,
+        let item_count = items.len();
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                ),
+            chunks[1],
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
     }
 
     pub(crate) fn render_view_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -1063,10 +1213,16 @@ impl App {
         let Some(editor) = &self.view_editor else {
             return;
         };
-        let mut lines = vec![
-            Line::from(format!("Editing view: {}", editor.base_view_name)),
-            Line::from(format!("Preview matches: {}", editor.preview_count)),
-            Line::from(""),
+        let mut items = vec![
+            ListItem::new(Line::from(format!(
+                "Editing view: {}",
+                editor.base_view_name
+            ))),
+            ListItem::new(Line::from(format!(
+                "Preview matches: {}",
+                editor.preview_count
+            ))),
+            ListItem::new(Line::from("")),
         ];
         let actions = [
             format!(
@@ -1091,42 +1247,44 @@ impl App {
                 editor.draft.show_unmatched, editor.draft.unmatched_label
             ),
         ];
-        for (index, action) in actions.into_iter().enumerate() {
-            let marker = if index == editor.action_index {
-                "> "
-            } else {
-                "  "
-            };
-            let text = format!("{marker}{action}");
-            if index == editor.action_index {
-                lines.push(Line::styled(text, selected_row_style()));
-            } else {
-                lines.push(Line::from(text));
-            }
-        }
-        lines.extend([
-            Line::from(""),
-            Line::from("Use j/k then o/right to open selected editor."),
-            Line::from("Quick keys: + include  - exclude  ] v-include  [ v-exclude"),
-            Line::from("            s sections  u unmatched  Enter save  Esc cancel"),
+        let actions_len = actions.len();
+        let action_start = items.len();
+        items.extend(
+            actions
+                .into_iter()
+                .map(|action| ListItem::new(Line::from(action))),
+        );
+        let selected_line = Some(action_start + editor.action_index.min(actions_len - 1));
+        items.extend([
+            ListItem::new(Line::from("")),
+            ListItem::new(Line::from("Use j/k then o/right to open selected editor.")),
+            ListItem::new(Line::from(
+                "Quick keys: + include  - exclude  ] v-include  [ v-exclude",
+            )),
+            ListItem::new(Line::from(
+                "            s sections  u unmatched  Enter save  Esc cancel",
+            )),
         ]);
         if editor.draft.sections.is_empty() {
-            lines.push(Line::from("No sections configured yet."));
+            items.push(ListItem::new(Line::from("No sections configured yet.")));
         }
 
-        let scroll = list_scroll_for_selected_line(area, Some(3 + editor.action_index));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .scroll((scroll, 0))
+        let item_count = items.len();
+        let mut state = Self::list_state_for(area, selected_line);
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
                 .block(
                     Block::default()
                         .title("View Editor")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Magenta)),
-                )
-                .wrap(Wrap { trim: false }),
+                ),
             area,
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
     pub(crate) fn render_view_editor_category_picker(
@@ -1141,51 +1299,51 @@ impl App {
         let Some(target) = self.view_editor_category_target else {
             return;
         };
-        let mut lines = vec![Line::from(format!(
-            "Target: {}",
-            category_target_label(target)
-        ))];
-        for (index, row) in self.category_rows.iter().enumerate() {
-            let marker = if index == editor.category_index {
-                "> "
-            } else {
-                "  "
-            };
-            let selected =
-                category_target_contains(&editor.draft, editor.section_index, target, row.id);
-            let check = if selected { "[x]" } else { "[ ]" };
-            let category_name = with_note_marker(row.name.clone(), row.has_note);
-            let text = format!(
-                "{marker}{check} {}{}",
-                "  ".repeat(row.depth),
-                category_name
-            );
-            if index == editor.category_index {
-                lines.push(Line::styled(text, selected_row_style()));
-            } else {
-                lines.push(Line::from(text));
-            }
-        }
-        let scroll = list_scroll_for_selected_line(
-            area,
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+        frame.render_widget(
+            Paragraph::new(format!("Target: {}", category_target_label(target))),
+            chunks[0],
+        );
+
+        let items: Vec<ListItem<'_>> = self
+            .category_rows
+            .iter()
+            .map(|row| {
+                let selected =
+                    category_target_contains(&editor.draft, editor.section_index, target, row.id);
+                let check = if selected { "[x]" } else { "[ ]" };
+                let category_name = with_note_marker(row.name.clone(), row.has_note);
+                let text = format!("{check} {}{}", "  ".repeat(row.depth), category_name);
+                ListItem::new(Line::from(text))
+            })
+            .collect();
+
+        let mut state = Self::list_state_for(
+            chunks[1],
             if self.category_rows.is_empty() {
                 None
             } else {
-                Some(1 + editor.category_index)
+                Some(editor.category_index)
             },
         );
-        frame.render_widget(
-            Paragraph::new(lines)
-                .scroll((scroll, 0))
+        let item_count = items.len();
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
                 .block(
                     Block::default()
                         .title("Category Picker")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Magenta)),
-                )
-                .wrap(Wrap { trim: false }),
-            area,
+                ),
+            chunks[1],
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
     }
 
     pub(crate) fn render_view_manager_category_picker(
@@ -1194,18 +1352,12 @@ impl App {
         area: Rect,
     ) {
         frame.render_widget(Clear, area);
-        let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
-            vec![Line::from("(no categories)")]
+        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
+            vec![ListItem::new(Line::from("(no categories)"))]
         } else {
             self.category_rows
                 .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    let marker = if index == self.view_category_index {
-                        "> "
-                    } else {
-                        "  "
-                    };
+                .map(|row| {
                     let selected_flag = self
                         .view_manager_category_row_index
                         .and_then(|row_index| self.view_manager_rows.get(row_index))
@@ -1215,21 +1367,17 @@ impl App {
                     let reserved = if row.is_reserved { " [reserved]" } else { "" };
                     let category_name = with_note_marker(row.name.clone(), row.has_note);
                     let text = format!(
-                        "{marker}{}{} {}{}",
+                        "{}{} {}{}",
                         "  ".repeat(row.depth),
                         check,
                         category_name,
                         reserved
                     );
-                    if index == self.view_category_index {
-                        Line::styled(text, selected_row_style())
-                    } else {
-                        Line::from(text)
-                    }
+                    ListItem::new(Line::from(text))
                 })
                 .collect()
         };
-        let scroll = list_scroll_for_selected_line(
+        let mut state = Self::list_state_for(
             area,
             if self.category_rows.is_empty() {
                 None
@@ -1237,16 +1385,22 @@ impl App {
                 Some(self.view_category_index)
             },
         );
+        let item_count = items.len();
 
-        frame.render_widget(
-            Paragraph::new(lines).scroll((scroll, 0)).block(
-                Block::default()
-                    .title("View Manager Category Picker")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Magenta)),
-            ),
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("View Manager Category Picker")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                ),
             area,
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
     pub(crate) fn render_view_editor_bucket_picker(
@@ -1261,39 +1415,42 @@ impl App {
         let Some(target) = self.view_editor_bucket_target else {
             return;
         };
-        let mut lines = vec![Line::from(format!(
-            "Target: {}",
-            bucket_target_label(target)
-        ))];
-        for (index, bucket) in when_bucket_options().iter().enumerate() {
-            let marker = if index == editor.bucket_index {
-                "> "
-            } else {
-                "  "
-            };
-            let selected =
-                bucket_target_contains(&editor.draft, editor.section_index, target, *bucket);
-            let check = if selected { "[x]" } else { "[ ]" };
-            let text = format!("{marker}{check} {}", when_bucket_label(*bucket));
-            if index == editor.bucket_index {
-                lines.push(Line::styled(text, selected_row_style()));
-            } else {
-                lines.push(Line::from(text));
-            }
-        }
-        let scroll = list_scroll_for_selected_line(area, Some(1 + editor.bucket_index));
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
         frame.render_widget(
-            Paragraph::new(lines)
-                .scroll((scroll, 0))
+            Paragraph::new(format!("Target: {}", bucket_target_label(target))),
+            chunks[0],
+        );
+
+        let items: Vec<ListItem<'_>> = when_bucket_options()
+            .iter()
+            .map(|bucket| {
+                let selected =
+                    bucket_target_contains(&editor.draft, editor.section_index, target, *bucket);
+                let check = if selected { "[x]" } else { "[ ]" };
+                let text = format!("{check} {}", when_bucket_label(*bucket));
+                ListItem::new(Line::from(text))
+            })
+            .collect();
+
+        let mut state = Self::list_state_for(chunks[1], Some(editor.bucket_index));
+        let item_count = items.len();
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
                 .block(
                     Block::default()
                         .title("Bucket Picker")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Magenta)),
-                )
-                .wrap(Wrap { trim: false }),
-            area,
+                ),
+            chunks[1],
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
     }
 
     pub(crate) fn render_view_section_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -1301,57 +1458,51 @@ impl App {
         let Some(editor) = &self.view_editor else {
             return;
         };
-        let mut lines = vec![Line::from("Sections in current view draft:")];
+        let mut items = vec![ListItem::new(Line::from("Sections in current view draft:"))];
+        let mut selected_line = None;
         if editor.draft.sections.is_empty() {
-            lines.push(Line::from("(no sections)"));
+            items.push(ListItem::new(Line::from("(no sections)")));
         } else {
-            for (index, section) in editor.draft.sections.iter().enumerate() {
-                let marker = if index == editor.section_index {
-                    "> "
-                } else {
-                    "  "
-                };
-                let text = format!(
-                    "{marker}{} (include={}, exclude={}, v+={}, v-={}, show_children={})",
+            let row_start = items.len();
+            items.extend(editor.draft.sections.iter().map(|section| {
+                ListItem::new(Line::from(format!(
+                    "{} (include={}, exclude={}, v+={}, v-={}, show_children={})",
                     section.title,
                     section.criteria.include.len(),
                     section.criteria.exclude.len(),
                     section.criteria.virtual_include.len(),
                     section.criteria.virtual_exclude.len(),
                     section.show_children
-                );
-                if index == editor.section_index {
-                    lines.push(Line::styled(text, selected_row_style()));
-                } else {
-                    lines.push(Line::from(text));
-                }
-            }
+                )))
+            }));
+            selected_line = Some(
+                row_start
+                    + editor
+                        .section_index
+                        .min(editor.draft.sections.len().saturating_sub(1)),
+            );
         }
-        lines.push(Line::from(""));
-        lines.push(Line::from(
+        items.push(ListItem::new(Line::from("")));
+        items.push(ListItem::new(Line::from(
             "N add  x remove  [/] reorder  Enter edit  Esc back",
-        ));
+        )));
 
-        let scroll = list_scroll_for_selected_line(
-            area,
-            if editor.draft.sections.is_empty() {
-                None
-            } else {
-                Some(1 + editor.section_index)
-            },
-        );
-        frame.render_widget(
-            Paragraph::new(lines)
-                .scroll((scroll, 0))
+        let item_count = items.len();
+        let mut state = Self::list_state_for(area, selected_line);
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
                 .block(
                     Block::default()
                         .title("Section Editor")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Magenta)),
-                )
-                .wrap(Wrap { trim: false }),
+                ),
             area,
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
     pub(crate) fn render_view_section_detail(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -1427,180 +1578,228 @@ impl App {
     pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
-        let mut lines = vec![Line::from(
-            "Edit selected item categories (Space toggles, n or / enters category text)",
-        )];
-        if self.category_rows.is_empty() {
-            lines.push(Line::from("(no categories)"));
-        } else {
-            for (index, row) in self.category_rows.iter().enumerate() {
-                let marker = if index == self.item_assign_category_index {
-                    "> "
-                } else {
-                    "  "
-                };
-                let mut flags = Vec::new();
-                if row.is_reserved {
-                    flags.push("reserved");
-                }
-                if row.is_exclusive {
-                    flags.push("exclusive");
-                }
-                let suffix = if flags.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{}]", flags.join(","))
-                };
-                let assigned = if self.selected_item_has_assignment(row.id) {
-                    "[x]"
-                } else {
-                    "[ ]"
-                };
-                let category_name = with_note_marker(row.name.clone(), row.has_note);
-                let text = format!(
-                    "{marker}{assigned} {}{}{}",
-                    "  ".repeat(row.depth),
-                    category_name,
-                    suffix
-                );
-                if index == self.item_assign_category_index {
-                    lines.push(Line::styled(text, selected_row_style()));
-                } else {
-                    lines.push(Line::from(text));
-                }
-            }
-        }
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+        frame.render_widget(
+            Paragraph::new(
+                "Edit selected item categories (Space toggles, n or / enters category text)",
+            ),
+            chunks[0],
+        );
 
-        let scroll = list_scroll_for_selected_line(
-            area,
+        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
+            vec![ListItem::new(Line::from("(no categories)"))]
+        } else {
+            self.category_rows
+                .iter()
+                .map(|row| {
+                    let mut flags = Vec::new();
+                    if row.is_reserved {
+                        flags.push("reserved");
+                    }
+                    if row.is_exclusive {
+                        flags.push("exclusive");
+                    }
+                    let suffix = if flags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", flags.join(","))
+                    };
+                    let assigned = if self.selected_item_has_assignment(row.id) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    let category_name = with_note_marker(row.name.clone(), row.has_note);
+                    let text = format!(
+                        "{assigned} {}{}{}",
+                        "  ".repeat(row.depth),
+                        category_name,
+                        suffix
+                    );
+                    ListItem::new(Line::from(text))
+                })
+                .collect()
+        };
+
+        let mut state = Self::list_state_for(
+            chunks[1],
             if self.category_rows.is_empty() {
                 None
             } else {
-                Some(1 + self.item_assign_category_index)
+                Some(self.item_assign_category_index)
             },
         );
-        frame.render_widget(
-            Paragraph::new(lines).scroll((scroll, 0)).block(
-                Block::default()
-                    .title("Assign Item")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
-            ),
-            area,
+        let item_count = items.len();
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("Assign Item")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                ),
+            chunks[1],
+            &mut state,
         );
+        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
     }
 
     pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let mut lines = vec![Line::from(
-            "Categories are global. Enter opens config popup (checkboxes + note).",
-        )];
-        let inner_width = area.width.saturating_sub(2) as usize;
-        let marker_width = 2usize;
-        let excl_width = 4usize;
-        let noimpl_width = 7usize;
-        let todo_width = 6usize;
-        let separator_width = BOARD_COLUMN_SEPARATOR.len() * 3;
-        let name_width = inner_width.saturating_sub(
-            marker_width + excl_width + noimpl_width + todo_width + separator_width,
-        );
-        lines.push(Line::from(format!(
-            "{}{}{}{}{}{}{}{}",
-            " ".repeat(marker_width),
-            fit_board_cell("Category", name_width),
-            BOARD_COLUMN_SEPARATOR,
-            fit_board_cell("Excl", excl_width),
-            BOARD_COLUMN_SEPARATOR,
-            fit_board_cell("Match", noimpl_width),
-            BOARD_COLUMN_SEPARATOR,
-            fit_board_cell("Todo", todo_width),
-        )));
-        let mut selected_line = None;
-        if self.category_rows.is_empty() {
-            lines.push(Line::from("(no categories)"));
-        } else {
-            for (index, row) in self.category_rows.iter().enumerate() {
-                let is_selected = index == self.category_index;
-                let marker = if is_selected { "> " } else { "  " };
-                if is_selected {
-                    selected_line = Some(2 + index);
-                }
-                let indent = "  ".repeat(row.depth);
-                let mut label = format!("{indent}{}", row.name);
-                label = with_note_marker(label, row.has_note);
-                if row.is_reserved {
-                    label.push_str(" [reserved]");
-                }
-                let excl = if row.is_exclusive { "[x]" } else { "[ ]" };
-                let noimp = if row.enable_implicit_string {
-                    "[x]"
-                } else {
-                    "[ ]"
-                };
-                let todo = if row.is_actionable { "[x]" } else { "[ ]" };
-                let text = format!(
-                    "{marker}{}{}{}{}{}{}{}",
-                    fit_board_cell(&label, name_width),
-                    BOARD_COLUMN_SEPARATOR,
-                    fit_board_cell(excl, excl_width),
-                    BOARD_COLUMN_SEPARATOR,
-                    fit_board_cell(noimp, noimpl_width),
-                    BOARD_COLUMN_SEPARATOR,
-                    fit_board_cell(todo, todo_width),
-                );
-                if is_selected {
-                    lines.push(Line::styled(text, selected_row_style()));
-                } else {
-                    lines.push(Line::from(text));
-                }
-            }
-        }
+        frame.render_widget(Clear, area);
 
-        if self.mode == Mode::CategoryCreateInput {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+        frame.render_widget(
+            Paragraph::new("Categories are global. Enter opens config popup (checkboxes + note)."),
+            layout[0],
+        );
+
+        let table_area = if self.mode == Mode::CategoryReparentPicker {
+            let body = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(60), Constraint::Min(4)])
+                .split(layout[1]);
+            body[0]
+        } else {
+            layout[1]
+        };
+
+        let title_suffix = if self.mode == Mode::CategoryCreateInput {
             let parent = self
                 .create_parent_name()
                 .unwrap_or_else(|| "(top level / no parent)".to_string());
-            lines.push(Line::from(""));
-            lines.push(Line::from(format!("New category location: under {parent}")));
-        }
-        if self.mode == Mode::CategoryRenameInput {
+            format!(" | new under {parent}")
+        } else if self.mode == Mode::CategoryRenameInput {
             let target = self
                 .selected_category_row()
                 .map(|row| row.name.clone())
                 .unwrap_or_else(|| "(none)".to_string());
-            lines.push(Line::from(""));
-            lines.push(Line::from(format!("Rename target: {target}")));
-        }
-        if self.mode == Mode::CategoryReparentPicker {
-            lines.push(Line::from(""));
-            lines.push(Line::from("Select new parent:"));
-            if self.category_reparent_options.is_empty() {
-                lines.push(Line::from("(no valid parent options)"));
-            } else {
-                let options_start = lines.len();
-                for (index, option) in self.category_reparent_options.iter().enumerate() {
-                    let marker = if index == self.category_reparent_index {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    if index == self.category_reparent_index {
-                        selected_line = Some(options_start + index);
-                    }
-                    lines.push(Line::from(format!("{marker}{}", option.label)));
-                }
-            }
-        }
-        let scroll = list_scroll_for_selected_line(area, selected_line);
+            format!(" | rename target {target}")
+        } else {
+            String::new()
+        };
 
-        frame.render_widget(
-            Paragraph::new(lines).scroll((scroll, 0)).block(
+        let rows: Vec<Row<'_>> = if self.category_rows.is_empty() {
+            vec![Row::new(vec![
+                Cell::from("(no categories)"),
+                Cell::from(String::new()),
+                Cell::from(String::new()),
+                Cell::from(String::new()),
+            ])]
+        } else {
+            self.category_rows
+                .iter()
+                .map(|row| {
+                    let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
+                    label = with_note_marker(label, row.has_note);
+                    if row.is_reserved {
+                        label.push_str(" [reserved]");
+                    }
+                    Row::new(vec![
+                        Cell::from(label),
+                        Cell::from(if row.is_exclusive { "[x]" } else { "[ ]" }),
+                        Cell::from(if row.enable_implicit_string {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        }),
+                        Cell::from(if row.is_actionable { "[x]" } else { "[ ]" }),
+                    ])
+                })
+                .collect()
+        };
+        let mut state = Self::table_state_for(
+            table_area,
+            if self.category_rows.is_empty() {
+                None
+            } else {
+                Some(self.category_index)
+            },
+        );
+        frame.render_stateful_widget(
+            Table::new(
+                rows,
+                vec![
+                    Constraint::Min(20),
+                    Constraint::Length(6),
+                    Constraint::Length(7),
+                    Constraint::Length(6),
+                ],
+            )
+            .header(
+                Row::new(vec![
+                    Cell::from("Category"),
+                    Cell::from("Excl"),
+                    Cell::from("Match"),
+                    Cell::from("Todo"),
+                ])
+                .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+            .highlight_symbol("> ")
+            .row_highlight_style(selected_row_style())
+            .block(
                 Block::default()
-                    .title("Category Manager")
+                    .title(format!("Category Manager{title_suffix}"))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Green)),
             ),
-            area,
+            table_area,
+            &mut state,
         );
+        Self::render_vertical_scrollbar(
+            frame,
+            table_area,
+            self.category_rows.len(),
+            state.offset(),
+        );
+
+        if self.mode == Mode::CategoryReparentPicker {
+            let body = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(60), Constraint::Min(4)])
+                .split(layout[1]);
+            let reparent_items: Vec<ListItem<'_>> = if self.category_reparent_options.is_empty() {
+                vec![ListItem::new(Line::from("(no valid parent options)"))]
+            } else {
+                self.category_reparent_options
+                    .iter()
+                    .map(|option| ListItem::new(Line::from(option.label.clone())))
+                    .collect()
+            };
+            let mut reparent_state = Self::list_state_for(
+                body[1],
+                if self.category_reparent_options.is_empty() {
+                    None
+                } else {
+                    Some(
+                        self.category_reparent_index
+                            .min(self.category_reparent_options.len().saturating_sub(1)),
+                    )
+                },
+            );
+            let item_count = reparent_items.len();
+            frame.render_stateful_widget(
+                List::new(reparent_items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .title("Select new parent")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Green)),
+                    ),
+                body[1],
+                &mut reparent_state,
+            );
+            Self::render_vertical_scrollbar(frame, body[1], item_count, reparent_state.offset());
+        }
     }
 
     pub(crate) fn render_category_config_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -1692,6 +1891,12 @@ impl App {
                 )
                 .wrap(Wrap { trim: false }),
             regions.note,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            regions.note,
+            editor.note.lines().count().max(1),
+            note_scroll as usize,
         );
 
         let save_button = if editor.focus == CategoryConfigFocus::SaveButton {
