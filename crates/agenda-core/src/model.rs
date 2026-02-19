@@ -74,6 +74,8 @@ pub struct View {
     pub show_unmatched: bool,
     pub unmatched_label: String,
     pub remove_from_view_unassign: HashSet<CategoryId>,
+    #[serde(default)]
+    pub item_column_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,8 +87,22 @@ pub struct Section {
     pub show_children: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ColumnKind {
+    When,
+    Standard,
+}
+
+impl Default for ColumnKind {
+    fn default() -> Self {
+        ColumnKind::Standard
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
+    #[serde(default)]
+    pub kind: ColumnKind,
     pub heading: CategoryId,
     pub width: u16,
 }
@@ -176,6 +192,7 @@ impl View {
             show_unmatched: true,
             unmatched_label: "Unassigned".to_string(),
             remove_from_view_unassign: HashSet::new(),
+            item_column_label: None,
         }
     }
 }
