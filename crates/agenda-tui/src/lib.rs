@@ -30,6 +30,7 @@ mod app;
 mod input;
 mod modes;
 mod render;
+mod text_buffer;
 mod ui_support;
 
 use ui_support::*;
