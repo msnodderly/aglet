@@ -620,11 +620,15 @@ impl App {
             .current_view()
             .map(|v| v.columns.as_slice())
             .unwrap_or(&[]);
-        let use_dynamic = !view_columns.is_empty();
+        let use_dynamic = !view_columns.is_empty()
+            && view_columns
+                .iter()
+                .any(|column| column.kind == ColumnKind::Standard);
         let view_item_label = self
             .current_view()
             .and_then(|v| v.item_column_label.clone())
-            .unwrap_or_default();
+            .filter(|label| !label.trim().is_empty())
+            .unwrap_or_else(|| "Item".to_string());
         let view_columns_owned: Vec<Column> = view_columns.to_vec();
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
@@ -648,14 +652,21 @@ impl App {
                     &view_item_label,
                     inner_width,
                 );
-                let mut constraints =
-                    vec![Constraint::Length(layout.item.min(u16::MAX as usize) as u16)];
+                let mut constraints = vec![
+                    Constraint::Length(layout.marker.min(u16::MAX as usize) as u16),
+                    Constraint::Length(layout.note.min(u16::MAX as usize) as u16),
+                    Constraint::Length(layout.item.min(u16::MAX as usize) as u16),
+                ];
                 constraints.extend(
                     layout.columns.iter().map(|column| {
                         Constraint::Length(column.width.min(u16::MAX as usize) as u16)
                     }),
                 );
-                let mut header_cells = vec![Cell::from(layout.item_label.clone())];
+                let mut header_cells = vec![
+                    Cell::from(String::new()),
+                    Cell::from(String::new()),
+                    Cell::from(layout.item_label.clone()),
+                ];
                 header_cells.extend(
                     layout
                         .columns
@@ -664,17 +675,30 @@ impl App {
                 );
 
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
-                    let mut cells = vec![Cell::from("(no items)")];
+                    let mut cells = vec![
+                        Cell::from(String::new()),
+                        Cell::from(String::new()),
+                        Cell::from("(no items)"),
+                    ];
                     cells.extend(layout.columns.iter().map(|_| Cell::from(String::new())));
                     vec![Row::new(cells)]
                 } else {
                     slot.items
                         .iter()
-                        .map(|item| {
-                            let mut cells = vec![Cell::from(with_note_marker(
-                                board_item_label(item),
-                                has_note_text(item.note.as_deref()),
-                            ))];
+                        .enumerate()
+                        .map(|(item_index, item)| {
+                            let is_selected = is_selected_slot && item_index == self.item_index;
+                            let marker_cell = if is_selected { ">" } else { " " };
+                            let note_cell = if has_note_text(item.note.as_deref()) {
+                                NOTE_MARKER_SYMBOL
+                            } else {
+                                " "
+                            };
+                            let mut cells = vec![
+                                Cell::from(marker_cell),
+                                Cell::from(note_cell),
+                                Cell::from(board_item_label(item)),
+                            ];
                             cells.extend(layout.columns.iter().map(|column| {
                                 let value = match column.kind {
                                     ColumnKind::When => item
@@ -701,7 +725,6 @@ impl App {
                             Row::new(header_cells)
                                 .style(Style::default().add_modifier(Modifier::BOLD)),
                         )
-                        .highlight_symbol("> ")
                         .row_highlight_style(selected_row_style())
                         .block(
                             Block::default()
@@ -721,28 +744,37 @@ impl App {
             } else {
                 let widths = board_column_widths(inner_width);
                 let constraints = vec![
+                    Constraint::Length(widths.marker.min(u16::MAX as usize) as u16),
                     Constraint::Length(widths.when.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.note.min(u16::MAX as usize) as u16),
                     Constraint::Length(widths.item.min(u16::MAX as usize) as u16),
                     Constraint::Length(widths.categories.min(u16::MAX as usize) as u16),
                 ];
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
                     vec![Row::new(vec![
-                        Cell::from("(no items)"),
                         Cell::from(String::new()),
+                        Cell::from(String::new()),
+                        Cell::from(String::new()),
+                        Cell::from("(no items)"),
                         Cell::from(String::new()),
                     ])]
                 } else {
                     slot.items
                         .iter()
-                        .map(|item| {
+                        .enumerate()
+                        .map(|(item_index, item)| {
+                            let is_selected = is_selected_slot && item_index == self.item_index;
                             let when = item
                                 .when_date
                                 .map(|dt| dt.to_string())
                                 .unwrap_or_else(|| "-".to_string());
-                            let item_text = with_note_marker(
-                                board_item_label(item),
-                                has_note_text(item.note.as_deref()),
-                            );
+                            let marker_cell = if is_selected { ">" } else { " " };
+                            let note_cell = if has_note_text(item.note.as_deref()) {
+                                NOTE_MARKER_SYMBOL
+                            } else {
+                                " "
+                            };
+                            let item_text = board_item_label(item);
                             let categories = item_assignment_labels(item, &category_names);
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
@@ -750,7 +782,9 @@ impl App {
                                 categories.join(", ")
                             };
                             Row::new(vec![
+                                Cell::from(marker_cell),
                                 Cell::from(when),
+                                Cell::from(note_cell),
                                 Cell::from(item_text),
                                 Cell::from(categories_text),
                             ])
@@ -762,13 +796,14 @@ impl App {
                     Table::new(rows, constraints)
                         .header(
                             Row::new(vec![
+                                Cell::from(""),
                                 Cell::from("When"),
+                                Cell::from(""),
                                 Cell::from("Item"),
                                 Cell::from("All Categories"),
                             ])
                             .style(Style::default().add_modifier(Modifier::BOLD)),
                         )
-                        .highlight_symbol("> ")
                         .row_highlight_style(selected_row_style())
                         .block(
                             Block::default()
