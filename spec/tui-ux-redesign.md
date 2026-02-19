@@ -1,0 +1,539 @@
+# TUI UX Redesign Proposal
+
+Date: 2026-02-18
+Status: Draft
+
+## 1. Problem Statement
+
+The current TUI works but is clunky to use. The primary pain points:
+
+1. **Mode explosion**: 30 Mode variants with inconsistent navigation patterns
+2. **Esc behavior is inconsistent**: sometimes cancels, sometimes goes back one level, sometimes clears state, sometimes does nothing useful
+3. **Two parallel editing paths**: View Manager (3-pane, handles criteria+columns) and View Editor (overlay, handles criteria+sections+unmatched) duplicate concerns and have different save semantics
+4. **Deep modal drilling**: creating a filtered view with sections requires navigating 7+ mode transitions
+5. **Cursor/field model is ad-hoc**: three independent cursor implementations (input, item_edit_note, category_config_note) with duplicated logic; no shared abstraction for "an editable text field"
+6. **`view_return_to_manager` flag**: a boolean that silently changes where Esc goes, making behavior unpredictable to the user
+
+This proposal redesigns the interaction model without changing the data model (`View`, `Section`, `Column`, `Query`, `Category`, `Item`).
+
+## 2. Design Principles
+
+**P1. Esc always means "go back one level."** Every mode has exactly one parent. Esc returns to that parent. No conditional branching on flags. **Exception**: in Normal mode (the root), Esc clears the active filter if one is set. This is the only mode where Esc performs a contextual action rather than navigating to a parent, because Normal has no parent to return to.
+
+**P2. One editing surface per concept.** Views are edited in one place, not two. Categories are edited in one place.
+
+**P3. Consistent key vocabulary.** The same key means the same thing everywhere it appears.
+
+**P4. A shared field cursor model.** One abstraction for editable text, reused by every input context.
+
+**P5. No new features.** Same data model, same persistence, same capabilities. Just better organized.
+
+## 3. Esc Transition Map (Current vs. Proposed)
+
+### 3.1 Current Esc Behavior (Inconsistencies highlighted)
+
+| Mode | Esc goes to | Notes |
+|------|-------------|-------|
+| Normal | clears filter (if set), else no-op | **Inconsistent**: Esc does a filter-specific action, not "go back" |
+| AddInput | Normal | OK |
+| ItemEditInput | Normal | OK (discards edit) |
+| NoteEditInput | Normal | OK (discards edit) |
+| FilterInput | Normal + clears filter | **Inconsistent**: Esc = cancel + clear, but Enter = apply. No way to cancel *without* clearing. |
+| ViewPicker | Normal | OK |
+| ViewManagerScreen | ViewPicker | OK, but discards unsaved silently |
+| ViewEditor | ViewPicker | OK (discards draft) |
+| ViewCreateNameInput | ViewPicker *or* ViewManagerScreen | **Flag-dependent** (`view_return_to_manager`) |
+| ViewCreateCategoryPicker | ViewPicker | **Inconsistent**: ignores `view_return_to_manager` flag |
+| ViewRenameInput | ViewPicker *or* ViewManagerScreen | **Flag-dependent** |
+| ViewDeleteConfirm | ViewPicker *or* ViewManagerScreen | **Flag-dependent** |
+| ViewEditorCategoryPicker | ViewEditor *or* ViewSectionDetail | **Target-dependent** (section vs view) |
+| ViewEditorBucketPicker | ViewEditor *or* ViewSectionDetail | **Target-dependent** |
+| ViewManagerCategoryPicker | ViewManagerScreen | OK |
+| ViewSectionEditor | ViewEditor *or* ViewManagerScreen | **Flag-dependent** |
+| ViewSectionDetail | ViewSectionEditor *or* ViewManagerScreen | **Flag-dependent** |
+| ViewSectionTitleInput | ViewSectionDetail | OK |
+| ViewUnmatchedSettings | ViewEditor *or* ViewManagerScreen | **Flag-dependent** |
+| ViewUnmatchedLabelInput | ViewUnmatchedSettings | OK |
+| ConfirmDelete | Normal | OK |
+| CategoryManager | Normal | OK |
+| CategoryCreateInput | CategoryManager | OK |
+| CategoryRenameInput | CategoryManager | OK |
+| CategoryReparentPicker | CategoryManager | OK |
+| CategoryDeleteConfirm | CategoryManager | OK |
+| CategoryConfigEditor | CategoryManager | OK |
+| ItemAssignCategoryPicker | Normal *or* ItemEditInput | **Flag-dependent** (`item_assign_return_to_item_edit`) |
+| ItemAssignCategoryInput | ItemAssignCategoryPicker | OK |
+| InspectUnassignPicker | Normal | OK |
+
+### 3.2 Proposed Esc Behavior
+
+Every mode has a **fixed** parent. No flags.
+
+| Mode | Esc goes to | Rationale |
+|------|-------------|-----------|
+| Normal | clears filter if set, else no-op | P1 exception: Normal is the root mode with no parent. Esc clears filter as a convenience. |
+| AddInput | Normal | Unchanged |
+| ItemEdit | Normal | Unchanged (discards unsaved edits) |
+| NoteEdit | Normal | Unchanged |
+| FilterInput | Normal (preserves existing filter) | **Changed**: Esc = cancel input, not clear filter. Enter = apply. Esc from Normal still clears. |
+| ViewPicker | Normal | Unchanged |
+| ViewEdit | ViewPicker | **New unified mode** (replaces ViewEditor + ViewManagerScreen) |
+| ViewEdit > picker overlay | ViewEdit (closes overlay) | Pickers are overlays *within* ViewEdit, not separate modes |
+| ViewEdit > text input | ViewEdit (cancels input) | Title/label inputs are sub-modes of ViewEdit |
+| ViewCreateName | ViewPicker | Always. No flag. |
+| ViewCreateCategoryPicker | ViewPicker | Always. No flag. |
+| ViewRenameInput | ViewPicker | Always. No flag. |
+| ViewDeleteConfirm | ViewPicker | Always. No flag. |
+| ConfirmDelete | Normal | Unchanged |
+| CategoryManager | Normal | Unchanged |
+| CategoryCreate | CategoryManager | Unchanged |
+| CategoryRename | CategoryManager | Unchanged |
+| CategoryReparent | CategoryManager | Unchanged |
+| CategoryDelete | CategoryManager | Unchanged |
+| CategoryConfig | CategoryManager | Unchanged |
+| ItemAssignPicker | Normal | **Changed**: always returns to Normal. See section 5.3. |
+| ItemAssignInput | ItemAssignPicker | Unchanged |
+| InspectUnassign | Normal | Unchanged |
+
+**Key change**: `view_return_to_manager` and `item_assign_return_to_item_edit` flags are eliminated. Each mode has one parent.
+
+## 4. Unified View Editor
+
+### 4.1 Rationale
+
+Currently there are two editing surfaces for views:
+- **View Manager** (Mode::ViewManagerScreen): 3-pane layout. Handles view-level criteria (as rows) and columns. Can open section/unmatched editing but does so by spawning a ViewEditorState and entering ViewSectionEditor/ViewSectionDetail modes — which also belong to the View Editor flow. Saves with `s`.
+- **View Editor** (Mode::ViewEditor): overlay. Handles view-level criteria (as include/exclude sets), sections, and unmatched settings. Saves with `Enter`.
+
+These should be one screen.
+
+### 4.2 Proposed Layout
+
+The unified View Editor is a **full-screen mode** (replaces the board, not an overlay). It has four vertically-stacked regions:
+
+```
+┌─ Edit View: My Status Board ─────────────────────── matches: 42 ─┐
+│                                                                    │
+│ CRITERIA ──────────────────────────────────────────────────────── │
+│  + Work, Project                                                   │
+│  - Done                                                            │
+│  When: Overdue, Today, ThisWeek                                    │
+│                                                                    │
+│ COLUMNS ───────────────────────────────────────────────────────── │
+│  1. When          w:16                                             │
+│  2. Priority      w:12                                             │
+│  3. Status        w:12                                             │
+│                                                                    │
+│ SECTIONS ──────────────────────────────────────────────────────── │
+│  > 1. Open         include: Status/open                            │
+│    2. Closed       include: Status/closed                          │
+│                                                                    │
+│ UNMATCHED ─────────────────────────────────────────────────────── │
+│  Visible: yes    Label: "Unassigned"                               │
+│                                                                    │
+├────────────────────────────────────────────────────────────────────┤
+│ Tab:region  S:save  Esc:cancel                                     │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.3 Region Focus
+
+- `Tab` / `Shift-Tab` cycles focus between regions: Criteria → Columns → Sections → Unmatched → Criteria
+- The focused region has a highlighted border
+- Within each region, `j`/`k` navigates items
+
+### 4.4 Per-Region Keys
+
+**Criteria region:**
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Navigate criteria rows |
+| `N` | Add criteria row (opens category picker overlay) |
+| `x` | Remove selected criteria row |
+| `Space` | Toggle include/exclude on selected row |
+| `c` | Change category on selected row (opens picker overlay) |
+| `]`/`[` | Add/remove virtual include/exclude (opens bucket picker overlay) |
+
+**Columns region:**
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Navigate columns |
+| `N` | Add column (opens category picker overlay) |
+| `x` | Remove selected column |
+| `[`/`]` | Reorder column up/down |
+| `w` | Edit width (inline number input) |
+| `Enter` | Change heading category (opens picker overlay) |
+
+**Sections region:**
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Navigate sections |
+| `N` | Add new section |
+| `x` | Remove selected section |
+| `[`/`]` | Reorder section up/down |
+| `Enter` | Expand/collapse section detail inline |
+| `t` | Edit section title (inline text input) |
+
+When a section is expanded:
+| Key | Action |
+|-----|--------|
+| `+`/`-` | Add/remove include/exclude criteria (opens picker overlay) |
+| `a` | Edit on-insert-assign set (opens picker overlay) |
+| `r` | Edit on-remove-unassign set (opens picker overlay) |
+| `h` | Toggle show_children |
+
+**Unmatched region:**
+| Key | Action |
+|-----|--------|
+| `t` | Toggle show_unmatched |
+| `l` | Edit unmatched label (inline text input) |
+
+**Global (any region):**
+| Key | Action |
+|-----|--------|
+| `S` (capital) | Save entire view |
+| `Esc` | Cancel (discard all changes, return to ViewPicker) |
+| `Tab`/`Shift-Tab` | Cycle region focus |
+
+### 4.5 Picker Overlays
+
+Category and bucket pickers are overlays within ViewEdit, not separate top-level modes. They render as a right-aligned panel (40% width) over the ViewEdit screen. Keys:
+- `j`/`k` navigate
+- `Space` toggles selection
+- `Enter` or `Esc` closes the overlay and returns to the ViewEdit region that opened it
+
+Internally this can be tracked as a sub-state (e.g., `view_edit_overlay: Option<PickerOverlay>`) rather than as separate Mode variants. The picker overlay intercepts keys when active; when dismissed, the underlying region regains focus.
+
+### 4.6 Inline Text Input
+
+When editing a section title or unmatched label, the text becomes editable in-place within the region. The shared field cursor (section 6) handles this. `Enter` confirms, `Esc` cancels. This replaces the separate ViewSectionTitleInput and ViewUnmatchedLabelInput modes.
+
+Internally this can be tracked as `view_edit_inline_input: Option<InlineInputTarget>` alongside the ViewEdit mode.
+
+### 4.7 Save Semantics
+
+One save action: `S` (capital S). Persists the entire view (criteria + columns + sections + unmatched settings) atomically via `store.update_view()`. This replaces the split where the View Manager saved criteria with `s` and the View Editor saved criteria+sections with `Enter`.
+
+After saving, the editor remains open showing the saved state. The user presses `Esc` to return to the ViewPicker.
+
+### 4.8 Entry Points
+
+- From ViewPicker: `e` opens the selected view in ViewEdit
+- From ViewPicker: `V` also opens ViewEdit (same as `e`; `V` can be removed or kept as alias)
+- From ViewPicker: `N` creates a new view, then opens it in ViewEdit
+
+## 5. Mode Reduction
+
+### 5.1 Proposed Mode Enum
+
+```rust
+enum Mode {
+    // Board
+    Normal,
+    AddInput,
+    ItemEdit,           // was ItemEditInput
+    NoteEdit,           // was NoteEditInput
+    FilterInput,
+    ConfirmDelete,
+
+    // Item assignment
+    ItemAssignPicker,   // was ItemAssignCategoryPicker
+    ItemAssignInput,    // was ItemAssignCategoryInput
+    InspectUnassign,    // was InspectUnassignPicker
+
+    // View management
+    ViewPicker,
+    ViewEdit,           // NEW: unified (replaces ViewManagerScreen + ViewEditor
+                        //   + ViewSectionEditor + ViewSectionDetail
+                        //   + ViewSectionTitleInput + ViewEditorCategoryPicker
+                        //   + ViewEditorBucketPicker + ViewManagerCategoryPicker
+                        //   + ViewUnmatchedSettings + ViewUnmatchedLabelInput)
+    ViewCreateName,     // was ViewCreateNameInput
+    ViewCreateCategory, // was ViewCreateCategoryPicker
+    ViewRename,         // was ViewRenameInput
+    ViewDeleteConfirm,
+
+    // Category management
+    CategoryManager,
+    CategoryCreate,     // was CategoryCreateInput
+    CategoryRename,     // was CategoryRenameInput
+    CategoryReparent,   // was CategoryReparentPicker
+    CategoryDelete,     // was CategoryDeleteConfirm
+    CategoryConfig,     // was CategoryConfigEditor
+}
+```
+
+**30 modes → 21 modes.** The 10 eliminated view-editing modes (ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput) become sub-states of the single new ViewEdit mode.
+
+### 5.2 ViewEdit Sub-State
+
+```rust
+enum ViewEditRegion {
+    Criteria,
+    Columns,
+    Sections,
+    Unmatched,
+}
+
+enum ViewEditOverlay {
+    CategoryPicker { target: CategoryEditTarget },
+    BucketPicker { target: BucketEditTarget },
+}
+
+enum ViewEditInlineInput {
+    SectionTitle { section_index: usize },
+    UnmatchedLabel,
+    ColumnWidth { column_index: usize },
+}
+
+struct ViewEditState {
+    draft: View,
+    region: ViewEditRegion,
+    criteria_index: usize,
+    column_index: usize,
+    section_index: usize,
+    section_expanded: Option<usize>,   // which section is showing detail
+    overlay: Option<ViewEditOverlay>,
+    inline_input: Option<ViewEditInlineInput>,
+    picker_index: usize,               // cursor within overlay picker
+    preview_count: usize,
+    criteria_rows: Vec<ViewCriteriaRow>,
+}
+```
+
+**Key dispatch precedence in ViewEdit** (innermost layer wins):
+1. If `inline_input.is_some()`, handle text input keys (Enter confirms, Esc cancels inline input)
+2. Else if `overlay.is_some()`, handle picker keys (j/k/Space/Enter/Esc dismisses overlay)
+3. Else handle region-level keys (j/k/N/x/Tab/S/Esc returns to ViewPicker)
+
+This precedence is normative. All key dispatch in ViewEdit must follow this order.
+
+### 5.3 Item Edit and Category Assignment
+
+Currently `ItemAssignCategoryPicker` uses `item_assign_return_to_item_edit` to decide whether Esc goes to Normal or ItemEditInput. This creates the inconsistency where the same mode behaves differently depending on how you entered it.
+
+**Normative decision**: ItemAssignPicker always returns to Normal on both Esc and Enter. The `item_assign_return_to_item_edit` flag is deleted.
+
+Workflow when the user wants to edit categories from within the ItemEdit popup:
+1. User presses Enter on the "Categories" button → enters ItemAssignPicker (mode changes to ItemAssignPicker)
+2. User toggles categories with Space, presses Enter or Esc → returns to Normal
+3. User presses `e` to re-open ItemEdit → the same item is still selected, so the popup re-opens with current state
+
+This means the user takes one extra keystroke (`e`) to get back into the ItemEdit popup after using the category picker. This is an acceptable trade-off for deterministic Esc behavior. The item selection is preserved across the Normal→ItemAssignPicker→Normal→ItemEdit round-trip, so no work is lost.
+
+## 6. Shared Field Cursor Model
+
+### 6.1 Current Problem
+
+There are three independent cursor implementations:
+- `input` + `input_cursor` (single-line, used by AddInput/FilterInput/various name inputs)
+- `item_edit_note` + `item_edit_note_cursor` (multi-line, used by ItemEdit note field)
+- `category_config_editor.note` + `category_config_editor.note_cursor` (multi-line, used by CategoryConfig)
+
+Each has its own set of methods: `move_*_cursor_left`, `move_*_cursor_right`, `backspace_*_char`, etc. These are functionally identical except for the field they operate on. The `input/mod.rs` file is 487 lines, most of it duplicated logic.
+
+### 6.2 Proposed Abstraction
+
+```rust
+/// A text buffer with a cursor position, supporting single-line and multi-line editing.
+struct TextBuffer {
+    text: String,
+    cursor: usize,  // char offset (not byte offset)
+}
+
+impl TextBuffer {
+    fn new(text: String) -> Self { /* cursor at end */ }
+    fn empty() -> Self { /* empty, cursor at 0 */ }
+
+    // Cursor movement
+    fn move_left(&mut self);
+    fn move_right(&mut self);
+    fn move_home(&mut self);
+    fn move_end(&mut self);
+    fn move_up(&mut self);     // multi-line: moves to same column on previous line
+    fn move_down(&mut self);   // multi-line: moves to same column on next line
+
+    // Editing
+    fn insert_char(&mut self, c: char);
+    fn insert_newline(&mut self);
+    fn backspace(&mut self);
+    fn delete(&mut self);
+
+    // Access
+    fn text(&self) -> &str;
+    fn cursor(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn trimmed(&self) -> &str;
+
+    // Key dispatch helper
+    fn handle_key(&mut self, code: KeyCode, multiline: bool) -> bool;
+}
+```
+
+The `handle_key` method combines the current `handle_text_input_key` / `handle_item_edit_note_input_key` / `handle_category_config_note_input_key` into one. When `multiline` is true, Up/Down move between lines and Enter inserts a newline. When false, Up/Down are not consumed and Enter is not consumed.
+
+### 6.3 Usage
+
+Replace the ad-hoc fields:
+
+```rust
+struct App {
+    // Instead of: input: String, input_cursor: usize
+    input: TextBuffer,
+
+    // Instead of: item_edit_note: String, item_edit_note_cursor: usize
+    item_edit_note: TextBuffer,
+
+    // CategoryConfigEditorState.note + note_cursor → TextBuffer
+}
+```
+
+The `handle_key` dispatch becomes:
+
+```rust
+// In AddInput handler:
+KeyCode::Esc => { /* cancel */ }
+KeyCode::Enter => { /* submit */ }
+_ => { self.input.handle_key(code, false); }
+
+// In ItemEdit handler, when focus is Note:
+KeyCode::Esc => { /* cancel */ }
+KeyCode::Tab => { /* cycle focus */ }
+_ => { self.item_edit_note.handle_key(code, true); }
+```
+
+### 6.4 Cursor Position for Rendering
+
+`TextBuffer` should also provide:
+
+```rust
+fn line_col(&self) -> (usize, usize);  // for cursor positioning in multi-line renders
+fn clamped_cursor(&self) -> usize;     // cursor clamped to text length
+```
+
+This eliminates the standalone `note_cursor_line_col` and `note_line_start_chars` helper functions, folding them into the buffer.
+
+## 7. Key Vocabulary
+
+Consistent meanings across all contexts:
+
+| Key | Meaning |
+|-----|---------|
+| `j`/`Down` | Move cursor down in a list |
+| `k`/`Up` | Move cursor up in a list |
+| `h`/`Left` | Move cursor left (or move to previous pane/slot) |
+| `l`/`Right` | Move cursor right (or move to next pane/slot) |
+| `Tab` | Cycle focus forward (fields in a form, regions in ViewEdit, slots in board) |
+| `Shift-Tab` | Cycle focus backward |
+| `Enter` | Confirm/activate/submit (open item for editing, submit input, expand section) |
+| `Esc` | Go back / cancel / dismiss |
+| `Space` | Toggle (checkbox, include/exclude, assign/unassign in picker) |
+| `n` | New item (lowercase, from board) |
+| `N` | New entity in current context (uppercase: new view, section, column, criteria row, category) |
+| `x` | Delete selected entity (with confirmation for destructive actions) |
+| `r` | Rename |
+| `[`/`]` | Reorder up/down (sections, columns) *or* move item between slots (in board) |
+| `+`/`-` | Add/remove include/exclude criteria (in view/section editing) |
+| `S` | Save (in ViewEdit) |
+| `s` | Not used in ViewEdit (avoids collision with lowercase action keys) |
+| `q` | Quit (from Normal mode only) |
+| `/` | Open filter |
+| `v` | Open view picker |
+| `c` | Open category manager |
+| `p` | Toggle preview |
+| `d` | Toggle done |
+| `a` | Open category assignment picker for selected item |
+
+### 7.1 Conflict Resolutions
+
+- Current ViewManagerScreen uses `s` to save criteria only (not columns/sections). ViewEdit uses `S` (capital) to save everything. This avoids conflict with `s` being used for "sections" in the View Editor.
+- Current ViewEditor uses `s` to open section editor. In ViewEdit, sections are a visible region — no key needed to "open" them, just Tab to the region.
+- `[`/`]` is overloaded: reorder in editing contexts, move item in board context. This is OK because they never coexist (you're either in ViewEdit or on the board).
+
+## 8. Status Bar Messages
+
+The status bar should follow a consistent format:
+
+- **Mode entry**: brief instruction. E.g., `"Add item: type text, Enter to save, Esc to cancel"`
+- **Action result**: what happened. E.g., `"Item added (parsed when: 2026-02-24 15:00)"`, `"Saved view: My Board (42 matches)"`
+- **Error**: prefixed with `"Error: "`. E.g., `"Error: Cannot save — text is empty"`
+- **Warning**: prefixed with `"Warning: "`. E.g., `"Warning: unknown_hashtags=office,someday"`
+
+Keep messages under 80 characters where possible. Do not embed keyboard hints in every status message — the footer hint bar is for that.
+
+## 9. Footer Hint Bar
+
+Currently hints are embedded in status messages, which means they disappear when the next action updates the status. Instead, render a persistent hint bar in the footer area, separate from the status message.
+
+The hint bar content changes based on mode + focused region:
+
+```
+Normal:    n:add  e:edit  d:done  x:delete  v:views  c:categories  /:filter  q:quit
+ViewPicker: Enter:switch  e:edit  N:new  r:rename  x:delete  Esc:back
+ViewEdit:  Tab:region  S:save  Esc:cancel  (+ region-specific hints)
+```
+
+The status line sits above the hint bar and shows transient messages (action results, errors).
+
+**Layout**:
+```
+┌─ header ───────────────────────────────────────────┐
+│ main area                                           │
+├─────────────────────────────────────────────────────┤
+│ Status: Item added                                  │  ← transient message
+│ n:add  e:edit  d:done  v:views  /:filter  q:quit   │  ← persistent hints
+└─────────────────────────────────────────────────────┘
+```
+
+## 10. Implementation Sequence
+
+### Phase 1: TextBuffer extraction
+1. Create `text_buffer.rs` with `TextBuffer` struct
+2. Replace `input` + `input_cursor` with `TextBuffer`
+3. Replace `item_edit_note` + `item_edit_note_cursor` with `TextBuffer`
+4. Replace `CategoryConfigEditorState.note` + `note_cursor` with `TextBuffer`
+5. Delete duplicated cursor methods from `input/mod.rs`
+6. All existing tests must pass
+
+### Phase 2: Unified ViewEdit mode
+1. Create `ViewEditState` struct with region/overlay/inline_input sub-states
+2. Implement ViewEdit key dispatch (inline_input → overlay → region precedence, per section 5.2)
+3. Implement ViewEdit rendering (four regions with focus highlight)
+4. Implement picker overlay rendering (right-aligned panel)
+5. Implement inline text input within regions
+6. Wire up save (`S`) to persist full view via `store.update_view()`
+7. Delete old modes: ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput
+8. Delete `view_editor_return_to_manager`, `view_editor_category_target`, `view_editor_bucket_target` flags (these are subsumed by ViewEditState.overlay). Delete `view_return_to_manager` flag (ViewCreateName/ViewRename/ViewDeleteConfirm always return to ViewPicker). Delete `item_assign_return_to_item_edit` flag (ItemAssignPicker always returns to Normal).
+9. All existing tests must pass (adapt mode assertions)
+
+### Phase 3: Esc consistency (remaining fixes after Phase 2)
+Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `view_editor_return_to_manager`, `item_assign_return_to_item_edit`). This phase fixes the remaining Esc inconsistencies that are independent of the view editor unification:
+
+1. Fix FilterInput: Esc cancels the input and returns to Normal, preserving the existing filter (if any). Currently Esc clears the filter; this changes so that only Esc *from Normal mode* clears the filter.
+2. Fix ViewCreateCategoryPicker: Esc returns to ViewPicker (fixed parent, unconditional).
+
+### Phase 4: Footer hint bar
+1. Add persistent hint bar to footer layout
+2. Compute hint text from current mode + sub-state
+3. Separate status messages from hints
+
+## 11. What This Proposal Does NOT Change
+
+- Data model: `View`, `Section`, `Column`, `Query`, `Category`, `Item` are unchanged
+- Persistence: `Store` API is unchanged
+- Board rendering: slot/item layout, column rendering, preview panel — all unchanged
+- Category Manager: same screen, same keys, same flow
+- Item editing: same popup, same field cycling, same save behavior
+- CLI: untouched
+
+## 12. Migration Notes for Existing Users
+
+Key binding changes that existing users will notice:
+
+| Old | New | Context |
+|-----|-----|---------|
+| `v` then `V` to enter View Manager | `v` then `e` to enter ViewEdit | View Manager is gone |
+| `s` in View Manager to save criteria | `S` in ViewEdit to save everything | Capital S, saves all aspects |
+| `t` in View Manager Definition pane to toggle Criteria/Columns | `Tab` in ViewEdit to switch between Criteria and Columns regions | Region cycling replaces sub-tab toggle |
+| `e` in ViewPicker to open View Editor overlay | `e` in ViewPicker to open ViewEdit (full-screen) | Same key, different presentation |
+| `Enter` in View Editor to save | `S` in ViewEdit to save | Enter is now "activate/expand", not "save" |
