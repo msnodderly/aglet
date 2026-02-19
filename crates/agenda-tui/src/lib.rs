@@ -415,8 +415,8 @@ mod tests {
         build_category_rows, build_reparent_options, category_name_map, category_target_set_mut,
         compute_board_layout, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
-        should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
-        CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
+        should_render_unmatched_lane, truncate_board_cell, when_bucket_options, App,
+        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2558,6 +2558,13 @@ mod tests {
                 <= slot_width as usize
         );
         assert!(legacy.item >= 1);
+    }
+
+    #[test]
+    fn truncate_board_cell_uses_ellipsis_for_overflow() {
+        assert_eq!(truncate_board_cell("abcdef", 5), "ab...");
+        assert_eq!(truncate_board_cell("abcdef", 3), "...");
+        assert_eq!(truncate_board_cell("abc", 5), "abc");
     }
 
     #[test]
