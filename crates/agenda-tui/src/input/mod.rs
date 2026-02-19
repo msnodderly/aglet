@@ -90,26 +90,6 @@ impl App {
         (value, cursor)
     }
 
-    fn with_category_config_note_textarea<F>(&mut self, edit: F)
-    where
-        F: FnOnce(&mut TextArea<'static>),
-    {
-        let Some((note, note_cursor)) = self
-            .category_config_editor
-            .as_ref()
-            .map(|editor| (editor.note.clone(), editor.note_cursor))
-        else {
-            return;
-        };
-        let mut textarea = Self::multiline_textarea(&note, note_cursor);
-        edit(&mut textarea);
-        let (value, cursor) = Self::textarea_value_and_cursor(textarea);
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.note = value;
-            editor.note_cursor = cursor.min(editor.note.chars().count());
-        }
-    }
-
     pub(crate) fn input_len_chars(&self) -> usize {
         self.input.len_chars()
     }
@@ -146,85 +126,11 @@ impl App {
             .unwrap_or(false)
     }
 
-    pub(crate) fn category_config_note_cursor(&self) -> Option<usize> {
-        self.category_config_editor
-            .as_ref()
-            .map(|editor| editor.note_cursor.min(editor.note.chars().count()))
-    }
-
-    pub(crate) fn move_category_config_note_cursor_left(&mut self) {
-        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(CursorMove::Back));
-    }
-
-    pub(crate) fn move_category_config_note_cursor_right(&mut self) {
-        self.with_category_config_note_textarea(|textarea| {
-            textarea.move_cursor(CursorMove::Forward);
-        });
-    }
-
-    pub(crate) fn move_category_config_note_cursor_home(&mut self) {
-        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(CursorMove::Head));
-    }
-
-    pub(crate) fn move_category_config_note_cursor_end(&mut self) {
-        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(CursorMove::End));
-    }
-
-    pub(crate) fn move_category_config_note_cursor_vertical(&mut self, delta: i32) {
-        let movement = if delta < 0 {
-            CursorMove::Up
-        } else {
-            CursorMove::Down
-        };
-        self.with_category_config_note_textarea(|textarea| textarea.move_cursor(movement));
-    }
-
-    pub(crate) fn move_category_config_note_cursor_up(&mut self) {
-        self.move_category_config_note_cursor_vertical(-1);
-    }
-
-    pub(crate) fn move_category_config_note_cursor_down(&mut self) {
-        self.move_category_config_note_cursor_vertical(1);
-    }
-
-    pub(crate) fn backspace_category_config_note_char(&mut self) {
-        self.with_category_config_note_textarea(|textarea| {
-            let _ = textarea.delete_char();
-        });
-    }
-
-    pub(crate) fn delete_category_config_note_char(&mut self) {
-        self.with_category_config_note_textarea(|textarea| {
-            let _ = textarea.delete_next_char();
-        });
-    }
-
-    pub(crate) fn insert_category_config_note_char(&mut self, c: char) {
-        if c.is_control() {
-            return;
-        }
-        self.with_category_config_note_textarea(|textarea| textarea.insert_char(c));
-    }
-
-    pub(crate) fn insert_category_config_note_newline(&mut self) {
-        self.with_category_config_note_textarea(|textarea| textarea.insert_newline());
-    }
-
     pub(crate) fn handle_category_config_note_input_key(&mut self, code: KeyCode) -> bool {
-        match code {
-            KeyCode::Left => self.move_category_config_note_cursor_left(),
-            KeyCode::Right => self.move_category_config_note_cursor_right(),
-            KeyCode::Up => self.move_category_config_note_cursor_up(),
-            KeyCode::Down => self.move_category_config_note_cursor_down(),
-            KeyCode::Home => self.move_category_config_note_cursor_home(),
-            KeyCode::End => self.move_category_config_note_cursor_end(),
-            KeyCode::Backspace => self.backspace_category_config_note_char(),
-            KeyCode::Delete => self.delete_category_config_note_char(),
-            KeyCode::Enter => self.insert_category_config_note_newline(),
-            KeyCode::Char(c) => self.insert_category_config_note_char(c),
-            _ => return false,
-        }
-        true
+        let Some(editor) = &mut self.category_config_editor else {
+            return false;
+        };
+        editor.note.handle_key(code, true)
     }
 
     pub(crate) fn cycle_category_config_focus(&mut self, delta: i32) {

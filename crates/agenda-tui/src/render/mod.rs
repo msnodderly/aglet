@@ -224,8 +224,7 @@ impl App {
             return None;
         }
 
-        let cursor = self.category_config_note_cursor().unwrap_or(0);
-        let (line, col) = note_cursor_line_col(&editor.note, cursor);
+        let (line, col) = editor.note.line_col();
         let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
         let visible_line = line.saturating_sub(scroll);
         let max_x = regions
@@ -1934,7 +1933,7 @@ impl App {
         let note_lines: Vec<Line<'_>> = if editor.note.is_empty() {
             vec![Line::from("")]
         } else {
-            editor.note.lines().map(Line::from).collect()
+            editor.note.text().lines().map(Line::from).collect()
         };
         let note_border_color = if editor.focus == CategoryConfigFocus::Note {
             Color::Cyan
@@ -1946,8 +1945,7 @@ impl App {
         } else {
             "Note (editable)"
         };
-        let note_cursor = self.category_config_note_cursor().unwrap_or(0);
-        let note_cursor_line = note_cursor_line_col(&editor.note, note_cursor).0;
+        let note_cursor_line = editor.note.line_col().0;
         let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
         frame.render_widget(
             Paragraph::new(note_lines)
@@ -1964,7 +1962,7 @@ impl App {
         Self::render_vertical_scrollbar(
             frame,
             regions.note,
-            editor.note.lines().count().max(1),
+            editor.note.text().lines().count().max(1),
             note_scroll as usize,
         );
 
