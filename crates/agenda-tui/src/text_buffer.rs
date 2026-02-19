@@ -25,6 +25,7 @@ impl TextBuffer {
 
     /// New buffer with the given text and an explicit cursor position.
     /// The cursor is clamped to the text length on construction.
+    #[cfg(test)]
     pub(crate) fn with_cursor(text: String, cursor: usize) -> Self {
         let len = text.chars().count();
         Self {

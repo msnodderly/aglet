@@ -24,7 +24,6 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Table, TableState, Tabs, Wrap,
 };
 use ratatui::Terminal;
-use tui_textarea::{CursorMove, TextArea};
 
 mod app;
 mod input;

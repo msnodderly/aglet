@@ -50,60 +50,12 @@ impl App {
         self.input.clear();
     }
 
-    fn single_line_textarea(value: &str, cursor: usize) -> TextArea<'static> {
-        let mut textarea = TextArea::new(vec![value.to_string()]);
-        let col = cursor.min(value.chars().count()).min(u16::MAX as usize) as u16;
-        textarea.move_cursor(CursorMove::Jump(0, col));
-        textarea
-    }
-
-    fn multiline_textarea(value: &str, cursor: usize) -> TextArea<'static> {
-        let mut textarea = TextArea::new(value.split('\n').map(str::to_string).collect());
-        let (line, col) = note_cursor_line_col(value, cursor.min(value.chars().count()));
-        let row = line.min(u16::MAX as usize) as u16;
-        let col = col.min(u16::MAX as usize) as u16;
-        textarea.move_cursor(CursorMove::Jump(row, col));
-        textarea
-    }
-
-    fn char_index_from_line_col(value: &str, row: usize, col: usize) -> usize {
-        let line_starts = note_line_start_chars(value);
-        if line_starts.is_empty() {
-            return 0;
-        }
-
-        let line_index = row.min(line_starts.len().saturating_sub(1));
-        let line_start = line_starts[line_index];
-        let value_len = value.chars().count();
-        let line_end = if line_index + 1 < line_starts.len() {
-            line_starts[line_index + 1].saturating_sub(1)
-        } else {
-            value_len
-        };
-        line_start + col.min(line_end.saturating_sub(line_start))
-    }
-
-    fn textarea_value_and_cursor(textarea: TextArea<'static>) -> (String, usize) {
-        let (row, col) = textarea.cursor();
-        let value = textarea.into_lines().join("\n");
-        let cursor = Self::char_index_from_line_col(&value, row, col);
-        (value, cursor)
-    }
-
-    pub(crate) fn input_len_chars(&self) -> usize {
-        self.input.len_chars()
-    }
-
     pub(crate) fn clamped_input_cursor(&self) -> usize {
         self.input.cursor()
     }
 
     pub(crate) fn handle_text_input_key(&mut self, code: KeyCode) -> bool {
         self.input.handle_key(code, false)
-    }
-
-    pub(crate) fn clamped_item_edit_note_cursor(&self) -> usize {
-        self.item_edit_note.cursor()
     }
 
     pub(crate) fn handle_item_edit_note_input_key(&mut self, code: KeyCode) -> bool {

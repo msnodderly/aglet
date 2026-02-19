@@ -734,32 +734,6 @@ pub(super) fn category_config_popup_regions(area: Rect) -> Option<CategoryConfig
     })
 }
 
-pub(super) fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
-    let mut line = 0usize;
-    let mut col = 0usize;
-    for c in note.chars().take(cursor_chars) {
-        if c == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
-}
-
-pub(super) fn note_line_start_chars(note: &str) -> Vec<usize> {
-    let mut starts = vec![0usize];
-    let mut char_index = 0usize;
-    for c in note.chars() {
-        char_index += 1;
-        if c == '\n' {
-            starts.push(char_index);
-        }
-    }
-    starts
-}
-
 pub(super) fn add_capture_status_message(
     parsed_when: Option<NaiveDateTime>,
     unknown_hashtags: &[String],
