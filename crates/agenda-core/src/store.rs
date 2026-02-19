@@ -1107,7 +1107,6 @@ impl Store {
         }
 
         if from_version < 3 {
-            {
             // Inject kind field into existing columns_json.
             // Find the When category ID, then tag columns whose heading matches it
             // as When, all others as Standard.
