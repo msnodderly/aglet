@@ -275,6 +275,7 @@ pub(super) const BOARD_ITEM_MIN_WIDTH: usize = 12;
 pub(super) const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
 pub(super) const BOARD_CATEGORY_MIN_WIDTH: usize = 14;
 pub(super) const BOARD_DYNAMIC_ITEM_MIN_WIDTH: usize = 12;
+pub(super) const BOARD_TRUNCATION_SUFFIX: &str = "...";
 
 #[derive(Clone, Debug)]
 pub(super) struct BoardColumnLayout {
@@ -468,6 +469,22 @@ pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
         item,
         categories,
     }
+}
+
+pub(super) fn truncate_board_cell(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let count = text.chars().count();
+    if count <= width {
+        return text.to_string();
+    }
+    if width <= BOARD_TRUNCATION_SUFFIX.len() {
+        return ".".repeat(width);
+    }
+    let keep = width - BOARD_TRUNCATION_SUFFIX.len();
+    let prefix: String = text.chars().take(keep).collect();
+    format!("{prefix}{BOARD_TRUNCATION_SUFFIX}")
 }
 
 pub(super) fn selected_row_style() -> Style {

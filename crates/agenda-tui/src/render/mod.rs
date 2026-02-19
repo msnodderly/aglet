@@ -620,8 +620,9 @@ impl App {
             .current_view()
             .map(|v| v.columns.as_slice())
             .unwrap_or(&[]);
-        let use_dynamic = !view_columns.is_empty()
-            && view_columns
+        let use_dynamic = !view_columns.is_empty();
+        let include_all_categories_in_dynamic = use_dynamic
+            && !view_columns
                 .iter()
                 .any(|column| column.kind == ColumnKind::Standard);
         let view_item_label = self
@@ -652,16 +653,32 @@ impl App {
                     &view_item_label,
                     inner_width,
                 );
+                let mut item_width = layout.item;
+                let mut synthetic_categories_width = 0usize;
+                if include_all_categories_in_dynamic {
+                    let min_item_width = BOARD_ITEM_MIN_WIDTH.min(item_width);
+                    let available_for_categories = item_width.saturating_sub(min_item_width);
+                    if available_for_categories > 0 {
+                        synthetic_categories_width =
+                            BOARD_CATEGORY_TARGET_WIDTH.min(available_for_categories);
+                        item_width = item_width.saturating_sub(synthetic_categories_width);
+                    }
+                }
                 let mut constraints = vec![
                     Constraint::Length(layout.marker.min(u16::MAX as usize) as u16),
                     Constraint::Length(layout.note.min(u16::MAX as usize) as u16),
-                    Constraint::Length(layout.item.min(u16::MAX as usize) as u16),
+                    Constraint::Length(item_width.min(u16::MAX as usize) as u16),
                 ];
                 constraints.extend(
                     layout.columns.iter().map(|column| {
                         Constraint::Length(column.width.min(u16::MAX as usize) as u16)
                     }),
                 );
+                if synthetic_categories_width > 0 {
+                    constraints.push(Constraint::Length(
+                        synthetic_categories_width.min(u16::MAX as usize) as u16,
+                    ));
+                }
                 let mut header_cells = vec![
                     Cell::from(String::new()),
                     Cell::from(String::new()),
@@ -673,6 +690,9 @@ impl App {
                         .iter()
                         .map(|column| Cell::from(column.label.clone())),
                 );
+                if synthetic_categories_width > 0 {
+                    header_cells.push(Cell::from("All Categories"));
+                }
 
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
                     let mut cells = vec![
@@ -681,6 +701,9 @@ impl App {
                         Cell::from("(no items)"),
                     ];
                     cells.extend(layout.columns.iter().map(|_| Cell::from(String::new())));
+                    if synthetic_categories_width > 0 {
+                        cells.push(Cell::from(String::new()));
+                    }
                     vec![Row::new(cells)]
                 } else {
                     slot.items
@@ -697,7 +720,10 @@ impl App {
                             let mut cells = vec![
                                 Cell::from(marker_cell),
                                 Cell::from(note_cell),
-                                Cell::from(board_item_label(item)),
+                                Cell::from(truncate_board_cell(
+                                    &board_item_label(item),
+                                    item_width,
+                                )),
                             ];
                             cells.extend(layout.columns.iter().map(|column| {
                                 let value = match column.kind {
@@ -711,8 +737,20 @@ impl App {
                                         &category_names,
                                     ),
                                 };
-                                Cell::from(value)
+                                Cell::from(truncate_board_cell(&value, column.width))
                             }));
+                            if synthetic_categories_width > 0 {
+                                let categories = item_assignment_labels(item, &category_names);
+                                let categories_text = if categories.is_empty() {
+                                    "-".to_string()
+                                } else {
+                                    categories.join(", ")
+                                };
+                                cells.push(Cell::from(truncate_board_cell(
+                                    &categories_text,
+                                    synthetic_categories_width,
+                                )));
+                            }
                             Row::new(cells)
                         })
                         .collect()
@@ -783,10 +821,13 @@ impl App {
                             };
                             Row::new(vec![
                                 Cell::from(marker_cell),
-                                Cell::from(when),
+                                Cell::from(truncate_board_cell(&when, widths.when)),
                                 Cell::from(note_cell),
-                                Cell::from(item_text),
-                                Cell::from(categories_text),
+                                Cell::from(truncate_board_cell(&item_text, widths.item)),
+                                Cell::from(truncate_board_cell(
+                                    &categories_text,
+                                    widths.categories,
+                                )),
                             ])
                         })
                         .collect()
