@@ -1704,16 +1704,13 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.views.is_empty() {
-                    self.picker_index = (self.picker_index + 1) % self.views.len();
+                    self.picker_index = next_index_clamped(self.picker_index, self.views.len(), 1);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if !self.views.is_empty() {
-                    self.picker_index = if self.picker_index == 0 {
-                        self.views.len() - 1
-                    } else {
-                        self.picker_index - 1
-                    };
+                    self.picker_index =
+                        next_index_clamped(self.picker_index, self.views.len(), -1);
                 }
             }
             _ => {}
@@ -1785,7 +1782,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => match self.view_manager_pane {
                 ViewManagerPane::Views => {
                     if !self.views.is_empty() {
-                        let next = next_index(self.picker_index, self.views.len(), 1);
+                        let next = next_index_clamped(self.picker_index, self.views.len(), 1);
                         if self.view_manager_dirty
                             && self
                                 .view_manager_loaded_view_name
@@ -1816,11 +1813,11 @@ impl App {
                             .unwrap_or(0)
                             .max(1);
                         self.view_manager_column_index =
-                            next_index(self.view_manager_column_index, count, 1);
+                            next_index_clamped(self.view_manager_column_index, count, 1);
                     } else {
                         let count = self.view_manager_rows.len().max(1);
                         self.view_manager_definition_index =
-                            next_index(self.view_manager_definition_index, count, 1);
+                            next_index_clamped(self.view_manager_definition_index, count, 1);
                     }
                 }
                 ViewManagerPane::Sections => {
@@ -1830,13 +1827,13 @@ impl App {
                         .map(|view| view.sections.len().max(1))
                         .unwrap_or(1);
                     self.view_manager_section_index =
-                        next_index(self.view_manager_section_index, section_count, 1);
+                        next_index_clamped(self.view_manager_section_index, section_count, 1);
                 }
             },
             KeyCode::Up | KeyCode::Char('k') => match self.view_manager_pane {
                 ViewManagerPane::Views => {
                     if !self.views.is_empty() {
-                        let next = next_index(self.picker_index, self.views.len(), -1);
+                        let next = next_index_clamped(self.picker_index, self.views.len(), -1);
                         if self.view_manager_dirty
                             && self
                                 .view_manager_loaded_view_name
@@ -1867,11 +1864,11 @@ impl App {
                             .unwrap_or(0)
                             .max(1);
                         self.view_manager_column_index =
-                            next_index(self.view_manager_column_index, count, -1);
+                            next_index_clamped(self.view_manager_column_index, count, -1);
                     } else {
                         let count = self.view_manager_rows.len().max(1);
                         self.view_manager_definition_index =
-                            next_index(self.view_manager_definition_index, count, -1);
+                            next_index_clamped(self.view_manager_definition_index, count, -1);
                     }
                 }
                 ViewManagerPane::Sections => {
@@ -1881,7 +1878,7 @@ impl App {
                         .map(|view| view.sections.len().max(1))
                         .unwrap_or(1);
                     self.view_manager_section_index =
-                        next_index(self.view_manager_section_index, section_count, -1);
+                        next_index_clamped(self.view_manager_section_index, section_count, -1);
                 }
             },
             KeyCode::Enter => {
@@ -1943,7 +1940,7 @@ impl App {
                         self.refresh_view_manager_preview();
                     }
                 } else {
-                    self.open_view_manager_section_editor();
+                    self.open_view_manager_section_detail();
                 }
             }
             KeyCode::Char('s') => {
@@ -2392,13 +2389,13 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.category_rows.is_empty() {
                     self.view_category_index =
-                        next_index(self.view_category_index, self.category_rows.len(), 1);
+                        next_index_clamped(self.view_category_index, self.category_rows.len(), 1);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if !self.category_rows.is_empty() {
                     self.view_category_index =
-                        next_index(self.view_category_index, self.category_rows.len(), -1);
+                        next_index_clamped(self.view_category_index, self.category_rows.len(), -1);
                 }
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -2968,6 +2965,22 @@ impl App {
         self.status = "Section editor: N/x/[/] and Enter detail, Esc return to manager".to_string();
     }
 
+    fn open_view_manager_section_detail(&mut self) {
+        self.open_view_manager_section_editor();
+        let has_sections = self
+            .view_editor
+            .as_ref()
+            .map(|editor| !editor.draft.sections.is_empty())
+            .unwrap_or(false);
+        if has_sections {
+            self.mode = Mode::ViewSectionDetail;
+            self.status =
+                "Section detail: t title, +/- categories, [/] virtual, a insert-set, r remove-set, Esc back".to_string();
+        } else {
+            self.status = "No sections to edit; press N to add a section".to_string();
+        }
+    }
+
     fn open_view_manager_unmatched_settings(&mut self) {
         let Some(view) = self.views.get(self.picker_index).cloned() else {
             self.status = "No selected view for unmatched settings".to_string();
@@ -3079,12 +3092,14 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(editor) = &mut self.view_editor {
-                    editor.action_index = next_index(editor.action_index, VIEW_EDITOR_ACTIONS, 1);
+                    editor.action_index =
+                        next_index_clamped(editor.action_index, VIEW_EDITOR_ACTIONS, 1);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(editor) = &mut self.view_editor {
-                    editor.action_index = next_index(editor.action_index, VIEW_EDITOR_ACTIONS, -1);
+                    editor.action_index =
+                        next_index_clamped(editor.action_index, VIEW_EDITOR_ACTIONS, -1);
                 }
             }
             KeyCode::Char('+') => {
@@ -3163,13 +3178,13 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(editor) = &mut self.view_editor {
                     editor.category_index =
-                        next_index(editor.category_index, self.category_rows.len(), 1);
+                        next_index_clamped(editor.category_index, self.category_rows.len(), 1);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(editor) = &mut self.view_editor {
                     editor.category_index =
-                        next_index(editor.category_index, self.category_rows.len(), -1);
+                        next_index_clamped(editor.category_index, self.category_rows.len(), -1);
                 }
             }
             KeyCode::Char(' ') => {
@@ -3213,12 +3228,14 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(editor) = &mut self.view_editor {
-                    editor.bucket_index = next_index(editor.bucket_index, buckets.len(), 1);
+                    editor.bucket_index =
+                        next_index_clamped(editor.bucket_index, buckets.len(), 1);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(editor) = &mut self.view_editor {
-                    editor.bucket_index = next_index(editor.bucket_index, buckets.len(), -1);
+                    editor.bucket_index =
+                        next_index_clamped(editor.bucket_index, buckets.len(), -1);
                 }
             }
             KeyCode::Char(' ') => {
@@ -3265,7 +3282,7 @@ impl App {
                 if let Some(editor) = &mut self.view_editor {
                     if !editor.draft.sections.is_empty() {
                         editor.section_index =
-                            next_index(editor.section_index, editor.draft.sections.len(), 1);
+                            next_index_clamped(editor.section_index, editor.draft.sections.len(), 1);
                     }
                 }
             }
@@ -3273,7 +3290,7 @@ impl App {
                 if let Some(editor) = &mut self.view_editor {
                     if !editor.draft.sections.is_empty() {
                         editor.section_index =
-                            next_index(editor.section_index, editor.draft.sections.len(), -1);
+                            next_index_clamped(editor.section_index, editor.draft.sections.len(), -1);
                     }
                 }
             }
@@ -3338,7 +3355,12 @@ impl App {
     fn handle_view_section_detail_key(&mut self, code: KeyCode) -> Result<bool, String> {
         let Some(section_index) = self.view_editor.as_ref().map(|editor| editor.section_index)
         else {
-            self.mode = Mode::ViewPicker;
+            if self.view_editor_return_to_manager {
+                self.mode = Mode::ViewManagerScreen;
+                self.view_editor_return_to_manager = false;
+            } else {
+                self.mode = Mode::ViewPicker;
+            }
             return Ok(false);
         };
         let section_exists = self
@@ -3347,12 +3369,24 @@ impl App {
             .and_then(|editor| editor.draft.sections.get(section_index))
             .is_some();
         if !section_exists {
-            self.mode = Mode::ViewSectionEditor;
+            if self.view_editor_return_to_manager {
+                self.finish_view_editor_return_to_manager(
+                    "Updated sections in manager draft (press s to persist)",
+                );
+            } else {
+                self.mode = Mode::ViewSectionEditor;
+            }
             return Ok(false);
         }
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::ViewSectionEditor;
+                if self.view_editor_return_to_manager {
+                    self.finish_view_editor_return_to_manager(
+                        "Updated sections in manager draft (press s to persist)",
+                    );
+                } else {
+                    self.mode = Mode::ViewSectionEditor;
+                }
             }
             KeyCode::Char('t') => {
                 let title = self
@@ -5889,7 +5923,7 @@ impl App {
         if self.slots.is_empty() {
             return;
         }
-        self.slot_index = next_index(self.slot_index, self.slots.len(), delta);
+        self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
         self.item_index = self.item_index.min(
             self.current_slot()
                 .map(|slot| slot.items.len().saturating_sub(1))
@@ -5905,7 +5939,7 @@ impl App {
             self.item_index = 0;
             return;
         }
-        self.item_index = next_index(self.item_index, slot.items.len(), delta);
+        self.item_index = next_index_clamped(self.item_index, slot.items.len(), delta);
     }
 
     fn move_category_cursor(&mut self, delta: i32) {
@@ -5913,7 +5947,8 @@ impl App {
             self.category_index = 0;
             return;
         }
-        self.category_index = next_index(self.category_index, self.category_rows.len(), delta);
+        self.category_index =
+            next_index_clamped(self.category_index, self.category_rows.len(), delta);
     }
 
     fn move_selected_item_between_slots(
@@ -5929,7 +5964,7 @@ impl App {
         };
 
         let from_index = self.slot_index;
-        let to_index = next_index(self.slot_index, self.slots.len(), delta);
+        let to_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
         if from_index == to_index {
             return Ok(());
         }
@@ -5981,6 +6016,7 @@ impl App {
             .get_item(item.id)
             .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(item.id);
         Ok(created.when_date)
     }
 
@@ -6226,6 +6262,19 @@ fn next_index(current: usize, len: usize, delta: i32) -> usize {
     } else {
         let amount = (-delta) as usize % len;
         (current + len - amount) % len
+    }
+}
+
+fn next_index_clamped(current: usize, len: usize, delta: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    if delta > 0 {
+        current.saturating_add(delta as usize).min(len.saturating_sub(1))
+    } else if delta < 0 {
+        current.saturating_sub((-delta) as usize)
+    } else {
+        current.min(len.saturating_sub(1))
     }
 }
 
@@ -7055,7 +7104,7 @@ mod tests {
         add_capture_status_message, board_annotation_header, board_column_widths, board_item_label,
         board_item_row, bucket_target_set_mut, build_category_rows, build_reparent_options,
         category_target_set_mut, first_non_reserved_category_index, item_assignment_labels,
-        item_edit_popup_area, list_scroll_for_selected_line, next_index,
+        item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, when_bucket_options, App, BucketEditTarget,
         CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane, NOTE_MARKER_SYMBOL,
     };
@@ -7430,6 +7479,14 @@ mod tests {
     }
 
     #[test]
+    fn next_index_clamped_stops_at_edges() {
+        assert_eq!(next_index_clamped(0, 3, -1), 0);
+        assert_eq!(next_index_clamped(0, 3, 1), 1);
+        assert_eq!(next_index_clamped(2, 3, 1), 2);
+        assert_eq!(next_index_clamped(2, 3, -1), 1);
+    }
+
+    #[test]
     fn view_picker_delete_uses_x_and_removes_selected_view() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -7621,7 +7678,7 @@ mod tests {
     }
 
     #[test]
-    fn view_manager_section_editor_returns_and_applies_draft_changes() {
+    fn view_manager_section_detail_returns_and_applies_draft_changes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -7655,17 +7712,17 @@ mod tests {
         app.view_manager_pane = ViewManagerPane::Sections;
 
         app.handle_view_manager_key(KeyCode::Enter, &agenda)
-            .expect("open section editor");
-        assert_eq!(app.mode, Mode::ViewSectionEditor);
-
-        app.handle_view_section_editor_key(KeyCode::Char('N'))
-            .expect("add section in editor");
-        app.handle_view_section_editor_key(KeyCode::Esc)
+            .expect("open section detail");
+        assert_eq!(app.mode, Mode::ViewSectionDetail);
+        app.handle_view_section_detail_key(KeyCode::Char('h'))
+            .expect("toggle show_children");
+        app.handle_view_section_detail_key(KeyCode::Esc)
             .expect("return to manager");
         assert_eq!(app.mode, Mode::ViewManagerScreen);
 
         let selected = app.views.get(app.picker_index).expect("selected view");
-        assert_eq!(selected.sections.len(), 2);
+        assert_eq!(selected.sections.len(), 1);
+        assert!(selected.sections[0].show_children);
         assert!(app.view_manager_dirty);
 
         drop(store);
@@ -7818,9 +7875,6 @@ mod tests {
         app.view_manager_pane = ViewManagerPane::Sections;
 
         app.handle_view_manager_key(KeyCode::Enter, &agenda)
-            .expect("open section editor");
-        assert_eq!(app.mode, Mode::ViewSectionEditor);
-        app.handle_view_section_editor_key(KeyCode::Enter)
             .expect("open section detail");
         assert_eq!(app.mode, Mode::ViewSectionDetail);
 
@@ -7846,8 +7900,6 @@ mod tests {
         assert_eq!(app.mode, Mode::ViewSectionDetail);
 
         app.handle_view_section_detail_key(KeyCode::Esc)
-            .expect("back to section editor");
-        app.handle_view_section_editor_key(KeyCode::Esc)
             .expect("back to manager");
         assert_eq!(app.mode, Mode::ViewManagerScreen);
         app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
