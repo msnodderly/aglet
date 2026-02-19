@@ -262,8 +262,7 @@ struct CategoryConfigEditorState {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
-    note: String,
-    note_cursor: usize,
+    note: text_buffer::TextBuffer,
     focus: CategoryConfigFocus,
 }
 
