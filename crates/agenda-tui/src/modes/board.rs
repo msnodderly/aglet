@@ -282,8 +282,7 @@ impl App {
             self.mode = Mode::ItemEditInput;
             self.set_input(existing_text);
             self.item_edit_focus = ItemEditFocus::Text;
-            self.item_edit_note = existing_note;
-            self.item_edit_note_cursor = self.item_edit_note.chars().count();
+            self.item_edit_note.set(existing_note);
             self.status =
                 "Edit item: Tab cycles fields/buttons, Enter activates focused control, Up/Down in note"
                     .to_string();
@@ -337,7 +336,6 @@ impl App {
                 self.mode = Mode::Normal;
                 self.clear_input();
                 self.item_edit_note.clear();
-                self.item_edit_note_cursor = 0;
                 self.item_edit_focus = ItemEditFocus::Text;
                 self.status = "Edit canceled".to_string();
             }
@@ -357,7 +355,7 @@ impl App {
                     self.cycle_item_edit_focus(1);
                 }
                 ItemEditFocus::Note => {
-                    self.insert_item_edit_note_newline();
+                    self.item_edit_note.handle_key(KeyCode::Enter, true);
                 }
                 ItemEditFocus::CategoriesButton => {
                     self.open_item_assign_picker_from_item_edit();
@@ -369,7 +367,6 @@ impl App {
                     self.mode = Mode::Normal;
                     self.clear_input();
                     self.item_edit_note.clear();
-                    self.item_edit_note_cursor = 0;
                     self.item_edit_focus = ItemEditFocus::Text;
                     self.status = "Edit canceled".to_string();
                 }
@@ -402,7 +399,6 @@ impl App {
             self.mode = Mode::Normal;
             self.clear_input();
             self.item_edit_note.clear();
-            self.item_edit_note_cursor = 0;
             self.item_edit_focus = ItemEditFocus::Text;
             self.status = "Edit failed: no selected item".to_string();
             return Ok(());
@@ -413,10 +409,10 @@ impl App {
             self.status = "Cannot save: text cannot be empty".to_string();
             return Ok(());
         }
-        let updated_note = if self.item_edit_note.trim().is_empty() {
+        let updated_note = if self.item_edit_note.trimmed().is_empty() {
             None
         } else {
-            Some(self.item_edit_note.clone())
+            Some(self.item_edit_note.text().to_string())
         };
 
         let mut item = agenda
@@ -427,7 +423,6 @@ impl App {
             self.mode = Mode::Normal;
             self.clear_input();
             self.item_edit_note.clear();
-            self.item_edit_note_cursor = 0;
             self.item_edit_focus = ItemEditFocus::Text;
             self.status = "Edit canceled: no changes".to_string();
             return Ok(());
@@ -445,7 +440,6 @@ impl App {
         self.mode = Mode::Normal;
         self.clear_input();
         self.item_edit_note.clear();
-        self.item_edit_note_cursor = 0;
         self.item_edit_focus = ItemEditFocus::Text;
         self.status = "Item updated".to_string();
         Ok(())

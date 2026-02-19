@@ -177,10 +177,7 @@ impl App {
                 if regions.note_inner.width == 0 || regions.note_inner.height == 0 {
                     return None;
                 }
-                let (line, col) = note_cursor_line_col(
-                    &self.item_edit_note,
-                    self.clamped_item_edit_note_cursor(),
-                );
+                let (line, col) = self.item_edit_note.line_col();
                 let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
                 let visible_line = line.saturating_sub(scroll);
                 let max_x = regions
@@ -1118,7 +1115,7 @@ impl App {
         let note_lines: Vec<Line<'_>> = if self.item_edit_note.is_empty() {
             vec![Line::from("")]
         } else {
-            self.item_edit_note.lines().map(Line::from).collect()
+            self.item_edit_note.text().lines().map(Line::from).collect()
         };
         let note_border_color = if self.item_edit_focus == ItemEditFocus::Note {
             Color::Cyan
@@ -1130,8 +1127,7 @@ impl App {
         } else {
             "Note (editable)"
         };
-        let note_cursor_line =
-            note_cursor_line_col(&self.item_edit_note, self.clamped_item_edit_note_cursor()).0;
+        let note_cursor_line = self.item_edit_note.line_col().0;
         let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
         frame.render_widget(
             Paragraph::new(note_lines)
@@ -1148,7 +1144,7 @@ impl App {
         Self::render_vertical_scrollbar(
             frame,
             regions.note,
-            self.item_edit_note.lines().count().max(1),
+            self.item_edit_note.text().lines().count().max(1),
             note_scroll as usize,
         );
         frame.render_widget(
