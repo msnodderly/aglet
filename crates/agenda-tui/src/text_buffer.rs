@@ -23,6 +23,16 @@ impl TextBuffer {
         Self::default()
     }
 
+    /// New buffer with the given text and an explicit cursor position.
+    /// The cursor is clamped to the text length on construction.
+    pub(crate) fn with_cursor(text: String, cursor: usize) -> Self {
+        let len = text.chars().count();
+        Self {
+            cursor: cursor.min(len),
+            text,
+        }
+    }
+
     /// Replace the text and move the cursor to the end.
     pub(crate) fn set(&mut self, text: String) {
         self.cursor = text.chars().count();

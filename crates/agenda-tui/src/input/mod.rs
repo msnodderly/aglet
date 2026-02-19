@@ -43,13 +43,11 @@ impl App {
     }
 
     pub(crate) fn set_input(&mut self, value: String) {
-        self.input = value;
-        self.input_cursor = self.input.chars().count();
+        self.input.set(value);
     }
 
     pub(crate) fn clear_input(&mut self) {
         self.input.clear();
-        self.input_cursor = 0;
     }
 
     fn single_line_textarea(value: &str, cursor: usize) -> TextArea<'static> {
@@ -92,18 +90,7 @@ impl App {
         (value, cursor)
     }
 
-    fn with_input_textarea<F>(&mut self, edit: F)
-    where
-        F: FnOnce(&mut TextArea<'static>),
-    {
-        let mut textarea = Self::single_line_textarea(&self.input, self.clamped_input_cursor());
-        edit(&mut textarea);
-        let (value, cursor) = Self::textarea_value_and_cursor(textarea);
-        self.input = value;
-        self.input_cursor = cursor.min(self.input_len_chars());
-    }
-
-    fn with_item_edit_note_textarea<F>(&mut self, edit: F)
+fn with_item_edit_note_textarea<F>(&mut self, edit: F)
     where
         F: FnOnce(&mut TextArea<'static>),
     {
@@ -136,60 +123,15 @@ impl App {
     }
 
     pub(crate) fn input_len_chars(&self) -> usize {
-        self.input.chars().count()
+        self.input.len_chars()
     }
 
     pub(crate) fn clamped_input_cursor(&self) -> usize {
-        self.input_cursor.min(self.input_len_chars())
-    }
-
-    pub(crate) fn move_input_cursor_left(&mut self) {
-        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::Back));
-    }
-
-    pub(crate) fn move_input_cursor_right(&mut self) {
-        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::Forward));
-    }
-
-    pub(crate) fn move_input_cursor_home(&mut self) {
-        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::Head));
-    }
-
-    pub(crate) fn move_input_cursor_end(&mut self) {
-        self.with_input_textarea(|textarea| textarea.move_cursor(CursorMove::End));
-    }
-
-    pub(crate) fn backspace_input_char(&mut self) {
-        self.with_input_textarea(|textarea| {
-            let _ = textarea.delete_char();
-        });
-    }
-
-    pub(crate) fn delete_input_char(&mut self) {
-        self.with_input_textarea(|textarea| {
-            let _ = textarea.delete_next_char();
-        });
-    }
-
-    pub(crate) fn insert_input_char(&mut self, c: char) {
-        if c.is_control() {
-            return;
-        }
-        self.with_input_textarea(|textarea| textarea.insert_char(c));
+        self.input.cursor()
     }
 
     pub(crate) fn handle_text_input_key(&mut self, code: KeyCode) -> bool {
-        match code {
-            KeyCode::Left => self.move_input_cursor_left(),
-            KeyCode::Right => self.move_input_cursor_right(),
-            KeyCode::Home => self.move_input_cursor_home(),
-            KeyCode::End => self.move_input_cursor_end(),
-            KeyCode::Backspace => self.backspace_input_char(),
-            KeyCode::Delete => self.delete_input_char(),
-            KeyCode::Char(c) => self.insert_input_char(c),
-            _ => return false,
-        }
-        true
+        self.input.handle_key(code, false)
     }
 
     pub(crate) fn item_edit_note_len_chars(&self) -> usize {

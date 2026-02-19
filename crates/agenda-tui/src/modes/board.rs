@@ -304,7 +304,7 @@ impl App {
                 self.status = "Add canceled".to_string();
             }
             KeyCode::Enter => {
-                let text = self.input.trim();
+                let text = self.input.trimmed();
                 if !text.is_empty() {
                     let text_value = text.to_string();
                     let category_names: Vec<String> = agenda
@@ -408,7 +408,7 @@ impl App {
             return Ok(());
         };
 
-        let updated_text = self.input.trim().to_string();
+        let updated_text = self.input.trimmed().to_string();
         if updated_text.is_empty() {
             self.status = "Cannot save: text cannot be empty".to_string();
             return Ok(());
@@ -470,10 +470,10 @@ impl App {
                     return Ok(false);
                 };
 
-                let new_note = if self.input.trim().is_empty() {
+                let new_note = if self.input.trimmed().is_empty() {
                     None
                 } else {
-                    Some(self.input.clone())
+                    Some(self.input.text().to_string())
                 };
 
                 let mut item = agenda
@@ -651,7 +651,7 @@ impl App {
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
-                let name = self.input.trim().to_string();
+                let name = self.input.trimmed().to_string();
                 if name.is_empty() {
                     self.mode = Mode::ItemAssignCategoryPicker;
                     self.clear_input();
@@ -770,7 +770,7 @@ impl App {
             }
             KeyCode::Enter => {
                 self.mode = Mode::Normal;
-                let value = self.input.trim().to_string();
+                let value = self.input.trimmed().to_string();
                 self.filter = if value.is_empty() { None } else { Some(value) };
                 self.refresh(agenda.store())?;
                 self.status = if self.filter.is_some() {
