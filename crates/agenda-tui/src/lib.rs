@@ -2045,6 +2045,81 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
+        let (store, db_path) = make_test_store_with_view("section-plus");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create work category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Sections
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("add section");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().draft.sections.len(), 1);
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
+
+        app.handle_view_edit_key(KeyCode::Char('+'), &agenda)
+            .expect("open section include picker");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, Some(0));
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::SectionCriteriaInclude
+            })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_section_e_starts_section_title_edit() {
+        let (store, db_path) = make_test_store_with_view("section-e-rename");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("add section");
+        app.handle_view_edit_key(KeyCode::Char('e'), &agenda)
+            .expect("start section title edit");
+
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_save_persists_view() {
         let (store, db_path) = make_test_store_with_view("save");
         let classifier = SubstringClassifier;
