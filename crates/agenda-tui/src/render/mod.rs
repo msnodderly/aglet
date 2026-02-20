@@ -270,6 +270,10 @@ impl App {
     }
 
     pub(crate) fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if self.mode == Mode::ViewEdit {
+            self.render_view_edit_screen(frame, area);
+            return;
+        }
         if self.mode == Mode::ViewManagerScreen {
             self.render_view_manager_screen(frame, area);
             return;
@@ -1051,6 +1055,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
+            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  N:add  x:remove  S:save  Esc:cancel",
             Mode::ViewEditor => "j/k:select  o/right:open  +|-|[|]:quick open  s/u:sections/unmatched  Enter:save  Esc:cancel",
             Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
             Mode::ViewEditorBucketPicker => "j/k:select bucket  Space:toggle  Enter/Esc:back",
@@ -1986,5 +1991,327 @@ impl App {
             ),
             regions.help,
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // ViewEdit (unified view editor)
+    // -------------------------------------------------------------------------
+
+    pub(crate) fn render_view_edit_screen(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(state) = &self.view_edit_state else {
+            return;
+        };
+
+        // Split into 4 vertical regions
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(20),
+                Constraint::Percentage(35),
+                Constraint::Percentage(20),
+            ])
+            .split(area);
+
+        let focused_border = Color::Cyan;
+        let inactive_border = Color::Blue;
+
+        let border_for = |region: ViewEditRegion| -> Color {
+            if state.region == region {
+                focused_border
+            } else {
+                inactive_border
+            }
+        };
+
+        let category_names = category_name_map(&self.categories);
+
+        // ── Criteria region ──────────────────────────────────────────────────
+        {
+            let block = Block::default()
+                .title(format!(
+                    " CRITERIA  matches:{} ",
+                    state.preview_count
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Criteria)));
+
+            let mut items: Vec<ListItem<'_>> = state
+                .criteria_rows
+                .iter()
+                .enumerate()
+                .map(|(i, row)| {
+                    let name = category_names
+                        .get(&row.category_id)
+                        .cloned()
+                        .unwrap_or_else(|| "(deleted)".to_string());
+                    let sign = match row.sign {
+                        ViewCriteriaSign::Include => "+",
+                        ViewCriteriaSign::Exclude => "-",
+                    };
+                    let label = format!("  {sign}{name}");
+                    let style = if i == state.criteria_index
+                        && state.region == ViewEditRegion::Criteria
+                    {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(Line::from(label)).style(style)
+                })
+                .collect();
+
+            // Virtual include/exclude summary lines
+            if !state.draft.criteria.virtual_include.is_empty() {
+                let buckets: Vec<&str> = when_bucket_options()
+                    .iter()
+                    .filter(|b| state.draft.criteria.virtual_include.contains(*b))
+                    .map(|b| when_bucket_label(*b))
+                    .collect();
+                items.push(ListItem::new(Line::from(format!(
+                    "  When: {}",
+                    buckets.join(", ")
+                ))));
+            }
+            if !state.draft.criteria.virtual_exclude.is_empty() {
+                let buckets: Vec<&str> = when_bucket_options()
+                    .iter()
+                    .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
+                    .map(|b| when_bucket_label(*b))
+                    .collect();
+                items.push(ListItem::new(Line::from(format!(
+                    "  When (excl): {}",
+                    buckets.join(", ")
+                ))));
+            }
+
+            if items.is_empty() {
+                items.push(ListItem::new(Line::from("  (no criteria — matches all items)")));
+            }
+
+            let list = List::new(items).block(block);
+            frame.render_widget(list, chunks[0]);
+        }
+
+        // ── Columns region ───────────────────────────────────────────────────
+        {
+            let block = Block::default()
+                .title(" COLUMNS ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Columns)));
+
+            let items: Vec<ListItem<'_>> = if state.draft.columns.is_empty() {
+                vec![ListItem::new(Line::from("  (no columns)"))]
+            } else {
+                state
+                    .draft
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, col)| {
+                        let name = category_names
+                            .get(&col.heading)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string());
+                        let kind_tag = match col.kind {
+                            ColumnKind::When => "  [When]",
+                            ColumnKind::Standard => "",
+                        };
+                        let label = format!("  {}. {}  w:{}{}", i + 1, name, col.width, kind_tag);
+                        let style = if i == state.column_index
+                            && state.region == ViewEditRegion::Columns
+                        {
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(Line::from(label)).style(style)
+                    })
+                    .collect()
+            };
+
+            let list = List::new(items).block(block);
+            frame.render_widget(list, chunks[1]);
+        }
+
+        // ── Sections region ──────────────────────────────────────────────────
+        {
+            let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
+                if let ViewEditInlineInput::SectionTitle { section_index } = inp {
+                    Some(*section_index)
+                } else {
+                    None
+                }
+            });
+
+            let block = Block::default()
+                .title(" SECTIONS ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Sections)));
+
+            let mut items: Vec<ListItem<'_>> = Vec::new();
+            if state.draft.sections.is_empty() {
+                items.push(ListItem::new(Line::from("  (no sections)")));
+            } else {
+                for (i, section) in state.draft.sections.iter().enumerate() {
+                    let cursor = if i == state.section_index
+                        && state.region == ViewEditRegion::Sections
+                    {
+                        ">"
+                    } else {
+                        " "
+                    };
+
+                    let title = if inline_editing_section == Some(i) {
+                        format!("{}  {}. {} ◀ editing", cursor, i + 1, state.inline_buf.text())
+                    } else {
+                        format!("{}  {}. {}", cursor, i + 1, section.title)
+                    };
+
+                    let style = if i == state.section_index
+                        && state.region == ViewEditRegion::Sections
+                    {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    items.push(ListItem::new(Line::from(title)).style(style));
+
+                    // Show expanded detail
+                    if state.section_expanded == Some(i) {
+                        let inc: Vec<String> = section
+                            .criteria
+                            .include
+                            .iter()
+                            .map(|id| {
+                                category_names
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| id.to_string())
+                            })
+                            .collect();
+                        let exc: Vec<String> = section
+                            .criteria
+                            .exclude
+                            .iter()
+                            .map(|id| {
+                                category_names
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| id.to_string())
+                            })
+                            .collect();
+                        if !inc.is_empty() {
+                            items.push(ListItem::new(Line::from(format!(
+                                "     include: {}",
+                                inc.join(", ")
+                            ))));
+                        }
+                        if !exc.is_empty() {
+                            items.push(ListItem::new(Line::from(format!(
+                                "     exclude: {}",
+                                exc.join(", ")
+                            ))));
+                        }
+                        items.push(ListItem::new(Line::from(format!(
+                            "     children:{} (+/-:criteria  a:on-insert  r:on-remove  h:children)",
+                            if section.show_children { "yes" } else { "no" }
+                        ))));
+                    }
+                }
+            }
+
+            let list = List::new(items).block(block);
+            frame.render_widget(list, chunks[2]);
+        }
+
+        // ── Unmatched region ─────────────────────────────────────────────────
+        {
+            let editing_label = matches!(
+                state.inline_input,
+                Some(ViewEditInlineInput::UnmatchedLabel)
+            );
+
+            let block = Block::default()
+                .title(" UNMATCHED ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Unmatched)));
+
+            let label_text = if editing_label {
+                format!("  ◀ {}", state.inline_buf.text())
+            } else {
+                format!("  \"{}\"", state.draft.unmatched_label)
+            };
+            let text = format!(
+                "  Visible: {}    Label: {}",
+                if state.draft.show_unmatched { "yes" } else { "no" },
+                label_text
+            );
+            let style = if state.region == ViewEditRegion::Unmatched {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            let para = Paragraph::new(Line::from(text).style(style)).block(block);
+            frame.render_widget(para, chunks[3]);
+        }
+
+        // ── Picker overlay ───────────────────────────────────────────────────
+        if let Some(overlay) = &state.overlay {
+            let overlay_area = {
+                let x = area.x + area.width * 6 / 10;
+                let w = area.width * 4 / 10;
+                Rect::new(x, area.y, w, area.height)
+            };
+            frame.render_widget(Clear, overlay_area);
+            match overlay {
+                ViewEditOverlay::CategoryPicker { .. } => {
+                    let title = " Pick category ";
+                    let items: Vec<ListItem<'_>> = self
+                        .category_rows
+                        .iter()
+                        .enumerate()
+                        .map(|(i, row)| {
+                            let indent = "  ".repeat(row.depth);
+                            let label = format!("{indent}{}", row.name);
+                            let style = if i == state.picker_index {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
+                            ListItem::new(Line::from(label)).style(style)
+                        })
+                        .collect();
+                    let block = Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow));
+                    let mut list_state = Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(List::new(items).block(block), overlay_area, &mut list_state);
+                }
+                ViewEditOverlay::BucketPicker { .. } => {
+                    let options = when_bucket_options();
+                    let items: Vec<ListItem<'_>> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, bucket)| {
+                            let label = format!("  {}", when_bucket_label(*bucket));
+                            let style = if i == state.picker_index {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
+                            ListItem::new(Line::from(label)).style(style)
+                        })
+                        .collect();
+                    let block = Block::default()
+                        .title(" Pick bucket ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow));
+                    let mut list_state = Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(List::new(items).block(block), overlay_area, &mut list_state);
+                }
+            }
+        }
     }
 }
