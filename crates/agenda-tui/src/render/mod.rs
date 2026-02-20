@@ -733,7 +733,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
-            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add  x:remove  Enter:save  Esc:cancel",
+            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add section  e/t:rename section  +/-:criteria  x:remove  Enter:save  Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
             Mode::ItemEditInput => {
@@ -1452,10 +1452,14 @@ impl App {
                 .border_style(Style::default().fg(border_for(ViewEditRegion::Sections)));
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
+            let mut selected_line: Option<usize> = None;
             if state.draft.sections.is_empty() {
                 items.push(ListItem::new(Line::from("  (no sections)")));
             } else {
                 for (i, section) in state.draft.sections.iter().enumerate() {
+                    if i == state.section_index {
+                        selected_line = Some(items.len());
+                    }
                     let cursor = if i == state.section_index
                         && state.region == ViewEditRegion::Sections
                     {
@@ -1479,52 +1483,51 @@ impl App {
                     };
                     items.push(ListItem::new(Line::from(title)).style(style));
 
-                    // Show expanded detail
-                    if state.section_expanded == Some(i) {
-                        let inc: Vec<String> = section
-                            .criteria
-                            .include
-                            .iter()
-                            .map(|id| {
-                                category_names
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| id.to_string())
-                            })
-                            .collect();
-                        let exc: Vec<String> = section
-                            .criteria
-                            .exclude
-                            .iter()
-                            .map(|id| {
-                                category_names
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| id.to_string())
-                            })
-                            .collect();
-                        if !inc.is_empty() {
-                            items.push(ListItem::new(Line::from(format!(
-                                "     include: {}",
-                                inc.join(", ")
-                            ))));
-                        }
-                        if !exc.is_empty() {
-                            items.push(ListItem::new(Line::from(format!(
-                                "     exclude: {}",
-                                exc.join(", ")
-                            ))));
-                        }
+                    let inc: Vec<String> = section
+                        .criteria
+                        .include
+                        .iter()
+                        .map(|id| {
+                            category_names
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| id.to_string())
+                        })
+                        .collect();
+                    let exc: Vec<String> = section
+                        .criteria
+                        .exclude
+                        .iter()
+                        .map(|id| {
+                            category_names
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| id.to_string())
+                        })
+                        .collect();
+                    if !inc.is_empty() {
                         items.push(ListItem::new(Line::from(format!(
-                            "     children:{} (+/-:criteria  a:on-insert  r:on-remove  h:children)",
-                            if section.show_children { "yes" } else { "no" }
+                            "     include: {}",
+                            inc.join(", ")
                         ))));
                     }
+                    if !exc.is_empty() {
+                        items.push(ListItem::new(Line::from(format!(
+                            "     exclude: {}",
+                            exc.join(", ")
+                        ))));
+                    }
+                    items.push(ListItem::new(Line::from(format!(
+                        "     children:{} (e/t:title  +/-:criteria  a:on-insert  r:on-remove  h:children)",
+                        if section.show_children { "yes" } else { "no" }
+                    ))));
                 }
             }
 
-            let list = List::new(items).block(block);
-            frame.render_widget(list, chunks[2]);
+            let content_len = items.len();
+            let mut list_state = Self::list_state_for(chunks[2], selected_line);
+            frame.render_stateful_widget(List::new(items).block(block), chunks[2], &mut list_state);
+            Self::render_vertical_scrollbar(frame, chunks[2], content_len, list_state.offset());
         }
 
         // ── Unmatched region ─────────────────────────────────────────────────

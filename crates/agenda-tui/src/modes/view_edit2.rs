@@ -586,7 +586,6 @@ impl App {
         };
         let len = state.draft.sections.len();
         let idx = state.section_index;
-        let expanded = state.section_expanded;
 
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
@@ -597,17 +596,6 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.section_index = next_index_clamped(idx, len, -1);
-                }
-            }
-            KeyCode::Char(' ') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.section_expanded = if expanded == Some(idx) {
-                        None
-                    } else if idx < state.draft.sections.len() {
-                        Some(idx)
-                    } else {
-                        None
-                    };
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
@@ -642,9 +630,6 @@ impl App {
                     if idx > 0 && idx < state.draft.sections.len() {
                         state.draft.sections.swap(idx, idx - 1);
                         state.section_index = idx - 1;
-                        if state.section_expanded == Some(idx) {
-                            state.section_expanded = Some(idx - 1);
-                        }
                     }
                 }
             }
@@ -653,13 +638,10 @@ impl App {
                     if idx + 1 < state.draft.sections.len() {
                         state.draft.sections.swap(idx, idx + 1);
                         state.section_index = idx + 1;
-                        if state.section_expanded == Some(idx) {
-                            state.section_expanded = Some(idx + 1);
-                        }
                     }
                 }
             }
-            KeyCode::Char('t') => {
+            KeyCode::Char('t') | KeyCode::Char('e') => {
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < state.draft.sections.len() {
                         let current = state.draft.sections[idx].title.clone();
@@ -673,58 +655,59 @@ impl App {
             }
             // Expanded section detail keys
             KeyCode::Char('+') => {
-                if let Some(exp) = expanded {
+                if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionCriteriaInclude,
                         });
-                        state.section_expanded = Some(exp);
+                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                 }
             }
             KeyCode::Char('-') => {
-                if let Some(exp) = expanded {
+                if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionCriteriaExclude,
                         });
-                        state.section_expanded = Some(exp);
+                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                 }
             }
             KeyCode::Char('a') => {
-                if let Some(exp) = expanded {
+                if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionOnInsertAssign,
                         });
-                        state.section_expanded = Some(exp);
+                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                 }
             }
             KeyCode::Char('r') => {
-                if let Some(exp) = expanded {
+                if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionOnRemoveUnassign,
                         });
-                        state.section_expanded = Some(exp);
+                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                 }
             }
             KeyCode::Char('h') => {
-                if let Some(exp) = expanded {
+                if idx < len {
                     if let Some(state) = &mut self.view_edit_state {
-                        if let Some(section) = state.draft.sections.get_mut(exp) {
+                        if let Some(section) = state.draft.sections.get_mut(idx) {
                             section.show_children = !section.show_children;
+                            state.section_expanded = Some(idx);
                         }
                     }
                 }
