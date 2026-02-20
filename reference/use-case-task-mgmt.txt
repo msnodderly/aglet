@@ -1,0 +1,80 @@
+TASK LIST
+Applied Self Management Using Lotus Agenda
+Copyright 1992, Pages 5.5-5.8
+
+An effective way of managing your time and achieving goals is to maintain a
+daily or weekly task list. The list is nothing more than a brief description
+of each activity and when it should be done by. If activities are priorities
+you can work your way through the list, dealing with the highest priority
+tasks first. Agenda can be used to create and maintain a task list.
+
+Setting Up the Database:
+
+  1. Create a new database with the name 'tasks'.
+  2. Go to the Category Manager.
+  3. Edit the 'Initial Section' supplied by Agenda and change its name to
+     'Task Type'.
+  4. Add the following Categories as children of 'Task Type':
+       Planning
+       Meeting
+       Report
+       Memo
+       Letter
+       Education
+       Telephone
+       Visit
+       Routine
+  5. Add a new Category 'Prty' with the following children:
+       Vital
+       Important
+       Some value
+  6. Change the Properties of the child Categories of 'Prty' so that they
+     have the following short names:
+       Vital         A
+       Important     B
+       Some value    C
+  7. Add a numeric Category 'No' and a standard Category 'Routine Tasks'.
+
+Configuring the Ad-hoc Tasks View:
+
+  1. Return to the View and change the View Properties:
+       View name        Ad-hoc Tasks
+       Sections         All children of 'Task Type'
+       Hide Done Items  Yes
+  2. Add a column for the 'When' Category to the right of the item.
+  3. Change the column properties so that the Date Format is 'Relative'.
+  4. Add two columns for the 'Prty' and 'No' Categories to the left of
+     the Item.
+  5. Change the column width of the 'Prty' column to three characters.
+  6. Change the Properties of the 'No' column:
+       Width      3
+       Decimals   0
+       Total      No
+  7. Enter some ad-hoc tasks that you need to perform during the next week.
+
+Creating the Routine Tasks View:
+
+  1. Create a new View:
+       Name       Routine tasks
+       Sections   Routine tasks
+       Columns    Prty, No, When
+  2. Change the Properties of the 'When' column:
+       Width        30
+       Date Format  Relative
+  3. Enter some routine tasks that you perform every day, week or month.
+
+Creating the Weekly Tasks View:
+
+  1. Create a new view:
+       Name       Weekly Tasks
+       Type       Datebook
+       Columns    Task type, Prty, No
+  2. Sort the Items by 'Prty' and 'No'.
+
+Setting Up Assignment Conditions:
+
+  1. Go to the Category Manager.
+  2. Change the Properties for the Category 'Routine' (child of 'Task type')
+     to add an Assignment Condition to assign Items to 'Routine' if they are
+     assigned to 'Routine Tasks'.
+  3. Force Agenda to re-execute all of the assignments.

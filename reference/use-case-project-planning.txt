@@ -1,0 +1,68 @@
+
+PLANNING PROJECTS
+Agenda's excellent date facilities make it an ideal tool for project
+planning.
+Project planning involves:
+Identifying the tasks that need to be
+carried out
+Deciding when they need to be done
+Identifying any dependencies between
+tasks
+Assigning the tasks to people
+You would probably not use Agenda as a fully-blown project management
+system as there is a lot of more powerful, specialised software for
+this purpose.
+However, Agenda is ideal for small projects or for the planning phase
+of larger projects.
+Copyright 1992 Page 4.2
+Applied Self Management Using Lotus Agenda
+PLANNING PROJECTS
+Create a new database with the name 'projplan'.
+Edit the 'Initial Section' supplied by Agenda and change the name to
+'Task'.
+Go to the Category Manager and add the following Categories:
+People (standard category)
+Finish (date category)
+Return to the view and add columns for the following categories:
+People
+When
+Finish
+Change the column width of the 'When' and 'Finish' columns to be eight
+characters wide.
+Think about a project that you may have to undertake in the near
+future.
+Enter the tasks that are involved in this project as Items.
+Assign the Tasks to people by typing their names in the 'People'
+column.
+Show when the task must start by typing dates in the 'When' column.
+Copyright 1992 Page 4.3
+Applied Self Management Using Lotus Agenda
+PLANNING PROJECTS
+Type the date that the task must finish in the 'Finish' column.
+Select the 'View Properties' dialogue box and change the name of the
+view to 'Tasks'.
+Create a new view of the database with the following properties:
+View name: Task Assignments
+View type: Standard
+Sections: Children of 'People'
+Create a third view of the database with the following properties:
+View name: Schedule
+View type: Datebook
+End category: End
+Period: Month
+Interval: Daily
+Look carefully at the tasks you have entered.
+Are there any tasks that are dependent on prior tasks being completed
+before they can commence?
+If not, invent some now and enter them as items.
+Set up the task dependencies.
+Change the View Properties to hide dependent Items.
+Copyright 1992 Page 4.4
+Applied Self Management Using Lotus Agenda
+PLANNING PROJECTS
+Mark some of the tasks that are prerequisites for dependent tasks as
+'Done'.
+Use Agenda's 'Show View' to display the prerequisites for a dependent
+task.
+Copyright 1992 Page 4.5
+Applied Self Management Using Lotus Agenda

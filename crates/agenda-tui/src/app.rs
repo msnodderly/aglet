@@ -89,6 +89,7 @@ impl App {
                         title: format!("{} / {}", section.title, subsection.title),
                         items: subsection.items,
                         context: SlotContext::GeneratedSection {
+                            section_index: section.section_index,
                             on_insert_assign: subsection.on_insert_assign,
                             on_remove_unassign: subsection.on_remove_unassign,
                         },
@@ -272,6 +273,7 @@ impl App {
                     .map_err(|e| e.to_string())
             }
             SlotContext::GeneratedSection {
+                section_index: _,
                 on_insert_assign: _,
                 on_remove_unassign,
             } => {
@@ -307,6 +309,7 @@ impl App {
                     .map_err(|e| e.to_string())
             }
             SlotContext::GeneratedSection {
+                section_index: _,
                 on_insert_assign,
                 on_remove_unassign,
             } => {

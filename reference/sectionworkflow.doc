@@ -1,0 +1,92 @@
+How Sections, Filters, and Columns Work During View Creation
+=============================================================
+
+Phase 1: Initial Section Selection (during View Add)
+-----------------------------------------------------
+
+When you're in the View Properties/Add box (after F8 → INS or F10 View Add):
+
+- The Section(s) field accepts a list of category names — each one becomes a
+  section head.
+- Press F3 (CHOICES) to pick from existing categories, or just type new
+  category names.
+- You can list multiple categories (e.g., Calls, Letters, Projects) — each
+  becomes its own section.
+- You can also set a view-level Filter right here (e.g., add "High Priority"
+  to only show items assigned to that category across the whole view).
+- Press ENTER to create the view. Agenda creates all sections at once, each
+  with a default item column.
+
+At this point the view exists but each section only has the item column — no
+additional columns yet.
+
+
+Phase 2: Adding Columns (after the view is created)
+----------------------------------------------------
+
+Columns are added per-section after the view exists:
+
+1. Navigate to the section you want to modify
+2. ALT-L (add column left) or ALT-R (add column right) — quick method
+   - Or: F10 → View → Column → Add for full Column Add box with all settings
+3. Enter/select a category for the column head (via F3 or typing)
+4. The category type determines the column type:
+   - Standard category → shows child category assignments
+   - Date category (marked *) → shows dates/times
+   - Numeric category (marked #) → shows numbers with optional calculations
+   - Unindexed category → shows freeform text
+5. Press ENTER
+
+
+Phase 3: Setting Per-Section Filters and Properties
+----------------------------------------------------
+
+Each section can have its own filter independent of the view-level filter:
+
+1. Highlight the section head
+2. F6 (PROPS) — opens the Section Properties box
+3. Key settings in this box:
+   - Section head — change which category heads the section
+   - Item sorting — how items sort within this section
+   - Filter — section-level filter criteria:
+     - Enter a standard category → opens Standard Filter Box → choose
+       "Assigned" or "Not assigned"
+     - Enter a date category → opens Date Filter Box → choose Assigned/Not
+       assigned + optional date range
+     - Enter a numeric category → opens Numeric Filter Box → choose value range
+   - Columns — list of column head categories for this section (you can
+     add/remove/reorder here too)
+4. Press ENTER
+
+Key insight: Items must pass BOTH the view-level filter AND the section-level
+filter to appear. The section head itself is already an implicit filter — only
+items assigned to that category appear in that section.
+
+
+Concrete Keystroke Example: Full View Build
+--------------------------------------------
+
+F8                          → Open View Manager
+INS                         → Add new view
+Type "My Projects"          → Name the view
+↓ to Section(s)             → Move to Section field
+F3                          → Open category chooser
+Select "ProjectA" → ENTER   → First section head
+Type "ProjectB" → ENTER     → Second section head
+ENTER                       → Create the view
+
+(Now in the new view with two sections)
+
+ALT-R                       → Add column to the right
+F3 → select "When" → ENTER  → Date column added
+ALT-R                       → Add another column
+F3 → select "People" → ENTER → Standard column added
+
+(Set a section-level filter)
+Highlight "ProjectA" section head
+F6                          → Open Section Properties
+↓ to Filter                 → Move to Filter field
+Type "High Priority"        → Filter category
+  → Standard Filter Box opens
+  → Choose "Assigned" → ENTER
+ENTER                       → Save section properties

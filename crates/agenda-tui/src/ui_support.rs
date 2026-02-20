@@ -7,6 +7,7 @@ pub(super) fn generated_section(
     Section {
         title: "generated".to_string(),
         criteria: Query::default(),
+        columns: Vec::new(),
         on_insert_assign,
         on_remove_unassign,
         show_children: false,
