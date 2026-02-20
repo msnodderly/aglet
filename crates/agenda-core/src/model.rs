@@ -87,16 +87,11 @@ pub struct Section {
     pub show_children: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ColumnKind {
     When,
+    #[default]
     Standard,
-}
-
-impl Default for ColumnKind {
-    fn default() -> Self {
-        ColumnKind::Standard
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
