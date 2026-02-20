@@ -49,26 +49,16 @@ impl App {
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
-                    self.open_view_editor(view);
-                    self.status =
-                        "View editor: j/k select row, o/right open, Enter save, Esc cancel"
-                            .to_string();
+                    self.open_view_edit(view);
                 } else {
                     self.status = "No selected view to edit".to_string();
                 }
             }
             KeyCode::Char('V') => {
-                if self.views.is_empty() {
-                    self.status = "No views available".to_string();
+                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    self.open_view_edit(view);
                 } else {
-                    self.mode = Mode::ViewManagerScreen;
-                    self.view_return_to_manager = false;
-                    self.view_manager_pane = ViewManagerPane::Views;
-                    self.view_manager_section_index = 0;
-                    self.load_view_manager_rows_from_selected_view();
-                    self.status =
-                        "View manager: Tab pane, j/k row, Enter action, s save, q/Esc back"
-                            .to_string();
+                    self.status = "No views available".to_string();
                 }
             }
             KeyCode::Char('x') => {

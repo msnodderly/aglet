@@ -18,6 +18,7 @@ impl App {
             Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
+            Mode::ViewEdit => self.handle_view_edit_key(code, agenda),
             Mode::ViewManagerScreen => self.handle_view_manager_key(code, agenda),
             Mode::ViewCreateNameInput => self.handle_view_create_name_key(code),
             Mode::ViewCreateCategoryPicker => self.handle_view_create_category_key(code, agenda),
