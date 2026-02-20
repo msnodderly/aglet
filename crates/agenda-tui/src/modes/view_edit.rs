@@ -1005,10 +1005,14 @@ impl App {
                 let deleted_index = self.picker_index.min(self.views.len().saturating_sub(1));
                 match agenda.store().delete_view(view.id) {
                     Ok(()) => {
-                        if self.view_index > deleted_index {
-                            self.view_index -= 1;
-                        } else if self.view_index == deleted_index {
-                            self.view_index = deleted_index.saturating_sub(1);
+                        match self.view_index.cmp(&deleted_index) {
+                            std::cmp::Ordering::Greater => {
+                                self.view_index -= 1;
+                            }
+                            std::cmp::Ordering::Equal => {
+                                self.view_index = deleted_index.saturating_sub(1);
+                            }
+                            std::cmp::Ordering::Less => {}
                         }
                         self.refresh(agenda.store())?;
                         self.mode = return_mode;

@@ -410,8 +410,8 @@ mod tests {
         build_category_rows, build_reparent_options, category_name_map, category_target_set_mut,
         compute_board_layout, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
-        should_render_unmatched_lane, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane, text_buffer,
+        should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
+        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2012,9 +2012,13 @@ mod tests {
 
     #[test]
     fn item_edit_note_up_down_moves_cursor_between_lines() {
-        let mut app = App::default();
-        app.item_edit_note =
-            text_buffer::TextBuffer::with_cursor("first\nsecond".to_string(), "first\nse".chars().count());
+        let mut app = App {
+            item_edit_note: text_buffer::TextBuffer::with_cursor(
+                "first\nsecond".to_string(),
+                "first\nse".chars().count(),
+            ),
+            ..App::default()
+        };
 
         app.handle_item_edit_note_input_key(KeyCode::Up);
         assert_eq!(app.item_edit_note.cursor(), "fi".chars().count());
@@ -2358,17 +2362,19 @@ mod tests {
 
     #[test]
     fn view_editor_action_selection_opens_expected_picker() {
-        let mut app = App::default();
-        app.category_rows = vec![CategoryListRow {
-            id: CategoryId::new_v4(),
-            name: "Work".to_string(),
-            depth: 0,
-            is_reserved: false,
-            has_note: false,
-            is_exclusive: false,
-            is_actionable: true,
-            enable_implicit_string: true,
-        }];
+        let mut app = App {
+            category_rows: vec![CategoryListRow {
+                id: CategoryId::new_v4(),
+                name: "Work".to_string(),
+                depth: 0,
+                is_reserved: false,
+                has_note: false,
+                is_exclusive: false,
+                is_actionable: true,
+                enable_implicit_string: true,
+            }],
+            ..App::default()
+        };
         app.open_view_editor(View::new("Board".to_string()));
         if let Some(editor) = &mut app.view_editor {
             editor.action_index = 0;

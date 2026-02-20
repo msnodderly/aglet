@@ -198,21 +198,19 @@ impl App {
                     && self.preview_mode == PreviewMode::Provenance
                 {
                     self.open_provenance_unassign_picker();
+                } else if self.selected_item_id().is_none() {
+                    self.status = "No selected item to edit categories".to_string();
+                } else if self.category_rows.is_empty() {
+                    self.status = "No categories available".to_string();
                 } else {
-                    if self.selected_item_id().is_none() {
-                        self.status = "No selected item to edit categories".to_string();
-                    } else if self.category_rows.is_empty() {
-                        self.status = "No categories available".to_string();
-                    } else {
-                        self.mode = Mode::ItemAssignCategoryPicker;
-                        self.item_assign_return_to_item_edit = false;
-                        self.item_assign_category_index =
-                            first_non_reserved_category_index(&self.category_rows);
-                        self.clear_input();
-                        self.status =
-                            "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
-                                .to_string();
-                    }
+                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.item_assign_return_to_item_edit = false;
+                    self.item_assign_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.clear_input();
+                    self.status =
+                        "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                            .to_string();
                 }
             }
             KeyCode::Char('p') => self.toggle_preview(),

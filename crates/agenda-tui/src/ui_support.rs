@@ -29,14 +29,12 @@ pub(super) fn next_index_clamped(current: usize, len: usize, delta: i32) -> usiz
     if len == 0 {
         return 0;
     }
-    if delta > 0 {
-        current
+    match delta.cmp(&0) {
+        std::cmp::Ordering::Greater => current
             .saturating_add(delta as usize)
-            .min(len.saturating_sub(1))
-    } else if delta < 0 {
-        current.saturating_sub((-delta) as usize)
-    } else {
-        current.min(len.saturating_sub(1))
+            .min(len.saturating_sub(1)),
+        std::cmp::Ordering::Less => current.saturating_sub((-delta) as usize),
+        std::cmp::Ordering::Equal => current.min(len.saturating_sub(1)),
     }
 }
 
@@ -103,11 +101,11 @@ pub(super) fn bucket_target_label(target: BucketEditTarget) -> &'static str {
     }
 }
 
-pub(super) fn category_target_set_mut<'a>(
-    view: &'a mut View,
+pub(super) fn category_target_set_mut(
+    view: &mut View,
     section_index: usize,
     target: CategoryEditTarget,
-) -> Option<&'a mut HashSet<CategoryId>> {
+) -> Option<&mut HashSet<CategoryId>> {
     match target {
         CategoryEditTarget::ViewInclude => Some(&mut view.criteria.include),
         CategoryEditTarget::ViewExclude => Some(&mut view.criteria.exclude),
@@ -130,11 +128,11 @@ pub(super) fn category_target_set_mut<'a>(
     }
 }
 
-pub(super) fn bucket_target_set_mut<'a>(
-    view: &'a mut View,
+pub(super) fn bucket_target_set_mut(
+    view: &mut View,
     section_index: usize,
     target: BucketEditTarget,
-) -> Option<&'a mut HashSet<WhenBucket>> {
+) -> Option<&mut HashSet<WhenBucket>> {
     match target {
         BucketEditTarget::ViewVirtualInclude => Some(&mut view.criteria.virtual_include),
         BucketEditTarget::ViewVirtualExclude => Some(&mut view.criteria.virtual_exclude),
