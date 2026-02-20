@@ -312,10 +312,6 @@ impl App {
 
         let category_names = category_name_map(&self.categories);
         let current_view = self.current_view().cloned();
-        let default_columns = current_view
-            .as_ref()
-            .map(|view| view.columns.clone())
-            .unwrap_or_default();
         let view_item_label = current_view
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
@@ -340,16 +336,9 @@ impl App {
                 | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
                     .sections
                     .get(*section_index)
-                    .map(|section| {
-                        if section.columns.is_empty() {
-                            default_columns.clone()
-                        } else {
-                            section.columns.clone()
-                        }
-                    })
-                    .unwrap_or_else(|| default_columns.clone()),
-                (SlotContext::Unmatched, Some(_)) => default_columns.clone(),
-                (_, None) => Vec::new(),
+                    .map(|section| section.columns.clone())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
             };
             let use_dynamic = !slot_columns_owned.is_empty();
             let include_all_categories_in_dynamic = use_dynamic
@@ -749,7 +738,17 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
-            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add section  e/t:rename section  +/-:criteria  c:section-columns  x:remove  Enter:save  Esc:cancel",
+            Mode::ViewEdit => {
+                if let Some(state) = &self.view_edit_state {
+                    match state.region {
+                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle +/-  ]/[:when-buckets  Tab:region  Enter:save  Esc:cancel",
+                        ViewEditRegion::Sections => "n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  Tab:region  Enter:save  Esc:cancel",
+                        ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  Enter:save  Esc:cancel",
+                    }
+                } else {
+                    "Tab:region  Enter:save  Esc:cancel"
+                }
+            }
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
             Mode::ItemEditInput => {
@@ -1320,14 +1319,13 @@ impl App {
             return;
         };
 
-        // Split into 4 vertical regions
+        // Split into 3 vertical regions
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Percentage(25),
-                Constraint::Percentage(20),
-                Constraint::Percentage(35),
-                Constraint::Percentage(20),
+                Constraint::Percentage(50),
+                Constraint::Percentage(25),
             ])
             .split(area);
 
@@ -1410,46 +1408,6 @@ impl App {
 
             let list = List::new(items).block(block);
             frame.render_widget(list, chunks[0]);
-        }
-
-        // ── Columns region ───────────────────────────────────────────────────
-        {
-            let block = Block::default()
-                .title(" DEFAULT COLUMNS ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_for(ViewEditRegion::Columns)));
-
-            let items: Vec<ListItem<'_>> = if state.draft.columns.is_empty() {
-                vec![ListItem::new(Line::from("  (no columns)"))]
-            } else {
-                state
-                    .draft
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, col)| {
-                        let name = category_names
-                            .get(&col.heading)
-                            .cloned()
-                            .unwrap_or_else(|| "(deleted)".to_string());
-                        let kind_tag = match col.kind {
-                            ColumnKind::When => "  [When]",
-                            ColumnKind::Standard => "",
-                        };
-                        let label = format!("  {}. {}  w:{}{}", i + 1, name, col.width, kind_tag);
-                        let style =
-                            if i == state.column_index && state.region == ViewEditRegion::Columns {
-                                Style::default().add_modifier(Modifier::REVERSED)
-                            } else {
-                                Style::default()
-                            };
-                        ListItem::new(Line::from(label)).style(style)
-                    })
-                    .collect()
-            };
-
-            let list = List::new(items).block(block);
-            frame.render_widget(list, chunks[1]);
         }
 
         // ── Sections region ──────────────────────────────────────────────────
@@ -1539,7 +1497,7 @@ impl App {
                         ))));
                     }
                     let section_columns: Vec<String> = if section.columns.is_empty() {
-                        vec!["(default)".to_string()]
+                        vec!["(none)".to_string()]
                     } else {
                         section
                             .columns
@@ -1565,9 +1523,9 @@ impl App {
             }
 
             let content_len = items.len();
-            let mut list_state = Self::list_state_for(chunks[2], selected_line);
-            frame.render_stateful_widget(List::new(items).block(block), chunks[2], &mut list_state);
-            Self::render_vertical_scrollbar(frame, chunks[2], content_len, list_state.offset());
+            let mut list_state = Self::list_state_for(chunks[1], selected_line);
+            frame.render_stateful_widget(List::new(items).block(block), chunks[1], &mut list_state);
+            Self::render_vertical_scrollbar(frame, chunks[1], content_len, list_state.offset());
         }
 
         // ── Unmatched region ─────────────────────────────────────────────────
@@ -1602,7 +1560,7 @@ impl App {
                 Style::default()
             };
             let para = Paragraph::new(Line::from(text).style(style)).block(block);
-            frame.render_widget(para, chunks[3]);
+            frame.render_widget(para, chunks[2]);
         }
 
         // ── Picker overlay ───────────────────────────────────────────────────
@@ -1625,11 +1583,7 @@ impl App {
                             let indent = "  ".repeat(row.depth);
                             let checked = match target {
                                 CategoryEditTarget::ViewInclude => {
-                                    if state.region == ViewEditRegion::Columns {
-                                        state.draft.columns.iter().any(|col| col.heading == row.id)
-                                    } else {
-                                        state.draft.criteria.include.contains(&row.id)
-                                    }
+                                    state.draft.criteria.include.contains(&row.id)
                                 }
                                 CategoryEditTarget::SectionCriteriaInclude => state
                                     .draft
