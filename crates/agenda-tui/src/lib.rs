@@ -360,7 +360,6 @@ struct App {
     view_pending_name: Option<String>,
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
-    view_return_to_manager: bool,
     view_manager_pane: ViewManagerPane,
     view_manager_definition_index: usize,
     view_manager_section_index: usize,
@@ -389,7 +388,6 @@ struct App {
     category_reparent_index: usize,
     category_config_editor: Option<CategoryConfigEditorState>,
     item_assign_category_index: usize,
-    item_assign_return_to_item_edit: bool,
     item_edit_focus: ItemEditFocus,
     item_edit_note: text_buffer::TextBuffer,
     preview_provenance_scroll: usize,
@@ -419,7 +417,6 @@ impl Default for App {
             view_pending_name: None,
             view_pending_edit_name: None,
             view_category_index: 0,
-            view_return_to_manager: false,
             view_manager_pane: ViewManagerPane::Views,
             view_manager_definition_index: 0,
             view_manager_section_index: 0,
@@ -447,7 +444,6 @@ impl Default for App {
             category_reparent_index: 0,
             category_config_editor: None,
             item_assign_category_index: 0,
-            item_assign_return_to_item_edit: false,
             item_edit_focus: ItemEditFocus::Text,
             item_edit_note: text_buffer::TextBuffer::empty(),
             preview_provenance_scroll: 0,
@@ -1308,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn view_manager_create_cancel_returns_to_manager() {
+    fn view_manager_create_cancel_returns_to_view_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -1329,14 +1325,14 @@ mod tests {
         assert_eq!(app.mode, Mode::ViewCreateNameInput);
         app.handle_view_create_name_key(KeyCode::Esc)
             .expect("cancel create");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
+        assert_eq!(app.mode, Mode::ViewPicker);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn view_manager_delete_cancel_returns_to_manager() {
+    fn view_manager_delete_cancel_returns_to_view_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -1362,7 +1358,7 @@ mod tests {
         assert_eq!(app.mode, Mode::ViewDeleteConfirm);
         app.handle_view_delete_key(KeyCode::Esc, &agenda)
             .expect("cancel delete");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
+        assert_eq!(app.mode, Mode::ViewPicker);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

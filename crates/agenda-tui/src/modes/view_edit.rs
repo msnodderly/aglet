@@ -33,7 +33,6 @@ impl App {
                 self.clear_input();
                 self.view_pending_name = None;
                 self.view_pending_edit_name = None;
-                self.view_return_to_manager = false;
                 self.status = "Create view: type name and press Enter".to_string();
             }
             KeyCode::Char('r') => {
@@ -41,7 +40,6 @@ impl App {
                     self.mode = Mode::ViewRenameInput;
                     self.set_input(view.name.clone());
                     self.view_pending_edit_name = Some(view.name.clone());
-                    self.view_return_to_manager = false;
                     self.status = format!("Rename view {}: type name and Enter", view.name);
                 } else {
                     self.status = "No selected view to rename".to_string();
@@ -64,7 +62,6 @@ impl App {
             KeyCode::Char('x') => {
                 if let Some(view) = self.views.get(self.picker_index) {
                     self.mode = Mode::ViewDeleteConfirm;
-                    self.view_return_to_manager = false;
                     self.status = format!("Delete view '{}' ? y/n", view.name);
                 } else {
                     self.status = "No selected view to delete".to_string();
@@ -343,7 +340,6 @@ impl App {
                     self.clear_input();
                     self.view_pending_name = None;
                     self.view_pending_edit_name = None;
-                    self.view_return_to_manager = true;
                     self.status = "Create view: type name and press Enter".to_string();
                 }
                 ViewManagerPane::Definition => {
@@ -407,7 +403,6 @@ impl App {
                         self.mode = Mode::ViewRenameInput;
                         self.set_input(view.name.clone());
                         self.view_pending_edit_name = Some(view.name.clone());
-                        self.view_return_to_manager = true;
                         self.status = format!("Rename view {}: type name and Enter", view.name);
                     } else {
                         self.status = "No selected view to rename".to_string();
@@ -418,7 +413,6 @@ impl App {
                 ViewManagerPane::Views => {
                     if let Some(view) = self.views.get(self.picker_index) {
                         self.mode = Mode::ViewDeleteConfirm;
-                        self.view_return_to_manager = true;
                         self.status = format!("Delete view '{}' ? y/n", view.name);
                     } else {
                         self.status = "No selected view to delete".to_string();
@@ -979,16 +973,10 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        let return_mode = if self.view_return_to_manager {
-            Mode::ViewManagerScreen
-        } else {
-            Mode::ViewPicker
-        };
         match code {
             KeyCode::Char('y') => {
                 let Some(view) = self.views.get(self.picker_index).cloned() else {
-                    self.mode = return_mode;
-                    self.view_return_to_manager = false;
+                    self.mode = Mode::ViewPicker;
                     self.status = "Delete failed: no selected view".to_string();
                     return Ok(false);
                 };
@@ -1005,28 +993,19 @@ impl App {
                             std::cmp::Ordering::Less => {}
                         }
                         self.refresh(agenda.store())?;
-                        self.mode = return_mode;
+                        self.mode = Mode::ViewPicker;
                         self.picker_index =
                             self.picker_index.min(self.views.len().saturating_sub(1));
-                        self.view_return_to_manager = false;
-                        if self.mode == Mode::ViewManagerScreen {
-                            self.load_view_manager_rows_from_selected_view();
-                        }
                         self.status = format!("Deleted view: {}", view.name);
                     }
                     Err(err) => {
-                        self.mode = return_mode;
-                        self.view_return_to_manager = false;
+                        self.mode = Mode::ViewPicker;
                         self.status = format!("Delete failed: {err}");
                     }
                 }
             }
             KeyCode::Char('n') | KeyCode::Esc => {
-                self.mode = return_mode;
-                self.view_return_to_manager = false;
-                if self.mode == Mode::ViewManagerScreen {
-                    self.load_view_manager_rows_from_selected_view();
-                }
+                self.mode = Mode::ViewPicker;
                 self.status = "Delete canceled".to_string();
             }
             _ => {}
@@ -1035,32 +1014,19 @@ impl App {
     }
 
     pub(crate) fn handle_view_create_name_key(&mut self, code: KeyCode) -> Result<bool, String> {
-        let return_mode = if self.view_return_to_manager {
-            Mode::ViewManagerScreen
-        } else {
-            Mode::ViewPicker
-        };
         match code {
             KeyCode::Esc => {
-                self.mode = return_mode;
+                self.mode = Mode::ViewPicker;
                 self.clear_input();
                 self.view_pending_name = None;
-                self.view_return_to_manager = false;
-                if self.mode == Mode::ViewManagerScreen {
-                    self.load_view_manager_rows_from_selected_view();
-                }
                 self.status = "View create canceled".to_string();
             }
             KeyCode::Enter => {
                 let name = self.input.trimmed().to_string();
                 if name.is_empty() {
-                    self.mode = return_mode;
+                    self.mode = Mode::ViewPicker;
                     self.clear_input();
                     self.view_pending_name = None;
-                    self.view_return_to_manager = false;
-                    if self.mode == Mode::ViewManagerScreen {
-                        self.load_view_manager_rows_from_selected_view();
-                    }
                     self.status = "View create canceled (empty name)".to_string();
                 } else {
                     self.view_pending_name = Some(name.clone());
@@ -1131,12 +1097,7 @@ impl App {
             }
             KeyCode::Enter => {
                 let Some(name) = self.view_pending_name.clone() else {
-                    self.mode = if self.view_return_to_manager {
-                        Mode::ViewManagerScreen
-                    } else {
-                        Mode::ViewPicker
-                    };
-                    self.view_return_to_manager = false;
+                    self.mode = Mode::ViewPicker;
                     self.status = "View create failed: missing name".to_string();
                     return Ok(false);
                 };
@@ -1159,39 +1120,29 @@ impl App {
 
                 match agenda.store().create_view(&view) {
                     Ok(()) => {
+                        let include_count = view.criteria.include.len();
+                        let exclude_count = view.criteria.exclude.len();
+                        let view_name = view.name.clone();
                         self.refresh(agenda.store())?;
-                        self.set_view_selection_by_name(&view.name);
-                        self.mode = if self.view_return_to_manager {
-                            Mode::ViewManagerScreen
-                        } else {
-                            Mode::Normal
-                        };
                         self.view_pending_name = None;
                         self.view_create_include_selection.clear();
                         self.view_create_exclude_selection.clear();
-                        self.view_return_to_manager = false;
-                        if self.mode == Mode::ViewManagerScreen {
-                            self.load_view_manager_rows_from_selected_view();
+                        if let Some(new_view) =
+                            self.views.iter().find(|v| v.name == view_name).cloned()
+                        {
+                            self.open_view_edit(new_view);
+                        } else {
+                            self.mode = Mode::ViewPicker;
                         }
                         self.status = format!(
                             "Created view {} (include={}, exclude={})",
-                            view.name,
-                            view.criteria.include.len(),
-                            view.criteria.exclude.len()
+                            view_name, include_count, exclude_count
                         );
                     }
                     Err(err) => {
-                        self.mode = if self.view_return_to_manager {
-                            Mode::ViewManagerScreen
-                        } else {
-                            Mode::ViewPicker
-                        };
+                        self.mode = Mode::ViewPicker;
                         self.view_create_include_selection.clear();
                         self.view_create_exclude_selection.clear();
-                        self.view_return_to_manager = false;
-                        if self.mode == Mode::ViewManagerScreen {
-                            self.load_view_manager_rows_from_selected_view();
-                        }
                         self.status = format!("View create failed: {err}");
                     }
                 }
@@ -1206,37 +1157,26 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        let return_mode = if self.view_return_to_manager {
-            Mode::ViewManagerScreen
-        } else {
-            Mode::ViewPicker
-        };
         match code {
             KeyCode::Esc => {
-                self.mode = return_mode;
+                self.mode = Mode::ViewPicker;
                 self.clear_input();
                 self.view_pending_edit_name = None;
-                self.view_return_to_manager = false;
-                if self.mode == Mode::ViewManagerScreen {
-                    self.load_view_manager_rows_from_selected_view();
-                }
                 self.status = "View rename canceled".to_string();
             }
             KeyCode::Enter => {
                 let Some(view_name) = self.view_pending_edit_name.clone() else {
-                    self.mode = return_mode;
+                    self.mode = Mode::ViewPicker;
                     self.clear_input();
-                    self.view_return_to_manager = false;
                     self.status = "View rename failed: no selected view".to_string();
                     return Ok(false);
                 };
 
                 let new_name = self.input.trimmed().to_string();
                 if new_name.is_empty() {
-                    self.mode = return_mode;
+                    self.mode = Mode::ViewPicker;
                     self.clear_input();
                     self.view_pending_edit_name = None;
-                    self.view_return_to_manager = false;
                     self.status = "View rename canceled (empty name)".to_string();
                     return Ok(false);
                 }
@@ -1247,19 +1187,17 @@ impl App {
                     .find(|view| view.name.eq_ignore_ascii_case(&view_name))
                     .cloned()
                 else {
-                    self.mode = return_mode;
+                    self.mode = Mode::ViewPicker;
                     self.clear_input();
                     self.view_pending_edit_name = None;
-                    self.view_return_to_manager = false;
                     self.status = "View rename failed: selected view not found".to_string();
                     return Ok(false);
                 };
 
                 if view.name == new_name {
-                    self.mode = return_mode;
+                    self.mode = Mode::ViewPicker;
                     self.clear_input();
                     self.view_pending_edit_name = None;
-                    self.view_return_to_manager = false;
                     self.status = "View rename canceled (unchanged)".to_string();
                     return Ok(false);
                 }
@@ -1269,20 +1207,15 @@ impl App {
                     Ok(()) => {
                         self.refresh(agenda.store())?;
                         self.set_view_selection_by_name(&new_name);
-                        self.mode = return_mode;
+                        self.mode = Mode::ViewPicker;
                         self.clear_input();
                         self.view_pending_edit_name = None;
-                        self.view_return_to_manager = false;
-                        if self.mode == Mode::ViewManagerScreen {
-                            self.load_view_manager_rows_from_selected_view();
-                        }
                         self.status = format!("Renamed view to {}", new_name);
                     }
                     Err(err) => {
-                        self.mode = return_mode;
+                        self.mode = Mode::ViewPicker;
                         self.clear_input();
                         self.view_pending_edit_name = None;
-                        self.view_return_to_manager = false;
                         self.status = format!("View rename failed: {err}");
                     }
                 }
