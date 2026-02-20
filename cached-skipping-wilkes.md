@@ -61,47 +61,30 @@ impl TextBuffer {
 
 ---
 
-## Phase 2: Unified ViewEdit Mode — 🔲 NEXT
+## Phase 2: Unified ViewEdit Mode — 🔄 IN PROGRESS
 
 Replaces 10 separate view-editing modes with one unified `Mode::ViewEdit`
 backed by `ViewEditState`. Old modes remain until Phase 2c deletes them,
 so existing tests keep passing throughout.
 
-### Phase 2a: Build ViewEdit alongside old modes
+### Phase 2a: Build ViewEdit alongside old modes — ✅ COMPLETE
 
-**Goal**: ViewEdit works end-to-end; `ViewPicker e` enters it. Old modes still exist.
+**Commit**: `163b1cf` — `tui: Phase 2a – add Mode::ViewEdit alongside old modes`
 
-1. Create `ViewEditState` struct in `lib.rs`:
-   ```rust
-   struct ViewEditState {
-       view: View,
-       selected_section: usize,
-       region: ViewEditRegion,
-       overlay: Option<ViewEditOverlay>,
-       inline_input: Option<ViewEditInlineInput>,
-   }
-   enum ViewEditRegion { Criteria, Columns, Sections, Unmatched }
-   enum ViewEditOverlay { CategoryPicker, BucketPicker }
-   enum ViewEditInlineInput { SectionTitle, UnmatchedLabel }
-   ```
-   Existing types reused: `ViewManagerState` (Criteria rows), `ViewEditorState`
-   (columns), `ViewSectionEditorState` (section list), `ViewSectionDetailState`.
+**92 tests pass, 1 warning (dead_code: open_view_editor, expected — deleted in 2c).**
 
-2. Add `Mode::ViewEdit` to the Mode enum (keep old variants for now)
-3. Add `view_edit_state: Option<ViewEditState>` field to `App`
-4. Implement key dispatch in `modes/view_edit2.rs` with precedence:
-   inline_input → overlay → region (per spec §5.2)
-5. Implement rendering in `render/mod.rs`: four-region layout
-   (Criteria top-left, Columns top-right, Sections bottom-left, Unmatched bottom-right)
-   with focus highlight per spec §4.3.1–4.3.2
-6. Implement picker overlay: right-aligned 40% panel over ViewEdit
-7. Implement inline text input for section title and unmatched label
-8. Wire save (`S`) → `store.update_view()`
-9. Wire entry: `ViewPicker e` → `Mode::ViewEdit`
-10. **Tests**: region cycling (Tab), key precedence (inline > overlay > region),
-    save round-trip, Esc returns to ViewPicker
+#### What was done
 
-Commit: `tui: add Mode::ViewEdit with four-region layout and key dispatch`
+- `lib.rs`: Added `Mode::ViewEdit`; new types `ViewEditRegion`, `ViewEditOverlay`,
+  `ViewEditInlineInput`, `ViewEditState`; `view_edit_state: Option<ViewEditState>` on App.
+- `modes/view_edit2.rs` (new): `open_view_edit()`, `handle_view_edit_key()` with
+  3-layer dispatch (inline → overlay → region), per-region handlers for all 4 regions,
+  `handle_view_edit_save()` (persists via `update_view`, refreshes, reopens editor).
+- `render/mod.rs`: `render_view_edit_screen()` — 4-region vertical layout with focus
+  highlight, right-aligned picker overlay panel.
+- `input/mod.rs`: `Mode::ViewEdit` routed to `handle_view_edit_key`.
+- `view_edit.rs`: ViewPicker `e` and `V` now call `open_view_edit()`.
+- 8 new tests (region cycling, key precedence, save round-trip, Esc).
 
 ### Phase 2b: Migrate remaining entry points
 

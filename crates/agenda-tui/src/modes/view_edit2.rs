@@ -11,14 +11,10 @@ impl App {
             .map(|&id| ViewCriteriaRow {
                 sign: ViewCriteriaSign::Include,
                 category_id: id,
-                join_is_or: false,
-                depth: 0,
             })
             .chain(view.criteria.exclude.iter().map(|&id| ViewCriteriaRow {
                 sign: ViewCriteriaSign::Exclude,
                 category_id: id,
-                join_is_or: false,
-                depth: 0,
             }))
             .collect();
         rows.sort_by(|a, b| {
