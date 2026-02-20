@@ -82,7 +82,6 @@ impl App {
         Ok(false)
     }
 
-
     pub(crate) fn handle_view_delete_key(
         &mut self,
         code: KeyCode,

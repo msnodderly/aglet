@@ -311,21 +311,16 @@ impl App {
             .split(area);
 
         let category_names = category_name_map(&self.categories);
-        let view_columns = self
-            .current_view()
-            .map(|v| v.columns.as_slice())
-            .unwrap_or(&[]);
-        let use_dynamic = !view_columns.is_empty();
-        let include_all_categories_in_dynamic = use_dynamic
-            && !view_columns
-                .iter()
-                .any(|column| column.kind == ColumnKind::Standard);
-        let view_item_label = self
-            .current_view()
+        let current_view = self.current_view().cloned();
+        let default_columns = current_view
+            .as_ref()
+            .map(|view| view.columns.clone())
+            .unwrap_or_default();
+        let view_item_label = current_view
+            .as_ref()
             .and_then(|v| v.item_column_label.clone())
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| "Item".to_string());
-        let view_columns_owned: Vec<Column> = view_columns.to_vec();
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let is_selected_slot = slot_index == self.slot_index;
             let inner_width = columns[slot_index].width.saturating_sub(2);
@@ -340,9 +335,30 @@ impl App {
             } else {
                 Color::Blue
             };
+            let slot_columns_owned = match (&slot.context, current_view.as_ref()) {
+                (SlotContext::Section { section_index }, Some(view))
+                | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                    .sections
+                    .get(*section_index)
+                    .map(|section| {
+                        if section.columns.is_empty() {
+                            default_columns.clone()
+                        } else {
+                            section.columns.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| default_columns.clone()),
+                (SlotContext::Unmatched, Some(_)) => default_columns.clone(),
+                (_, None) => Vec::new(),
+            };
+            let use_dynamic = !slot_columns_owned.is_empty();
+            let include_all_categories_in_dynamic = use_dynamic
+                && !slot_columns_owned
+                    .iter()
+                    .any(|column| column.kind == ColumnKind::Standard);
             if use_dynamic {
                 let layout = compute_board_layout(
-                    &view_columns_owned,
+                    &slot_columns_owned,
                     &self.categories,
                     &category_names,
                     &view_item_label,
@@ -733,7 +749,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
-            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add section  e/t:rename section  +/-:criteria  x:remove  Enter:save  Esc:cancel",
+            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add section  e/t:rename section  +/-:criteria  c:section-columns  x:remove  Enter:save  Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
             Mode::ItemEditInput => {
@@ -1332,7 +1348,7 @@ impl App {
         {
             let block = Block::default()
                 .title(format!(
-                    " CRITERIA  matches:{} ",
+                    " VIEW CRITERIA  matches:{} ",
                     state.preview_count
                 ))
                 .borders(Borders::ALL)
@@ -1352,13 +1368,12 @@ impl App {
                         ViewCriteriaSign::Exclude => "-",
                     };
                     let label = format!("  {sign}{name}");
-                    let style = if i == state.criteria_index
-                        && state.region == ViewEditRegion::Criteria
-                    {
-                        Style::default().add_modifier(Modifier::REVERSED)
-                    } else {
-                        Style::default()
-                    };
+                    let style =
+                        if i == state.criteria_index && state.region == ViewEditRegion::Criteria {
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        };
                     ListItem::new(Line::from(label)).style(style)
                 })
                 .collect();
@@ -1388,7 +1403,9 @@ impl App {
             }
 
             if items.is_empty() {
-                items.push(ListItem::new(Line::from("  (no criteria — matches all items)")));
+                items.push(ListItem::new(Line::from(
+                    "  (no criteria — matches all items)",
+                )));
             }
 
             let list = List::new(items).block(block);
@@ -1398,7 +1415,7 @@ impl App {
         // ── Columns region ───────────────────────────────────────────────────
         {
             let block = Block::default()
-                .title(" COLUMNS ")
+                .title(" DEFAULT COLUMNS ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_for(ViewEditRegion::Columns)));
 
@@ -1420,13 +1437,12 @@ impl App {
                             ColumnKind::Standard => "",
                         };
                         let label = format!("  {}. {}  w:{}{}", i + 1, name, col.width, kind_tag);
-                        let style = if i == state.column_index
-                            && state.region == ViewEditRegion::Columns
-                        {
-                            Style::default().add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        };
+                        let style =
+                            if i == state.column_index && state.region == ViewEditRegion::Columns {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
                         ListItem::new(Line::from(label)).style(style)
                     })
                     .collect()
@@ -1460,30 +1476,33 @@ impl App {
                     if i == state.section_index {
                         selected_line = Some(items.len());
                     }
-                    let cursor = if i == state.section_index
-                        && state.region == ViewEditRegion::Sections
-                    {
-                        ">"
-                    } else {
-                        " "
-                    };
+                    let cursor =
+                        if i == state.section_index && state.region == ViewEditRegion::Sections {
+                            ">"
+                        } else {
+                            " "
+                        };
 
                     let title = if inline_editing_section == Some(i) {
-                        format!("{}  {}. {} ◀ editing", cursor, i + 1, state.inline_buf.text())
+                        format!(
+                            "{}  {}. {} ◀ editing",
+                            cursor,
+                            i + 1,
+                            state.inline_buf.text()
+                        )
                     } else {
                         format!("{}  {}. {}", cursor, i + 1, section.title)
                     };
 
-                    let style = if i == state.section_index
-                        && state.region == ViewEditRegion::Sections
-                    {
-                        Style::default().add_modifier(Modifier::REVERSED)
-                    } else {
-                        Style::default()
-                    };
+                    let style =
+                        if i == state.section_index && state.region == ViewEditRegion::Sections {
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        };
                     items.push(ListItem::new(Line::from(title)).style(style));
 
-                    let inc: Vec<String> = section
+                    let mut inc: Vec<String> = section
                         .criteria
                         .include
                         .iter()
@@ -1494,7 +1513,8 @@ impl App {
                                 .unwrap_or_else(|| id.to_string())
                         })
                         .collect();
-                    let exc: Vec<String> = section
+                    inc.sort_by_key(|name| name.to_ascii_lowercase());
+                    let mut exc: Vec<String> = section
                         .criteria
                         .exclude
                         .iter()
@@ -1505,6 +1525,7 @@ impl App {
                                 .unwrap_or_else(|| id.to_string())
                         })
                         .collect();
+                    exc.sort_by_key(|name| name.to_ascii_lowercase());
                     if !inc.is_empty() {
                         items.push(ListItem::new(Line::from(format!(
                             "     include: {}",
@@ -1517,8 +1538,27 @@ impl App {
                             exc.join(", ")
                         ))));
                     }
+                    let section_columns: Vec<String> = if section.columns.is_empty() {
+                        vec!["(default)".to_string()]
+                    } else {
+                        section
+                            .columns
+                            .iter()
+                            .map(|column| {
+                                let name = category_names
+                                    .get(&column.heading)
+                                    .cloned()
+                                    .unwrap_or_else(|| "(deleted)".to_string());
+                                format!("{name}[w:{}]", column.width)
+                            })
+                            .collect()
+                    };
                     items.push(ListItem::new(Line::from(format!(
-                        "     children:{} (e/t:title  +/-:criteria  a:on-insert  r:on-remove  h:children)",
+                        "     columns: {}",
+                        section_columns.join(", ")
+                    ))));
+                    items.push(ListItem::new(Line::from(format!(
+                        "     children:{} (e/t:title  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
                         if section.show_children { "yes" } else { "no" }
                     ))));
                 }
@@ -1549,7 +1589,11 @@ impl App {
             };
             let text = format!(
                 "  Visible: {}    Label: {}",
-                if state.draft.show_unmatched { "yes" } else { "no" },
+                if state.draft.show_unmatched {
+                    "yes"
+                } else {
+                    "no"
+                },
                 label_text
             );
             let style = if state.region == ViewEditRegion::Unmatched {
@@ -1582,10 +1626,7 @@ impl App {
                             let checked = match target {
                                 CategoryEditTarget::ViewInclude => {
                                     if state.region == ViewEditRegion::Columns {
-                                        state.draft.columns.iter().any(|col| {
-                                            col.kind == ColumnKind::Standard
-                                                && col.heading == row.id
-                                        })
+                                        state.draft.columns.iter().any(|col| col.heading == row.id)
                                     } else {
                                         state.draft.criteria.include.contains(&row.id)
                                     }
@@ -1601,6 +1642,14 @@ impl App {
                                     .sections
                                     .get(section_expanded)
                                     .map(|section| section.criteria.exclude.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionColumns => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| {
+                                        section.columns.iter().any(|col| col.heading == row.id)
+                                    })
                                     .unwrap_or(false),
                                 CategoryEditTarget::SectionOnInsertAssign => state
                                     .draft
@@ -1632,8 +1681,13 @@ impl App {
                         .title(title)
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow));
-                    let mut list_state = Self::list_state_for(overlay_area, Some(state.picker_index));
-                    frame.render_stateful_widget(List::new(items).block(block), overlay_area, &mut list_state);
+                    let mut list_state =
+                        Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(
+                        List::new(items).block(block),
+                        overlay_area,
+                        &mut list_state,
+                    );
                 }
                 ViewEditOverlay::BucketPicker { .. } => {
                     let options = when_bucket_options();
@@ -1654,8 +1708,13 @@ impl App {
                         .title(" Pick bucket ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow));
-                    let mut list_state = Self::list_state_for(overlay_area, Some(state.picker_index));
-                    frame.render_stateful_widget(List::new(items).block(block), overlay_area, &mut list_state);
+                    let mut list_state =
+                        Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(
+                        List::new(items).block(block),
+                        overlay_area,
+                        &mut list_state,
+                    );
                 }
             }
         }

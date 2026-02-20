@@ -1101,9 +1101,8 @@ impl Store {
         // guards against DBs that were stamped at version 3 by an earlier
         // partial implementation before this column was added to the schema.
         if !self.column_exists("views", "item_column_label")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN item_column_label TEXT;",
-            )?;
+            self.conn
+                .execute_batch("ALTER TABLE views ADD COLUMN item_column_label TEXT;")?;
         }
 
         if from_version < 3 {
@@ -1111,9 +1110,7 @@ impl Store {
             // Find the When category ID, then tag columns whose heading matches it
             // as When, all others as Standard.
             let when_cat_id = self.get_category_id_by_name("When")?;
-            let mut stmt = self.conn.prepare(
-                "SELECT id, columns_json FROM views",
-            )?;
+            let mut stmt = self.conn.prepare("SELECT id, columns_json FROM views")?;
             let rows: Vec<(String, String)> = stmt
                 .query_map([], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -1859,6 +1856,11 @@ mod tests {
         view.sections.push(Section {
             title: "Due Soon".to_string(),
             criteria: section_criteria,
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: when_category,
+                width: 18,
+            }],
             on_insert_assign: HashSet::from([when_category]),
             on_remove_unassign: HashSet::new(),
             show_children: true,
@@ -1881,6 +1883,9 @@ mod tests {
         assert_eq!(loaded.sections.len(), 1);
         assert_eq!(loaded.sections[0].title, "Due Soon");
         assert!(loaded.sections[0].show_children);
+        assert_eq!(loaded.sections[0].columns.len(), 1);
+        assert_eq!(loaded.sections[0].columns[0].heading, when_category);
+        assert_eq!(loaded.sections[0].columns[0].width, 18);
         assert_eq!(loaded.columns.len(), 1);
         assert_eq!(loaded.columns[0].heading, when_category);
         assert_eq!(loaded.columns[0].width, 24);
@@ -1928,6 +1933,7 @@ mod tests {
         view.sections.push(Section {
             title: "Today".to_string(),
             criteria: Query::default(),
+            columns: Vec::new(),
             on_insert_assign: HashSet::from([category_id]),
             on_remove_unassign: HashSet::new(),
             show_children: false,

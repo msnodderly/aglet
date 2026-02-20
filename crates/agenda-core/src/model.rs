@@ -82,6 +82,8 @@ pub struct View {
 pub struct Section {
     pub title: String,
     pub criteria: Query,
+    #[serde(default)]
+    pub columns: Vec<Column>,
     pub on_insert_assign: HashSet<CategoryId>,
     pub on_remove_unassign: HashSet<CategoryId>,
     pub show_children: bool,

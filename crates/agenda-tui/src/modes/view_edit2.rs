@@ -88,9 +88,7 @@ impl App {
                             .draft
                             .columns
                             .iter()
-                            .position(|col| {
-                                col.kind == ColumnKind::Standard && col.heading == cat_id
-                            })
+                            .position(|col| col.heading == cat_id)
                         {
                             state.draft.columns.remove(existing_index);
                             if state.column_index >= state.draft.columns.len()
@@ -105,8 +103,7 @@ impl App {
                                 width: 12,
                             };
                             state.draft.columns.push(new_col);
-                            state.column_index =
-                                state.draft.columns.len().saturating_sub(1);
+                            state.column_index = state.draft.columns.len().saturating_sub(1);
                         }
                     } else if !state.draft.criteria.include.remove(&cat_id) {
                         state.draft.criteria.include.insert(cat_id);
@@ -129,6 +126,21 @@ impl App {
                         if !section.criteria.exclude.remove(&cat_id) {
                             section.criteria.exclude.insert(cat_id);
                             section.criteria.include.remove(&cat_id);
+                        }
+                    }
+                }
+                CategoryEditTarget::SectionColumns => {
+                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                        if let Some(existing_index) =
+                            section.columns.iter().position(|col| col.heading == cat_id)
+                        {
+                            section.columns.remove(existing_index);
+                        } else {
+                            section.columns.push(Column {
+                                kind: ColumnKind::Standard,
+                                heading: cat_id,
+                                width: 12,
+                            });
                         }
                     }
                 }
@@ -259,42 +271,35 @@ impl App {
         let section_expanded = state.section_expanded.unwrap_or(0);
 
         match overlay {
-            Some(ViewEditOverlay::CategoryPicker { target }) => {
-                match code {
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        if let Some(state) = &mut self.view_edit_state {
-                            state.picker_index =
-                                next_index_clamped(picker_index, self.category_rows.len(), 1);
-                        }
+            Some(ViewEditOverlay::CategoryPicker { target }) => match code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.picker_index =
+                            next_index_clamped(picker_index, self.category_rows.len(), 1);
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        if let Some(state) = &mut self.view_edit_state {
-                            state.picker_index =
-                                next_index_clamped(picker_index, self.category_rows.len(), -1);
-                        }
-                    }
-                    KeyCode::Char(' ') | KeyCode::Enter => {
-                        if let Some(row) = self.category_rows.get(picker_index).cloned() {
-                            self.toggle_category_picker_selection(
-                                target,
-                                section_expanded,
-                                row.id,
-                            );
-                        }
-                    }
-                    KeyCode::Esc => {
-                        self.close_view_edit_overlay();
-                    }
-                    _ => {}
                 }
-            }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.picker_index =
+                            next_index_clamped(picker_index, self.category_rows.len(), -1);
+                    }
+                }
+                KeyCode::Char(' ') | KeyCode::Enter => {
+                    if let Some(row) = self.category_rows.get(picker_index).cloned() {
+                        self.toggle_category_picker_selection(target, section_expanded, row.id);
+                    }
+                }
+                KeyCode::Esc => {
+                    self.close_view_edit_overlay();
+                }
+                _ => {}
+            },
             Some(ViewEditOverlay::BucketPicker { target }) => {
                 let options = when_bucket_options();
                 match code {
                     KeyCode::Char('j') | KeyCode::Down => {
                         if let Some(state) = &mut self.view_edit_state {
-                            state.picker_index =
-                                next_index_clamped(picker_index, options.len(), 1);
+                            state.picker_index = next_index_clamped(picker_index, options.len(), 1);
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
@@ -307,10 +312,9 @@ impl App {
                         if matches!(code, KeyCode::Char(' ') | KeyCode::Enter) {
                             if let Some(&bucket) = options.get(picker_index) {
                                 if let Some(state) = &mut self.view_edit_state {
-                                    if let Some(set) = bucket_target_set_mut(
-                                        &mut state.draft,
-                                        target,
-                                    ) {
+                                    if let Some(set) =
+                                        bucket_target_set_mut(&mut state.draft, target)
+                                    {
                                         if set.contains(&bucket) {
                                             set.remove(&bucket);
                                         } else {
@@ -436,8 +440,7 @@ impl App {
                     });
                     state.picker_index = first;
                 }
-                self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done"
-                    .to_string();
+                self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done".to_string();
             }
             KeyCode::Char('x') => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -530,8 +533,7 @@ impl App {
                     });
                     state.picker_index = first;
                 }
-                self.status = "Add column: j/k select  Space/Enter:toggle  Esc:done"
-                    .to_string();
+                self.status = "Add column: j/k select  Space/Enter:toggle  Esc:done".to_string();
             }
             KeyCode::Char('x') => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -603,6 +605,7 @@ impl App {
                     let new_section = Section {
                         title: "New section".to_string(),
                         criteria: Query::default(),
+                        columns: state.draft.columns.clone(),
                         on_insert_assign: HashSet::new(),
                         on_remove_unassign: HashSet::new(),
                         show_children: false,
@@ -650,8 +653,7 @@ impl App {
                         state.inline_buf = text_buffer::TextBuffer::new(current);
                     }
                 }
-                self.status =
-                    "Section title: type text  Enter:confirm  Esc:cancel".to_string();
+                self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
             }
             // Expanded section detail keys
             KeyCode::Char('+') => {
@@ -684,6 +686,18 @@ impl App {
                     if let Some(state) = &mut self.view_edit_state {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionOnInsertAssign,
+                        });
+                        state.section_expanded = Some(idx);
+                        state.picker_index = first;
+                    }
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                if idx < len {
+                    let first = first_non_reserved_category_index(&self.category_rows);
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.overlay = Some(ViewEditOverlay::CategoryPicker {
+                            target: CategoryEditTarget::SectionColumns,
                         });
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
@@ -734,8 +748,7 @@ impl App {
                     state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                     state.inline_buf = text_buffer::TextBuffer::new(current);
                 }
-                self.status =
-                    "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+                self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
             }
             _ => {}
         }

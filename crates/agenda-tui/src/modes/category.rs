@@ -250,14 +250,18 @@ impl App {
                 CategoryConfigFocus::Exclusive => self.toggle_category_config_exclusive(),
                 CategoryConfigFocus::NoImplicit => self.toggle_category_config_no_implicit(),
                 CategoryConfigFocus::Actionable => self.toggle_category_config_actionable(),
-                CategoryConfigFocus::Note => { self.handle_category_config_note_input_key(KeyCode::Char(' ')); }
+                CategoryConfigFocus::Note => {
+                    self.handle_category_config_note_input_key(KeyCode::Char(' '));
+                }
                 CategoryConfigFocus::SaveButton | CategoryConfigFocus::CancelButton => {}
             },
             KeyCode::Enter => match focus {
                 CategoryConfigFocus::Exclusive
                 | CategoryConfigFocus::NoImplicit
                 | CategoryConfigFocus::Actionable => self.save_category_config_editor(agenda)?,
-                CategoryConfigFocus::Note => { self.handle_category_config_note_input_key(KeyCode::Enter); }
+                CategoryConfigFocus::Note => {
+                    self.handle_category_config_note_input_key(KeyCode::Enter);
+                }
                 CategoryConfigFocus::SaveButton => self.save_category_config_editor(agenda)?,
                 CategoryConfigFocus::CancelButton => {
                     self.mode = Mode::CategoryManager;

@@ -374,6 +374,7 @@ mod tests {
         Section {
             title: title.to_string(),
             criteria,
+            columns: Vec::new(),
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
