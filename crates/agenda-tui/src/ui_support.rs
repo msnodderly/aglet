@@ -29,14 +29,12 @@ pub(super) fn next_index_clamped(current: usize, len: usize, delta: i32) -> usiz
     if len == 0 {
         return 0;
     }
-    if delta > 0 {
-        current
+    match delta.cmp(&0) {
+        std::cmp::Ordering::Greater => current
             .saturating_add(delta as usize)
-            .min(len.saturating_sub(1))
-    } else if delta < 0 {
-        current.saturating_sub((-delta) as usize)
-    } else {
-        current.min(len.saturating_sub(1))
+            .min(len.saturating_sub(1)),
+        std::cmp::Ordering::Less => current.saturating_sub((-delta) as usize),
+        std::cmp::Ordering::Equal => current.min(len.saturating_sub(1)),
     }
 }
 
@@ -66,140 +64,13 @@ pub(super) fn when_bucket_label(bucket: WhenBucket) -> &'static str {
     }
 }
 
-pub(super) fn category_target_is_section(target: CategoryEditTarget) -> bool {
-    matches!(
-        target,
-        CategoryEditTarget::SectionCriteriaInclude
-            | CategoryEditTarget::SectionCriteriaExclude
-            | CategoryEditTarget::SectionOnInsertAssign
-            | CategoryEditTarget::SectionOnRemoveUnassign
-    )
-}
-
-pub(super) fn bucket_target_is_section(target: BucketEditTarget) -> bool {
-    matches!(
-        target,
-        BucketEditTarget::SectionVirtualInclude | BucketEditTarget::SectionVirtualExclude
-    )
-}
-
-pub(super) fn category_target_label(target: CategoryEditTarget) -> &'static str {
-    match target {
-        CategoryEditTarget::ViewInclude => "View include categories",
-        CategoryEditTarget::ViewExclude => "View exclude categories",
-        CategoryEditTarget::SectionCriteriaInclude => "Section include criteria",
-        CategoryEditTarget::SectionCriteriaExclude => "Section exclude criteria",
-        CategoryEditTarget::SectionOnInsertAssign => "Section on-insert assign",
-        CategoryEditTarget::SectionOnRemoveUnassign => "Section on-remove unassign",
-    }
-}
-
-pub(super) fn bucket_target_label(target: BucketEditTarget) -> &'static str {
-    match target {
-        BucketEditTarget::ViewVirtualInclude => "View virtual include buckets",
-        BucketEditTarget::ViewVirtualExclude => "View virtual exclude buckets",
-        BucketEditTarget::SectionVirtualInclude => "Section virtual include buckets",
-        BucketEditTarget::SectionVirtualExclude => "Section virtual exclude buckets",
-    }
-}
-
-pub(super) fn category_target_set_mut<'a>(
-    view: &'a mut View,
-    section_index: usize,
-    target: CategoryEditTarget,
-) -> Option<&'a mut HashSet<CategoryId>> {
-    match target {
-        CategoryEditTarget::ViewInclude => Some(&mut view.criteria.include),
-        CategoryEditTarget::ViewExclude => Some(&mut view.criteria.exclude),
-        CategoryEditTarget::SectionCriteriaInclude => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.criteria.include),
-        CategoryEditTarget::SectionCriteriaExclude => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.criteria.exclude),
-        CategoryEditTarget::SectionOnInsertAssign => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.on_insert_assign),
-        CategoryEditTarget::SectionOnRemoveUnassign => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.on_remove_unassign),
-    }
-}
-
-pub(super) fn bucket_target_set_mut<'a>(
-    view: &'a mut View,
-    section_index: usize,
+pub(super) fn bucket_target_set_mut(
+    view: &mut View,
     target: BucketEditTarget,
-) -> Option<&'a mut HashSet<WhenBucket>> {
+) -> Option<&mut HashSet<WhenBucket>> {
     match target {
         BucketEditTarget::ViewVirtualInclude => Some(&mut view.criteria.virtual_include),
         BucketEditTarget::ViewVirtualExclude => Some(&mut view.criteria.virtual_exclude),
-        BucketEditTarget::SectionVirtualInclude => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.criteria.virtual_include),
-        BucketEditTarget::SectionVirtualExclude => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.criteria.virtual_exclude),
-    }
-}
-
-pub(super) fn category_target_contains(
-    view: &View,
-    section_index: usize,
-    target: CategoryEditTarget,
-    category_id: CategoryId,
-) -> bool {
-    match target {
-        CategoryEditTarget::ViewInclude => view.criteria.include.contains(&category_id),
-        CategoryEditTarget::ViewExclude => view.criteria.exclude.contains(&category_id),
-        CategoryEditTarget::SectionCriteriaInclude => view
-            .sections
-            .get(section_index)
-            .map(|section| section.criteria.include.contains(&category_id))
-            .unwrap_or(false),
-        CategoryEditTarget::SectionCriteriaExclude => view
-            .sections
-            .get(section_index)
-            .map(|section| section.criteria.exclude.contains(&category_id))
-            .unwrap_or(false),
-        CategoryEditTarget::SectionOnInsertAssign => view
-            .sections
-            .get(section_index)
-            .map(|section| section.on_insert_assign.contains(&category_id))
-            .unwrap_or(false),
-        CategoryEditTarget::SectionOnRemoveUnassign => view
-            .sections
-            .get(section_index)
-            .map(|section| section.on_remove_unassign.contains(&category_id))
-            .unwrap_or(false),
-    }
-}
-
-pub(super) fn bucket_target_contains(
-    view: &View,
-    section_index: usize,
-    target: BucketEditTarget,
-    bucket: WhenBucket,
-) -> bool {
-    match target {
-        BucketEditTarget::ViewVirtualInclude => view.criteria.virtual_include.contains(&bucket),
-        BucketEditTarget::ViewVirtualExclude => view.criteria.virtual_exclude.contains(&bucket),
-        BucketEditTarget::SectionVirtualInclude => view
-            .sections
-            .get(section_index)
-            .map(|section| section.criteria.virtual_include.contains(&bucket))
-            .unwrap_or(false),
-        BucketEditTarget::SectionVirtualExclude => view
-            .sections
-            .get(section_index)
-            .map(|section| section.criteria.virtual_exclude.contains(&bucket))
-            .unwrap_or(false),
     }
 }
 
@@ -732,32 +603,6 @@ pub(super) fn category_config_popup_regions(area: Rect) -> Option<CategoryConfig
         buttons: chunks[3],
         help: chunks[4],
     })
-}
-
-pub(super) fn note_cursor_line_col(note: &str, cursor_chars: usize) -> (usize, usize) {
-    let mut line = 0usize;
-    let mut col = 0usize;
-    for c in note.chars().take(cursor_chars) {
-        if c == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
-}
-
-pub(super) fn note_line_start_chars(note: &str) -> Vec<usize> {
-    let mut starts = vec![0usize];
-    let mut char_index = 0usize;
-    for c in note.chars() {
-        char_index += 1;
-        if c == '\n' {
-            starts.push(char_index);
-        }
-    }
-    starts
 }
 
 pub(super) fn add_capture_status_message(

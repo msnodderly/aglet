@@ -155,7 +155,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =
-                    "View palette: Enter switch, N create, r rename, x delete, e edit view, Esc cancel"
+                    "View palette: Enter switch, n create, r rename, x delete, e edit view, Esc cancel"
                         .to_string();
             }
             KeyCode::F(9) | KeyCode::Char('c') => {
@@ -183,7 +183,6 @@ impl App {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignCategoryPicker;
-                    self.item_assign_return_to_item_edit = false;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
@@ -198,21 +197,18 @@ impl App {
                     && self.preview_mode == PreviewMode::Provenance
                 {
                     self.open_provenance_unassign_picker();
+                } else if self.selected_item_id().is_none() {
+                    self.status = "No selected item to edit categories".to_string();
+                } else if self.category_rows.is_empty() {
+                    self.status = "No categories available".to_string();
                 } else {
-                    if self.selected_item_id().is_none() {
-                        self.status = "No selected item to edit categories".to_string();
-                    } else if self.category_rows.is_empty() {
-                        self.status = "No categories available".to_string();
-                    } else {
-                        self.mode = Mode::ItemAssignCategoryPicker;
-                        self.item_assign_return_to_item_edit = false;
-                        self.item_assign_category_index =
-                            first_non_reserved_category_index(&self.category_rows);
-                        self.clear_input();
-                        self.status =
-                            "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
-                                .to_string();
-                    }
+                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.item_assign_category_index =
+                        first_non_reserved_category_index(&self.category_rows);
+                    self.clear_input();
+                    self.status =
+                        "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                            .to_string();
                 }
             }
             KeyCode::Char('p') => self.toggle_preview(),
@@ -282,8 +278,7 @@ impl App {
             self.mode = Mode::ItemEditInput;
             self.set_input(existing_text);
             self.item_edit_focus = ItemEditFocus::Text;
-            self.item_edit_note = existing_note;
-            self.item_edit_note_cursor = self.item_edit_note.chars().count();
+            self.item_edit_note.set(existing_note);
             self.status =
                 "Edit item: Tab cycles fields/buttons, Enter activates focused control, Up/Down in note"
                     .to_string();
@@ -304,7 +299,7 @@ impl App {
                 self.status = "Add canceled".to_string();
             }
             KeyCode::Enter => {
-                let text = self.input.trim();
+                let text = self.input.trimmed();
                 if !text.is_empty() {
                     let text_value = text.to_string();
                     let category_names: Vec<String> = agenda
@@ -337,7 +332,6 @@ impl App {
                 self.mode = Mode::Normal;
                 self.clear_input();
                 self.item_edit_note.clear();
-                self.item_edit_note_cursor = 0;
                 self.item_edit_focus = ItemEditFocus::Text;
                 self.status = "Edit canceled".to_string();
             }
@@ -357,7 +351,7 @@ impl App {
                     self.cycle_item_edit_focus(1);
                 }
                 ItemEditFocus::Note => {
-                    self.insert_item_edit_note_newline();
+                    self.item_edit_note.handle_key(KeyCode::Enter, true);
                 }
                 ItemEditFocus::CategoriesButton => {
                     self.open_item_assign_picker_from_item_edit();
@@ -369,7 +363,6 @@ impl App {
                     self.mode = Mode::Normal;
                     self.clear_input();
                     self.item_edit_note.clear();
-                    self.item_edit_note_cursor = 0;
                     self.item_edit_focus = ItemEditFocus::Text;
                     self.status = "Edit canceled".to_string();
                 }
@@ -390,7 +383,6 @@ impl App {
             return;
         }
         self.mode = Mode::ItemAssignCategoryPicker;
-        self.item_assign_return_to_item_edit = true;
         self.item_assign_category_index = first_non_reserved_category_index(&self.category_rows);
         self.status =
             "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
@@ -402,21 +394,20 @@ impl App {
             self.mode = Mode::Normal;
             self.clear_input();
             self.item_edit_note.clear();
-            self.item_edit_note_cursor = 0;
             self.item_edit_focus = ItemEditFocus::Text;
             self.status = "Edit failed: no selected item".to_string();
             return Ok(());
         };
 
-        let updated_text = self.input.trim().to_string();
+        let updated_text = self.input.trimmed().to_string();
         if updated_text.is_empty() {
             self.status = "Cannot save: text cannot be empty".to_string();
             return Ok(());
         }
-        let updated_note = if self.item_edit_note.trim().is_empty() {
+        let updated_note = if self.item_edit_note.trimmed().is_empty() {
             None
         } else {
-            Some(self.item_edit_note.clone())
+            Some(self.item_edit_note.text().to_string())
         };
 
         let mut item = agenda
@@ -427,7 +418,6 @@ impl App {
             self.mode = Mode::Normal;
             self.clear_input();
             self.item_edit_note.clear();
-            self.item_edit_note_cursor = 0;
             self.item_edit_focus = ItemEditFocus::Text;
             self.status = "Edit canceled: no changes".to_string();
             return Ok(());
@@ -445,7 +435,6 @@ impl App {
         self.mode = Mode::Normal;
         self.clear_input();
         self.item_edit_note.clear();
-        self.item_edit_note_cursor = 0;
         self.item_edit_focus = ItemEditFocus::Text;
         self.status = "Item updated".to_string();
         Ok(())
@@ -470,10 +459,10 @@ impl App {
                     return Ok(false);
                 };
 
-                let new_note = if self.input.trim().is_empty() {
+                let new_note = if self.input.trimmed().is_empty() {
                     None
                 } else {
-                    Some(self.input.clone())
+                    Some(self.input.text().to_string())
                 };
 
                 let mut item = agenda
@@ -516,12 +505,7 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.mode = if self.item_assign_return_to_item_edit {
-                    Mode::ItemEditInput
-                } else {
-                    Mode::Normal
-                };
-                self.item_assign_return_to_item_edit = false;
+                self.mode = Mode::Normal;
                 self.clear_input();
                 self.status = "Assign canceled".to_string();
             }
@@ -547,12 +531,7 @@ impl App {
             }
             KeyCode::Char(' ') => {
                 let Some(item_id) = self.selected_item_id() else {
-                    self.mode = if self.item_assign_return_to_item_edit {
-                        Mode::ItemEditInput
-                    } else {
-                        Mode::Normal
-                    };
-                    self.item_assign_return_to_item_edit = false;
+                    self.mode = Mode::Normal;
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -618,12 +597,7 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.mode = if self.item_assign_return_to_item_edit {
-                    Mode::ItemEditInput
-                } else {
-                    Mode::Normal
-                };
-                self.item_assign_return_to_item_edit = false;
+                self.mode = Mode::Normal;
                 self.clear_input();
                 self.status = "Category edit saved".to_string();
             }
@@ -651,7 +625,7 @@ impl App {
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
-                let name = self.input.trim().to_string();
+                let name = self.input.trimmed().to_string();
                 if name.is_empty() {
                     self.mode = Mode::ItemAssignCategoryPicker;
                     self.clear_input();
@@ -770,7 +744,7 @@ impl App {
             }
             KeyCode::Enter => {
                 self.mode = Mode::Normal;
-                let value = self.input.trim().to_string();
+                let value = self.input.trimmed().to_string();
                 self.filter = if value.is_empty() { None } else { Some(value) };
                 self.refresh(agenda.store())?;
                 self.status = if self.filter.is_some() {

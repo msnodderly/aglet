@@ -82,33 +82,6 @@ impl App {
         if matches!(self.mode, Mode::ViewCreateCategoryPicker) {
             self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
         }
-        if self.mode == Mode::ViewEditor {
-            self.render_view_editor(frame, centered_rect(72, 72, frame.area()));
-        }
-        if self.mode == Mode::ViewEditorCategoryPicker {
-            self.render_view_editor_category_picker(frame, centered_rect(72, 72, frame.area()));
-        }
-        if self.mode == Mode::ViewManagerCategoryPicker {
-            self.render_view_manager_category_picker(frame, centered_rect(72, 72, frame.area()));
-        }
-        if self.mode == Mode::ViewEditorBucketPicker {
-            self.render_view_editor_bucket_picker(frame, centered_rect(60, 60, frame.area()));
-        }
-        if self.mode == Mode::ViewSectionEditor {
-            self.render_view_section_editor(frame, centered_rect(72, 72, frame.area()));
-        }
-        if matches!(
-            self.mode,
-            Mode::ViewSectionDetail | Mode::ViewSectionTitleInput
-        ) {
-            self.render_view_section_detail(frame, centered_rect(72, 72, frame.area()));
-        }
-        if matches!(
-            self.mode,
-            Mode::ViewUnmatchedSettings | Mode::ViewUnmatchedLabelInput
-        ) {
-            self.render_view_unmatched_settings(frame, centered_rect(60, 40, frame.area()));
-        }
     }
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
@@ -118,8 +91,6 @@ impl App {
             Mode::FilterInput => Some("Filter> "),
             Mode::ViewCreateNameInput => Some("View create> "),
             Mode::ViewRenameInput => Some("View rename> "),
-            Mode::ViewSectionTitleInput => Some("Section title> "),
-            Mode::ViewUnmatchedLabelInput => Some("Unmatched label> "),
             Mode::CategoryCreateInput => Some("Category create> "),
             Mode::CategoryRenameInput => Some("Category rename> "),
             Mode::ItemAssignCategoryInput => Some("Category> "),
@@ -177,10 +148,7 @@ impl App {
                 if regions.note_inner.width == 0 || regions.note_inner.height == 0 {
                     return None;
                 }
-                let (line, col) = note_cursor_line_col(
-                    &self.item_edit_note,
-                    self.clamped_item_edit_note_cursor(),
-                );
+                let (line, col) = self.item_edit_note.line_col();
                 let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
                 let visible_line = line.saturating_sub(scroll);
                 let max_x = regions
@@ -227,8 +195,7 @@ impl App {
             return None;
         }
 
-        let cursor = self.category_config_note_cursor().unwrap_or(0);
-        let (line, col) = note_cursor_line_col(&editor.note, cursor);
+        let (line, col) = editor.note.line_col();
         let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
         let visible_line = line.saturating_sub(scroll);
         let max_x = regions
@@ -274,8 +241,8 @@ impl App {
     }
 
     pub(crate) fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        if self.mode == Mode::ViewManagerScreen {
-            self.render_view_manager_screen(frame, area);
+        if self.mode == Mode::ViewEdit {
+            self.render_view_edit_screen(frame, area);
             return;
         }
         if matches!(
@@ -317,278 +284,6 @@ impl App {
         } else {
             self.render_board_columns(frame, area);
         }
-    }
-
-    pub(crate) fn render_view_manager_screen(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let panes = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(30),
-                Constraint::Percentage(40),
-                Constraint::Percentage(30),
-            ])
-            .split(area);
-
-        let selected_view = self.views.get(self.picker_index);
-        let views_items: Vec<ListItem<'_>> = if self.views.is_empty() {
-            vec![ListItem::new(Line::from("(no views)"))]
-        } else {
-            self.views
-                .iter()
-                .map(|view| ListItem::new(Line::from(view.name.clone())))
-                .collect()
-        };
-        let views_border = if self.view_manager_pane == ViewManagerPane::Views {
-            Color::Cyan
-        } else {
-            Color::Blue
-        };
-        let mut views_state = Self::list_state_for(
-            panes[0],
-            if self.views.is_empty() {
-                None
-            } else {
-                Some(self.picker_index)
-            },
-        );
-        frame.render_stateful_widget(
-            List::new(views_items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("Views")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(views_border)),
-                ),
-            panes[0],
-            &mut views_state,
-        );
-        Self::render_vertical_scrollbar(frame, panes[0], self.views.len(), views_state.offset());
-
-        let definition_panes = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(panes[1]);
-        let tab_index = if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
-            0
-        } else {
-            1
-        };
-        frame.render_widget(
-            Tabs::new(["Criteria", "Columns"])
-                .select(tab_index)
-                .highlight_style(selected_row_style())
-                .divider(" ")
-                .padding("", "")
-                .block(Block::default().title("t:toggle")),
-            definition_panes[0],
-        );
-
-        let mut definition_items = vec![ListItem::new(Line::from(""))];
-        let mut definition_selected_line = None;
-        if let Some(view) = selected_view {
-            if self.view_manager_definition_sub_tab == DefinitionSubTab::Criteria {
-                let validation_errors = self.view_manager_representability_errors();
-                definition_items.push(ListItem::new(Line::from(format!("View: {}", view.name))));
-                definition_items.push(ListItem::new(Line::from(format!(
-                    "Rows: {}{}",
-                    self.view_manager_rows.len(),
-                    if self.view_manager_dirty {
-                        "  *unsaved*"
-                    } else {
-                        ""
-                    }
-                ))));
-                definition_items.push(ListItem::new(Line::from(format!(
-                    "Preview matching: {}",
-                    self.view_manager_preview_count
-                ))));
-                if validation_errors.is_empty() {
-                    definition_items.push(ListItem::new(Line::from("Validation: ok")));
-                } else {
-                    definition_items.push(ListItem::new(Line::styled(
-                        format!("Validation errors: {}", validation_errors.len()),
-                        Style::default().fg(Color::Red),
-                    )));
-                    definition_items.push(ListItem::new(Line::styled(
-                        format!("  - {}", validation_errors[0]),
-                        Style::default().fg(Color::Red),
-                    )));
-                }
-                definition_items.push(ListItem::new(Line::from("")));
-                if self.view_manager_rows.is_empty() {
-                    definition_items.push(ListItem::new(Line::from("(no criteria rows)")));
-                } else {
-                    let row_start = definition_items.len();
-                    definition_items.extend(self.view_manager_rows.iter().enumerate().map(
-                        |(index, row)| {
-                            let join = if index == 0 {
-                                "  "
-                            } else if row.join_is_or {
-                                "OR"
-                            } else {
-                                "AND"
-                            };
-                            let sign = match row.sign {
-                                ViewCriteriaSign::Include => '+',
-                                ViewCriteriaSign::Exclude => '-',
-                            };
-                            let category_name = self.view_manager_category_label(row.category_id);
-                            let text = format!(
-                                "{join} {}{} {}",
-                                "  ".repeat(row.depth),
-                                sign,
-                                category_name
-                            );
-                            ListItem::new(Line::from(text))
-                        },
-                    ));
-                    definition_selected_line = Some(
-                        row_start
-                            + self
-                                .view_manager_definition_index
-                                .min(self.view_manager_rows.len().saturating_sub(1)),
-                    );
-                }
-            } else {
-                let category_names = category_name_map(&self.categories);
-                definition_items.push(ListItem::new(Line::from(format!("View: {}", view.name))));
-                definition_items.push(ListItem::new(Line::from(format!(
-                    "Columns: {}{}",
-                    view.columns.len(),
-                    if self.view_manager_dirty {
-                        "  *unsaved*"
-                    } else {
-                        ""
-                    }
-                ))));
-                definition_items.push(ListItem::new(Line::from("")));
-                if view.columns.is_empty() {
-                    definition_items
-                        .push(ListItem::new(Line::from("(no columns — legacy rendering)")));
-                } else {
-                    let row_start = definition_items.len();
-                    definition_items.extend(view.columns.iter().map(|col| {
-                        let label = category_names
-                            .get(&col.heading)
-                            .cloned()
-                            .unwrap_or_else(|| "(deleted)".to_string());
-                        let kind_tag = match col.kind {
-                            ColumnKind::When => " [When]",
-                            ColumnKind::Standard => "",
-                        };
-                        ListItem::new(Line::from(format!("{label}{kind_tag}  w:{}", col.width)))
-                    }));
-                    definition_selected_line = Some(
-                        row_start
-                            + self
-                                .view_manager_column_index
-                                .min(view.columns.len().saturating_sub(1)),
-                    );
-                }
-                definition_items.push(ListItem::new(Line::from("")));
-                if self.view_manager_column_width_input {
-                    definition_items
-                        .push(ListItem::new(Line::from(format!("Width> {}", self.input))));
-                } else {
-                    definition_items.push(ListItem::new(Line::from(
-                        "N:add  x:del  [/]:move  w:width  Enter:heading",
-                    )));
-                }
-            }
-        } else {
-            definition_items.push(ListItem::new(Line::from("(no selected view)")));
-        }
-        let definition_border = if self.view_manager_pane == ViewManagerPane::Definition {
-            Color::Cyan
-        } else {
-            Color::Blue
-        };
-        let definition_item_count = definition_items.len();
-        let mut definition_state =
-            Self::list_state_for(definition_panes[1], definition_selected_line);
-        frame.render_stateful_widget(
-            List::new(definition_items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("Definition")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(definition_border)),
-                ),
-            definition_panes[1],
-            &mut definition_state,
-        );
-        Self::render_vertical_scrollbar(
-            frame,
-            definition_panes[1],
-            definition_item_count,
-            definition_state.offset(),
-        );
-
-        let mut section_items = vec![ListItem::new(Line::from(""))];
-        let mut section_selected_line = None;
-        if let Some(view) = selected_view {
-            if view.sections.is_empty() {
-                section_items.push(ListItem::new(Line::from("(no sections configured)")));
-            } else {
-                let row_start = section_items.len();
-                section_items.extend(
-                    view.sections
-                        .iter()
-                        .map(|section| ListItem::new(Line::from(section.title.clone()))),
-                );
-                section_selected_line = Some(
-                    row_start
-                        + self
-                            .view_manager_section_index
-                            .min(view.sections.len().saturating_sub(1)),
-                );
-            }
-            section_items.push(ListItem::new(Line::from("")));
-            section_items.push(ListItem::new(Line::from(format!(
-                "Unmatched: {}",
-                if view.show_unmatched { "on" } else { "off" }
-            ))));
-            section_items.push(ListItem::new(Line::from(format!(
-                "Label: {}",
-                if view.unmatched_label.trim().is_empty() {
-                    "Unassigned".to_string()
-                } else {
-                    view.unmatched_label.clone()
-                }
-            ))));
-        } else {
-            section_items.push(ListItem::new(Line::from("(no selected view)")));
-        }
-        let section_border = if self.view_manager_pane == ViewManagerPane::Sections {
-            Color::Cyan
-        } else {
-            Color::Blue
-        };
-        let section_item_count = section_items.len();
-        let mut section_state = Self::list_state_for(panes[2], section_selected_line);
-        frame.render_stateful_widget(
-            List::new(section_items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("Sections")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(section_border)),
-                ),
-            panes[2],
-            &mut section_state,
-        );
-        Self::render_vertical_scrollbar(
-            frame,
-            panes[2],
-            section_item_count,
-            section_state.offset(),
-        );
     }
 
     pub(crate) fn render_board_columns(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -982,31 +677,18 @@ impl App {
 
     pub(crate) fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
-            Mode::AddInput => format!("Add> {}", self.input),
-            Mode::NoteEditInput => format!("Note> {}", self.input),
-            Mode::FilterInput => format!("Filter> {}", self.input),
+            Mode::AddInput => format!("Add> {}", self.input.text()),
+            Mode::NoteEditInput => format!("Note> {}", self.input.text()),
+            Mode::FilterInput => format!("Filter> {}", self.input.text()),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
-            Mode::ViewCreateNameInput => format!("View create> {}", self.input),
-            Mode::ViewRenameInput => format!("View rename> {}", self.input),
+            Mode::ViewCreateNameInput => format!("View create> {}", self.input.text()),
+            Mode::ViewRenameInput => format!("View rename> {}", self.input.text()),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategoryPicker => {
                 "Set include/exclude categories for new view".to_string()
             }
-            Mode::ViewManagerCategoryPicker => "Pick category for criteria row".to_string(),
-            Mode::ViewManagerScreen => format!(
-                "View manager pane:{:?} preview:{}{}",
-                self.view_manager_pane,
-                self.view_manager_preview_count,
-                if self.view_manager_dirty {
-                    "  *unsaved*"
-                } else {
-                    ""
-                }
-            ),
-            Mode::ViewSectionTitleInput => format!("Section title> {}", self.input),
-            Mode::ViewUnmatchedLabelInput => format!("Unmatched label> {}", self.input),
-            Mode::CategoryCreateInput => format!("Category create> {}", self.input),
-            Mode::CategoryRenameInput => format!("Category rename> {}", self.input),
+            Mode::CategoryCreateInput => format!("Category create> {}", self.input.text()),
+            Mode::CategoryRenameInput => format!("Category rename> {}", self.input.text()),
             Mode::CategoryReparentPicker => "Select category parent".to_string(),
             Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
             Mode::CategoryConfigEditor => {
@@ -1017,7 +699,7 @@ impl App {
                 }
             }
             Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
-            Mode::ItemAssignCategoryInput => format!("Category> {}", self.input),
+            Mode::ItemAssignCategoryInput => format!("Category> {}", self.input.text()),
             Mode::InspectUnassignPicker => "Select assignment".to_string(),
             Mode::ItemEditInput => format!(
                 "Edit item fields in popup (focus: {})",
@@ -1043,26 +725,15 @@ impl App {
                 "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  Enter:save (except note)  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
-                "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
+                "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
-            Mode::ViewManagerScreen => {
-                "Tab/Shift+Tab:pane  j/k:row  Enter:activate  N:add  x:remove  [/] reorder  a/o:join  (/):depth  c:pick-category  u:unmatched  s:save  q/Esc:back"
-            }
-            Mode::ViewManagerCategoryPicker => "j/k:select  Enter/Space:choose  Esc:cancel",
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
-            Mode::ViewEditor => "j/k:select  o/right:open  +|-|[|]:quick open  s/u:sections/unmatched  Enter:save  Esc:cancel",
-            Mode::ViewEditorCategoryPicker => "j/k:select category  Space:toggle  Enter/Esc:back",
-            Mode::ViewEditorBucketPicker => "j/k:select bucket  Space:toggle  Enter/Esc:back",
-            Mode::ViewSectionEditor => "j/k:select  N:add  x:remove  [/] reorder  Enter:edit  Esc:back",
-            Mode::ViewSectionDetail => "t:title  +/-:criteria  [/] virtual  a:on-insert  r:on-remove  h:children  Esc:back",
-            Mode::ViewSectionTitleInput => "Type section title, Enter:save, Esc:cancel",
-            Mode::ViewUnmatchedSettings => "t:toggle unmatched  l:label  Esc:back",
-            Mode::ViewUnmatchedLabelInput => "Type unmatched label, Enter:save, Esc:cancel",
+            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add section  e/t:rename section  +/-:criteria  x:remove  Enter:save  Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
             Mode::ItemEditInput => {
@@ -1111,14 +782,14 @@ impl App {
 
         frame.render_widget(Paragraph::new("Edit selected item"), regions.heading);
         frame.render_widget(
-            Paragraph::new(format!("{text_marker} Text> {}", self.input)),
+            Paragraph::new(format!("{text_marker} Text> {}", self.input.text())),
             regions.text,
         );
 
         let note_lines: Vec<Line<'_>> = if self.item_edit_note.is_empty() {
             vec![Line::from("")]
         } else {
-            self.item_edit_note.lines().map(Line::from).collect()
+            self.item_edit_note.text().lines().map(Line::from).collect()
         };
         let note_border_color = if self.item_edit_focus == ItemEditFocus::Note {
             Color::Cyan
@@ -1130,8 +801,7 @@ impl App {
         } else {
             "Note (editable)"
         };
-        let note_cursor_line =
-            note_cursor_line_col(&self.item_edit_note, self.clamped_item_edit_note_cursor()).0;
+        let note_cursor_line = self.item_edit_note.line_col().0;
         let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
         frame.render_widget(
             Paragraph::new(note_lines)
@@ -1148,7 +818,7 @@ impl App {
         Self::render_vertical_scrollbar(
             frame,
             regions.note,
-            self.item_edit_note.lines().count().max(1),
+            self.item_edit_note.text().lines().count().max(1),
             note_scroll as usize,
         );
         frame.render_widget(
@@ -1280,374 +950,6 @@ impl App {
         );
         Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
     }
-
-    pub(crate) fn render_view_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-        let Some(editor) = &self.view_editor else {
-            return;
-        };
-        let mut items = vec![
-            ListItem::new(Line::from(format!(
-                "Editing view: {}",
-                editor.base_view_name
-            ))),
-            ListItem::new(Line::from(format!(
-                "Preview matches: {}",
-                editor.preview_count
-            ))),
-            ListItem::new(Line::from("")),
-        ];
-        let actions = [
-            format!(
-                "Include categories ({})",
-                editor.draft.criteria.include.len()
-            ),
-            format!(
-                "Exclude categories ({})",
-                editor.draft.criteria.exclude.len()
-            ),
-            format!(
-                "Virtual include buckets ({})",
-                editor.draft.criteria.virtual_include.len()
-            ),
-            format!(
-                "Virtual exclude buckets ({})",
-                editor.draft.criteria.virtual_exclude.len()
-            ),
-            format!("Sections ({})", editor.draft.sections.len()),
-            format!(
-                "Unmatched settings (enabled={} label={})",
-                editor.draft.show_unmatched, editor.draft.unmatched_label
-            ),
-        ];
-        let actions_len = actions.len();
-        let action_start = items.len();
-        items.extend(
-            actions
-                .into_iter()
-                .map(|action| ListItem::new(Line::from(action))),
-        );
-        let selected_line = Some(action_start + editor.action_index.min(actions_len - 1));
-        items.extend([
-            ListItem::new(Line::from("")),
-            ListItem::new(Line::from("Use j/k then o/right to open selected editor.")),
-            ListItem::new(Line::from(
-                "Quick keys: + include  - exclude  ] v-include  [ v-exclude",
-            )),
-            ListItem::new(Line::from(
-                "            s sections  u unmatched  Enter save  Esc cancel",
-            )),
-        ]);
-        if editor.draft.sections.is_empty() {
-            items.push(ListItem::new(Line::from("No sections configured yet.")));
-        }
-
-        let item_count = items.len();
-        let mut state = Self::list_state_for(area, selected_line);
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("View Editor")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            area,
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
-    }
-
-    pub(crate) fn render_view_editor_category_picker(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: Rect,
-    ) {
-        frame.render_widget(Clear, area);
-        let Some(editor) = &self.view_editor else {
-            return;
-        };
-        let Some(target) = self.view_editor_category_target else {
-            return;
-        };
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(area);
-        frame.render_widget(
-            Paragraph::new(format!("Target: {}", category_target_label(target))),
-            chunks[0],
-        );
-
-        let items: Vec<ListItem<'_>> = self
-            .category_rows
-            .iter()
-            .map(|row| {
-                let selected =
-                    category_target_contains(&editor.draft, editor.section_index, target, row.id);
-                let check = if selected { "[x]" } else { "[ ]" };
-                let category_name = with_note_marker(row.name.clone(), row.has_note);
-                let text = format!("{check} {}{}", "  ".repeat(row.depth), category_name);
-                ListItem::new(Line::from(text))
-            })
-            .collect();
-
-        let mut state = Self::list_state_for(
-            chunks[1],
-            if self.category_rows.is_empty() {
-                None
-            } else {
-                Some(editor.category_index)
-            },
-        );
-        let item_count = items.len();
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("Category Picker")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            chunks[1],
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
-    }
-
-    pub(crate) fn render_view_manager_category_picker(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: Rect,
-    ) {
-        frame.render_widget(Clear, area);
-        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
-            vec![ListItem::new(Line::from("(no categories)"))]
-        } else {
-            self.category_rows
-                .iter()
-                .map(|row| {
-                    let selected_flag = self
-                        .view_manager_category_row_index
-                        .and_then(|row_index| self.view_manager_rows.get(row_index))
-                        .map(|criteria_row| criteria_row.category_id == row.id)
-                        .unwrap_or(false);
-                    let check = if selected_flag { "[x]" } else { "[ ]" };
-                    let reserved = if row.is_reserved { " [reserved]" } else { "" };
-                    let category_name = with_note_marker(row.name.clone(), row.has_note);
-                    let text = format!(
-                        "{}{} {}{}",
-                        "  ".repeat(row.depth),
-                        check,
-                        category_name,
-                        reserved
-                    );
-                    ListItem::new(Line::from(text))
-                })
-                .collect()
-        };
-        let mut state = Self::list_state_for(
-            area,
-            if self.category_rows.is_empty() {
-                None
-            } else {
-                Some(self.view_category_index)
-            },
-        );
-        let item_count = items.len();
-
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("View Manager Category Picker")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            area,
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
-    }
-
-    pub(crate) fn render_view_editor_bucket_picker(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: Rect,
-    ) {
-        frame.render_widget(Clear, area);
-        let Some(editor) = &self.view_editor else {
-            return;
-        };
-        let Some(target) = self.view_editor_bucket_target else {
-            return;
-        };
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(area);
-        frame.render_widget(
-            Paragraph::new(format!("Target: {}", bucket_target_label(target))),
-            chunks[0],
-        );
-
-        let items: Vec<ListItem<'_>> = when_bucket_options()
-            .iter()
-            .map(|bucket| {
-                let selected =
-                    bucket_target_contains(&editor.draft, editor.section_index, target, *bucket);
-                let check = if selected { "[x]" } else { "[ ]" };
-                let text = format!("{check} {}", when_bucket_label(*bucket));
-                ListItem::new(Line::from(text))
-            })
-            .collect();
-
-        let mut state = Self::list_state_for(chunks[1], Some(editor.bucket_index));
-        let item_count = items.len();
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("Bucket Picker")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            chunks[1],
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
-    }
-
-    pub(crate) fn render_view_section_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-        let Some(editor) = &self.view_editor else {
-            return;
-        };
-        let mut items = vec![ListItem::new(Line::from("Sections in current view draft:"))];
-        let mut selected_line = None;
-        if editor.draft.sections.is_empty() {
-            items.push(ListItem::new(Line::from("(no sections)")));
-        } else {
-            let row_start = items.len();
-            items.extend(editor.draft.sections.iter().map(|section| {
-                ListItem::new(Line::from(format!(
-                    "{} (include={}, exclude={}, v+={}, v-={}, show_children={})",
-                    section.title,
-                    section.criteria.include.len(),
-                    section.criteria.exclude.len(),
-                    section.criteria.virtual_include.len(),
-                    section.criteria.virtual_exclude.len(),
-                    section.show_children
-                )))
-            }));
-            selected_line = Some(
-                row_start
-                    + editor
-                        .section_index
-                        .min(editor.draft.sections.len().saturating_sub(1)),
-            );
-        }
-        items.push(ListItem::new(Line::from("")));
-        items.push(ListItem::new(Line::from(
-            "N add  x remove  [/] reorder  Enter edit  Esc back",
-        )));
-
-        let item_count = items.len();
-        let mut state = Self::list_state_for(area, selected_line);
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("Section Editor")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            area,
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
-    }
-
-    pub(crate) fn render_view_section_detail(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-        let Some(editor) = &self.view_editor else {
-            return;
-        };
-        let Some(section) = editor.draft.sections.get(editor.section_index) else {
-            return;
-        };
-
-        let lines = vec![
-            Line::from(format!("Section: {}", section.title)),
-            Line::from(format!(
-                "criteria include={} exclude={} v_include={} v_exclude={}",
-                section.criteria.include.len(),
-                section.criteria.exclude.len(),
-                section.criteria.virtual_include.len(),
-                section.criteria.virtual_exclude.len()
-            )),
-            Line::from(format!(
-                "on_insert_assign={} on_remove_unassign={}",
-                section.on_insert_assign.len(),
-                section.on_remove_unassign.len()
-            )),
-            Line::from(format!("show_children={}", section.show_children)),
-            Line::from(""),
-            Line::from("t title  + include  - exclude  ] v-include  [ v-exclude"),
-            Line::from("a on-insert  r on-remove  h toggle show_children  Esc back"),
-        ];
-
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .title("Section Detail")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                )
-                .wrap(Wrap { trim: false }),
-            area,
-        );
-    }
-
-    pub(crate) fn render_view_unmatched_settings(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: Rect,
-    ) {
-        frame.render_widget(Clear, area);
-        let Some(editor) = &self.view_editor else {
-            return;
-        };
-        let lines = vec![
-            Line::from(format!("show_unmatched: {}", editor.draft.show_unmatched)),
-            Line::from(format!("unmatched_label: {}", editor.draft.unmatched_label)),
-            Line::from(""),
-            Line::from("t toggle visibility  l edit label  Esc back"),
-        ];
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .title("Unmatched Settings")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                )
-                .wrap(Wrap { trim: false }),
-            area,
-        );
-    }
-
     pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
@@ -1938,7 +1240,7 @@ impl App {
         let note_lines: Vec<Line<'_>> = if editor.note.is_empty() {
             vec![Line::from("")]
         } else {
-            editor.note.lines().map(Line::from).collect()
+            editor.note.text().lines().map(Line::from).collect()
         };
         let note_border_color = if editor.focus == CategoryConfigFocus::Note {
             Color::Cyan
@@ -1950,8 +1252,7 @@ impl App {
         } else {
             "Note (editable)"
         };
-        let note_cursor = self.category_config_note_cursor().unwrap_or(0);
-        let note_cursor_line = note_cursor_line_col(&editor.note, note_cursor).0;
+        let note_cursor_line = editor.note.line_col().0;
         let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
         frame.render_widget(
             Paragraph::new(note_lines)
@@ -1968,7 +1269,7 @@ impl App {
         Self::render_vertical_scrollbar(
             frame,
             regions.note,
-            editor.note.lines().count().max(1),
+            editor.note.text().lines().count().max(1),
             note_scroll as usize,
         );
 
@@ -1992,5 +1293,371 @@ impl App {
             ),
             regions.help,
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // ViewEdit (unified view editor)
+    // -------------------------------------------------------------------------
+
+    pub(crate) fn render_view_edit_screen(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(state) = &self.view_edit_state else {
+            return;
+        };
+
+        // Split into 4 vertical regions
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(20),
+                Constraint::Percentage(35),
+                Constraint::Percentage(20),
+            ])
+            .split(area);
+
+        let focused_border = Color::Cyan;
+        let inactive_border = Color::Blue;
+
+        let border_for = |region: ViewEditRegion| -> Color {
+            if state.region == region {
+                focused_border
+            } else {
+                inactive_border
+            }
+        };
+
+        let category_names = category_name_map(&self.categories);
+
+        // ── Criteria region ──────────────────────────────────────────────────
+        {
+            let block = Block::default()
+                .title(format!(
+                    " CRITERIA  matches:{} ",
+                    state.preview_count
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Criteria)));
+
+            let mut items: Vec<ListItem<'_>> = state
+                .criteria_rows
+                .iter()
+                .enumerate()
+                .map(|(i, row)| {
+                    let name = category_names
+                        .get(&row.category_id)
+                        .cloned()
+                        .unwrap_or_else(|| "(deleted)".to_string());
+                    let sign = match row.sign {
+                        ViewCriteriaSign::Include => "+",
+                        ViewCriteriaSign::Exclude => "-",
+                    };
+                    let label = format!("  {sign}{name}");
+                    let style = if i == state.criteria_index
+                        && state.region == ViewEditRegion::Criteria
+                    {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(Line::from(label)).style(style)
+                })
+                .collect();
+
+            // Virtual include/exclude summary lines
+            if !state.draft.criteria.virtual_include.is_empty() {
+                let buckets: Vec<&str> = when_bucket_options()
+                    .iter()
+                    .filter(|b| state.draft.criteria.virtual_include.contains(*b))
+                    .map(|b| when_bucket_label(*b))
+                    .collect();
+                items.push(ListItem::new(Line::from(format!(
+                    "  When: {}",
+                    buckets.join(", ")
+                ))));
+            }
+            if !state.draft.criteria.virtual_exclude.is_empty() {
+                let buckets: Vec<&str> = when_bucket_options()
+                    .iter()
+                    .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
+                    .map(|b| when_bucket_label(*b))
+                    .collect();
+                items.push(ListItem::new(Line::from(format!(
+                    "  When (excl): {}",
+                    buckets.join(", ")
+                ))));
+            }
+
+            if items.is_empty() {
+                items.push(ListItem::new(Line::from("  (no criteria — matches all items)")));
+            }
+
+            let list = List::new(items).block(block);
+            frame.render_widget(list, chunks[0]);
+        }
+
+        // ── Columns region ───────────────────────────────────────────────────
+        {
+            let block = Block::default()
+                .title(" COLUMNS ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Columns)));
+
+            let items: Vec<ListItem<'_>> = if state.draft.columns.is_empty() {
+                vec![ListItem::new(Line::from("  (no columns)"))]
+            } else {
+                state
+                    .draft
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, col)| {
+                        let name = category_names
+                            .get(&col.heading)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string());
+                        let kind_tag = match col.kind {
+                            ColumnKind::When => "  [When]",
+                            ColumnKind::Standard => "",
+                        };
+                        let label = format!("  {}. {}  w:{}{}", i + 1, name, col.width, kind_tag);
+                        let style = if i == state.column_index
+                            && state.region == ViewEditRegion::Columns
+                        {
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(Line::from(label)).style(style)
+                    })
+                    .collect()
+            };
+
+            let list = List::new(items).block(block);
+            frame.render_widget(list, chunks[1]);
+        }
+
+        // ── Sections region ──────────────────────────────────────────────────
+        {
+            let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
+                if let ViewEditInlineInput::SectionTitle { section_index } = inp {
+                    Some(*section_index)
+                } else {
+                    None
+                }
+            });
+
+            let block = Block::default()
+                .title(" SECTIONS ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Sections)));
+
+            let mut items: Vec<ListItem<'_>> = Vec::new();
+            let mut selected_line: Option<usize> = None;
+            if state.draft.sections.is_empty() {
+                items.push(ListItem::new(Line::from("  (no sections)")));
+            } else {
+                for (i, section) in state.draft.sections.iter().enumerate() {
+                    if i == state.section_index {
+                        selected_line = Some(items.len());
+                    }
+                    let cursor = if i == state.section_index
+                        && state.region == ViewEditRegion::Sections
+                    {
+                        ">"
+                    } else {
+                        " "
+                    };
+
+                    let title = if inline_editing_section == Some(i) {
+                        format!("{}  {}. {} ◀ editing", cursor, i + 1, state.inline_buf.text())
+                    } else {
+                        format!("{}  {}. {}", cursor, i + 1, section.title)
+                    };
+
+                    let style = if i == state.section_index
+                        && state.region == ViewEditRegion::Sections
+                    {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    items.push(ListItem::new(Line::from(title)).style(style));
+
+                    let inc: Vec<String> = section
+                        .criteria
+                        .include
+                        .iter()
+                        .map(|id| {
+                            category_names
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| id.to_string())
+                        })
+                        .collect();
+                    let exc: Vec<String> = section
+                        .criteria
+                        .exclude
+                        .iter()
+                        .map(|id| {
+                            category_names
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| id.to_string())
+                        })
+                        .collect();
+                    if !inc.is_empty() {
+                        items.push(ListItem::new(Line::from(format!(
+                            "     include: {}",
+                            inc.join(", ")
+                        ))));
+                    }
+                    if !exc.is_empty() {
+                        items.push(ListItem::new(Line::from(format!(
+                            "     exclude: {}",
+                            exc.join(", ")
+                        ))));
+                    }
+                    items.push(ListItem::new(Line::from(format!(
+                        "     children:{} (e/t:title  +/-:criteria  a:on-insert  r:on-remove  h:children)",
+                        if section.show_children { "yes" } else { "no" }
+                    ))));
+                }
+            }
+
+            let content_len = items.len();
+            let mut list_state = Self::list_state_for(chunks[2], selected_line);
+            frame.render_stateful_widget(List::new(items).block(block), chunks[2], &mut list_state);
+            Self::render_vertical_scrollbar(frame, chunks[2], content_len, list_state.offset());
+        }
+
+        // ── Unmatched region ─────────────────────────────────────────────────
+        {
+            let editing_label = matches!(
+                state.inline_input,
+                Some(ViewEditInlineInput::UnmatchedLabel)
+            );
+
+            let block = Block::default()
+                .title(" UNMATCHED ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_for(ViewEditRegion::Unmatched)));
+
+            let label_text = if editing_label {
+                format!("  ◀ {}", state.inline_buf.text())
+            } else {
+                format!("  \"{}\"", state.draft.unmatched_label)
+            };
+            let text = format!(
+                "  Visible: {}    Label: {}",
+                if state.draft.show_unmatched { "yes" } else { "no" },
+                label_text
+            );
+            let style = if state.region == ViewEditRegion::Unmatched {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            let para = Paragraph::new(Line::from(text).style(style)).block(block);
+            frame.render_widget(para, chunks[3]);
+        }
+
+        // ── Picker overlay ───────────────────────────────────────────────────
+        if let Some(overlay) = &state.overlay {
+            let overlay_area = {
+                let x = area.x + area.width * 6 / 10;
+                let w = area.width * 4 / 10;
+                Rect::new(x, area.y, w, area.height)
+            };
+            frame.render_widget(Clear, overlay_area);
+            match overlay {
+                ViewEditOverlay::CategoryPicker { target } => {
+                    let title = " Pick categories (Space/Enter toggle, Esc done) ";
+                    let section_expanded = state.section_expanded.unwrap_or(0);
+                    let items: Vec<ListItem<'_>> = self
+                        .category_rows
+                        .iter()
+                        .enumerate()
+                        .map(|(i, row)| {
+                            let indent = "  ".repeat(row.depth);
+                            let checked = match target {
+                                CategoryEditTarget::ViewInclude => {
+                                    if state.region == ViewEditRegion::Columns {
+                                        state.draft.columns.iter().any(|col| {
+                                            col.kind == ColumnKind::Standard
+                                                && col.heading == row.id
+                                        })
+                                    } else {
+                                        state.draft.criteria.include.contains(&row.id)
+                                    }
+                                }
+                                CategoryEditTarget::SectionCriteriaInclude => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.criteria.include.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionCriteriaExclude => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.criteria.exclude.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionOnInsertAssign => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.on_insert_assign.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionOnRemoveUnassign => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.on_remove_unassign.contains(&row.id))
+                                    .unwrap_or(false),
+                            };
+                            let label = format!(
+                                "{indent}[{}] {}",
+                                if checked { "x" } else { " " },
+                                row.name
+                            );
+                            let style = if i == state.picker_index {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
+                            ListItem::new(Line::from(label)).style(style)
+                        })
+                        .collect();
+                    let block = Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow));
+                    let mut list_state = Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(List::new(items).block(block), overlay_area, &mut list_state);
+                }
+                ViewEditOverlay::BucketPicker { .. } => {
+                    let options = when_bucket_options();
+                    let items: Vec<ListItem<'_>> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, bucket)| {
+                            let label = format!("  {}", when_bucket_label(*bucket));
+                            let style = if i == state.picker_index {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
+                            ListItem::new(Line::from(label)).style(style)
+                        })
+                        .collect();
+                    let block = Block::default()
+                        .title(" Pick bucket ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow));
+                    let mut list_state = Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(List::new(items).block(block), overlay_area, &mut list_state);
+                }
+            }
+        }
     }
 }

@@ -21,15 +21,15 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Table, TableState, Tabs, Wrap,
+    ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
-use tui_textarea::{CursorMove, TextArea};
 
 mod app;
 mod input;
 mod modes;
 mod render;
+mod text_buffer;
 mod ui_support;
 
 use ui_support::*;
@@ -154,33 +154,19 @@ struct ReparentOptionRow {
     label: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryEditTarget {
     ViewInclude,
-    ViewExclude,
     SectionCriteriaInclude,
     SectionCriteriaExclude,
     SectionOnInsertAssign,
     SectionOnRemoveUnassign,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum BucketEditTarget {
     ViewVirtualInclude,
     ViewVirtualExclude,
-    SectionVirtualInclude,
-    SectionVirtualExclude,
-}
-
-#[derive(Clone)]
-struct ViewEditorState {
-    base_view_name: String,
-    draft: View,
-    category_index: usize,
-    bucket_index: usize,
-    section_index: usize,
-    action_index: usize,
-    preview_count: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -194,20 +180,11 @@ enum Mode {
     InspectUnassignPicker,
     FilterInput,
     ViewPicker,
-    ViewManagerScreen,
+    ViewEdit,
     ViewCreateNameInput,
     ViewCreateCategoryPicker,
     ViewRenameInput,
     ViewDeleteConfirm,
-    ViewEditor,
-    ViewEditorCategoryPicker,
-    ViewEditorBucketPicker,
-    ViewManagerCategoryPicker,
-    ViewSectionEditor,
-    ViewSectionDetail,
-    ViewSectionTitleInput,
-    ViewUnmatchedSettings,
-    ViewUnmatchedLabelInput,
     ConfirmDelete,
     CategoryManager,
     CategoryCreateInput,
@@ -218,16 +195,60 @@ enum Mode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ViewManagerPane {
-    Views,
-    Definition,
-    Sections,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum DefinitionSubTab {
+enum ViewEditRegion {
     Criteria,
     Columns,
+    Sections,
+    Unmatched,
+}
+
+impl ViewEditRegion {
+    fn next(self) -> Self {
+        match self {
+            Self::Criteria => Self::Columns,
+            Self::Columns => Self::Sections,
+            Self::Sections => Self::Unmatched,
+            Self::Unmatched => Self::Criteria,
+        }
+    }
+
+    fn prev(self) -> Self {
+        match self {
+            Self::Criteria => Self::Unmatched,
+            Self::Columns => Self::Criteria,
+            Self::Sections => Self::Columns,
+            Self::Unmatched => Self::Sections,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ViewEditOverlay {
+    CategoryPicker { target: CategoryEditTarget },
+    BucketPicker { target: BucketEditTarget },
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ViewEditInlineInput {
+    SectionTitle { section_index: usize },
+    UnmatchedLabel,
+    ColumnWidth { column_index: usize },
+}
+
+#[derive(Clone)]
+struct ViewEditState {
+    draft: View,
+    region: ViewEditRegion,
+    criteria_index: usize,
+    column_index: usize,
+    section_index: usize,
+    section_expanded: Option<usize>,
+    overlay: Option<ViewEditOverlay>,
+    inline_input: Option<ViewEditInlineInput>,
+    inline_buf: text_buffer::TextBuffer,
+    picker_index: usize,
+    preview_count: usize,
+    criteria_rows: Vec<ViewCriteriaRow>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -240,8 +261,6 @@ enum ViewCriteriaSign {
 struct ViewCriteriaRow {
     sign: ViewCriteriaSign,
     category_id: CategoryId,
-    join_is_or: bool,
-    depth: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -261,8 +280,7 @@ struct CategoryConfigEditorState {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
-    note: String,
-    note_cursor: usize,
+    note: text_buffer::TextBuffer,
     focus: CategoryConfigFocus,
 }
 
@@ -290,8 +308,7 @@ enum NormalFocus {
 struct App {
     mode: Mode,
     status: String,
-    input: String,
-    input_cursor: usize,
+    input: text_buffer::TextBuffer,
     filter: Option<String>,
     show_preview: bool,
     preview_mode: PreviewMode,
@@ -304,25 +321,9 @@ struct App {
     view_pending_name: Option<String>,
     view_pending_edit_name: Option<String>,
     view_category_index: usize,
-    view_return_to_manager: bool,
-    view_manager_pane: ViewManagerPane,
-    view_manager_definition_index: usize,
-    view_manager_section_index: usize,
-    view_manager_rows: Vec<ViewCriteriaRow>,
-    view_manager_loaded_view_name: Option<String>,
-    view_manager_preview_count: usize,
-    view_manager_dirty: bool,
-    view_manager_category_row_index: Option<usize>,
-    view_manager_definition_sub_tab: DefinitionSubTab,
-    view_manager_column_index: usize,
-    view_manager_column_picker_target: bool,
-    view_manager_column_width_input: bool,
     view_create_include_selection: HashSet<CategoryId>,
     view_create_exclude_selection: HashSet<CategoryId>,
-    view_editor: Option<ViewEditorState>,
-    view_editor_return_to_manager: bool,
-    view_editor_category_target: Option<CategoryEditTarget>,
-    view_editor_bucket_target: Option<BucketEditTarget>,
+    view_edit_state: Option<ViewEditState>,
 
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
@@ -332,10 +333,8 @@ struct App {
     category_reparent_index: usize,
     category_config_editor: Option<CategoryConfigEditorState>,
     item_assign_category_index: usize,
-    item_assign_return_to_item_edit: bool,
     item_edit_focus: ItemEditFocus,
-    item_edit_note: String,
-    item_edit_note_cursor: usize,
+    item_edit_note: text_buffer::TextBuffer,
     preview_provenance_scroll: usize,
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
@@ -351,8 +350,7 @@ impl Default for App {
             status:
                 "Press n to add, v for view palette, c for category manager, p for preview, q to quit"
                     .to_string(),
-            input: String::new(),
-            input_cursor: 0,
+            input: text_buffer::TextBuffer::empty(),
             filter: None,
             show_preview: false,
             preview_mode: PreviewMode::Summary,
@@ -364,25 +362,9 @@ impl Default for App {
             view_pending_name: None,
             view_pending_edit_name: None,
             view_category_index: 0,
-            view_return_to_manager: false,
-            view_manager_pane: ViewManagerPane::Views,
-            view_manager_definition_index: 0,
-            view_manager_section_index: 0,
-            view_manager_rows: Vec::new(),
-            view_manager_loaded_view_name: None,
-            view_manager_preview_count: 0,
-            view_manager_dirty: false,
-            view_manager_category_row_index: None,
-            view_manager_definition_sub_tab: DefinitionSubTab::Criteria,
-            view_manager_column_index: 0,
-            view_manager_column_picker_target: false,
-            view_manager_column_width_input: false,
             view_create_include_selection: HashSet::new(),
             view_create_exclude_selection: HashSet::new(),
-            view_editor: None,
-            view_editor_return_to_manager: false,
-            view_editor_category_target: None,
-            view_editor_bucket_target: None,
+            view_edit_state: None,
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
@@ -391,10 +373,8 @@ impl Default for App {
             category_reparent_index: 0,
             category_config_editor: None,
             item_assign_category_index: 0,
-            item_assign_return_to_item_edit: false,
             item_edit_focus: ItemEditFocus::Text,
-            item_edit_note: String::new(),
-            item_edit_note_cursor: 0,
+            item_edit_note: text_buffer::TextBuffer::empty(),
             preview_provenance_scroll: 0,
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
@@ -412,11 +392,11 @@ mod tests {
 
     use super::{
         add_capture_status_message, board_column_widths, board_item_label, bucket_target_set_mut,
-        build_category_rows, build_reparent_options, category_name_map, category_target_set_mut,
+        build_category_rows, build_reparent_options, category_name_map,
         compute_board_layout, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
-        should_render_unmatched_lane, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewManagerPane,
+        should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
+        BucketEditTarget, CategoryListRow, Mode, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -607,8 +587,6 @@ mod tests {
             (Mode::FilterInput, "Filter> "),
             (Mode::ViewCreateNameInput, "View create> "),
             (Mode::ViewRenameInput, "View rename> "),
-            (Mode::ViewSectionTitleInput, "Section title> "),
-            (Mode::ViewUnmatchedLabelInput, "Unmatched label> "),
             (Mode::CategoryCreateInput, "Category create> "),
             (Mode::CategoryRenameInput, "Category rename> "),
             (Mode::ItemAssignCategoryInput, "Category> "),
@@ -617,8 +595,7 @@ mod tests {
         for (mode, prefix) in cases {
             let app = App {
                 mode,
-                input: input.to_string(),
-                input_cursor: input.len(),
+                input: text_buffer::TextBuffer::new(input.to_string()),
                 ..App::default()
             };
             let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
@@ -641,7 +618,7 @@ mod tests {
         ] {
             let app = App {
                 mode,
-                input: "abc".to_string(),
+                input: text_buffer::TextBuffer::new("abc".to_string()),
                 ..App::default()
             };
             assert_eq!(app.input_cursor_position(footer), None);
@@ -651,10 +628,10 @@ mod tests {
     #[test]
     fn input_cursor_position_clamps_to_footer_inner_width() {
         let footer = Rect::new(0, 0, 8, 3);
+        // cursor clamps to text length (26), which overflows the 8-wide footer → x=6
         let app = App {
             mode: Mode::AddInput,
-            input: "abcdefghijklmnopqrstuvwxyz".to_string(),
-            input_cursor: usize::MAX,
+            input: text_buffer::TextBuffer::new("abcdefghijklmnopqrstuvwxyz".to_string()),
             ..App::default()
         };
 
@@ -666,8 +643,7 @@ mod tests {
         let footer = Rect::new(0, 0, 40, 3);
         let app = App {
             mode: Mode::AddInput,
-            input: "abcd".to_string(),
-            input_cursor: 2,
+            input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
             ..App::default()
         };
 
@@ -680,8 +656,7 @@ mod tests {
         let popup = item_edit_popup_area(screen);
         let app = App {
             mode: Mode::ItemEditInput,
-            input: "abcd".to_string(),
-            input_cursor: 2,
+            input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
             ..App::default()
         };
         assert_eq!(
@@ -860,12 +835,12 @@ mod tests {
     }
 
     #[test]
-    fn view_picker_v_opens_view_manager_screen() {
+    fn view_picker_v_opens_view_edit() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-open-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-edit-open-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -879,774 +854,57 @@ mod tests {
         app.picker_index = 0;
 
         app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open view manager shell");
+            .expect("open view edit");
 
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
-        assert_eq!(app.view_manager_pane, ViewManagerPane::Views);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_tab_cycles_panes() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-tabs-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewManagerScreen;
-        app.view_manager_pane = ViewManagerPane::Views;
-
-        app.handle_view_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab");
-        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
-
-        app.handle_view_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab");
-        assert_eq!(app.view_manager_pane, ViewManagerPane::Sections);
-
-        app.handle_view_manager_key(KeyCode::BackTab, &agenda)
-            .expect("backtab");
-        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.is_some());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn view_manager_sections_support_add_remove_and_reorder() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-sections-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
+    fn view_picker_lowercase_n_opens_view_create() {
+        let (store, db_path) = make_test_store_with_view("picker-lower-n");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
-        let mut view = View::new("Board".to_string());
-        view.sections.push(Section {
-            title: "A".to_string(),
-            criteria: Query::default(),
-            on_insert_assign: std::collections::HashSet::new(),
-            on_remove_unassign: std::collections::HashSet::new(),
-            show_children: false,
-        });
-        view.sections.push(Section {
-            title: "B".to_string(),
-            criteria: Query::default(),
-            on_insert_assign: std::collections::HashSet::new(),
-            on_remove_unassign: std::collections::HashSet::new(),
-            show_children: false,
-        });
-        store.create_view(&view).expect("create view");
-
         let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
+        app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "Board")
-            .expect("board view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Sections;
 
-        app.handle_view_manager_key(KeyCode::Char(']'), &agenda)
-            .expect("reorder down");
-        let selected = app.views.get(app.picker_index).expect("selected view");
-        assert_eq!(selected.sections[0].title, "B");
-        assert_eq!(selected.sections[1].title, "A");
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("n opens create view");
 
-        app.handle_view_manager_key(KeyCode::Char('['), &agenda)
-            .expect("reorder up");
-        let selected = app.views.get(app.picker_index).expect("selected view");
-        assert_eq!(selected.sections[0].title, "A");
-        assert_eq!(selected.sections[1].title, "B");
-
-        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("add section");
-        let selected = app.views.get(app.picker_index).expect("selected view");
-        assert_eq!(selected.sections.len(), 3);
-
-        app.handle_view_manager_key(KeyCode::Char('x'), &agenda)
-            .expect("remove section");
-        let selected = app.views.get(app.picker_index).expect("selected view");
-        assert_eq!(selected.sections.len(), 2);
-        assert!(app.view_manager_dirty);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_section_detail_returns_and_applies_draft_changes() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-section-editor-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut view = View::new("Board".to_string());
-        view.sections.push(Section {
-            title: "A".to_string(),
-            criteria: Query::default(),
-            on_insert_assign: std::collections::HashSet::new(),
-            on_remove_unassign: std::collections::HashSet::new(),
-            show_children: false,
-        });
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "Board")
-            .expect("board view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Sections;
-
-        app.handle_view_manager_key(KeyCode::Enter, &agenda)
-            .expect("open section detail");
-        assert_eq!(app.mode, Mode::ViewSectionDetail);
-        app.handle_view_section_detail_key(KeyCode::Char('h'))
-            .expect("toggle show_children");
-        app.handle_view_section_detail_key(KeyCode::Esc)
-            .expect("return to manager");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
-
-        let selected = app.views.get(app.picker_index).expect("selected view");
-        assert_eq!(selected.sections.len(), 1);
-        assert!(selected.sections[0].show_children);
-        assert!(app.view_manager_dirty);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_unmatched_settings_apply_and_persist_on_save() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-unmatched-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let view = View::new("Board".to_string());
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "Board")
-            .expect("board view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Sections;
-
-        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("add section");
-        app.handle_view_manager_key(KeyCode::Char('u'), &agenda)
-            .expect("open unmatched settings");
-        assert_eq!(app.mode, Mode::ViewUnmatchedSettings);
-        app.handle_view_unmatched_settings_key(KeyCode::Char('t'))
-            .expect("toggle unmatched");
-        app.handle_view_unmatched_settings_key(KeyCode::Esc)
-            .expect("return to manager");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
-
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("save manager changes");
-
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "Board")
-            .expect("saved board");
-        assert_eq!(saved.sections.len(), 1);
-        assert!(!saved.show_unmatched);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_cancel_discards_unsaved_section_changes() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-cancel-discard-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let view = View::new("Board".to_string());
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "Board")
-            .expect("board view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Sections;
-
-        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("add unsaved section");
-        let local_sections = app.views[app.picker_index].sections.len();
-        assert_eq!(local_sections, 1);
-        assert!(app.view_manager_dirty);
-
-        app.handle_view_manager_key(KeyCode::Esc, &agenda)
-            .expect("close manager and discard");
-        assert_eq!(app.mode, Mode::ViewPicker);
-        assert!(app.status.contains("discarded"));
-
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("reopen manager");
-        assert_eq!(app.views[app.picker_index].sections.len(), 0);
-
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "Board")
-            .expect("saved board");
-        assert_eq!(saved.sections.len(), 0);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_section_detail_edits_children_and_assignment_sets() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-section-detail-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let category = Category::new("Work".to_string());
-        store.create_category(&category).expect("create category");
-
-        let mut view = View::new("Board".to_string());
-        view.sections.push(Section {
-            title: "Section A".to_string(),
-            criteria: Query::default(),
-            on_insert_assign: std::collections::HashSet::new(),
-            on_remove_unassign: std::collections::HashSet::new(),
-            show_children: false,
-        });
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "Board")
-            .expect("board view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Sections;
-
-        app.handle_view_manager_key(KeyCode::Enter, &agenda)
-            .expect("open section detail");
-        assert_eq!(app.mode, Mode::ViewSectionDetail);
-
-        app.handle_view_section_detail_key(KeyCode::Char('h'))
-            .expect("toggle show_children");
-
-        app.handle_view_section_detail_key(KeyCode::Char('a'))
-            .expect("open on-insert picker");
-        assert_eq!(app.mode, Mode::ViewEditorCategoryPicker);
-        app.handle_view_editor_category_key(KeyCode::Char(' '))
-            .expect("toggle on-insert category");
-        app.handle_view_editor_category_key(KeyCode::Enter)
-            .expect("close on-insert picker");
-        assert_eq!(app.mode, Mode::ViewSectionDetail);
-
-        app.handle_view_section_detail_key(KeyCode::Char('r'))
-            .expect("open on-remove picker");
-        assert_eq!(app.mode, Mode::ViewEditorCategoryPicker);
-        app.handle_view_editor_category_key(KeyCode::Char(' '))
-            .expect("toggle on-remove category");
-        app.handle_view_editor_category_key(KeyCode::Enter)
-            .expect("close on-remove picker");
-        assert_eq!(app.mode, Mode::ViewSectionDetail);
-
-        app.handle_view_section_detail_key(KeyCode::Esc)
-            .expect("back to manager");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("save manager");
-
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "Board")
-            .expect("saved board");
-        let section = saved.sections.first().expect("saved section");
-        assert!(section.show_children);
-        assert_eq!(section.on_insert_assign.len(), 1);
-        assert_eq!(section.on_remove_unassign.len(), 1);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_escape_returns_to_view_picker() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-manager-esc-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewManagerScreen;
-
-        app.handle_view_manager_key(KeyCode::Esc, &agenda)
-            .expect("escape");
-        assert_eq!(app.mode, Mode::ViewPicker);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_create_cancel_returns_to_manager() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-create-cancel-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewManagerScreen;
-        app.view_manager_pane = ViewManagerPane::Views;
-
-        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("open create");
         assert_eq!(app.mode, Mode::ViewCreateNameInput);
-        app.handle_view_create_name_key(KeyCode::Esc)
-            .expect("cancel create");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
 
-        drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn view_manager_delete_cancel_returns_to_manager() {
+    fn view_edit_navigation_keys_do_not_request_app_quit() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-delete-cancel-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-edit-nav-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewManagerScreen;
-        app.view_manager_pane = ViewManagerPane::Views;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|view| view.name == "All Items")
-            .unwrap_or(0);
-
-        app.handle_view_manager_key(KeyCode::Char('x'), &agenda)
-            .expect("open delete");
-        assert_eq!(app.mode, Mode::ViewDeleteConfirm);
-        app.handle_view_delete_key(KeyCode::Esc, &agenda)
-            .expect("cancel delete");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_clone_creates_copy_view() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-clone-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut view = View::new("Board".to_string());
-        view.show_unmatched = false;
-        store.create_view(&view).expect("create base view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewManagerScreen;
-        app.view_manager_pane = ViewManagerPane::Views;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "Board")
-            .expect("base view present");
-
-        app.handle_view_manager_key(KeyCode::Char('C'), &agenda)
-            .expect("clone view");
-
-        let names: Vec<String> = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .map(|v| v.name)
-            .collect();
-        assert!(names.iter().any(|n| n == "Board"));
-        assert!(names.iter().any(|n| n == "Board Copy"));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_definition_space_and_save_persists_criteria() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-def-save-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let category = Category::new("Work".to_string());
-        store.create_category(&category).expect("create category");
-
-        let mut view = View::new("WorkView".to_string());
-        view.criteria.include.insert(category.id);
-        store.create_view(&view).expect("create view");
+        store
+            .create_view(&View::new("Work Board".to_string()))
+            .expect("create view");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "WorkView")
-            .expect("view exists");
+        app.picker_index = 0;
         app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
+            .expect("open view edit");
 
-        app.handle_view_manager_key(KeyCode::Tab, &agenda)
-            .expect("move to definition pane");
-        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
-        app.handle_view_manager_key(KeyCode::Char(' '), &agenda)
-            .expect("toggle sign");
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("save criteria");
-
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "WorkView")
-            .expect("saved view");
-        assert!(!saved.criteria.include.contains(&category.id));
-        assert!(saved.criteria.exclude.contains(&category.id));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_definition_add_remove_rows_and_save() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-def-rows-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let category = Category::new("Focus".to_string());
-        store.create_category(&category).expect("create category");
-        let view = View::new("FocusView".to_string());
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "FocusView")
-            .expect("view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.handle_view_manager_key(KeyCode::Tab, &agenda)
-            .expect("move to definition pane");
-
-        app.handle_view_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("add criteria row");
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("save include row");
-
-        let saved_with_row = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "FocusView")
-            .expect("saved view");
-        assert!(saved_with_row.criteria.include.contains(&category.id));
-
-        app.handle_view_manager_key(KeyCode::Char('x'), &agenda)
-            .expect("remove criteria row");
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("save without rows");
-
-        let saved_without_row = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "FocusView")
-            .expect("saved view");
-        assert!(!saved_without_row.criteria.include.contains(&category.id));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_save_rejects_or_rows_as_not_representable() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-or-invalid-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let alpha = Category::new("Alpha".to_string());
-        let beta = Category::new("Beta".to_string());
-        store.create_category(&alpha).expect("create alpha");
-        store.create_category(&beta).expect("create beta");
-
-        let mut view = View::new("InvalidOr".to_string());
-        view.criteria.include.insert(alpha.id);
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "InvalidOr")
-            .expect("view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Definition;
-        app.view_manager_rows = vec![
-            super::ViewCriteriaRow {
-                sign: super::ViewCriteriaSign::Include,
-                category_id: alpha.id,
-                join_is_or: false,
-                depth: 0,
-            },
-            super::ViewCriteriaRow {
-                sign: super::ViewCriteriaSign::Include,
-                category_id: beta.id,
-                join_is_or: true,
-                depth: 0,
-            },
-        ];
-        app.view_manager_dirty = true;
-
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("attempt save");
-        assert!(app.status.starts_with("Cannot save criteria: "));
-
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "InvalidOr")
-            .expect("saved view");
-        assert!(saved.criteria.include.contains(&alpha.id));
-        assert!(!saved.criteria.include.contains(&beta.id));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_save_rejects_nested_rows_as_not_representable() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-depth-invalid-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let alpha = Category::new("Alpha".to_string());
-        store.create_category(&alpha).expect("create alpha");
-
-        let mut view = View::new("InvalidDepth".to_string());
-        view.criteria.include.insert(alpha.id);
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "InvalidDepth")
-            .expect("view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.view_manager_pane = ViewManagerPane::Definition;
-        app.view_manager_rows = vec![super::ViewCriteriaRow {
-            sign: super::ViewCriteriaSign::Include,
-            category_id: alpha.id,
-            join_is_or: false,
-            depth: 1,
-        }];
-        app.view_manager_dirty = true;
-
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("attempt save");
-        assert!(app.status.starts_with("Cannot save criteria: "));
-
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "InvalidDepth")
-            .expect("saved view");
-        assert!(saved.criteria.include.contains(&alpha.id));
-        assert!(saved.criteria.exclude.is_empty());
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_manager_definition_c_opens_picker_and_applies_category() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-manager-def-picker-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let alpha = Category::new("Alpha".to_string());
-        let beta = Category::new("Beta".to_string());
-        store.create_category(&alpha).expect("create alpha");
-        store.create_category(&beta).expect("create beta");
-
-        let mut view = View::new("PickerView".to_string());
-        view.criteria.include.insert(alpha.id);
-        store.create_view(&view).expect("create view");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewPicker;
-        app.picker_index = app
-            .views
-            .iter()
-            .position(|v| v.name == "PickerView")
-            .expect("view exists");
-        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
-            .expect("open manager");
-        app.handle_view_manager_key(KeyCode::Tab, &agenda)
-            .expect("move to definition");
-        assert_eq!(app.view_manager_pane, ViewManagerPane::Definition);
-
-        app.handle_view_manager_key(KeyCode::Char('c'), &agenda)
-            .expect("open picker");
-        assert_eq!(app.mode, Mode::ViewManagerCategoryPicker);
-
-        app.view_category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.id == beta.id)
-            .expect("beta row");
-        app.handle_view_manager_category_picker_key(KeyCode::Enter)
-            .expect("apply picker selection");
-        assert_eq!(app.mode, Mode::ViewManagerScreen);
-        assert_eq!(app.view_manager_rows[0].category_id, beta.id);
-
-        app.handle_view_manager_key(KeyCode::Char('s'), &agenda)
-            .expect("save criteria");
-        let saved = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "PickerView")
-            .expect("saved view");
-        assert!(saved.criteria.include.contains(&beta.id));
-        assert!(!saved.criteria.include.contains(&alpha.id));
+        let should_quit = app.handle_key(KeyCode::Down, &agenda).expect("down in view edit");
+        assert!(!should_quit, "view-edit navigation must not quit the app");
+        assert_eq!(app.mode, Mode::ViewEdit);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -2020,15 +1278,19 @@ mod tests {
 
     #[test]
     fn item_edit_note_up_down_moves_cursor_between_lines() {
-        let mut app = App::default();
-        app.item_edit_note = "first\nsecond".to_string();
-        app.item_edit_note_cursor = "first\nse".chars().count();
+        let mut app = App {
+            item_edit_note: text_buffer::TextBuffer::with_cursor(
+                "first\nsecond".to_string(),
+                "first\nse".chars().count(),
+            ),
+            ..App::default()
+        };
 
-        app.move_item_edit_note_cursor_up();
-        assert_eq!(app.item_edit_note_cursor, "fi".chars().count());
+        app.handle_item_edit_note_input_key(KeyCode::Up);
+        assert_eq!(app.item_edit_note.cursor(), "fi".chars().count());
 
-        app.move_item_edit_note_cursor_down();
-        assert_eq!(app.item_edit_note_cursor, "first\nse".chars().count());
+        app.handle_item_edit_note_input_key(KeyCode::Down);
+        assert_eq!(app.item_edit_note.cursor(), "first\nse".chars().count());
     }
 
     #[test]
@@ -2365,60 +1627,24 @@ mod tests {
     }
 
     #[test]
-    fn view_editor_action_selection_opens_expected_picker() {
-        let mut app = App::default();
-        app.category_rows = vec![CategoryListRow {
-            id: CategoryId::new_v4(),
-            name: "Work".to_string(),
-            depth: 0,
-            is_reserved: false,
-            has_note: false,
-            is_exclusive: false,
-            is_actionable: true,
-            enable_implicit_string: true,
-        }];
-        app.open_view_editor(View::new("Board".to_string()));
-        if let Some(editor) = &mut app.view_editor {
-            editor.action_index = 0;
-        }
-
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-view-editor-action-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        app.handle_view_editor_key(KeyCode::Char('o'), &agenda)
-            .expect("open selected action");
-        assert_eq!(app.mode, Mode::ViewEditorCategoryPicker);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
     fn text_input_editing_supports_navigation_insert_backspace_and_delete() {
         let mut app = App::default();
         app.set_input("ac".to_string());
 
         assert!(app.handle_text_input_key(KeyCode::Left));
-        assert_eq!(app.input_cursor, 1);
+        assert_eq!(app.input.cursor(), 1);
 
         assert!(app.handle_text_input_key(KeyCode::Char('b')));
-        assert_eq!(app.input, "abc");
-        assert_eq!(app.input_cursor, 2);
+        assert_eq!(app.input.text(), "abc");
+        assert_eq!(app.input.cursor(), 2);
 
         assert!(app.handle_text_input_key(KeyCode::Backspace));
-        assert_eq!(app.input, "ac");
-        assert_eq!(app.input_cursor, 1);
+        assert_eq!(app.input.text(), "ac");
+        assert_eq!(app.input.cursor(), 1);
 
         assert!(app.handle_text_input_key(KeyCode::Delete));
-        assert_eq!(app.input, "a");
-        assert_eq!(app.input_cursor, 1);
+        assert_eq!(app.input.text(), "a");
+        assert_eq!(app.input.cursor(), 1);
     }
 
     #[test]
@@ -2429,31 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn category_target_set_mut_supports_view_and_section_targets() {
-        let mut view = View::new("Board".to_string());
-        view.sections.push(Section {
-            title: "One".to_string(),
-            criteria: Query::default(),
-            on_insert_assign: std::collections::HashSet::new(),
-            on_remove_unassign: std::collections::HashSet::new(),
-            show_children: false,
-        });
-        let category_id = CategoryId::new_v4();
-
-        let view_include = category_target_set_mut(&mut view, 0, CategoryEditTarget::ViewInclude)
-            .expect("view include set");
-        view_include.insert(category_id);
-        assert!(view.criteria.include.contains(&category_id));
-
-        let section_insert =
-            category_target_set_mut(&mut view, 0, CategoryEditTarget::SectionOnInsertAssign)
-                .expect("section on_insert_assign set");
-        section_insert.insert(category_id);
-        assert!(view.sections[0].on_insert_assign.contains(&category_id));
-    }
-
-    #[test]
-    fn bucket_target_set_mut_supports_view_and_section_targets() {
+    fn bucket_target_set_mut_supports_view_targets() {
         let mut view = View::new("Board".to_string());
         view.sections.push(Section {
             title: "One".to_string(),
@@ -2464,16 +1666,16 @@ mod tests {
         });
 
         let view_virtual =
-            bucket_target_set_mut(&mut view, 0, BucketEditTarget::ViewVirtualInclude)
+            bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualInclude)
                 .expect("view virtual include set");
         view_virtual.insert(WhenBucket::Today);
         assert!(view.criteria.virtual_include.contains(&WhenBucket::Today));
 
-        let section_virtual =
-            bucket_target_set_mut(&mut view, 0, BucketEditTarget::SectionVirtualExclude)
-                .expect("section virtual exclude set");
-        section_virtual.insert(WhenBucket::NoDate);
-        assert!(view.sections[0]
+        let view_virtual_exclude =
+            bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualExclude)
+                .expect("view virtual exclude set");
+        view_virtual_exclude.insert(WhenBucket::NoDate);
+        assert!(view
             .criteria
             .virtual_exclude
             .contains(&WhenBucket::NoDate));
@@ -2572,5 +1774,406 @@ mod tests {
         let mut item = Item::new("alignment check".to_string());
         item.note = Some("detail".to_string());
         assert_eq!(board_item_label(&item), "alignment check");
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 2a: ViewEdit tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn store_section_roundtrip_smoke() {
+        // Minimal test: can the store persist and reload a Section?
+        let (store, db_path) = make_test_store_with_view("roundtrip");
+        let view = store.list_views().expect("list").into_iter().next().expect("view");
+        let mut updated = view.clone();
+        updated.sections.push(Section {
+            title: "Roundtrip".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        store.update_view(&updated).expect("update_view");
+        let saved = store.list_views().expect("list").into_iter().next().expect("view");
+        assert_eq!(saved.sections.len(), 1, "store section roundtrip should work");
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    fn make_test_store_with_view(suffix: &str) -> (Store, std::path::PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-view-edit-{suffix}-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        store
+            .create_view(&View::new("TestView".to_string()))
+            .expect("create view");
+        (store, db_path)
+    }
+
+    #[test]
+    fn view_picker_e_opens_view_edit() {
+        let (store, db_path) = make_test_store_with_view("e-opens");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = 0;
+
+        app.handle_view_picker_key(KeyCode::Char('e'), &agenda)
+            .expect("open view edit");
+
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.is_some());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_tab_cycles_regions() {
+        let (store, db_path) = make_test_store_with_view("tab-cycle");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Criteria);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Columns);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Sections);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Unmatched);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab wraps");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Criteria);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_shift_tab_cycles_regions_backwards() {
+        let (store, db_path) = make_test_store_with_view("shift-tab-cycle");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Criteria);
+        app.handle_view_edit_key(KeyCode::BackTab, &agenda).expect("shift-tab");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Unmatched);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_esc_returns_to_view_picker() {
+        let (store, db_path) = make_test_store_with_view("esc-returns");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Esc, &agenda).expect("esc");
+
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_inline_input_intercepts_keys_before_region() {
+        let (store, db_path) = make_test_store_with_view("inline-precedence");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app.views[0].clone();
+        view.sections.push(Section {
+            title: "Old Title".to_string(),
+            criteria: Query::default(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        app.open_view_edit(view);
+
+        // Move to Sections region
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Sections);
+
+        // Press 't' to start inline edit
+        app.handle_view_edit_key(KeyCode::Char('t'), &agenda).expect("t");
+        assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_some());
+
+        // Tab should go into inline buf, NOT cycle regions
+        app.handle_view_edit_key(KeyCode::Char('X'), &agenda).expect("type");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Sections);
+
+        // Esc cancels inline input, stays in ViewEdit
+        app.handle_view_edit_key(KeyCode::Esc, &agenda).expect("esc inline");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_overlay_intercepts_keys_before_region() {
+        let (store, db_path) = make_test_store_with_view("overlay-precedence");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        // Press 'N' to open overlay
+        app.handle_view_edit_key(KeyCode::Char('N'), &agenda).expect("N");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+
+        // Tab should not cycle regions while overlay is open
+        let region_before = app.view_edit_state.as_ref().unwrap().region;
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab during overlay");
+        // Tab in category picker is not handled, overlay stays open
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, region_before);
+
+        // Esc closes overlay, stays in ViewEdit
+        app.handle_view_edit_key(KeyCode::Esc, &agenda).expect("esc overlay");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_category_picker_allows_multi_select_with_enter() {
+        let (store, db_path) = make_test_store_with_view("picker-multi");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let home = Category::new("Home".to_string());
+        store.create_category(&work).expect("create work category");
+        store.create_category(&home).expect("create home category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("open category picker");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+
+        let work_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Work")
+            .expect("work row");
+        let home_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Home")
+            .expect("home row");
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = work_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle work");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .criteria
+            .include
+            .contains(&work.id));
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = home_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle home");
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .criteria
+            .include
+            .contains(&home.id));
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close category picker");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
+        let (store, db_path) = make_test_store_with_view("section-plus");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create work category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Sections
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("add section");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().draft.sections.len(), 1);
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
+
+        app.handle_view_edit_key(KeyCode::Char('+'), &agenda)
+            .expect("open section include picker");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, Some(0));
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::SectionCriteriaInclude
+            })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_section_e_starts_section_title_edit() {
+        let (store, db_path) = make_test_store_with_view("section-e-rename");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("add section");
+        app.handle_view_edit_key(KeyCode::Char('e'), &agenda)
+            .expect("start section title edit");
+
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_save_persists_view() {
+        let (store, db_path) = make_test_store_with_view("save");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        // Add a section via 'N' in Sections region
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().region, ViewEditRegion::Sections);
+        app.handle_view_edit_key(KeyCode::Char('N'), &agenda).expect("N adds section");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().draft.sections.len(), 1);
+
+        // Verify draft has section before save
+        let draft_before_save = app.view_edit_state.as_ref().unwrap().draft.clone();
+        assert_eq!(draft_before_save.sections.len(), 1, "draft must have 1 section before save");
+
+        // Verify draft ID matches what's in the store
+        let view_in_store = store.list_views().expect("list before update").into_iter().find(|v| v.name == "TestView").expect("view before update");
+        assert_eq!(draft_before_save.id, view_in_store.id, "draft ID must match store ID");
+
+        // Directly verify update_view works
+        agenda.store().update_view(&draft_before_save).expect("direct update_view should work");
+        let after_direct = store.list_views().expect("list").into_iter().find(|v| v.name == "TestView").expect("view");
+        assert_eq!(after_direct.sections.len(), 1, "direct update_view should persist section");
+
+        // Save with Enter (save + exit)
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("Enter save");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+        assert!(app.status.contains("Saved"), "save status should say Saved, got: {}", app.status);
+
+        // Verify persisted
+        let saved = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "TestView")
+            .expect("saved view");
+        assert_eq!(saved.sections.len(), 1);
+
+        let _ = std::fs::remove_file(&db_path);
     }
 }

@@ -102,8 +102,7 @@ impl App {
             is_exclusive: category.is_exclusive,
             is_actionable: category.is_actionable,
             enable_implicit_string: category.enable_implicit_string,
-            note_cursor: note.chars().count(),
-            note,
+            note: crate::text_buffer::TextBuffer::new(note),
             focus: CategoryConfigFocus::Exclusive,
         });
         self.mode = Mode::CategoryConfigEditor;
@@ -138,10 +137,10 @@ impl App {
             return Ok(());
         }
 
-        let next_note = if editor.note.trim().is_empty() {
+        let next_note = if editor.note.trimmed().is_empty() {
             None
         } else {
-            Some(editor.note.clone())
+            Some(editor.note.text().to_string())
         };
         if category.is_exclusive == editor.is_exclusive
             && category.is_actionable == editor.is_actionable
@@ -216,49 +215,49 @@ impl App {
                 if !matches!(focus, CategoryConfigFocus::Note) {
                     self.move_category_config_checkbox_focus(-1);
                 } else {
-                    self.insert_category_config_note_char('h');
+                    self.handle_category_config_note_input_key(KeyCode::Char('h'));
                 }
             }
             KeyCode::Char('l') => {
                 if !matches!(focus, CategoryConfigFocus::Note) {
                     self.move_category_config_checkbox_focus(1);
                 } else {
-                    self.insert_category_config_note_char('l');
+                    self.handle_category_config_note_input_key(KeyCode::Char('l'));
                 }
             }
             KeyCode::Char('e') => {
                 if !matches!(focus, CategoryConfigFocus::Note) {
                     self.toggle_category_config_exclusive();
                 } else {
-                    self.insert_category_config_note_char('e');
+                    self.handle_category_config_note_input_key(KeyCode::Char('e'));
                 }
             }
             KeyCode::Char('i') => {
                 if !matches!(focus, CategoryConfigFocus::Note) {
                     self.toggle_category_config_no_implicit();
                 } else {
-                    self.insert_category_config_note_char('i');
+                    self.handle_category_config_note_input_key(KeyCode::Char('i'));
                 }
             }
             KeyCode::Char('a') => {
                 if !matches!(focus, CategoryConfigFocus::Note) {
                     self.toggle_category_config_actionable();
                 } else {
-                    self.insert_category_config_note_char('a');
+                    self.handle_category_config_note_input_key(KeyCode::Char('a'));
                 }
             }
             KeyCode::Char(' ') => match focus {
                 CategoryConfigFocus::Exclusive => self.toggle_category_config_exclusive(),
                 CategoryConfigFocus::NoImplicit => self.toggle_category_config_no_implicit(),
                 CategoryConfigFocus::Actionable => self.toggle_category_config_actionable(),
-                CategoryConfigFocus::Note => self.insert_category_config_note_char(' '),
+                CategoryConfigFocus::Note => { self.handle_category_config_note_input_key(KeyCode::Char(' ')); }
                 CategoryConfigFocus::SaveButton | CategoryConfigFocus::CancelButton => {}
             },
             KeyCode::Enter => match focus {
                 CategoryConfigFocus::Exclusive
                 | CategoryConfigFocus::NoImplicit
                 | CategoryConfigFocus::Actionable => self.save_category_config_editor(agenda)?,
-                CategoryConfigFocus::Note => self.insert_category_config_note_newline(),
+                CategoryConfigFocus::Note => { self.handle_category_config_note_input_key(KeyCode::Enter); }
                 CategoryConfigFocus::SaveButton => self.save_category_config_editor(agenda)?,
                 CategoryConfigFocus::CancelButton => {
                     self.mode = Mode::CategoryManager;
@@ -381,7 +380,7 @@ impl App {
                 self.status = "Category create canceled".to_string();
             }
             KeyCode::Enter => {
-                let name = self.input.trim().to_string();
+                let name = self.input.trimmed().to_string();
                 if !name.is_empty() {
                     let mut category = Category::new(name.clone());
                     category.enable_implicit_string = true;
@@ -441,7 +440,7 @@ impl App {
                     return Ok(false);
                 };
 
-                let new_name = self.input.trim().to_string();
+                let new_name = self.input.trimmed().to_string();
                 if new_name.is_empty() {
                     self.mode = Mode::CategoryManager;
                     self.clear_input();
