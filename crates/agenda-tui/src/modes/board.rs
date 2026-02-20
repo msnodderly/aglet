@@ -183,7 +183,6 @@ impl App {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignCategoryPicker;
-                    self.item_assign_return_to_item_edit = false;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
@@ -204,7 +203,6 @@ impl App {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignCategoryPicker;
-                    self.item_assign_return_to_item_edit = false;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
@@ -385,7 +383,6 @@ impl App {
             return;
         }
         self.mode = Mode::ItemAssignCategoryPicker;
-        self.item_assign_return_to_item_edit = true;
         self.item_assign_category_index = first_non_reserved_category_index(&self.category_rows);
         self.status =
             "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
@@ -508,12 +505,7 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.mode = if self.item_assign_return_to_item_edit {
-                    Mode::ItemEditInput
-                } else {
-                    Mode::Normal
-                };
-                self.item_assign_return_to_item_edit = false;
+                self.mode = Mode::Normal;
                 self.clear_input();
                 self.status = "Assign canceled".to_string();
             }
@@ -539,12 +531,7 @@ impl App {
             }
             KeyCode::Char(' ') => {
                 let Some(item_id) = self.selected_item_id() else {
-                    self.mode = if self.item_assign_return_to_item_edit {
-                        Mode::ItemEditInput
-                    } else {
-                        Mode::Normal
-                    };
-                    self.item_assign_return_to_item_edit = false;
+                    self.mode = Mode::Normal;
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -610,12 +597,7 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.mode = if self.item_assign_return_to_item_edit {
-                    Mode::ItemEditInput
-                } else {
-                    Mode::Normal
-                };
-                self.item_assign_return_to_item_edit = false;
+                self.mode = Mode::Normal;
                 self.clear_input();
                 self.status = "Category edit saved".to_string();
             }
