@@ -210,17 +210,21 @@ impl<'a> Agenda<'a> {
         process_item(self.store, self.classifier, item_id)
     }
 
+    pub fn mark_item_not_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let mut item = self.store.get_item(item_id)?;
+        item.is_done = false;
+        item.done_date = None;
+        item.modified_at = Utc::now();
+        self.store.update_item(&item)?;
+        let done_category_id = self.done_category_id()?;
+        self.store.unassign_item(item_id, done_category_id)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
     pub fn toggle_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
         let item = self.store.get_item(item_id)?;
         if item.is_done {
-            let mut updated = item;
-            updated.is_done = false;
-            updated.done_date = None;
-            updated.modified_at = Utc::now();
-            self.store.update_item(&updated)?;
-            let done_category_id = self.done_category_id()?;
-            self.store.unassign_item(item_id, done_category_id)?;
-            return process_item(self.store, self.classifier, item_id);
+            return self.mark_item_not_done(item_id);
         }
         self.mark_item_done(item_id)
     }
