@@ -199,7 +199,6 @@ enum Mode {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ViewEditRegion {
     Criteria,
-    Columns,
     Sections,
     Unmatched,
 }
@@ -207,8 +206,7 @@ enum ViewEditRegion {
 impl ViewEditRegion {
     fn next(self) -> Self {
         match self {
-            Self::Criteria => Self::Columns,
-            Self::Columns => Self::Sections,
+            Self::Criteria => Self::Sections,
             Self::Sections => Self::Unmatched,
             Self::Unmatched => Self::Criteria,
         }
@@ -217,8 +215,7 @@ impl ViewEditRegion {
     fn prev(self) -> Self {
         match self {
             Self::Criteria => Self::Unmatched,
-            Self::Columns => Self::Criteria,
-            Self::Sections => Self::Columns,
+            Self::Sections => Self::Criteria,
             Self::Unmatched => Self::Sections,
         }
     }
@@ -234,7 +231,6 @@ enum ViewEditOverlay {
 enum ViewEditInlineInput {
     SectionTitle { section_index: usize },
     UnmatchedLabel,
-    ColumnWidth { column_index: usize },
 }
 
 #[derive(Clone)]
@@ -242,7 +238,6 @@ struct ViewEditState {
     draft: View,
     region: ViewEditRegion,
     criteria_index: usize,
-    column_index: usize,
     section_index: usize,
     section_expanded: Option<usize>,
     overlay: Option<ViewEditOverlay>,
@@ -1871,13 +1866,6 @@ mod tests {
             .expect("tab");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Columns
-        );
-
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Sections
         );
 
@@ -1963,8 +1951,6 @@ mod tests {
         app.open_view_edit(view);
 
         // Move to Sections region
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
         assert_eq!(
@@ -2125,8 +2111,6 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Sections
@@ -2174,8 +2158,6 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
             .expect("add section");
         app.handle_view_edit_key(KeyCode::Char('e'), &agenda)
@@ -2208,8 +2190,6 @@ mod tests {
             .expect("TestView should exist");
         app.open_view_edit(view);
 
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
         app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
@@ -2276,8 +2256,6 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
             .expect("add section");
 
@@ -2309,8 +2287,6 @@ mod tests {
         app.open_view_edit(view);
 
         // Add a section via 'N' in Sections region
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
         assert_eq!(

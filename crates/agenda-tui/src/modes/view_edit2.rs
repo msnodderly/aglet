@@ -41,7 +41,6 @@ impl App {
             draft: view,
             region: ViewEditRegion::Criteria,
             criteria_index: 0,
-            column_index: 0,
             section_index: 0,
             section_expanded: None,
             overlay: None,
@@ -83,29 +82,7 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             match target {
                 CategoryEditTarget::ViewInclude => {
-                    if state.region == ViewEditRegion::Columns {
-                        if let Some(existing_index) = state
-                            .draft
-                            .columns
-                            .iter()
-                            .position(|col| col.heading == cat_id)
-                        {
-                            state.draft.columns.remove(existing_index);
-                            if state.column_index >= state.draft.columns.len()
-                                && !state.draft.columns.is_empty()
-                            {
-                                state.column_index = state.draft.columns.len() - 1;
-                            }
-                        } else {
-                            let new_col = Column {
-                                kind: ColumnKind::Standard,
-                                heading: cat_id,
-                                width: 12,
-                            };
-                            state.draft.columns.push(new_col);
-                            state.column_index = state.draft.columns.len().saturating_sub(1);
-                        }
-                    } else if !state.draft.criteria.include.remove(&cat_id) {
+                    if !state.draft.criteria.include.remove(&cat_id) {
                         state.draft.criteria.include.insert(cat_id);
                         state.draft.criteria.exclude.remove(&cat_id);
                         needs_criteria_rebuild = true;
@@ -235,13 +212,6 @@ impl App {
                     }
                     Some(ViewEditInlineInput::UnmatchedLabel) => {
                         state.draft.unmatched_label = text;
-                    }
-                    Some(ViewEditInlineInput::ColumnWidth { column_index }) => {
-                        if let Ok(w) = state.inline_buf.text().trim().parse::<u16>() {
-                            if let Some(col) = state.draft.columns.get_mut(*column_index) {
-                                col.width = w;
-                            }
-                        }
                     }
                     None => {}
                 }
@@ -383,7 +353,6 @@ impl App {
 
         match region {
             ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),
-            ViewEditRegion::Columns => self.handle_view_edit_columns_key(code),
             ViewEditRegion::Sections => self.handle_view_edit_sections_key(code),
             ViewEditRegion::Unmatched => self.handle_view_edit_unmatched_key(code),
         }
@@ -497,81 +466,6 @@ impl App {
                     });
                     state.picker_index = 0;
                 }
-            }
-            _ => {}
-        }
-        Ok(true)
-    }
-
-    // -------------------------------------------------------------------------
-    // Columns region
-    // -------------------------------------------------------------------------
-
-    fn handle_view_edit_columns_key(&mut self, code: KeyCode) -> Result<bool, String> {
-        let Some(state) = &self.view_edit_state else {
-            return Ok(false);
-        };
-        let len = state.draft.columns.len();
-        let idx = state.column_index;
-
-        match code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.column_index = next_index_clamped(idx, len, 1);
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.column_index = next_index_clamped(idx, len, -1);
-                }
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                let first = first_non_reserved_category_index(&self.category_rows);
-                if let Some(state) = &mut self.view_edit_state {
-                    state.overlay = Some(ViewEditOverlay::CategoryPicker {
-                        target: CategoryEditTarget::ViewInclude,
-                    });
-                    state.picker_index = first;
-                }
-                self.status = "Add column: j/k select  Space/Enter:toggle  Esc:done".to_string();
-            }
-            KeyCode::Char('x') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    if idx < state.draft.columns.len() {
-                        state.draft.columns.remove(idx);
-                        let new_len = state.draft.columns.len();
-                        if state.column_index >= new_len && new_len > 0 {
-                            state.column_index = new_len - 1;
-                        }
-                    }
-                }
-            }
-            KeyCode::Char('[') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    if idx > 0 && idx < state.draft.columns.len() {
-                        state.draft.columns.swap(idx, idx - 1);
-                        state.column_index = idx - 1;
-                    }
-                }
-            }
-            KeyCode::Char(']') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    if idx + 1 < state.draft.columns.len() {
-                        state.draft.columns.swap(idx, idx + 1);
-                        state.column_index = idx + 1;
-                    }
-                }
-            }
-            KeyCode::Char('w') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    if idx < state.draft.columns.len() {
-                        let current_width = state.draft.columns[idx].width.to_string();
-                        state.inline_input =
-                            Some(ViewEditInlineInput::ColumnWidth { column_index: idx });
-                        state.inline_buf = text_buffer::TextBuffer::new(current_width);
-                    }
-                }
-                self.status = "Column width: type number  Enter:confirm  Esc:cancel".to_string();
             }
             _ => {}
         }
