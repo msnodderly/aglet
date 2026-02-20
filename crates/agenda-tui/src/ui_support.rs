@@ -66,20 +66,11 @@ pub(super) fn when_bucket_label(bucket: WhenBucket) -> &'static str {
 
 pub(super) fn bucket_target_set_mut(
     view: &mut View,
-    section_index: usize,
     target: BucketEditTarget,
 ) -> Option<&mut HashSet<WhenBucket>> {
     match target {
         BucketEditTarget::ViewVirtualInclude => Some(&mut view.criteria.virtual_include),
         BucketEditTarget::ViewVirtualExclude => Some(&mut view.criteria.virtual_exclude),
-        BucketEditTarget::SectionVirtualInclude => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.criteria.virtual_include),
-        BucketEditTarget::SectionVirtualExclude => view
-            .sections
-            .get_mut(section_index)
-            .map(|section| &mut section.criteria.virtual_exclude),
     }
 }
 

@@ -725,7 +725,7 @@ impl App {
                 "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  Enter:save (except note)  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
-                "j/k:select  Enter:switch  N:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
+                "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
             Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
             Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
@@ -733,7 +733,7 @@ impl App {
             Mode::ViewCreateCategoryPicker => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
-            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  N:add  x:remove  S:save  Esc:cancel",
+            Mode::ViewEdit => "Tab/Shift+Tab:region  j/k:nav  n:add  x:remove  Enter:save  Esc:cancel",
             Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
             Mode::ItemEditInput => {
@@ -1567,15 +1567,56 @@ impl App {
             };
             frame.render_widget(Clear, overlay_area);
             match overlay {
-                ViewEditOverlay::CategoryPicker { .. } => {
-                    let title = " Pick category ";
+                ViewEditOverlay::CategoryPicker { target } => {
+                    let title = " Pick categories (Space/Enter toggle, Esc done) ";
+                    let section_expanded = state.section_expanded.unwrap_or(0);
                     let items: Vec<ListItem<'_>> = self
                         .category_rows
                         .iter()
                         .enumerate()
                         .map(|(i, row)| {
                             let indent = "  ".repeat(row.depth);
-                            let label = format!("{indent}{}", row.name);
+                            let checked = match target {
+                                CategoryEditTarget::ViewInclude => {
+                                    if state.region == ViewEditRegion::Columns {
+                                        state.draft.columns.iter().any(|col| {
+                                            col.kind == ColumnKind::Standard
+                                                && col.heading == row.id
+                                        })
+                                    } else {
+                                        state.draft.criteria.include.contains(&row.id)
+                                    }
+                                }
+                                CategoryEditTarget::SectionCriteriaInclude => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.criteria.include.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionCriteriaExclude => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.criteria.exclude.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionOnInsertAssign => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.on_insert_assign.contains(&row.id))
+                                    .unwrap_or(false),
+                                CategoryEditTarget::SectionOnRemoveUnassign => state
+                                    .draft
+                                    .sections
+                                    .get(section_expanded)
+                                    .map(|section| section.on_remove_unassign.contains(&row.id))
+                                    .unwrap_or(false),
+                            };
+                            let label = format!(
+                                "{indent}[{}] {}",
+                                if checked { "x" } else { " " },
+                                row.name
+                            );
                             let style = if i == state.picker_index {
                                 Style::default().add_modifier(Modifier::REVERSED)
                             } else {
