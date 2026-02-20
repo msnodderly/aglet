@@ -49,6 +49,33 @@ Notes:
 - Date parsing for capture uses the local calendar date as reference (`Local::now().date_naive()`).
   Weekday/date phrase resolution is therefore based on local date (not UTC date).
 
+### edit
+
+Edit an existing item's text, note, and/or done state.
+
+Usage:
+
+`agenda-cli edit [--note <NOTE>] [--clear-note] [--done <true|false>] <ITEM_ID> [TEXT]`
+
+Arguments:
+
+- `<ITEM_ID>`: The item to edit.
+- `[TEXT]`: New text (optional positional shorthand; also available as `--text`).
+
+Options:
+
+- `--note <NOTE>`: Update the note field.
+- `--clear-note`: Clear the note field.
+- `--done <true|false>`: Set done state. When marking done, assigns reserved `Done` category.
+
+### show
+
+Show a single item with its assignments.
+
+Usage:
+
+`agenda-cli show <ITEM_ID>`
+
 ### list
 
 List items, optionally filtered.
@@ -64,19 +91,6 @@ Search item text and note fields.
 Usage:
 
 `agenda-cli search [--include-done] <QUERY>`
-
-### done
-
-Mark an item done.
-
-Usage:
-
-`agenda-cli done <ITEM_ID>`
-
-Effect:
-
-- Sets done state and done timestamp.
-- Assigns reserved `Done` category.
 
 ### delete
 
@@ -123,14 +137,29 @@ Subcommands:
 `agenda-cli category list`
 : List categories as a tree.
 
+`agenda-cli category show <NAME>`
+: Show detailed info for a category.
+
 `agenda-cli category create [--parent <PARENT>] [--exclusive] [--disable-implicit-string] <NAME>`
 : Create category.
 
 `agenda-cli category delete <NAME>`
 : Delete category by name.
 
+`agenda-cli category rename <NAME> <NEW_NAME>`
+: Rename a category.
+
+`agenda-cli category reparent [--parent <PARENT>] [--root] <NAME>`
+: Reparent a category. Use `--root` to make top-level.
+
+`agenda-cli category update [--exclusive <true|false>] [--actionable <true|false>] [--implicit-string <true|false>] [--note <NOTE>] [--clear-note] <NAME>`
+: Update category flags.
+
 `agenda-cli category assign <ITEM_ID> <CATEGORY_NAME>`
 : Assign item to category by name.
+
+`agenda-cli category unassign <ITEM_ID> <CATEGORY_NAME>`
+: Unassign an item from a category.
 
 Category semantics:
 
@@ -138,7 +167,7 @@ Category semantics:
 - Duplicate create attempts fail and now guide you to reuse existing categories via `category assign`.
 - `--exclusive` on a parent category means item assignments are single-choice among that parent's children.
 - Manual assignment respects exclusivity (assigning one child unassigns exclusive siblings).
-- Special case: assigning category `Done` applies done semantics (same effect as `done` command).
+- Special case: assigning category `Done` applies done semantics (same effect as `edit --done true`).
 
 ### view
 
@@ -154,13 +183,16 @@ Subcommands:
 : List views.
 
 `agenda-cli view show <NAME>`
-: Render items in a view.
+: Show the contents of a view.
 
 `agenda-cli view create [--include <INCLUDE>] [--exclude <EXCLUDE>] [--hide-unmatched] <NAME>`
-: Create a basic view.
+: Create a basic view from include/exclude categories.
+
+`agenda-cli view rename <NAME> <NEW_NAME>`
+: Rename a view.
 
 `agenda-cli view delete <NAME>`
-: Delete a view.
+: Delete a view by name.
 
 ## RESERVED CATEGORIES
 
@@ -193,6 +225,16 @@ Example add output when date parsing succeeds:
 `created <item-id>`
 
 `parsed_when=2026-02-24 15:00:00`
+
+Edit an item:
+
+`agenda-cli edit <item-id> "Updated text"`
+
+`agenda-cli edit <item-id> --note "Added a note"`
+
+Mark an item done:
+
+`agenda-cli edit <item-id> --done true`
 
 Create a global priority taxonomy:
 

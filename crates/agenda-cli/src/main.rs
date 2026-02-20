@@ -34,6 +34,22 @@ enum Command {
         note: Option<String>,
     },
 
+    /// Edit an existing item's text, note, and/or done state
+    Edit {
+        item_id: String,
+        /// New text (positional shorthand; also available as --text)
+        text: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "clear-note")]
+        clear_note: bool,
+        #[arg(long)]
+        done: Option<bool>,
+    },
+
+    /// Show a single item with its assignments
+    Show { item_id: String },
+
     /// List items (optionally filtered)
     List {
         #[arg(long)]
@@ -51,9 +67,6 @@ enum Command {
         include_done: bool,
     },
 
-    /// Mark an item done
-    Done { item_id: String },
-
     /// Delete an item (writes deletion log)
     Delete { item_id: String },
 
@@ -66,13 +79,13 @@ enum Command {
     /// Launch the interactive TUI
     Tui,
 
-    /// Category commands (list, create, delete, assign)
+    /// Category commands
     Category {
         #[command(subcommand)]
         command: CategoryCommand,
     },
 
-    /// View commands (list, show, create, delete)
+    /// View commands
     View {
         #[command(subcommand)]
         command: ViewCommand,
@@ -83,6 +96,9 @@ enum Command {
 enum CategoryCommand {
     /// List categories as a tree
     List,
+
+    /// Show detailed info for a category
+    Show { name: String },
 
     /// Create a category
     Create {
@@ -98,8 +114,41 @@ enum CategoryCommand {
     /// Delete a category by name
     Delete { name: String },
 
+    /// Rename a category
+    Rename { name: String, new_name: String },
+
+    /// Reparent a category (use --root to make top-level)
+    Reparent {
+        name: String,
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(long)]
+        root: bool,
+    },
+
+    /// Update category flags
+    Update {
+        name: String,
+        #[arg(long)]
+        exclusive: Option<bool>,
+        #[arg(long)]
+        actionable: Option<bool>,
+        #[arg(long = "implicit-string")]
+        implicit_string: Option<bool>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "clear-note")]
+        clear_note: bool,
+    },
+
     /// Assign an item to a category by id/name
     Assign {
+        item_id: String,
+        category_name: String,
+    },
+
+    /// Unassign an item from a category
+    Unassign {
         item_id: String,
         category_name: String,
     },
@@ -123,6 +172,9 @@ enum ViewCommand {
         #[arg(long = "hide-unmatched")]
         hide_unmatched: bool,
     },
+
+    /// Rename a view
+    Rename { name: String, new_name: String },
 
     /// Delete a view by name
     Delete { name: String },
@@ -154,6 +206,14 @@ fn run() -> Result<(), String> {
 
     match command {
         Command::Add { text, note } => cmd_add(&agenda, text, note),
+        Command::Edit {
+            item_id,
+            text,
+            note,
+            clear_note,
+            done,
+        } => cmd_edit(&agenda, item_id, text, note, clear_note, done),
+        Command::Show { item_id } => cmd_show(&store, item_id),
         Command::List {
             view,
             category,
@@ -163,12 +223,11 @@ fn run() -> Result<(), String> {
             query,
             include_done,
         } => cmd_search(&store, query, include_done),
-        Command::Done { item_id } => cmd_done(&agenda, item_id),
         Command::Delete { item_id } => cmd_delete(&agenda, item_id),
         Command::Deleted => cmd_deleted(&store),
         Command::Restore { log_id } => cmd_restore(&store, log_id),
         Command::Category { command } => cmd_category(&agenda, &store, command),
-        Command::View { command } => cmd_view(&store, command),
+        Command::View { command } => cmd_view(&agenda, &store, command),
         Command::Tui => Ok(()),
     }
 }
@@ -208,6 +267,126 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
     Ok(())
 }
 
+fn cmd_edit(
+    agenda: &Agenda<'_>,
+    item_id_str: String,
+    text: Option<String>,
+    note: Option<String>,
+    clear_note: bool,
+    done: Option<bool>,
+) -> Result<(), String> {
+    let item_id = parse_item_id(&item_id_str)?;
+
+    if text.is_none() && note.is_none() && !clear_note && done.is_none() {
+        return Err(
+            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--clear-note] [--done <true|false>]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false".to_string()
+        );
+    }
+
+    if let Some(done_value) = done {
+        if done_value {
+            agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+            println!("marked done {}", item_id);
+        } else {
+            agenda
+                .mark_item_not_done(item_id)
+                .map_err(|e| e.to_string())?;
+            println!("marked not-done {}", item_id);
+        }
+    }
+
+    let mut item = agenda
+        .store()
+        .get_item(item_id)
+        .map_err(|e| e.to_string())?;
+
+    if text.is_some() || note.is_some() || clear_note {
+        if let Some(new_text) = text {
+            if new_text.is_empty() {
+                return Err("text cannot be empty".to_string());
+            }
+            item.text = new_text;
+        }
+        if clear_note {
+            item.note = None;
+        } else if let Some(new_note) = note {
+            item.note = if new_note.is_empty() {
+                None
+            } else {
+                Some(new_note)
+            };
+        }
+
+        item.modified_at = chrono::Utc::now();
+        let reference_date = Local::now().date_naive();
+        agenda
+            .update_item_with_reference_date(&item, reference_date)
+            .map_err(|e| e.to_string())?;
+
+        let updated = agenda
+            .store()
+            .get_item(item_id)
+            .map_err(|e| e.to_string())?;
+        println!("updated {}", item_id);
+        if let Some(line) = parsed_when_feedback_line(updated.when_date) {
+            println!("{line}");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
+    let item_id = parse_item_id(&item_id_str)?;
+    let item = store.get_item(item_id).map_err(|e| e.to_string())?;
+    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let category_names = category_name_map(&categories);
+
+    let done = if item.is_done { "done" } else { "open" };
+    let when = item
+        .when_date
+        .map(|dt| dt.to_string())
+        .unwrap_or_else(|| "-".to_string());
+
+    println!("id:         {}", item.id);
+    println!("text:       {}", item.text);
+    println!("status:     {}", done);
+    println!("when:       {}", when);
+    println!("entry_date: {}", item.entry_date);
+    println!("created_at: {}", item.created_at.to_rfc3339());
+    println!("modified_at: {}", item.modified_at.to_rfc3339());
+    if let Some(done_date) = item.done_date {
+        println!("done_date:  {}", done_date);
+    }
+    if let Some(note) = &item.note {
+        println!("note:       {}", note);
+    }
+
+    if item.assignments.is_empty() {
+        println!("assignments: (none)");
+    } else {
+        println!("assignments:");
+        let mut rows: Vec<_> = item
+            .assignments
+            .iter()
+            .map(|(cat_id, assignment)| {
+                let name = category_names
+                    .get(cat_id)
+                    .cloned()
+                    .unwrap_or_else(|| cat_id.to_string());
+                (name, assignment)
+            })
+            .collect();
+        rows.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+        for (name, assignment) in rows {
+            let origin = assignment.origin.as_deref().unwrap_or("-");
+            println!("  {} | {:?} | {}", name, assignment.source, origin);
+        }
+    }
+
+    Ok(())
+}
+
 fn parsed_when_feedback_line(when_date: Option<NaiveDateTime>) -> Option<String> {
     when_date.map(|when| format!("parsed_when={when}"))
 }
@@ -241,13 +420,21 @@ fn cmd_list(
         items.retain(|item| item.assignments.contains_key(&category_id));
     }
 
-    if let Some(view_name) = view_name {
-        let view = view_by_name(store, &view_name)?;
-        print_items_for_view(&view, &items, &categories, &category_names);
-        return Ok(());
-    }
+    let resolved_view = if let Some(view_name) = view_name {
+        Some(view_by_name(store, &view_name)?)
+    } else {
+        store
+            .list_views()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .next()
+    };
 
-    print_item_table(&items, &category_names);
+    if let Some(view) = resolved_view {
+        print_items_for_view(&view, &items, &categories, &category_names);
+    } else {
+        print_item_table(&items, &category_names);
+    }
     Ok(())
 }
 
@@ -269,16 +456,6 @@ fn cmd_search(store: &Store, query: String, include_done: bool) -> Result<(), St
 
     let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
     print_item_table(&matched_items, &category_names);
-    Ok(())
-}
-
-fn cmd_done(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
-    let item_id = parse_item_id(&item_id_str)?;
-    let result = agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
-    println!("marked done {}", item_id);
-    if !result.new_assignments.is_empty() {
-        println!("new_assignments={}", result.new_assignments.len());
-    }
     Ok(())
 }
 
@@ -331,6 +508,86 @@ fn cmd_category(
             print_category_tree(&categories);
             Ok(())
         }
+        CategoryCommand::Show { name } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let category_names = category_name_map(&categories);
+
+            println!("id:              {}", category.id);
+            println!("name:            {}", category.name);
+            let parent_label = category
+                .parent
+                .and_then(|id| category_names.get(&id))
+                .map(|s| s.as_str())
+                .unwrap_or("(root)");
+            println!("parent:          {}", parent_label);
+            println!("exclusive:       {}", category.is_exclusive);
+            println!("actionable:      {}", category.is_actionable);
+            println!("implicit_string: {}", category.enable_implicit_string);
+            if let Some(note) = &category.note {
+                println!("note:            {}", note);
+            }
+            if !category.children.is_empty() {
+                let child_names: Vec<&str> = category
+                    .children
+                    .iter()
+                    .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                    .collect();
+                println!("children:        {}", child_names.join(", "));
+            }
+            if !category.conditions.is_empty() {
+                println!("conditions:");
+                for condition in &category.conditions {
+                    match condition {
+                        agenda_core::model::Condition::ImplicitString => {
+                            println!("  - ImplicitString");
+                        }
+                        agenda_core::model::Condition::Profile { criteria } => {
+                            let inc: Vec<&str> = criteria
+                                .include
+                                .iter()
+                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                                .collect();
+                            let exc: Vec<&str> = criteria
+                                .exclude
+                                .iter()
+                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                                .collect();
+                            println!(
+                                "  - Profile (include=[{}], exclude=[{}])",
+                                inc.join(", "),
+                                exc.join(", ")
+                            );
+                        }
+                    }
+                }
+            }
+            if !category.actions.is_empty() {
+                println!("actions:");
+                for action in &category.actions {
+                    match action {
+                        agenda_core::model::Action::Assign { targets } => {
+                            let names: Vec<&str> = targets
+                                .iter()
+                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                                .collect();
+                            println!("  - Assign [{}]", names.join(", "));
+                        }
+                        agenda_core::model::Action::Remove { targets } => {
+                            let names: Vec<&str> = targets
+                                .iter()
+                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                                .collect();
+                            println!("  - Remove [{}]", names.join(", "));
+                        }
+                    }
+                }
+            }
+            println!("created_at:      {}", category.created_at.to_rfc3339());
+            println!("modified_at:     {}", category.modified_at.to_rfc3339());
+            Ok(())
+        }
         CategoryCommand::Create {
             name,
             parent,
@@ -379,6 +636,96 @@ fn cmd_category(
             println!("deleted category {}", name);
             Ok(())
         }
+        CategoryCommand::Rename { name, new_name } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            category.name = new_name.clone();
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            println!(
+                "renamed {} -> {} (processed_items={}, affected_items={})",
+                name, new_name, result.processed_items, result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::Reparent { name, parent, root } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            if root {
+                category.parent = None;
+            } else if let Some(parent_name) = parent {
+                category.parent = Some(category_id_by_name(&categories, &parent_name)?);
+            } else {
+                return Err("specify --parent <name> or --root to make top-level".to_string());
+            }
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            let new_parent = category
+                .parent
+                .and_then(|id| categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(root)");
+            println!(
+                "reparented {} under {} (processed_items={}, affected_items={})",
+                name, new_parent, result.processed_items, result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::Update {
+            name,
+            exclusive,
+            actionable,
+            implicit_string,
+            note,
+            clear_note,
+        } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            if exclusive.is_none()
+                && actionable.is_none()
+                && implicit_string.is_none()
+                && note.is_none()
+                && !clear_note
+            {
+                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --note, or --clear-note".to_string());
+            }
+            if let Some(val) = exclusive {
+                category.is_exclusive = val;
+            }
+            if let Some(val) = actionable {
+                category.is_actionable = val;
+            }
+            if let Some(val) = implicit_string {
+                category.enable_implicit_string = val;
+            }
+            if clear_note {
+                category.note = None;
+            } else if let Some(new_note) = note {
+                category.note = if new_note.is_empty() {
+                    None
+                } else {
+                    Some(new_note)
+                };
+            }
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            println!(
+                "updated {} (exclusive={}, actionable={}, implicit_string={}, processed_items={}, affected_items={})",
+                category.name,
+                category.is_exclusive,
+                category.is_actionable,
+                category.enable_implicit_string,
+                result.processed_items,
+                result.affected_items
+            );
+            Ok(())
+        }
         CategoryCommand::Assign {
             item_id,
             category_name,
@@ -405,10 +752,42 @@ fn cmd_category(
             }
             Ok(())
         }
+        CategoryCommand::Unassign {
+            item_id,
+            category_name,
+        } => {
+            let item_id = parse_item_id(&item_id)?;
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &category_name)?;
+
+            if category_name.eq_ignore_ascii_case("Done") {
+                let item = store.get_item(item_id).map_err(|e| e.to_string())?;
+                if item.is_done {
+                    agenda
+                        .toggle_item_done(item_id)
+                        .map_err(|e| e.to_string())?;
+                    println!(
+                        "unassigned item {} from category Done (marked not-done)",
+                        item_id
+                    );
+                    return Ok(());
+                }
+            }
+
+            agenda
+                .unassign_item_manual(item_id, category_id)
+                .map_err(|e| e.to_string())?;
+            println!(
+                "unassigned item {} from category {}",
+                item_id, category_name
+            );
+            Ok(())
+        }
     }
 }
 
-fn cmd_view(store: &Store, command: ViewCommand) -> Result<(), String> {
+fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<(), String> {
+    let _ = agenda;
     match command {
         ViewCommand::List => {
             let views = store.list_views().map_err(|e| e.to_string())?;
@@ -450,6 +829,13 @@ fn cmd_view(store: &Store, command: ViewCommand) -> Result<(), String> {
 
             store.create_view(&view).map_err(|e| e.to_string())?;
             println!("created view {}", view.name);
+            Ok(())
+        }
+        ViewCommand::Rename { name, new_name } => {
+            let mut view = view_by_name(store, &name)?;
+            view.name = new_name.clone();
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!("renamed view {} -> {}", name, new_name);
             Ok(())
         }
         ViewCommand::Delete { name } => {
@@ -676,7 +1062,7 @@ fn print_category_subtree(
 ) {
     let indent = "  ".repeat(depth);
     let flags = format!(
-        "{}{}",
+        "{}{}{}",
         if category.is_exclusive {
             " [exclusive]"
         } else {
@@ -684,6 +1070,11 @@ fn print_category_subtree(
         },
         if !category.enable_implicit_string {
             " [no-implicit-string]"
+        } else {
+            ""
+        },
+        if !category.is_actionable {
+            " [non-actionable]"
         } else {
             ""
         }
