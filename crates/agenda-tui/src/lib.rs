@@ -167,7 +167,6 @@ enum CategoryEditTarget {
 enum BucketEditTarget {
     ViewVirtualInclude,
     ViewVirtualExclude,
-    SectionVirtualExclude,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -397,7 +396,7 @@ mod tests {
         compute_board_layout, first_non_reserved_category_index, item_assignment_labels,
         item_edit_popup_area, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryEditTarget, CategoryListRow, Mode, ViewEditRegion,
+        BucketEditTarget, CategoryListRow, Mode, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -859,6 +858,53 @@ mod tests {
 
         assert_eq!(app.mode, Mode::ViewEdit);
         assert!(app.view_edit_state.is_some());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_lowercase_n_opens_view_create() {
+        let (store, db_path) = make_test_store_with_view("picker-lower-n");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("n opens create view");
+
+        assert_eq!(app.mode, Mode::ViewCreateNameInput);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_navigation_keys_do_not_request_app_quit() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-edit-nav-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        store
+            .create_view(&View::new("Work Board".to_string()))
+            .expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = 0;
+        app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
+            .expect("open view edit");
+
+        let should_quit = app.handle_key(KeyCode::Down, &agenda).expect("down in view edit");
+        assert!(!should_quit, "view-edit navigation must not quit the app");
+        assert_eq!(app.mode, Mode::ViewEdit);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -1609,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn bucket_target_set_mut_supports_view_and_section_targets() {
+    fn bucket_target_set_mut_supports_view_targets() {
         let mut view = View::new("Board".to_string());
         view.sections.push(Section {
             title: "One".to_string(),
@@ -1620,16 +1666,16 @@ mod tests {
         });
 
         let view_virtual =
-            bucket_target_set_mut(&mut view, 0, BucketEditTarget::ViewVirtualInclude)
+            bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualInclude)
                 .expect("view virtual include set");
         view_virtual.insert(WhenBucket::Today);
         assert!(view.criteria.virtual_include.contains(&WhenBucket::Today));
 
-        let section_virtual =
-            bucket_target_set_mut(&mut view, 0, BucketEditTarget::SectionVirtualExclude)
-                .expect("section virtual exclude set");
-        section_virtual.insert(WhenBucket::NoDate);
-        assert!(view.sections[0]
+        let view_virtual_exclude =
+            bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualExclude)
+                .expect("view virtual exclude set");
+        view_virtual_exclude.insert(WhenBucket::NoDate);
+        assert!(view
             .criteria
             .virtual_exclude
             .contains(&WhenBucket::NoDate));
@@ -1925,6 +1971,80 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_category_picker_allows_multi_select_with_enter() {
+        let (store, db_path) = make_test_store_with_view("picker-multi");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let home = Category::new("Home".to_string());
+        store.create_category(&work).expect("create work category");
+        store.create_category(&home).expect("create home category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("open category picker");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+
+        let work_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Work")
+            .expect("work row");
+        let home_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Home")
+            .expect("home row");
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = work_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle work");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .criteria
+            .include
+            .contains(&work.id));
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = home_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle home");
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .criteria
+            .include
+            .contains(&home.id));
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
+
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close category picker");
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_save_persists_view() {
         let (store, db_path) = make_test_store_with_view("save");
         let classifier = SubstringClassifier;
@@ -1963,9 +2083,11 @@ mod tests {
         let after_direct = store.list_views().expect("list").into_iter().find(|v| v.name == "TestView").expect("view");
         assert_eq!(after_direct.sections.len(), 1, "direct update_view should persist section");
 
-        // Save with 'S'
-        app.handle_view_edit_key(KeyCode::Char('S'), &agenda).expect("S save");
-        assert_eq!(app.mode, Mode::ViewEdit);
+        // Save with Enter (save + exit)
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("Enter save");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
         assert!(app.status.contains("Saved"), "save status should say Saved, got: {}", app.status);
 
         // Verify persisted

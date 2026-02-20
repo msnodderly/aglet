@@ -52,7 +52,7 @@ impl App {
             criteria_rows,
         });
         self.mode = Mode::ViewEdit;
-        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+        self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
     }
 
     /// Recompute `preview_count` in `view_edit_state` from the current draft criteria.
@@ -63,6 +63,102 @@ impl App {
                 state.preview_count = count;
             }
         }
+    }
+
+    fn close_view_edit_overlay(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.overlay = None;
+            state.picker_index = 0;
+        }
+        self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
+    }
+
+    fn toggle_category_picker_selection(
+        &mut self,
+        target: CategoryEditTarget,
+        section_expanded: usize,
+        cat_id: CategoryId,
+    ) {
+        let mut needs_criteria_rebuild = false;
+        if let Some(state) = &mut self.view_edit_state {
+            match target {
+                CategoryEditTarget::ViewInclude => {
+                    if state.region == ViewEditRegion::Columns {
+                        if let Some(existing_index) = state
+                            .draft
+                            .columns
+                            .iter()
+                            .position(|col| {
+                                col.kind == ColumnKind::Standard && col.heading == cat_id
+                            })
+                        {
+                            state.draft.columns.remove(existing_index);
+                            if state.column_index >= state.draft.columns.len()
+                                && !state.draft.columns.is_empty()
+                            {
+                                state.column_index = state.draft.columns.len() - 1;
+                            }
+                        } else {
+                            let new_col = Column {
+                                kind: ColumnKind::Standard,
+                                heading: cat_id,
+                                width: 12,
+                            };
+                            state.draft.columns.push(new_col);
+                            state.column_index =
+                                state.draft.columns.len().saturating_sub(1);
+                        }
+                    } else if !state.draft.criteria.include.remove(&cat_id) {
+                        state.draft.criteria.include.insert(cat_id);
+                        state.draft.criteria.exclude.remove(&cat_id);
+                        needs_criteria_rebuild = true;
+                    } else {
+                        needs_criteria_rebuild = true;
+                    }
+                }
+                CategoryEditTarget::SectionCriteriaInclude => {
+                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                        if !section.criteria.include.remove(&cat_id) {
+                            section.criteria.include.insert(cat_id);
+                            section.criteria.exclude.remove(&cat_id);
+                        }
+                    }
+                }
+                CategoryEditTarget::SectionCriteriaExclude => {
+                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                        if !section.criteria.exclude.remove(&cat_id) {
+                            section.criteria.exclude.insert(cat_id);
+                            section.criteria.include.remove(&cat_id);
+                        }
+                    }
+                }
+                CategoryEditTarget::SectionOnInsertAssign => {
+                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                        if !section.on_insert_assign.remove(&cat_id) {
+                            section.on_insert_assign.insert(cat_id);
+                        }
+                    }
+                }
+                CategoryEditTarget::SectionOnRemoveUnassign => {
+                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                        if !section.on_remove_unassign.remove(&cat_id) {
+                            section.on_remove_unassign.insert(cat_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        if needs_criteria_rebuild {
+            if let Some(state) = &self.view_edit_state {
+                let draft = state.draft.clone();
+                let rows = self.build_view_edit_criteria_rows(&draft);
+                if let Some(state) = &mut self.view_edit_state {
+                    state.criteria_rows = rows;
+                }
+            }
+        }
+        self.refresh_view_edit_preview();
     }
 
     pub(crate) fn handle_view_edit_key(
@@ -77,7 +173,8 @@ impl App {
             .map(|s| s.inline_input.is_some())
             .unwrap_or(false)
         {
-            return self.handle_view_edit_inline_key(code);
+            self.handle_view_edit_inline_key(code)?;
+            return Ok(false);
         }
 
         // Layer 2: picker overlay intercepts all keys.
@@ -87,11 +184,13 @@ impl App {
             .map(|s| s.overlay.is_some())
             .unwrap_or(false)
         {
-            return self.handle_view_edit_overlay_key(code);
+            self.handle_view_edit_overlay_key(code)?;
+            return Ok(false);
         }
 
         // Layer 3: global and region keys.
-        self.handle_view_edit_region_key(code, agenda)
+        self.handle_view_edit_region_key(code, agenda)?;
+        Ok(false)
     }
 
     // -------------------------------------------------------------------------
@@ -109,7 +208,7 @@ impl App {
                     state.inline_input = None;
                     state.inline_buf.clear();
                 }
-                self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
             }
             KeyCode::Enter => {
                 let Some(state) = &mut self.view_edit_state else {
@@ -136,7 +235,7 @@ impl App {
                 }
                 state.inline_input = None;
                 state.inline_buf.clear();
-                self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
             }
             _ => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -174,84 +273,17 @@ impl App {
                                 next_index_clamped(picker_index, self.category_rows.len(), -1);
                         }
                     }
-                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Esc => {
-                        let mut needs_criteria_rebuild = false;
-                        if matches!(code, KeyCode::Char(' ') | KeyCode::Enter) {
-                            if let Some(row) = self.category_rows.get(picker_index).cloned() {
-                                let cat_id = row.id;
-                                if let Some(state) = &mut self.view_edit_state {
-                                    match target {
-                                        CategoryEditTarget::ViewInclude => {
-                                            if state.region == ViewEditRegion::Columns {
-                                                let new_col = Column {
-                                                    kind: ColumnKind::Standard,
-                                                    heading: cat_id,
-                                                    width: 12,
-                                                };
-                                                state.draft.columns.push(new_col);
-                                                state.column_index =
-                                                    state.draft.columns.len().saturating_sub(1);
-                                            } else {
-                                                state.draft.criteria.include.insert(cat_id);
-                                                state.draft.criteria.exclude.remove(&cat_id);
-                                                needs_criteria_rebuild = true;
-                                            }
-                                        }
-                                        CategoryEditTarget::ViewExclude => {
-                                            state.draft.criteria.exclude.insert(cat_id);
-                                            state.draft.criteria.include.remove(&cat_id);
-                                            needs_criteria_rebuild = true;
-                                        }
-                                        CategoryEditTarget::SectionCriteriaInclude => {
-                                            if let Some(section) =
-                                                state.draft.sections.get_mut(section_expanded)
-                                            {
-                                                section.criteria.include.insert(cat_id);
-                                                section.criteria.exclude.remove(&cat_id);
-                                            }
-                                        }
-                                        CategoryEditTarget::SectionCriteriaExclude => {
-                                            if let Some(section) =
-                                                state.draft.sections.get_mut(section_expanded)
-                                            {
-                                                section.criteria.exclude.insert(cat_id);
-                                                section.criteria.include.remove(&cat_id);
-                                            }
-                                        }
-                                        CategoryEditTarget::SectionOnInsertAssign => {
-                                            if let Some(section) =
-                                                state.draft.sections.get_mut(section_expanded)
-                                            {
-                                                section.on_insert_assign.insert(cat_id);
-                                            }
-                                        }
-                                        CategoryEditTarget::SectionOnRemoveUnassign => {
-                                            if let Some(section) =
-                                                state.draft.sections.get_mut(section_expanded)
-                                            {
-                                                section.on_remove_unassign.insert(cat_id);
-                                            }
-                                        }
-                                    }
-                                }
-                                // Rebuild criteria_rows outside the mutable borrow scope
-                                if needs_criteria_rebuild {
-                                    if let Some(state) = &self.view_edit_state {
-                                        let draft = state.draft.clone();
-                                        let rows = self.build_view_edit_criteria_rows(&draft);
-                                        if let Some(state) = &mut self.view_edit_state {
-                                            state.criteria_rows = rows;
-                                        }
-                                    }
-                                }
-                                self.refresh_view_edit_preview();
-                            }
+                    KeyCode::Char(' ') | KeyCode::Enter => {
+                        if let Some(row) = self.category_rows.get(picker_index).cloned() {
+                            self.toggle_category_picker_selection(
+                                target,
+                                section_expanded,
+                                row.id,
+                            );
                         }
-                        if let Some(state) = &mut self.view_edit_state {
-                            state.overlay = None;
-                            state.picker_index = 0;
-                        }
-                        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                    }
+                    KeyCode::Esc => {
+                        self.close_view_edit_overlay();
                     }
                     _ => {}
                 }
@@ -277,7 +309,6 @@ impl App {
                                 if let Some(state) = &mut self.view_edit_state {
                                     if let Some(set) = bucket_target_set_mut(
                                         &mut state.draft,
-                                        section_expanded,
                                         target,
                                     ) {
                                         if set.contains(&bucket) {
@@ -294,7 +325,7 @@ impl App {
                             state.overlay = None;
                             state.picker_index = 0;
                         }
-                        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                        self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
                     }
                     _ => {}
                 }
@@ -333,7 +364,7 @@ impl App {
                 }
                 return Ok(true);
             }
-            KeyCode::Char('S') => {
+            KeyCode::Enter => {
                 return self.handle_view_edit_save(agenda);
             }
             _ => {}
@@ -364,13 +395,9 @@ impl App {
             Ok(()) => {
                 self.refresh(agenda.store())?;
                 self.set_view_selection_by_name(&view_name);
-                // Reopen editor with updated view so user can continue editing
-                if let Some(updated_view) =
-                    self.views.iter().find(|v| v.name == view_name).cloned()
-                {
-                    self.open_view_edit(updated_view);
-                }
-                self.status = format!("Saved view \"{view_name}\" (Esc to close)");
+                self.view_edit_state = None;
+                self.mode = Mode::ViewPicker;
+                self.status = format!("Saved view \"{view_name}\"");
             }
             Err(err) => {
                 self.status = format!("View save failed: {err}");
@@ -401,7 +428,7 @@ impl App {
                     state.criteria_index = next_index_clamped(idx, len, -1);
                 }
             }
-            KeyCode::Char('N') => {
+            KeyCode::Char('n') | KeyCode::Char('N') => {
                 let first = first_non_reserved_category_index(&self.category_rows);
                 if let Some(state) = &mut self.view_edit_state {
                     state.overlay = Some(ViewEditOverlay::CategoryPicker {
@@ -409,8 +436,8 @@ impl App {
                     });
                     state.picker_index = first;
                 }
-                self.status =
-                    "Add criteria: j/k select  Space/Enter:add  Esc:back".to_string();
+                self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done"
+                    .to_string();
             }
             KeyCode::Char('x') => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -495,7 +522,7 @@ impl App {
                     state.column_index = next_index_clamped(idx, len, -1);
                 }
             }
-            KeyCode::Char('N') => {
+            KeyCode::Char('n') | KeyCode::Char('N') => {
                 let first = first_non_reserved_category_index(&self.category_rows);
                 if let Some(state) = &mut self.view_edit_state {
                     state.overlay = Some(ViewEditOverlay::CategoryPicker {
@@ -503,7 +530,8 @@ impl App {
                     });
                     state.picker_index = first;
                 }
-                self.status = "Add column: j/k select  Space/Enter:add  Esc:back".to_string();
+                self.status = "Add column: j/k select  Space/Enter:toggle  Esc:done"
+                    .to_string();
             }
             KeyCode::Char('x') => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -571,7 +599,7 @@ impl App {
                     state.section_index = next_index_clamped(idx, len, -1);
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Char(' ') => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.section_expanded = if expanded == Some(idx) {
                         None
@@ -582,7 +610,7 @@ impl App {
                     };
                 }
             }
-            KeyCode::Char('N') => {
+            KeyCode::Char('n') | KeyCode::Char('N') => {
                 if let Some(state) = &mut self.view_edit_state {
                     let new_section = Section {
                         title: "New section".to_string(),

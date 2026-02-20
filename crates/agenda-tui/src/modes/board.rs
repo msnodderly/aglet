@@ -155,7 +155,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =
-                    "View palette: Enter switch, N create, r rename, x delete, e edit view, Esc cancel"
+                    "View palette: Enter switch, n create, r rename, x delete, e edit view, Esc cancel"
                         .to_string();
             }
             KeyCode::F(9) | KeyCode::Char('c') => {

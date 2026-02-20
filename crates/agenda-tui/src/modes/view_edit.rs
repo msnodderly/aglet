@@ -28,7 +28,7 @@ impl App {
                 }
                 self.mode = Mode::Normal;
             }
-            KeyCode::Char('N') => {
+            KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.mode = Mode::ViewCreateNameInput;
                 self.clear_input();
                 self.view_pending_name = None;
