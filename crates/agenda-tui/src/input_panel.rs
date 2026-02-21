@@ -193,6 +193,8 @@ impl InputPanel {
                 Some(InputPanelAction::FocusPrev)
             }
             KeyCode::Esc => Some(InputPanelAction::Cancel),
+            // Capital S saves from any focus (consistent with ViewEdit §4.7)
+            KeyCode::Char('S') => Some(InputPanelAction::Save),
             _ => None,
         }
     }

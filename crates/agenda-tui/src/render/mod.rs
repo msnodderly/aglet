@@ -730,7 +730,7 @@ impl App {
             Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDelete => "y:confirm delete  n:cancel",
             Mode::CategoryConfig => {
-                "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  Enter:save (except note)  e/i/a:quick toggle  Esc:cancel"
+                "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  S:save (except note)  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
                 "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  Esc:cancel"
@@ -742,12 +742,12 @@ impl App {
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
-                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle +/-  ]/[:when-buckets  Tab:region  Enter:save  Esc:cancel",
-                        ViewEditRegion::Sections => "n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  Tab:region  Enter:save  Esc:cancel",
-                        ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  Enter:save  Esc:cancel",
+                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle +/-  ]/[:when-buckets  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Sections => "n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
                     }
                 } else {
-                    "Tab:region  Enter:save  Esc:cancel"
+                    "Tab:region  S:save  Esc:cancel"
                 }
             }
             Mode::ItemAssignPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
@@ -756,10 +756,10 @@ impl App {
                 if self.input_panel.as_ref().map_or(false, |p| p.category_picker_open()) {
                     "j/k:navigate  Space:toggle  Enter/Esc:close picker"
                 } else {
-                    "Tab/Shift+Tab:cycle fields  Enter:activate button  Up/Down in note  Esc:cancel"
+                    "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Up/Down in note  Esc:cancel"
                 }
             }
-            Mode::NoteEdit => "Edit selected note, Enter:save (empty clears), Esc:cancel",
+            Mode::NoteEdit => "Edit selected note, S:save (empty clears), Esc:cancel",
             Mode::InspectUnassign => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
                 "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  ,/.:view  p:preview  o:preview-mode  Tab/Shift+Tab:section  f:board/preview focus  []:move  r:remove  d/D:done-toggle  x:delete  J/K:preview-scroll  q:quit"
@@ -892,7 +892,7 @@ impl App {
 
         // Help row
         frame.render_widget(
-            Paragraph::new("Tab/Shift+Tab:cycle  Enter:activate  Up/Down:note  Esc:cancel"),
+            Paragraph::new("S:save  Tab/Shift+Tab:cycle  Enter:activate  Up/Down:note  Esc:cancel"),
             regions.help,
         );
     }
