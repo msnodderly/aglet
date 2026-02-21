@@ -368,6 +368,7 @@ impl App {
             Ok(()) => {
                 self.refresh(agenda.store())?;
                 self.set_view_selection_by_name(&view_name);
+                self.reset_section_filters();
                 self.view_edit_state = None;
                 self.mode = Mode::ViewPicker;
                 self.status = format!("Saved view \"{view_name}\"");

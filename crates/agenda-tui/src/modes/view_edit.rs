@@ -17,6 +17,7 @@ impl App {
                     self.slot_index = 0;
                     self.item_index = 0;
                     self.refresh(agenda.store())?;
+                    self.reset_section_filters();
                     let view_name = self
                         .current_view()
                         .map(|view| view.name.clone())

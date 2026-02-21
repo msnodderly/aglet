@@ -221,11 +221,16 @@ impl App {
             .map(|view| view.name.as_str())
             .unwrap_or("(none)");
         let mode = format!("{:?}", self.mode);
-        let filter = self
-            .filter
-            .as_ref()
-            .map(|value| format!(" filter:{value}"))
-            .unwrap_or_default();
+        let active_filters = self
+            .section_filters
+            .iter()
+            .filter(|f| f.is_some())
+            .count();
+        let filter = if active_filters > 0 {
+            format!(" filters:{active_filters}")
+        } else {
+            String::new()
+        };
 
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -319,7 +324,13 @@ impl App {
             } else {
                 None
             };
-            let title = format!("{} ({})", slot.title, slot.items.len());
+            let filter_suffix = self
+                .section_filters
+                .get(slot_index)
+                .and_then(|f| f.as_deref())
+                .map(|needle| format!("  filter:{needle}"))
+                .unwrap_or_default();
+            let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
             let border_color = if is_selected_slot {
                 Color::Cyan
             } else {
@@ -690,7 +701,15 @@ impl App {
     fn footer_status_text(&self) -> String {
         match self.mode {
             Mode::NoteEdit => format!("Note> {}", self.input.text()),
-            Mode::FilterInput => format!("Filter> {}", self.input.text()),
+            Mode::FilterInput => {
+                let target = self.filter_target_section;
+                let section_name = self
+                    .slots
+                    .get(target)
+                    .map(|s| s.title.as_str())
+                    .unwrap_or("section");
+                format!("Filter [{section_name}]> {}", self.input.text())
+            }
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategory => {
