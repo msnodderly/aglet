@@ -500,7 +500,7 @@ impl App {
                     let new_section = Section {
                         title: "New section".to_string(),
                         criteria: Query::default(),
-                        columns: state.draft.columns.clone(),
+                        columns: Vec::new(),
                         on_insert_assign: HashSet::new(),
                         on_remove_unassign: HashSet::new(),
                         show_children: false,
@@ -539,6 +539,17 @@ impl App {
                     }
                 }
             }
+            KeyCode::Enter => {
+                if let Some(state) = &mut self.view_edit_state {
+                    if idx < len {
+                        if state.section_expanded == Some(idx) {
+                            state.section_expanded = None;
+                        } else {
+                            state.section_expanded = Some(idx);
+                        }
+                    }
+                }
+            }
             KeyCode::Char('t') | KeyCode::Char('e') => {
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < state.draft.sections.len() {
@@ -546,6 +557,7 @@ impl App {
                         state.inline_input =
                             Some(ViewEditInlineInput::SectionTitle { section_index: idx });
                         state.inline_buf = text_buffer::TextBuffer::new(current);
+                        state.section_expanded = Some(idx);
                     }
                 }
                 self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
