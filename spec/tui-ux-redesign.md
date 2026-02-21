@@ -717,23 +717,73 @@ Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `v
 2. Compute hint text from current mode + sub-state
 3. Separate status messages from hints
 
-## 12. What This Proposal Does NOT Change
+## 12. Current Implementation State
+
+This section records where the shipped code **differs from the spec above**. It is the authoritative reference for "what does the code actually do today." When spec and code disagree, the code wins until a tracking issue is resolved.
+
+Last updated: 2026-02-20. Tracking issues are in `feature-requests.ag`.
+
+### 12.1 ViewEdit Save Key (§4.7)
+
+| Spec says | Code does | Tracking |
+|-----------|-----------|----------|
+| `S` (capital S) saves the view | `Enter` saves the view | FR `94f2f053` |
+
+The spec §4.7 describes S as the save key and Enter as "activate/expand." The Phase 2a implementation used Enter for save instead. This is a known deviation. Until FR `94f2f053` is resolved, `Enter` saves in ViewEdit.
+
+### 12.2 ViewEdit Regions (§4, §5.2)
+
+| Spec says | Code does | Tracking |
+|-----------|-----------|----------|
+| 4 regions: Criteria / Columns / Sections / Unmatched | 3 regions: Criteria / Sections / Unmatched | FR `cf6b7dd8` |
+
+The Columns region was not implemented in Phase 2a. Columns are currently edited via a category picker overlay triggered by the `c` key from within the Sections region. `ViewEditRegion` has only 3 variants; `Tab` cycles among them.
+
+### 12.3 ViewEditInlineInput Variants (§5.2)
+
+| Spec says | Code does | Tracking |
+|-----------|-----------|----------|
+| `ColumnWidth { column_index }` variant | Variant does not exist | FR `cf6b7dd8` |
+
+Follows from 12.2 — no Columns region means no column-width inline edit.
+
+### 12.4 ViewCriteriaRow Fields (§5.2)
+
+| Spec says | Code does | Notes |
+|-----------|-----------|-------|
+| Fields: `sign`, `category_id`, `join_is_or`, `depth` | Fields: `sign`, `category_id` only | Simplified — boolean composition not yet supported |
+
+`join_is_or` and `depth` were omitted because the underlying query model does not yet support arbitrary boolean composition. The `ViewCriteriaRow` struct in `lib.rs` has only `sign: ViewCriteriaSign` and `category_id: CategoryId`.
+
+### 12.5 Summary Table
+
+| Area | Spec target | Current code | Gap FR |
+|------|-------------|--------------|--------|
+| ViewEdit save key | `S` | `Enter` | `94f2f053` |
+| ViewEdit regions | 4 (Criteria/Columns/Sections/Unmatched) | 3 (no Columns) | `cf6b7dd8` |
+| ViewEditInlineInput | ColumnWidth variant | Missing | `cf6b7dd8` |
+| ViewCriteriaRow | join_is_or + depth | Not present | — (blocked by query model) |
+| Item add flow | InputPanel (Phase 5) | Mode::AddInput (bare text) | `cfb526a4` |
+| Item edit flow | InputPanel (Phase 5) | Mode::ItemEdit (separate popup) | `0ce92977` |
+| Footer hint bar | Persistent per-mode hint bar (Phase 5) | Hints embedded in status messages | `afe45b4e` |
+| Per-section filters | Vec<Option<String>> (Phase 3) | Single view-wide filter | `882a75b0` |
+
+## 13. What This Proposal Does NOT Change
 
 - Data model: `View`, `Section`, `Column`, `Query`, `Category`, `Item` are unchanged
 - Persistence: `Store` API is unchanged
 - Board rendering: slot/item layout, column rendering, preview panel — all unchanged
 - Category Manager: same screen, same keys, same flow
-- Item editing: same popup, same field cycling, same save behavior
 - CLI: untouched
 
-## 13. Migration Notes for Existing Users
+## 14. Migration Notes for Existing Users
 
-Key binding changes that existing users will notice:
+Key binding changes that existing users will notice. **Note**: items marked `(spec)` describe the design target; items marked `(current)` describe what the code does today.
 
 | Old | New | Context |
 |-----|-----|---------|
 | `v` then `V` to enter View Manager | `v` then `e` to enter ViewEdit | View Manager is gone |
-| `s` in View Manager to save criteria | `S` in ViewEdit to save everything | Capital S, saves all aspects |
-| `t` in View Manager Definition pane to toggle Criteria/Columns | `Tab` in ViewEdit to switch between Criteria and Columns regions | Region cycling replaces sub-tab toggle |
+| `s` in View Manager to save criteria | `Enter` in ViewEdit to save (current); `S` when FR `94f2f053` ships (spec) | Capital S is the target |
+| `t` in View Manager Definition pane to toggle Criteria/Columns | `Tab` in ViewEdit cycles Criteria → Sections → Unmatched (current); will include Columns when FR `cf6b7dd8` ships | No Columns region yet |
 | `e` in ViewPicker to open View Editor overlay | `e` in ViewPicker to open ViewEdit (full-screen) | Same key, different presentation |
-| `Enter` in View Editor to save | `S` in ViewEdit to save | Enter is now "activate/expand", not "save" |
+| `Enter` in View Editor to save | `Enter` in ViewEdit to save (current); `S` when FR `94f2f053` ships (spec) | |
