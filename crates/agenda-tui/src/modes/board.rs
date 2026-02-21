@@ -802,7 +802,7 @@ impl App {
                 self.clear_input();
                 self.status = "Note edit canceled".to_string();
             }
-            KeyCode::Enter => {
+            KeyCode::Char('S') | KeyCode::Enter => {
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
                     self.clear_input();
