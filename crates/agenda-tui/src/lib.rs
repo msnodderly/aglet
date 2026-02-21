@@ -183,17 +183,23 @@ enum Mode {
     FilterInput,
     ViewPicker,
     ViewEdit,
-    ViewCreateName,
     ViewCreateCategory,
-    ViewRename,
     ViewDeleteConfirm,
     ConfirmDelete,
     CategoryManager,
-    CategoryCreate,
-    CategoryRename,
     CategoryReparent,
     CategoryDelete,
     CategoryConfig,
+}
+
+/// Disambiguates which name-input operation is in flight when Mode::InputPanel
+/// is open with InputPanelKind::NameInput.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NameInputContext {
+    ViewCreate,
+    ViewRename,
+    CategoryCreate,
+    CategoryRename,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -322,6 +328,7 @@ struct App {
     category_config_editor: Option<CategoryConfigState>,
     item_assign_category_index: usize,
     input_panel: Option<input_panel::InputPanel>,
+    name_input_context: Option<NameInputContext>,
     preview_provenance_scroll: usize,
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
@@ -361,6 +368,7 @@ impl Default for App {
             category_config_editor: None,
             item_assign_category_index: 0,
             input_panel: None,
+            name_input_context: None,
             preview_provenance_scroll: 0,
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
@@ -382,7 +390,7 @@ mod tests {
         first_non_reserved_category_index, input_panel, input_panel_popup_area,
         item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryListRow, Mode, ViewEditRegion,
+        BucketEditTarget, CategoryListRow, Mode, NameInputContext, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -572,10 +580,6 @@ mod tests {
         let cases = [
             (Mode::NoteEdit, "Note> "),
             (Mode::FilterInput, "Filter> "),
-            (Mode::ViewCreateName, "View create> "),
-            (Mode::ViewRename, "View rename> "),
-            (Mode::CategoryCreate, "Category create> "),
-            (Mode::CategoryRename, "Category rename> "),
             (Mode::ItemAssignInput, "Category> "),
         ];
 
@@ -912,7 +916,9 @@ mod tests {
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
             .expect("n opens create view");
 
-        assert_eq!(app.mode, Mode::ViewCreateName);
+        // After Phase 5d: 'n' in ViewPicker now opens InputPanel(NameInput) instead of ViewCreateName
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
 
         let _ = std::fs::remove_file(&db_path);
     }

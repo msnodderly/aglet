@@ -355,9 +355,19 @@ impl App {
         use input_panel::InputPanelAction;
         match action {
             InputPanelAction::Cancel => {
+                let kind = self.input_panel.as_ref().map(|p| p.kind);
                 self.input_panel = None;
-                self.mode = Mode::Normal;
-                self.status = "Canceled".to_string();
+                match kind {
+                    Some(input_panel::InputPanelKind::NameInput) => {
+                        self.mode = self.name_input_return_mode();
+                        self.name_input_context = None;
+                        self.status = "Canceled".to_string();
+                    }
+                    _ => {
+                        self.mode = Mode::Normal;
+                        self.status = "Canceled".to_string();
+                    }
+                }
             }
             InputPanelAction::Save => {
                 let kind = self
@@ -373,18 +383,7 @@ impl App {
                         self.save_input_panel_edit(agenda)?;
                     }
                     input_panel::InputPanelKind::NameInput => {
-                        // NameInput save is handled by the caller that set up the panel.
-                        // For now: no-op (NameInput migration is Phase 5d).
-                        let name = self
-                            .input_panel
-                            .as_ref()
-                            .map(|p| p.text.trimmed().to_string())
-                            .unwrap_or_default();
-                        if name.is_empty() {
-                            self.status = "Name cannot be empty".to_string();
-                        } else {
-                            self.status = format!("NameInput save not yet wired: {name}");
-                        }
+                        self.save_input_panel_name(agenda)?;
                     }
                 }
             }
@@ -622,6 +621,162 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         self.status = "Item updated".to_string();
+        Ok(())
+    }
+
+    /// Returns the mode to return to when a NameInput panel is canceled or completed.
+    fn name_input_return_mode(&self) -> Mode {
+        match self.name_input_context {
+            Some(NameInputContext::ViewCreate) | Some(NameInputContext::ViewRename) => {
+                Mode::ViewPicker
+            }
+            Some(NameInputContext::CategoryCreate) | Some(NameInputContext::CategoryRename) => {
+                Mode::CategoryManager
+            }
+            None => Mode::Normal,
+        }
+    }
+
+    /// Save an InputPanel(NameInput) — dispatches on name_input_context.
+    fn save_input_panel_name(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let name = self
+            .input_panel
+            .as_ref()
+            .map(|p| p.text.trimmed().to_string())
+            .unwrap_or_default();
+
+        if name.is_empty() {
+            self.status = "Name cannot be empty".to_string();
+            return Ok(());
+        }
+
+        match self.name_input_context {
+            Some(NameInputContext::ViewCreate) => {
+                self.view_pending_name = Some(name.clone());
+                self.view_category_index = first_non_reserved_category_index(&self.category_rows);
+                self.view_create_include_selection.clear();
+                self.view_create_exclude_selection.clear();
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::ViewCreateCategory;
+                self.status = format!("Create view {name}: + include, - exclude, Enter creates");
+            }
+            Some(NameInputContext::ViewRename) => {
+                let Some(old_name) = self.view_pending_edit_name.clone() else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View rename failed: no selected view".to_string();
+                    return Ok(());
+                };
+                let Some(mut view) = self
+                    .views
+                    .iter()
+                    .find(|v| v.name.eq_ignore_ascii_case(&old_name))
+                    .cloned()
+                else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.view_pending_edit_name = None;
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View rename failed: selected view not found".to_string();
+                    return Ok(());
+                };
+                if view.name == name {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.view_pending_edit_name = None;
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View rename canceled (unchanged)".to_string();
+                    return Ok(());
+                }
+                view.name = name.clone();
+                match agenda.store().update_view(&view) {
+                    Ok(()) => {
+                        self.refresh(agenda.store())?;
+                        self.set_view_selection_by_name(&name);
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.view_pending_edit_name = None;
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("Renamed view to {name}");
+                    }
+                    Err(err) => {
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.view_pending_edit_name = None;
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("View rename failed: {err}");
+                    }
+                }
+            }
+            Some(NameInputContext::CategoryCreate) => {
+                let mut category = Category::new(name.clone());
+                category.enable_implicit_string = true;
+                category.parent = self.category_create_parent;
+                let parent_label = self
+                    .create_parent_name()
+                    .unwrap_or_else(|| "top level".to_string());
+                match agenda.create_category(&category).map_err(|e| e.to_string()) {
+                    Ok(result) => {
+                        self.refresh(agenda.store())?;
+                        self.set_category_selection_by_id(category.id);
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.category_create_parent = None;
+                        self.mode = Mode::CategoryManager;
+                        self.status = format!(
+                            "Created category {name} under {parent_label} (processed_items={}, affected_items={})",
+                            result.processed_items, result.affected_items
+                        );
+                    }
+                    Err(err) => {
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.category_create_parent = None;
+                        self.mode = Mode::CategoryManager;
+                        self.status = format!("Create failed: {err}");
+                    }
+                }
+            }
+            Some(NameInputContext::CategoryRename) => {
+                let Some(category_id) = self.selected_category_id() else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::CategoryManager;
+                    self.status = "Category rename failed: no selection".to_string();
+                    return Ok(());
+                };
+                let mut category = agenda
+                    .store()
+                    .get_category(category_id)
+                    .map_err(|e| e.to_string())?;
+                if category.name == name {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::CategoryManager;
+                    self.status = "Category rename canceled (unchanged)".to_string();
+                    return Ok(());
+                }
+                category.name = name.clone();
+                let result = agenda.update_category(&category).map_err(|e| e.to_string())?;
+                self.refresh(agenda.store())?;
+                self.set_category_selection_by_id(category_id);
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::CategoryManager;
+                self.status = format!(
+                    "Renamed category to {name} (processed_items={}, affected_items={})",
+                    result.processed_items, result.affected_items
+                );
+            }
+            None => {
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::Normal;
+                self.status = "NameInput save: no context".to_string();
+            }
+        }
         Ok(())
     }
 

@@ -66,13 +66,7 @@ impl App {
             }
         }
 
-        if matches!(
-            self.mode,
-            Mode::ViewPicker
-                | Mode::ViewCreateName
-                | Mode::ViewRename
-                | Mode::ViewDeleteConfirm
-        ) {
+        if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
         if matches!(
@@ -90,10 +84,6 @@ impl App {
         match self.mode {
             Mode::NoteEdit => Some("Note> "),
             Mode::FilterInput => Some("Filter> "),
-            Mode::ViewCreateName => Some("View create> "),
-            Mode::ViewRename => Some("View rename> "),
-            Mode::CategoryCreate => Some("Category create> "),
-            Mode::CategoryRename => Some("Category rename> "),
             Mode::ItemAssignInput => Some("Category> "),
             _ => None,
         }
@@ -254,8 +244,6 @@ impl App {
         if matches!(
             self.mode,
             Mode::CategoryManager
-                | Mode::CategoryCreate
-                | Mode::CategoryRename
                 | Mode::CategoryReparent
                 | Mode::CategoryDelete
                 | Mode::CategoryConfig
@@ -691,14 +679,10 @@ impl App {
             Mode::NoteEdit => format!("Note> {}", self.input.text()),
             Mode::FilterInput => format!("Filter> {}", self.input.text()),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
-            Mode::ViewCreateName => format!("View create> {}", self.input.text()),
-            Mode::ViewRename => format!("View rename> {}", self.input.text()),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategory => {
                 "Set include/exclude categories for new view".to_string()
             }
-            Mode::CategoryCreate => format!("Category create> {}", self.input.text()),
-            Mode::CategoryRename => format!("Category rename> {}", self.input.text()),
             Mode::CategoryReparent => "Select category parent".to_string(),
             Mode::CategoryDelete => "Delete selected category? y/n".to_string(),
             Mode::CategoryConfig => {
@@ -743,18 +727,14 @@ impl App {
             Mode::CategoryManager => {
                 "j/k:row  Enter:config popup  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
             }
-            Mode::CategoryCreate => "Type category name, Enter:create, Esc:cancel",
-            Mode::CategoryRename => "Type new category name, Enter:rename, Esc:cancel",
             Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDelete => "y:confirm delete  n:cancel",
             Mode::CategoryConfig => {
                 "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  Enter:save (except note)  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
-                "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
+                "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  Esc:cancel"
             }
-            Mode::ViewCreateName => "Type view name, Enter:next, Esc:cancel",
-            Mode::ViewRename => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewCreateCategory => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
@@ -1207,20 +1187,7 @@ impl App {
             layout[1]
         };
 
-        let title_suffix = if self.mode == Mode::CategoryCreate {
-            let parent = self
-                .create_parent_name()
-                .unwrap_or_else(|| "(top level / no parent)".to_string());
-            format!(" | new under {parent}")
-        } else if self.mode == Mode::CategoryRename {
-            let target = self
-                .selected_category_row()
-                .map(|row| row.name.clone())
-                .unwrap_or_else(|| "(none)".to_string());
-            format!(" | rename target {target}")
-        } else {
-            String::new()
-        };
+        let title_suffix = String::new();
 
         let rows: Vec<Row<'_>> = if self.category_rows.is_empty() {
             vec![Row::new(vec![

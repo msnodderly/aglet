@@ -19,27 +19,30 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
             KeyCode::Char('n') => {
-                self.mode = Mode::CategoryCreate;
-                self.clear_input();
                 self.category_create_parent = self.selected_category_id();
                 let parent = self
                     .create_parent_name()
                     .unwrap_or_else(|| "top level".to_string());
-                self.status = format!("Create subcategory under {parent}: type name and Enter");
+                let label = format!("New subcategory under {parent}");
+                self.input_panel = Some(input_panel::InputPanel::new_name_input("", &label));
+                self.name_input_context = Some(NameInputContext::CategoryCreate);
+                self.mode = Mode::InputPanel;
+                self.status = format!("Create subcategory under {parent}: type name, Save to confirm, Esc to cancel");
             }
             KeyCode::Char('N') => {
-                self.mode = Mode::CategoryCreate;
-                self.clear_input();
                 self.category_create_parent = None;
-                self.status =
-                    "Create top-level category (no parent): type name and Enter".to_string();
+                self.input_panel = Some(input_panel::InputPanel::new_name_input("", "New top-level category"));
+                self.name_input_context = Some(NameInputContext::CategoryCreate);
+                self.mode = Mode::InputPanel;
+                self.status = "Create top-level category: type name, Save to confirm, Esc to cancel".to_string();
             }
             KeyCode::Char('r') => {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
-                    self.mode = Mode::CategoryRename;
-                    self.set_input(row_name.clone());
-                    self.status = format!("Rename category {}: type name and Enter", row_name);
+                    self.input_panel = Some(input_panel::InputPanel::new_name_input(&row_name, "Rename category"));
+                    self.name_input_context = Some(NameInputContext::CategoryRename);
+                    self.mode = Mode::InputPanel;
+                    self.status = format!("Rename category {row_name}: edit name, Save to confirm, Esc to cancel");
                 }
             }
             KeyCode::Char('p') => {
@@ -369,117 +372,6 @@ impl App {
             updated.name, updated.is_actionable, result.processed_items, result.affected_items
         );
         Ok(())
-    }
-
-    pub(crate) fn handle_category_create_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::CategoryManager;
-                self.clear_input();
-                self.category_create_parent = None;
-                self.status = "Category create canceled".to_string();
-            }
-            KeyCode::Enter => {
-                let name = self.input.trimmed().to_string();
-                if !name.is_empty() {
-                    let mut category = Category::new(name.clone());
-                    category.enable_implicit_string = true;
-                    category.parent = self.category_create_parent;
-                    let parent_label = self
-                        .create_parent_name()
-                        .unwrap_or_else(|| "top level".to_string());
-                    let create_result =
-                        agenda.create_category(&category).map_err(|e| e.to_string());
-                    match create_result {
-                        Ok(result) => {
-                            self.refresh(agenda.store())?;
-                            self.set_category_selection_by_id(category.id);
-                            self.mode = Mode::CategoryManager;
-                            self.status = format!(
-                                "Created category {} under {} (processed_items={}, affected_items={})",
-                                category.name,
-                                parent_label,
-                                result.processed_items,
-                                result.affected_items
-                            );
-                        }
-                        Err(err) => {
-                            self.mode = Mode::CategoryManager;
-                            self.status = format!("Create failed: {err}");
-                        }
-                    }
-                } else {
-                    self.mode = Mode::CategoryManager;
-                    self.status = "Category create canceled (empty name)".to_string();
-                }
-                self.clear_input();
-                self.category_create_parent = None;
-            }
-            _ if self.handle_text_input_key(code) => {}
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    pub(crate) fn handle_category_rename_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::CategoryManager;
-                self.clear_input();
-                self.status = "Category rename canceled".to_string();
-            }
-            KeyCode::Enter => {
-                let Some(category_id) = self.selected_category_id() else {
-                    self.mode = Mode::CategoryManager;
-                    self.clear_input();
-                    self.status = "Category rename failed: no selection".to_string();
-                    return Ok(false);
-                };
-
-                let new_name = self.input.trimmed().to_string();
-                if new_name.is_empty() {
-                    self.mode = Mode::CategoryManager;
-                    self.clear_input();
-                    self.status = "Category rename canceled (empty name)".to_string();
-                    return Ok(false);
-                }
-
-                let mut category = agenda
-                    .store()
-                    .get_category(category_id)
-                    .map_err(|e| e.to_string())?;
-                if category.name == new_name {
-                    self.mode = Mode::CategoryManager;
-                    self.clear_input();
-                    self.status = "Category rename canceled (unchanged)".to_string();
-                    return Ok(false);
-                }
-
-                category.name = new_name.clone();
-                let result = agenda
-                    .update_category(&category)
-                    .map_err(|e| e.to_string())?;
-                self.refresh(agenda.store())?;
-                self.set_category_selection_by_id(category_id);
-                self.mode = Mode::CategoryManager;
-                self.clear_input();
-                self.status = format!(
-                    "Renamed category to {} (processed_items={}, affected_items={})",
-                    new_name, result.processed_items, result.affected_items
-                );
-            }
-            _ if self.handle_text_input_key(code) => {}
-            _ => {}
-        }
-        Ok(false)
     }
 
     pub(crate) fn handle_category_reparent_key(
