@@ -432,6 +432,21 @@ impl App {
                 let row = self.category_rows.get(idx).cloned();
                 if let Some(row) = row {
                     if !row.is_reserved {
+                        // Determine if this is an add (not currently selected).
+                        let is_adding = self
+                            .input_panel
+                            .as_ref()
+                            .map(|p| !p.categories.contains(&row.id))
+                            .unwrap_or(false);
+                        // If adding into an exclusive parent group, clear siblings first.
+                        if is_adding {
+                            let to_clear = exclusive_siblings_to_clear(&self.category_rows, idx);
+                            if let Some(panel) = &mut self.input_panel {
+                                for sibling_id in to_clear {
+                                    panel.categories.remove(&sibling_id);
+                                }
+                            }
+                        }
                         if let Some(panel) = &mut self.input_panel {
                             panel.toggle_category(row.id);
                         }
@@ -928,5 +943,131 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+}
+
+/// Returns the CategoryIds of all siblings that should be deselected when `row_idx`
+/// is selected in an exclusive-parent group.
+///
+/// Walks backward from `row_idx` to find the parent row (depth = row.depth - 1).
+/// If the parent has `is_exclusive = true`, returns all direct children of that parent
+/// except the one at `row_idx`.  Returns an empty vec if no exclusivity applies.
+fn exclusive_siblings_to_clear(rows: &[CategoryListRow], row_idx: usize) -> Vec<CategoryId> {
+    let Some(row) = rows.get(row_idx) else {
+        return vec![];
+    };
+    if row.depth == 0 {
+        return vec![];
+    }
+    let target_depth = row.depth;
+    let parent_depth = target_depth - 1;
+
+    // Find the nearest ancestor at parent_depth (depth-first layout, so walk backward).
+    let parent_idx = match (0..row_idx).rev().find(|&i| rows[i].depth == parent_depth) {
+        Some(i) => i,
+        None => return vec![],
+    };
+
+    if !rows[parent_idx].is_exclusive {
+        return vec![];
+    }
+
+    // Collect all direct children of the parent (depth == target_depth) within its subtree.
+    let mut siblings = vec![];
+    for i in (parent_idx + 1)..rows.len() {
+        if rows[i].depth <= parent_depth {
+            break; // Exited the parent's subtree
+        }
+        if rows[i].depth == target_depth && i != row_idx {
+            siblings.push(rows[i].id);
+        }
+    }
+    siblings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agenda_core::model::CategoryId;
+
+    fn make_row(id: CategoryId, depth: usize, is_exclusive: bool) -> CategoryListRow {
+        CategoryListRow {
+            id,
+            name: id.to_string(),
+            depth,
+            is_reserved: false,
+            has_note: false,
+            is_exclusive,
+            is_actionable: false,
+            enable_implicit_string: false,
+        }
+    }
+
+    #[test]
+    fn exclusive_siblings_cleared_when_parent_is_exclusive() {
+        // Priority (depth=0, exclusive=true)
+        //   High   (depth=1)
+        //   Medium (depth=1)
+        //   Low    (depth=1)
+        let p = CategoryId::new_v4();
+        let high = CategoryId::new_v4();
+        let medium = CategoryId::new_v4();
+        let low = CategoryId::new_v4();
+        let rows = vec![
+            make_row(p, 0, true),
+            make_row(high, 1, false),
+            make_row(medium, 1, false),
+            make_row(low, 1, false),
+        ];
+        // Selecting "Medium" (idx=2) should return High and Low as siblings to clear.
+        let to_clear = exclusive_siblings_to_clear(&rows, 2);
+        assert!(to_clear.contains(&high));
+        assert!(to_clear.contains(&low));
+        assert!(!to_clear.contains(&medium));
+    }
+
+    #[test]
+    fn exclusive_siblings_empty_when_parent_is_not_exclusive() {
+        let p = CategoryId::new_v4();
+        let a = CategoryId::new_v4();
+        let b = CategoryId::new_v4();
+        let rows = vec![
+            make_row(p, 0, false), // NOT exclusive
+            make_row(a, 1, false),
+            make_row(b, 1, false),
+        ];
+        assert!(exclusive_siblings_to_clear(&rows, 1).is_empty());
+    }
+
+    #[test]
+    fn exclusive_siblings_empty_for_top_level_row() {
+        let a = CategoryId::new_v4();
+        let rows = vec![make_row(a, 0, true)];
+        assert!(exclusive_siblings_to_clear(&rows, 0).is_empty());
+    }
+
+    #[test]
+    fn exclusive_siblings_respects_subtree_boundary() {
+        // Priority (depth=0, exclusive)
+        //   High   (depth=1)
+        //   Low    (depth=1)
+        // Status  (depth=0, exclusive)
+        //   Open   (depth=1)
+        let priority = CategoryId::new_v4();
+        let high = CategoryId::new_v4();
+        let low = CategoryId::new_v4();
+        let status = CategoryId::new_v4();
+        let open = CategoryId::new_v4();
+        let rows = vec![
+            make_row(priority, 0, true),
+            make_row(high, 1, false),
+            make_row(low, 1, false),
+            make_row(status, 0, true),
+            make_row(open, 1, false),
+        ];
+        // Selecting "High" (idx=1) should only return "Low", not "Open".
+        let to_clear = exclusive_siblings_to_clear(&rows, 1);
+        assert_eq!(to_clear, vec![low]);
+        assert!(!to_clear.contains(&open));
     }
 }
