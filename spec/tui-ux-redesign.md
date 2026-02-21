@@ -717,15 +717,24 @@ Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `v
 - ~~Entry points now open InputPanel(NameInput) with NameInputContext discriminant~~
 - ~~save_input_panel_name dispatches on context; cancel returns to correct parent mode~~
 
-**Phase 5e: Change save key from Enter → S** (next)
-1. In InputPanel: handle_key should treat `Char('S')` as Save from text/note focus (in addition to button activation)
-2. In ViewEdit: change Enter save → `Char('S')`; update footer hints and spec §12.1 tracking
-3. Add `Enter` in text focus of InputPanel to advance focus (currently Unhandled)
+**Phase 5e: Change save key from Enter → S — DONE (2026-02-21)**
+- ~~In InputPanel: Char('S') saves from any focus~~
+- ~~In ViewEdit: Enter save → Char('S'), footer hints updated~~
 
-### Phase 3: Per-section text filters
-1. Replace `filter: Option<String>` with `section_filters: Vec<Option<String>>` and `filter_target_section: usize`
-2. Compute hint text from current mode + sub-state
-3. Separate status messages from hints
+**Footer hint bar — DONE (2026-02-21)**
+- ~~Two-row footer: status (transient) + hint bar (persistent, per-mode, darkgray)~~
+- ~~Footer height 3→4 rows; render_footer split into footer_status_text + footer_hint_text~~
+- ~~All modes have explicit curated hints; Normal hints match spec §9~~
+- ~~Closes FR `afe45b4e`~~
+
+**Phase 3: Per-section text filters — DONE (2026-02-21)**
+- ~~Replace filter: Option<String> with section_filters: Vec<Option<String>> + filter_target_section: usize~~
+- ~~Reset on view switch, ViewEdit save; resize if slot count changes~~
+- ~~/` scopes to focused section; Esc in Normal clears focused section only~~
+- ~~FilterInput Esc cancels without clearing~~
+- ~~Section header shows filter:needle; header shows filters:N count~~
+- ~~4 new tests (isolation, esc-clears, esc-cancels, view-switch-reset)~~
+- ~~Closes FR `882a75b0`~~
 
 ## 12. Current Implementation State
 
@@ -773,10 +782,10 @@ Follows from 12.2 — no Columns region means no column-width inline edit.
 | ViewEdit regions | 4 (Criteria/Columns/Sections/Unmatched) | 3 (no Columns) | `cf6b7dd8` |
 | ViewEditInlineInput | ColumnWidth variant | Missing | `cf6b7dd8` |
 | ViewCriteriaRow | join_is_or + depth | Not present | — (blocked by query model) |
-| Item add flow | InputPanel (Phase 5) | Mode::AddInput (bare text) | `cfb526a4` |
-| Item edit flow | InputPanel (Phase 5) | Mode::ItemEdit (separate popup) | `0ce92977` |
-| Footer hint bar | Persistent per-mode hint bar (Phase 5) | Hints embedded in status messages | `afe45b4e` |
-| Per-section filters | Vec<Option<String>> (Phase 3) | Single view-wide filter | `882a75b0` |
+| Item add flow | InputPanel (Phase 5) | InputPanel(AddItem) ✓ | `cfb526a4` resolved |
+| Item edit flow | InputPanel (Phase 5) | InputPanel(EditItem) ✓ | `0ce92977` resolved |
+| Footer hint bar | Persistent per-mode hint bar | 2-row footer ✓ | `afe45b4e` resolved |
+| Per-section filters | Vec<Option<String>> | section_filters ✓ | `882a75b0` resolved |
 
 ## 13. What This Proposal Does NOT Change
 
