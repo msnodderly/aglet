@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, Column, ColumnKind, Condition,
-    DeletionLogEntry, Item, ItemId, Query, Section, View,
+    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, DeletionLogEntry, Item,
+    ItemId, Query, Section, View,
 };
 
 const SCHEMA_VERSION: i32 = 3;
@@ -517,10 +517,6 @@ impl Store {
             serde_json::to_string(&view.sections).map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
             })?;
-        let columns_json =
-            serde_json::to_string(&view.columns).map_err(|err| AgendaError::StorageError {
-                source: Box::new(err),
-            })?;
         let remove_from_view_unassign_json = serde_json::to_string(&view.remove_from_view_unassign)
             .map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
@@ -538,7 +534,7 @@ impl Store {
                     view.name,
                     criteria_json,
                     sections_json,
-                    columns_json,
+                    "[]",
                     view.show_unmatched as i32,
                     view.unmatched_label,
                     remove_from_view_unassign_json,
@@ -575,10 +571,6 @@ impl Store {
             serde_json::to_string(&view.sections).map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
             })?;
-        let columns_json =
-            serde_json::to_string(&view.columns).map_err(|err| AgendaError::StorageError {
-                source: Box::new(err),
-            })?;
         let remove_from_view_unassign_json = serde_json::to_string(&view.remove_from_view_unassign)
             .map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
@@ -601,7 +593,7 @@ impl Store {
                     view.name,
                     criteria_json,
                     sections_json,
-                    columns_json,
+                    "[]",
                     view.show_unmatched as i32,
                     view.unmatched_label,
                     remove_from_view_unassign_json,
@@ -746,14 +738,13 @@ impl Store {
         let id_str: String = row.get(0)?;
         let criteria_json: String = row.get(2)?;
         let sections_json: String = row.get(3)?;
-        let columns_json: String = row.get(4)?;
+        let _columns_json: String = row.get(4)?; // legacy column, no longer used
         let show_unmatched: i32 = row.get(5)?;
         let remove_from_view_unassign_json: String = row.get(7)?;
         let item_column_label: Option<String> = row.get(8)?;
 
         let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
         let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
-        let columns: Vec<Column> = serde_json::from_str(&columns_json).unwrap_or_default();
         let remove_from_view_unassign: HashSet<CategoryId> =
             serde_json::from_str(&remove_from_view_unassign_json).unwrap_or_default();
 
@@ -762,7 +753,6 @@ impl Store {
             name: row.get(1)?,
             criteria,
             sections,
-            columns,
             show_unmatched: show_unmatched != 0,
             unmatched_label: row.get(6)?,
             remove_from_view_unassign,
@@ -1036,17 +1026,12 @@ impl Store {
         Ok(exists.is_some())
     }
 
-    fn ensure_default_view(&self, when_category_id: CategoryId) -> Result<()> {
+    fn ensure_default_view(&self, _when_category_id: CategoryId) -> Result<()> {
         if self.has_view_named(DEFAULT_VIEW_NAME)? {
             return Ok(());
         }
 
-        let mut view = View::new(DEFAULT_VIEW_NAME.to_string());
-        view.columns.push(Column {
-            kind: ColumnKind::When,
-            heading: when_category_id,
-            width: 16,
-        });
+        let view = View::new(DEFAULT_VIEW_NAME.to_string());
         self.create_view(&view)?;
         Ok(())
     }
@@ -1336,9 +1321,6 @@ mod tests {
         assert_eq!(view.name, "All Items");
         assert!(view.criteria.include.is_empty());
         assert!(view.sections.is_empty());
-        assert_eq!(view.columns.len(), 1);
-        assert_eq!(view.columns[0].heading, when_id);
-        assert_eq!(view.columns[0].width, 16);
     }
 
     #[test]
@@ -1865,11 +1847,6 @@ mod tests {
             on_remove_unassign: HashSet::new(),
             show_children: true,
         });
-        view.columns.push(Column {
-            kind: ColumnKind::When,
-            heading: when_category,
-            width: 24,
-        });
         view.show_unmatched = false;
         view.unmatched_label = "Other".to_string();
         view.remove_from_view_unassign.insert(when_category);
@@ -1886,9 +1863,6 @@ mod tests {
         assert_eq!(loaded.sections[0].columns.len(), 1);
         assert_eq!(loaded.sections[0].columns[0].heading, when_category);
         assert_eq!(loaded.sections[0].columns[0].width, 18);
-        assert_eq!(loaded.columns.len(), 1);
-        assert_eq!(loaded.columns[0].heading, when_category);
-        assert_eq!(loaded.columns[0].width, 24);
         assert!(!loaded.show_unmatched);
         assert_eq!(loaded.unmatched_label, "Other");
         assert_eq!(
@@ -1938,11 +1912,6 @@ mod tests {
             on_remove_unassign: HashSet::new(),
             show_children: false,
         });
-        view.columns.push(Column {
-            kind: ColumnKind::Standard,
-            heading: category_id,
-            width: 32,
-        });
         view.show_unmatched = false;
         view.unmatched_label = "Unsectioned".to_string();
         view.remove_from_view_unassign.insert(category_id);
@@ -1953,7 +1922,6 @@ mod tests {
         assert_eq!(loaded.name, "Daily Agenda");
         assert_eq!(loaded.criteria.include, HashSet::from([category_id]));
         assert_eq!(loaded.sections.len(), 1);
-        assert_eq!(loaded.columns.len(), 1);
         assert!(!loaded.show_unmatched);
         assert_eq!(loaded.unmatched_label, "Unsectioned");
         assert_eq!(
