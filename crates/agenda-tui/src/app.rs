@@ -118,9 +118,15 @@ impl App {
             }
         }
 
-        if let Some(filter) = &self.filter {
-            let needle = filter.to_ascii_lowercase();
-            for slot in &mut slots {
+        // Resize section_filters to match slot count (resets if structure changed)
+        if self.section_filters.len() != slots.len() {
+            self.section_filters = vec![None; slots.len()];
+        }
+
+        // Apply per-section filters
+        for (slot, filter) in slots.iter_mut().zip(self.section_filters.iter()) {
+            if let Some(needle) = filter {
+                let needle = needle.to_ascii_lowercase();
                 slot.items.retain(|item| item_text_matches(item, &needle));
             }
         }
@@ -228,31 +234,6 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn create_item_in_current_context(
-        &mut self,
-        agenda: &Agenda<'_>,
-        text: String,
-    ) -> Result<Option<NaiveDateTime>, String> {
-        let item = Item::new(text);
-        let reference_date = Local::now().date_naive();
-        agenda
-            .create_item_with_reference_date(&item, reference_date)
-            .map_err(|e| e.to_string())?;
-
-        if let Some(view) = self.current_view().cloned() {
-            if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
-                self.insert_into_context(agenda, item.id, &view, &context)?;
-            }
-        }
-
-        let created = agenda
-            .store()
-            .get_item(item.id)
-            .map_err(|e| e.to_string())?;
-        self.refresh(agenda.store())?;
-        self.set_item_selection_by_id(item.id);
-        Ok(created.when_date)
-    }
 
     pub(crate) fn remove_from_context(
         &self,
@@ -431,6 +412,10 @@ impl App {
         }
     }
 
+    pub(crate) fn reset_section_filters(&mut self) {
+        self.section_filters = vec![None; self.slots.len()];
+    }
+
     pub(crate) fn set_view_selection_by_name(&mut self, view_name: &str) {
         if let Some(index) = self
             .views
@@ -452,6 +437,7 @@ impl App {
         self.slot_index = 0;
         self.item_index = 0;
         self.refresh(agenda.store())?;
+        self.reset_section_filters();
         let view_name = self
             .current_view()
             .map(|view| view.name.clone())
@@ -474,6 +460,7 @@ impl App {
         self.slot_index = 0;
         self.item_index = 0;
         self.refresh(agenda.store())?;
+        self.reset_section_filters();
         self.status = "Jumped to view: All Items".to_string();
         Ok(())
     }
