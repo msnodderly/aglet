@@ -51,7 +51,7 @@ impl App {
             criteria_rows,
         });
         self.mode = Mode::ViewEdit;
-        self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
+        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
     }
 
     /// Recompute `preview_count` in `view_edit_state` from the current draft criteria.
@@ -69,7 +69,7 @@ impl App {
             state.overlay = None;
             state.picker_index = 0;
         }
-        self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
+        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
     }
 
     fn toggle_category_picker_selection(
@@ -197,7 +197,7 @@ impl App {
                     state.inline_input = None;
                     state.inline_buf.clear();
                 }
-                self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
+                self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
             }
             KeyCode::Enter => {
                 let Some(state) = &mut self.view_edit_state else {
@@ -217,7 +217,7 @@ impl App {
                 }
                 state.inline_input = None;
                 state.inline_buf.clear();
-                self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
+                self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
             }
             _ => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -299,7 +299,7 @@ impl App {
                             state.overlay = None;
                             state.picker_index = 0;
                         }
-                        self.status = "Edit view: Tab=region  Enter=save  Esc=cancel".to_string();
+                        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
                     }
                     _ => {}
                 }
@@ -338,7 +338,7 @@ impl App {
                 }
                 return Ok(true);
             }
-            KeyCode::Enter => {
+            KeyCode::Char('S') => {
                 return self.handle_view_edit_save(agenda);
             }
             _ => {}

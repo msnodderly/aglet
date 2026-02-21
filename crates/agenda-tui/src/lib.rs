@@ -2387,9 +2387,9 @@ mod tests {
             "direct update_view should persist section"
         );
 
-        // Save with Enter (save + exit)
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("Enter save");
+        // Save with S (save + exit)
+        app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
+            .expect("S save");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
         assert!(

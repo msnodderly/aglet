@@ -298,7 +298,7 @@ impl App {
         ));
         self.mode = Mode::InputPanel;
         self.status =
-            "Add item: type text, Tab for note/categories, Enter on Save to submit, Esc to cancel"
+            "Add item: type text, S to save, Tab for note/categories, Esc to cancel"
                 .to_string();
     }
 
@@ -326,7 +326,7 @@ impl App {
             ));
             self.mode = Mode::InputPanel;
             self.status =
-                "Edit item: Tab cycles fields, Enter on Save to submit, Esc to cancel".to_string();
+                "Edit item: S to save, Tab cycles fields, Esc to cancel".to_string();
         } else {
             self.status = "No selected item to edit".to_string();
         }
