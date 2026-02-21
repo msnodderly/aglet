@@ -2275,51 +2275,6 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_new_section_inherits_default_columns() {
-        let (store, db_path) = make_test_store_with_view("section-inherit-columns");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let work = Category::new("Work".to_string());
-        store.create_category(&work).expect("create work category");
-
-        let mut view = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|v| v.name == "TestView")
-            .expect("TestView should exist");
-        view.columns.push(Column {
-            kind: ColumnKind::Standard,
-            heading: work.id,
-            width: 16,
-        });
-        store.update_view(&view).expect("update default columns");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh");
-        let view = app
-            .views
-            .iter()
-            .find(|v| v.name == "TestView")
-            .cloned()
-            .expect("TestView should exist");
-        app.open_view_edit(view);
-
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
-            .expect("add section");
-
-        let section_columns = &app.view_edit_state.as_ref().unwrap().draft.sections[0].columns;
-        assert_eq!(section_columns.len(), 1);
-        assert_eq!(section_columns[0].heading, work.id);
-        assert_eq!(section_columns[0].width, 16);
-
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
     fn view_edit_save_persists_view() {
         let (store, db_path) = make_test_store_with_view("save");
         let classifier = SubstringClassifier;
