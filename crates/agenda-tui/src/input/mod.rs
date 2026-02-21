@@ -9,27 +9,27 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::AddInput => self.handle_add_key(code, agenda),
-            Mode::ItemEditInput => self.handle_item_edit_key(code, agenda),
-            Mode::NoteEditInput => self.handle_note_edit_key(code, agenda),
-            Mode::ItemAssignCategoryPicker => self.handle_item_assign_category_key(code, agenda),
-            Mode::ItemAssignCategoryInput => {
+            Mode::ItemEdit => self.handle_item_edit_key(code, agenda),
+            Mode::NoteEdit => self.handle_note_edit_key(code, agenda),
+            Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),
+            Mode::ItemAssignInput => {
                 self.handle_item_assign_category_input_key(code, agenda)
             }
-            Mode::InspectUnassignPicker => self.handle_inspect_unassign_key(code, agenda),
+            Mode::InspectUnassign => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ViewEdit => self.handle_view_edit_key(code, agenda),
-            Mode::ViewCreateNameInput => self.handle_view_create_name_key(code),
-            Mode::ViewCreateCategoryPicker => self.handle_view_create_category_key(code, agenda),
-            Mode::ViewRenameInput => self.handle_view_rename_key(code, agenda),
+            Mode::ViewCreateName => self.handle_view_create_name_key(code),
+            Mode::ViewCreateCategory => self.handle_view_create_category_key(code, agenda),
+            Mode::ViewRename => self.handle_view_rename_key(code, agenda),
             Mode::ViewDeleteConfirm => self.handle_view_delete_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
             Mode::CategoryManager => self.handle_category_manager_key(code, agenda),
-            Mode::CategoryCreateInput => self.handle_category_create_key(code, agenda),
-            Mode::CategoryRenameInput => self.handle_category_rename_key(code, agenda),
-            Mode::CategoryReparentPicker => self.handle_category_reparent_key(code, agenda),
-            Mode::CategoryDeleteConfirm => self.handle_category_delete_key(code, agenda),
-            Mode::CategoryConfigEditor => self.handle_category_config_editor_key(code, agenda),
+            Mode::CategoryCreate => self.handle_category_create_key(code, agenda),
+            Mode::CategoryRename => self.handle_category_rename_key(code, agenda),
+            Mode::CategoryReparent => self.handle_category_reparent_key(code, agenda),
+            Mode::CategoryDelete => self.handle_category_delete_key(code, agenda),
+            Mode::CategoryConfig => self.handle_category_config_editor_key(code, agenda),
         }
     }
 

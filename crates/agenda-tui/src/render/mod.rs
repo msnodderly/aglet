@@ -49,14 +49,14 @@ impl App {
         if let Some((x, y)) = self.input_cursor_position(footer_area) {
             frame.set_cursor_position((x, y));
         }
-        if self.mode == Mode::ItemEditInput {
+        if self.mode == Mode::ItemEdit {
             let popup_area = item_edit_popup_area(frame.area());
             self.render_item_edit_popup(frame, popup_area);
             if let Some((x, y)) = self.item_edit_cursor_position(popup_area) {
                 frame.set_cursor_position((x, y));
             }
         }
-        if self.mode == Mode::CategoryConfigEditor {
+        if self.mode == Mode::CategoryConfig {
             let popup_area = category_config_popup_area(frame.area());
             self.render_category_config_editor(frame, popup_area);
             if let Some((x, y)) = self.category_config_cursor_position(popup_area) {
@@ -67,19 +67,19 @@ impl App {
         if matches!(
             self.mode,
             Mode::ViewPicker
-                | Mode::ViewCreateNameInput
-                | Mode::ViewRenameInput
+                | Mode::ViewCreateName
+                | Mode::ViewRename
                 | Mode::ViewDeleteConfirm
         ) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
         if matches!(
             self.mode,
-            Mode::ItemAssignCategoryPicker | Mode::ItemAssignCategoryInput
+            Mode::ItemAssignPicker | Mode::ItemAssignInput
         ) {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
-        if matches!(self.mode, Mode::ViewCreateCategoryPicker) {
+        if matches!(self.mode, Mode::ViewCreateCategory) {
             self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
         }
     }
@@ -87,13 +87,13 @@ impl App {
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
         match self.mode {
             Mode::AddInput => Some("Add> "),
-            Mode::NoteEditInput => Some("Note> "),
+            Mode::NoteEdit => Some("Note> "),
             Mode::FilterInput => Some("Filter> "),
-            Mode::ViewCreateNameInput => Some("View create> "),
-            Mode::ViewRenameInput => Some("View rename> "),
-            Mode::CategoryCreateInput => Some("Category create> "),
-            Mode::CategoryRenameInput => Some("Category rename> "),
-            Mode::ItemAssignCategoryInput => Some("Category> "),
+            Mode::ViewCreateName => Some("View create> "),
+            Mode::ViewRename => Some("View rename> "),
+            Mode::CategoryCreate => Some("Category create> "),
+            Mode::CategoryRename => Some("Category rename> "),
+            Mode::ItemAssignInput => Some("Category> "),
             _ => None,
         }
     }
@@ -121,7 +121,7 @@ impl App {
     }
 
     pub(crate) fn item_edit_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
-        if self.mode != Mode::ItemEditInput {
+        if self.mode != Mode::ItemEdit {
             return None;
         }
         if popup_area.width < 3 || popup_area.height < 3 {
@@ -178,7 +178,7 @@ impl App {
     }
 
     pub(crate) fn category_config_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
-        if self.mode != Mode::CategoryConfigEditor {
+        if self.mode != Mode::CategoryConfig {
             return None;
         }
         let Some(editor) = &self.category_config_editor else {
@@ -248,11 +248,11 @@ impl App {
         if matches!(
             self.mode,
             Mode::CategoryManager
-                | Mode::CategoryCreateInput
-                | Mode::CategoryRenameInput
-                | Mode::CategoryReparentPicker
-                | Mode::CategoryDeleteConfirm
-                | Mode::CategoryConfigEditor
+                | Mode::CategoryCreate
+                | Mode::CategoryRename
+                | Mode::CategoryReparent
+                | Mode::CategoryDelete
+                | Mode::CategoryConfig
         ) {
             self.render_category_manager(frame, area);
             return;
@@ -583,7 +583,7 @@ impl App {
                 items.push(ListItem::new(Line::from("(no assignments)")));
             } else {
                 let row_start = items.len();
-                let picker_mode = self.mode == Mode::InspectUnassignPicker;
+                let picker_mode = self.mode == Mode::InspectUnassign;
                 for (index, row) in rows.iter().enumerate() {
                     items.push(ListItem::new(Line::from(format!(
                         "{} | source={} | origin={}",
@@ -683,30 +683,30 @@ impl App {
     pub(crate) fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
             Mode::AddInput => format!("Add> {}", self.input.text()),
-            Mode::NoteEditInput => format!("Note> {}", self.input.text()),
+            Mode::NoteEdit => format!("Note> {}", self.input.text()),
             Mode::FilterInput => format!("Filter> {}", self.input.text()),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
-            Mode::ViewCreateNameInput => format!("View create> {}", self.input.text()),
-            Mode::ViewRenameInput => format!("View rename> {}", self.input.text()),
+            Mode::ViewCreateName => format!("View create> {}", self.input.text()),
+            Mode::ViewRename => format!("View rename> {}", self.input.text()),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
-            Mode::ViewCreateCategoryPicker => {
+            Mode::ViewCreateCategory => {
                 "Set include/exclude categories for new view".to_string()
             }
-            Mode::CategoryCreateInput => format!("Category create> {}", self.input.text()),
-            Mode::CategoryRenameInput => format!("Category rename> {}", self.input.text()),
-            Mode::CategoryReparentPicker => "Select category parent".to_string(),
-            Mode::CategoryDeleteConfirm => "Delete selected category? y/n".to_string(),
-            Mode::CategoryConfigEditor => {
+            Mode::CategoryCreate => format!("Category create> {}", self.input.text()),
+            Mode::CategoryRename => format!("Category rename> {}", self.input.text()),
+            Mode::CategoryReparent => "Select category parent".to_string(),
+            Mode::CategoryDelete => "Delete selected category? y/n".to_string(),
+            Mode::CategoryConfig => {
                 if let Some(editor) = &self.category_config_editor {
                     format!("Edit category config (focus: {:?})", editor.focus)
                 } else {
                     "Edit category config".to_string()
                 }
             }
-            Mode::ItemAssignCategoryPicker => "Select category for selected item".to_string(),
-            Mode::ItemAssignCategoryInput => format!("Category> {}", self.input.text()),
-            Mode::InspectUnassignPicker => "Select assignment".to_string(),
-            Mode::ItemEditInput => format!(
+            Mode::ItemAssignPicker => "Select category for selected item".to_string(),
+            Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            Mode::InspectUnassign => "Select assignment".to_string(),
+            Mode::ItemEdit => format!(
                 "Edit item fields in popup (focus: {})",
                 match self.item_edit_focus {
                     ItemEditFocus::Text => "Text",
@@ -722,20 +722,20 @@ impl App {
             Mode::CategoryManager => {
                 "j/k:row  Enter:config popup  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
             }
-            Mode::CategoryCreateInput => "Type category name, Enter:create, Esc:cancel",
-            Mode::CategoryRenameInput => "Type new category name, Enter:rename, Esc:cancel",
-            Mode::CategoryReparentPicker => "j/k:select parent  Enter:reparent  Esc:cancel",
-            Mode::CategoryDeleteConfirm => "y:confirm delete  n:cancel",
-            Mode::CategoryConfigEditor => {
+            Mode::CategoryCreate => "Type category name, Enter:create, Esc:cancel",
+            Mode::CategoryRename => "Type new category name, Enter:rename, Esc:cancel",
+            Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
+            Mode::CategoryDelete => "y:confirm delete  n:cancel",
+            Mode::CategoryConfig => {
                 "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  Enter:save (except note)  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
                 "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  V:view manager  Esc:cancel"
             }
-            Mode::ViewCreateNameInput => "Type view name, Enter:next, Esc:cancel",
-            Mode::ViewRenameInput => "Type new view name, Enter:rename, Esc:cancel",
+            Mode::ViewCreateName => "Type view name, Enter:next, Esc:cancel",
+            Mode::ViewRename => "Type new view name, Enter:rename, Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
-            Mode::ViewCreateCategoryPicker => {
+            Mode::ViewCreateCategory => {
                 "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
             }
             Mode::ViewEdit => {
@@ -749,13 +749,13 @@ impl App {
                     "Tab:region  Enter:save  Esc:cancel"
                 }
             }
-            Mode::ItemAssignCategoryPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
-            Mode::ItemAssignCategoryInput => "Type category name, Enter:assign/create, Esc:back",
-            Mode::ItemEditInput => {
+            Mode::ItemAssignPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
+            Mode::ItemAssignInput => "Type category name, Enter:assign/create, Esc:back",
+            Mode::ItemEdit => {
                 "Edit popup: Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories"
             }
-            Mode::NoteEditInput => "Edit selected note, Enter:save (empty clears), Esc:cancel",
-            Mode::InspectUnassignPicker => "j/k:select assignment  Enter:apply  Esc:cancel",
+            Mode::NoteEdit => "Edit selected note, Enter:save (empty clears), Esc:cancel",
+            Mode::InspectUnassign => "j/k:select assignment  Enter:apply  Esc:cancel",
             _ => {
                 "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  ,/.:view  p:preview  o:preview-mode  Tab/Shift+Tab:section  f:board/preview focus  []:move  r:remove  d/D:done-toggle  x:delete  J/K:preview-scroll  q:quit"
             }
@@ -938,7 +938,7 @@ impl App {
         };
 
         let title = match self.mode {
-            Mode::ViewCreateCategoryPicker => "Create View Criteria",
+            Mode::ViewCreateCategory => "Create View Criteria",
             _ => "View Criteria",
         };
         let mut state = Self::list_state_for(
@@ -1051,7 +1051,7 @@ impl App {
             layout[0],
         );
 
-        let table_area = if self.mode == Mode::CategoryReparentPicker {
+        let table_area = if self.mode == Mode::CategoryReparent {
             let body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])
@@ -1061,12 +1061,12 @@ impl App {
             layout[1]
         };
 
-        let title_suffix = if self.mode == Mode::CategoryCreateInput {
+        let title_suffix = if self.mode == Mode::CategoryCreate {
             let parent = self
                 .create_parent_name()
                 .unwrap_or_else(|| "(top level / no parent)".to_string());
             format!(" | new under {parent}")
-        } else if self.mode == Mode::CategoryRenameInput {
+        } else if self.mode == Mode::CategoryRename {
             let target = self
                 .selected_category_row()
                 .map(|row| row.name.clone())
@@ -1150,7 +1150,7 @@ impl App {
             state.offset(),
         );
 
-        if self.mode == Mode::CategoryReparentPicker {
+        if self.mode == Mode::CategoryReparent {
             let body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])
