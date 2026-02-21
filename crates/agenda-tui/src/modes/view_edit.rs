@@ -29,7 +29,7 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.mode = Mode::ViewCreateNameInput;
+                self.mode = Mode::ViewCreateName;
                 self.clear_input();
                 self.view_pending_name = None;
                 self.view_pending_edit_name = None;
@@ -37,7 +37,7 @@ impl App {
             }
             KeyCode::Char('r') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
-                    self.mode = Mode::ViewRenameInput;
+                    self.mode = Mode::ViewRename;
                     self.set_input(view.name.clone());
                     self.view_pending_edit_name = Some(view.name.clone());
                     self.status = format!("Rename view {}: type name and Enter", view.name);
@@ -148,7 +148,7 @@ impl App {
                         first_non_reserved_category_index(&self.category_rows);
                     self.view_create_include_selection.clear();
                     self.view_create_exclude_selection.clear();
-                    self.mode = Mode::ViewCreateCategoryPicker;
+                    self.mode = Mode::ViewCreateCategory;
                     self.clear_input();
                     self.status =
                         format!("Create view {name}: + include, - exclude, Enter creates");

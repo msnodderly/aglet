@@ -680,21 +680,21 @@ Split into sub-phases to keep each commit testable. The old modes remain functio
 4. ~~Delete rendering code for the old modes~~
 5. ~~All tests pass~~
 
-**Phase 2d: Mode enum rename — TODO**
-Rename remaining Mode variants to match spec §5.1:
-- `ItemEditInput` → `ItemEdit`
-- `NoteEditInput` → `NoteEdit`
-- `ItemAssignCategoryPicker` → `ItemAssignPicker`
-- `ItemAssignCategoryInput` → `ItemAssignInput`
-- `InspectUnassignPicker` → `InspectUnassign`
-- `ViewCreateNameInput` → `ViewCreateName`
-- `ViewCreateCategoryPicker` → `ViewCreateCategory`
-- `ViewRenameInput` → `ViewRename`
-- `CategoryCreateInput` → `CategoryCreate`
-- `CategoryRenameInput` → `CategoryRename`
-- `CategoryReparentPicker` → `CategoryReparent`
-- `CategoryDeleteConfirm` → `CategoryDelete`
-- `CategoryConfigEditor` → `CategoryConfig`
+**Phase 2d: Mode enum rename — DONE (2026-02-20)**
+Renamed all 13 Mode variants to match spec §5.1:
+- ~~`ItemEditInput` → `ItemEdit`~~
+- ~~`NoteEditInput` → `NoteEdit`~~
+- ~~`ItemAssignCategoryPicker` → `ItemAssignPicker`~~
+- ~~`ItemAssignCategoryInput` → `ItemAssignInput`~~
+- ~~`InspectUnassignPicker` → `InspectUnassign`~~
+- ~~`ViewCreateNameInput` → `ViewCreateName`~~
+- ~~`ViewCreateCategoryPicker` → `ViewCreateCategory`~~
+- ~~`ViewRenameInput` → `ViewRename`~~
+- ~~`CategoryCreateInput` → `CategoryCreate`~~
+- ~~`CategoryRenameInput` → `CategoryRename`~~
+- ~~`CategoryReparentPicker` → `CategoryReparent`~~
+- ~~`CategoryDeleteConfirm` → `CategoryDelete`~~
+- ~~`CategoryConfigEditor` → `CategoryConfig`~~
 
 ### Phase 3: Per-section text filters
 1. Replace `filter: Option<String>` with `section_filters: Vec<Option<String>>` and `filter_target_section: usize`
