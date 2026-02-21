@@ -19,7 +19,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
             KeyCode::Char('n') => {
-                self.mode = Mode::CategoryCreateInput;
+                self.mode = Mode::CategoryCreate;
                 self.clear_input();
                 self.category_create_parent = self.selected_category_id();
                 let parent = self
@@ -28,7 +28,7 @@ impl App {
                 self.status = format!("Create subcategory under {parent}: type name and Enter");
             }
             KeyCode::Char('N') => {
-                self.mode = Mode::CategoryCreateInput;
+                self.mode = Mode::CategoryCreate;
                 self.clear_input();
                 self.category_create_parent = None;
                 self.status =
@@ -37,7 +37,7 @@ impl App {
             KeyCode::Char('r') => {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
-                    self.mode = Mode::CategoryRenameInput;
+                    self.mode = Mode::CategoryRename;
                     self.set_input(row_name.clone());
                     self.status = format!("Rename category {}: type name and Enter", row_name);
                 }
@@ -50,7 +50,7 @@ impl App {
                         .selected_category_parent_index(category_id)
                         .unwrap_or(0)
                         .min(self.category_reparent_options.len().saturating_sub(1));
-                    self.mode = Mode::CategoryReparentPicker;
+                    self.mode = Mode::CategoryReparent;
                     self.status = "Reparent category: j/k select parent, Enter apply".to_string();
                 }
             }
@@ -69,7 +69,7 @@ impl App {
             KeyCode::Char('x') => {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
-                    self.mode = Mode::CategoryDeleteConfirm;
+                    self.mode = Mode::CategoryDelete;
                     self.status = format!("Delete category \"{}\"? y/n", row_name);
                 }
             }
@@ -96,7 +96,7 @@ impl App {
             .get_category(row.id)
             .map_err(|e| e.to_string())?;
         let note = category.note.clone().unwrap_or_default();
-        self.category_config_editor = Some(CategoryConfigEditorState {
+        self.category_config_editor = Some(CategoryConfigState {
             category_id: category.id,
             category_name: category.name.clone(),
             is_exclusive: category.is_exclusive,
@@ -105,7 +105,7 @@ impl App {
             note: crate::text_buffer::TextBuffer::new(note),
             focus: CategoryConfigFocus::Exclusive,
         });
-        self.mode = Mode::CategoryConfigEditor;
+        self.mode = Mode::CategoryConfig;
         self.status = format!(
             "Edit category config for {}: Space toggles, Enter saves (except note field)",
             category.name

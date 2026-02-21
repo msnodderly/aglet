@@ -637,42 +637,64 @@ When `Tab`/`Shift-Tab` moves the cursor to a different section, the user is now 
 
 ## 11. Implementation Sequence
 
-### Phase 1: TextBuffer extraction
-1. Create `text_buffer.rs` with `TextBuffer` struct
-2. Replace `input` + `input_cursor` with `TextBuffer`
-3. Replace `item_edit_note` + `item_edit_note_cursor` with `TextBuffer`
-4. Replace `CategoryConfigEditorState.note` + `note_cursor` with `TextBuffer`
-5. Delete duplicated cursor methods from `input/mod.rs`
-6. **New tests**: TextBuffer unit tests for single-line ops (insert, backspace, move left/right/home/end), multi-line ops (move up/down, insert newline), edge cases (empty buffer, cursor at boundaries), `handle_key` with multiline true/false
-7. All existing tests must pass
+### Phase 1: TextBuffer extraction — DONE (2026-02-19)
+1. ~~Create `text_buffer.rs` with `TextBuffer` struct~~
+2. ~~Replace `input` + `input_cursor` with `TextBuffer`~~
+3. ~~Replace `item_edit_note` + `item_edit_note_cursor` with `TextBuffer`~~
+4. ~~Replace `CategoryConfigEditorState.note` + `note_cursor` with `TextBuffer`~~
+5. ~~Delete duplicated cursor methods from `input/mod.rs`~~
+6. ~~**New tests**: TextBuffer unit tests (22+ tests covering single/multi-line ops, edge cases)~~
+7. ~~All existing tests pass~~
 
 ### Phase 2: Unified ViewEdit mode
 
 Split into sub-phases to keep each commit testable. The old modes remain functional until Phase 2c deletes them, so existing tests pass throughout.
 
-**Phase 2a: Build ViewEdit alongside old modes**
-1. Create `ViewEditState` struct with region/overlay/inline_input sub-states
-2. Add `Mode::ViewEdit` variant to the Mode enum (old variants remain)
-3. Implement ViewEdit key dispatch (inline_input → overlay → region precedence, per section 5.2)
-4. Implement ViewEdit rendering (four regions with focus highlight, §4.3.1–4.3.2)
-5. Implement picker overlay rendering (right-aligned panel)
-6. Implement inline text input within regions
-7. Wire up save (`S`) to persist full view via `store.update_view()`
-8. Wire entry point: ViewPicker `e` enters ViewEdit instead of ViewManagerScreen/ViewEditor
-9. **New tests**: ViewEdit region cycling, key dispatch precedence (inline > overlay > region), save round-trip, Esc returns to ViewPicker
+**Phase 2a: Build ViewEdit alongside old modes — DONE (2026-02-19)**
+1. ~~Create `ViewEditState` struct with region/overlay/inline_input sub-states~~
+2. ~~Add `Mode::ViewEdit` variant to the Mode enum (old variants remain)~~
+3. ~~Implement ViewEdit key dispatch (inline_input → overlay → region precedence, per section 5.2)~~
+4. ~~Implement ViewEdit rendering (three regions: Criteria/Sections/Unmatched)~~
+5. ~~Implement picker overlay rendering (right-aligned panel)~~
+6. ~~Implement inline text input within regions~~
+7. ~~Wire up save (`Enter`) to persist full view via `store.update_view()`~~
+8. ~~Wire entry point: ViewPicker `e` enters ViewEdit instead of ViewManagerScreen/ViewEditor~~
+9. Tests not yet added
 
-**Phase 2b: Migrate remaining entry points**
-1. ViewPicker `N` (new view) opens ViewEdit after creation
-2. All ViewCreate*/ViewRename*/ViewDeleteConfirm modes return to ViewPicker unconditionally (delete `view_return_to_manager` flag)
-3. ItemAssignPicker always returns to Normal (delete `item_assign_return_to_item_edit` flag)
-4. Adapt existing mode-transition tests for new Esc targets
+**Implementation notes (deviations from spec):**
+- `ViewEditRegion` has 3 variants (Criteria/Sections/Unmatched) instead of 4 — missing `Columns` region
+- `ViewEditInlineInput` missing `ColumnWidth` variant — columns are edited via section-level category picker overlay (`c` key) instead of a dedicated Columns region
+- Save uses `Enter` key, not `S` (capital) as spec proposed
+- `ViewCriteriaRow` does not include `join_is_or` or `depth` fields (simplified)
 
-**Phase 2c: Delete old modes**
-1. Delete old modes: ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput
-2. Delete `view_editor_return_to_manager`, `view_editor_category_target`, `view_editor_bucket_target` fields (subsumed by ViewEditState.overlay)
-3. Delete `ViewEditorState` struct (subsumed by `ViewEditState`)
-4. Delete rendering code for the old modes
-5. All tests must pass
+**Phase 2b: Migrate remaining entry points — DONE (2026-02-19)**
+1. ~~ViewPicker `N` (new view) opens ViewEdit after creation~~
+2. ~~All ViewCreate*/ViewRename*/ViewDeleteConfirm modes return to ViewPicker unconditionally~~
+3. ~~`view_return_to_manager` and `item_assign_return_to_item_edit` flags deleted~~
+4. Tests not yet adapted
+
+**Phase 2c: Delete old modes — DONE (2026-02-19)**
+1. ~~Delete old modes: ViewManagerScreen, ViewEditor, ViewSectionEditor, ViewSectionDetail, ViewSectionTitleInput, ViewEditorCategoryPicker, ViewEditorBucketPicker, ViewManagerCategoryPicker, ViewUnmatchedSettings, ViewUnmatchedLabelInput~~
+2. ~~Delete `view_editor_return_to_manager`, `view_editor_category_target`, `view_editor_bucket_target` fields~~
+3. ~~Delete `ViewEditorState` struct~~
+4. ~~Delete rendering code for the old modes~~
+5. ~~All tests pass~~
+
+**Phase 2d: Mode enum rename — DONE (2026-02-20)**
+Renamed all 13 Mode variants to match spec §5.1:
+- ~~`ItemEditInput` → `ItemEdit`~~
+- ~~`NoteEditInput` → `NoteEdit`~~
+- ~~`ItemAssignCategoryPicker` → `ItemAssignPicker`~~
+- ~~`ItemAssignCategoryInput` → `ItemAssignInput`~~
+- ~~`InspectUnassignPicker` → `InspectUnassign`~~
+- ~~`ViewCreateNameInput` → `ViewCreateName`~~
+- ~~`ViewCreateCategoryPicker` → `ViewCreateCategory`~~
+- ~~`ViewRenameInput` → `ViewRename`~~
+- ~~`CategoryCreateInput` → `CategoryCreate`~~
+- ~~`CategoryRenameInput` → `CategoryRename`~~
+- ~~`CategoryReparentPicker` → `CategoryReparent`~~
+- ~~`CategoryDeleteConfirm` → `CategoryDelete`~~
+- ~~`CategoryConfigEditor` → `CategoryConfig`~~
 
 ### Phase 3: Per-section text filters
 1. Replace `filter: Option<String>` with `section_filters: Vec<Option<String>>` and `filter_target_section: usize`

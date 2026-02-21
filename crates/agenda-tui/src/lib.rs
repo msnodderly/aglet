@@ -175,25 +175,25 @@ enum BucketEditTarget {
 enum Mode {
     Normal,
     AddInput,
-    ItemEditInput,
-    NoteEditInput,
-    ItemAssignCategoryPicker,
-    ItemAssignCategoryInput,
-    InspectUnassignPicker,
+    ItemEdit,
+    NoteEdit,
+    ItemAssignPicker,
+    ItemAssignInput,
+    InspectUnassign,
     FilterInput,
     ViewPicker,
     ViewEdit,
-    ViewCreateNameInput,
-    ViewCreateCategoryPicker,
-    ViewRenameInput,
+    ViewCreateName,
+    ViewCreateCategory,
+    ViewRename,
     ViewDeleteConfirm,
     ConfirmDelete,
     CategoryManager,
-    CategoryCreateInput,
-    CategoryRenameInput,
-    CategoryReparentPicker,
-    CategoryDeleteConfirm,
-    CategoryConfigEditor,
+    CategoryCreate,
+    CategoryRename,
+    CategoryReparent,
+    CategoryDelete,
+    CategoryConfig,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -271,7 +271,7 @@ enum CategoryConfigFocus {
 }
 
 #[derive(Clone)]
-struct CategoryConfigEditorState {
+struct CategoryConfigState {
     category_id: CategoryId,
     category_name: String,
     is_exclusive: bool,
@@ -328,7 +328,7 @@ struct App {
     category_create_parent: Option<CategoryId>,
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
-    category_config_editor: Option<CategoryConfigEditorState>,
+    category_config_editor: Option<CategoryConfigState>,
     item_assign_category_index: usize,
     item_edit_focus: ItemEditFocus,
     item_edit_note: text_buffer::TextBuffer,
@@ -580,13 +580,13 @@ mod tests {
         let input = "abc";
         let cases = [
             (Mode::AddInput, "Add> "),
-            (Mode::NoteEditInput, "Note> "),
+            (Mode::NoteEdit, "Note> "),
             (Mode::FilterInput, "Filter> "),
-            (Mode::ViewCreateNameInput, "View create> "),
-            (Mode::ViewRenameInput, "View rename> "),
-            (Mode::CategoryCreateInput, "Category create> "),
-            (Mode::CategoryRenameInput, "Category rename> "),
-            (Mode::ItemAssignCategoryInput, "Category> "),
+            (Mode::ViewCreateName, "View create> "),
+            (Mode::ViewRename, "View rename> "),
+            (Mode::CategoryCreate, "Category create> "),
+            (Mode::CategoryRename, "Category rename> "),
+            (Mode::ItemAssignInput, "Category> "),
         ];
 
         for (mode, prefix) in cases {
@@ -652,7 +652,7 @@ mod tests {
         let screen = Rect::new(0, 0, 120, 40);
         let popup = item_edit_popup_area(screen);
         let app = App {
-            mode: Mode::ItemEditInput,
+            mode: Mode::ItemEdit,
             input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
             ..App::default()
         };
@@ -684,7 +684,7 @@ mod tests {
 
         app.handle_normal_key(KeyCode::Char('e'), &agenda)
             .expect("open item edit");
-        assert_eq!(app.mode, Mode::ItemEditInput);
+        assert_eq!(app.mode, Mode::ItemEdit);
 
         app.handle_item_edit_key(KeyCode::Tab, &agenda)
             .expect("switch to note");
@@ -873,7 +873,7 @@ mod tests {
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
             .expect("n opens create view");
 
-        assert_eq!(app.mode, Mode::ViewCreateNameInput);
+        assert_eq!(app.mode, Mode::ViewCreateName);
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -978,7 +978,7 @@ mod tests {
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
             .expect("u alias should open item category picker");
-        assert_eq!(app.mode, Mode::ItemAssignCategoryPicker);
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -1012,7 +1012,7 @@ mod tests {
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
             .expect("open unassign picker from preview provenance");
-        assert_eq!(app.mode, Mode::InspectUnassignPicker);
+        assert_eq!(app.mode, Mode::InspectUnassign);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -1051,7 +1051,7 @@ mod tests {
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
             .expect("open unassign picker from preview provenance");
-        assert_eq!(app.mode, Mode::InspectUnassignPicker);
+        assert_eq!(app.mode, Mode::InspectUnassign);
         assert_eq!(app.inspect_assignment_index, 0);
 
         app.handle_inspect_unassign_key(KeyCode::Char('j'), &agenda)
@@ -1321,7 +1321,7 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("open config editor");
 
-        assert_eq!(app.mode, Mode::CategoryConfigEditor);
+        assert_eq!(app.mode, Mode::CategoryConfig);
         assert_eq!(
             app.category_config_editor
                 .as_ref()
@@ -1389,7 +1389,7 @@ mod tests {
             .expect("work category row should exist");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("open category config");
-        assert_eq!(app.mode, Mode::CategoryConfigEditor);
+        assert_eq!(app.mode, Mode::CategoryConfig);
 
         app.handle_category_config_editor_key(KeyCode::Char('e'), &agenda)
             .expect("toggle exclusive");
@@ -1452,7 +1452,7 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
             .expect("open reparent picker");
-        assert_eq!(app.mode, Mode::CategoryReparentPicker);
+        assert_eq!(app.mode, Mode::CategoryReparent);
         assert!(!app.category_reparent_options.is_empty());
 
         let selected_parent = app
@@ -1593,7 +1593,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewCreateCategoryPicker;
+        app.mode = Mode::ViewCreateCategory;
         app.view_pending_name = Some("Mixed".to_string());
         app.view_category_index = app
             .category_rows

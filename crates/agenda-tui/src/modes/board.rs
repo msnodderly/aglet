@@ -90,7 +90,7 @@ impl App {
             self.status = "No assignments available to unassign".to_string();
             return;
         }
-        self.mode = Mode::InspectUnassignPicker;
+        self.mode = Mode::InspectUnassign;
         self.inspect_assignment_index = self.inspect_assignment_index.min(rows.len() - 1);
         self.status = "Select assignment to unassign (j/k, Enter, Esc)".to_string();
     }
@@ -132,7 +132,7 @@ impl App {
             KeyCode::Char('m') => {
                 if let Some(item) = self.selected_item() {
                     let existing_note = item.note.clone().unwrap_or_default();
-                    self.mode = Mode::NoteEditInput;
+                    self.mode = Mode::NoteEdit;
                     self.set_input(existing_note);
                     self.status =
                         "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
@@ -182,7 +182,7 @@ impl App {
                 } else if self.category_rows.is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
-                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.mode = Mode::ItemAssignPicker;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
@@ -202,7 +202,7 @@ impl App {
                 } else if self.category_rows.is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
-                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.mode = Mode::ItemAssignPicker;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
@@ -275,7 +275,7 @@ impl App {
         if let Some(item) = self.selected_item() {
             let existing_text = item.text.clone();
             let existing_note = item.note.clone().unwrap_or_default();
-            self.mode = Mode::ItemEditInput;
+            self.mode = Mode::ItemEdit;
             self.set_input(existing_text);
             self.item_edit_focus = ItemEditFocus::Text;
             self.item_edit_note.set(existing_note);
@@ -382,7 +382,7 @@ impl App {
             self.status = "No categories available".to_string();
             return;
         }
-        self.mode = Mode::ItemAssignCategoryPicker;
+        self.mode = Mode::ItemAssignPicker;
         self.item_assign_category_index = first_non_reserved_category_index(&self.category_rows);
         self.status =
             "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
@@ -525,7 +525,7 @@ impl App {
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('/') => {
-                self.mode = Mode::ItemAssignCategoryInput;
+                self.mode = Mode::ItemAssignInput;
                 self.clear_input();
                 self.status = "Type category name: Enter assign/create, Esc back".to_string();
             }
@@ -614,7 +614,7 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::ItemAssignCategoryPicker;
+                self.mode = Mode::ItemAssignPicker;
                 self.clear_input();
                 self.status = "Category name entry canceled".to_string();
             }
@@ -627,7 +627,7 @@ impl App {
                 };
                 let name = self.input.trimmed().to_string();
                 if name.is_empty() {
-                    self.mode = Mode::ItemAssignCategoryPicker;
+                    self.mode = Mode::ItemAssignPicker;
                     self.clear_input();
                     self.status = "Category name entry canceled (empty)".to_string();
                     return Ok(false);
@@ -661,7 +661,7 @@ impl App {
                 {
                     self.item_assign_category_index = index;
                 }
-                self.mode = Mode::ItemAssignCategoryPicker;
+                self.mode = Mode::ItemAssignPicker;
                 self.clear_input();
                 self.status = format!(
                     "Assigned category {} (new_assignments={})",
