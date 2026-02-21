@@ -500,7 +500,7 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
     horizontal[1]
 }
 
-pub(super) fn item_edit_popup_area(area: Rect) -> Rect {
+pub(super) fn input_panel_popup_area(area: Rect) -> Rect {
     centered_rect(84, 70, area)
 }
 
@@ -508,25 +508,22 @@ pub(super) fn category_config_popup_area(area: Rect) -> Rect {
     centered_rect(84, 76, area)
 }
 
-pub(super) struct ItemEditPopupRegions {
+pub(super) struct InputPanelPopupRegions {
     pub(super) heading: Rect,
     pub(super) text: Rect,
-    pub(super) note: Rect,
-    pub(super) note_inner: Rect,
+    /// Present for AddItem / EditItem; absent for NameInput.
+    pub(super) note: Option<Rect>,
+    pub(super) note_inner: Option<Rect>,
+    pub(super) categories: Option<Rect>,
+    pub(super) preview: Option<Rect>,
     pub(super) buttons: Rect,
     pub(super) help: Rect,
 }
 
-pub(super) struct CategoryConfigPopupRegions {
-    pub(super) heading: Rect,
-    pub(super) toggles: Rect,
-    pub(super) note: Rect,
-    pub(super) note_inner: Rect,
-    pub(super) buttons: Rect,
-    pub(super) help: Rect,
-}
-
-pub(super) fn item_edit_popup_regions(area: Rect) -> Option<ItemEditPopupRegions> {
+pub(super) fn input_panel_popup_regions(
+    area: Rect,
+    kind: crate::input_panel::InputPanelKind,
+) -> Option<InputPanelPopupRegions> {
     if area.width < 3 || area.height < 3 {
         return None;
     }
@@ -536,34 +533,84 @@ pub(super) fn item_edit_popup_regions(area: Rect) -> Option<ItemEditPopupRegions
         width: area.width.saturating_sub(2),
         height: area.height.saturating_sub(2),
     };
-    if inner.width == 0 || inner.height < 5 {
+
+    if inner.width == 0 {
         return None;
     }
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-    let note = chunks[2];
-    let note_inner = Rect {
-        x: note.x.saturating_add(1),
-        y: note.y.saturating_add(1),
-        width: note.width.saturating_sub(2),
-        height: note.height.saturating_sub(2),
-    };
-    Some(ItemEditPopupRegions {
-        heading: chunks[0],
-        text: chunks[1],
-        note,
-        note_inner,
-        buttons: chunks[3],
-        help: chunks[4],
-    })
+
+    use crate::input_panel::InputPanelKind;
+    match kind {
+        InputPanelKind::NameInput => {
+            // heading + text + buttons + help = 4 lines minimum
+            if inner.height < 4 {
+                return None;
+            }
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                ])
+                .split(inner);
+            Some(InputPanelPopupRegions {
+                heading: chunks[0],
+                text: chunks[1],
+                note: None,
+                note_inner: None,
+                categories: None,
+                preview: None,
+                buttons: chunks[3],
+                help: chunks[4],
+            })
+        }
+        InputPanelKind::AddItem | InputPanelKind::EditItem => {
+            // heading + text + note(min 3) + categories + preview + buttons + help = 9 minimum
+            if inner.height < 9 {
+                return None;
+            }
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // heading
+                    Constraint::Length(1), // text
+                    Constraint::Min(3),    // note
+                    Constraint::Length(1), // categories
+                    Constraint::Length(1), // preview
+                    Constraint::Length(1), // buttons
+                    Constraint::Length(1), // help
+                ])
+                .split(inner);
+            let note = chunks[2];
+            let note_inner = Rect {
+                x: note.x.saturating_add(1),
+                y: note.y.saturating_add(1),
+                width: note.width.saturating_sub(2),
+                height: note.height.saturating_sub(2),
+            };
+            Some(InputPanelPopupRegions {
+                heading: chunks[0],
+                text: chunks[1],
+                note: Some(note),
+                note_inner: Some(note_inner),
+                categories: Some(chunks[3]),
+                preview: Some(chunks[4]),
+                buttons: chunks[5],
+                help: chunks[6],
+            })
+        }
+    }
+}
+
+pub(super) struct CategoryConfigPopupRegions {
+    pub(super) heading: Rect,
+    pub(super) toggles: Rect,
+    pub(super) note: Rect,
+    pub(super) note_inner: Rect,
+    pub(super) buttons: Rect,
+    pub(super) help: Rect,
 }
 
 pub(super) fn category_config_popup_regions(area: Rect) -> Option<CategoryConfigPopupRegions> {

@@ -49,11 +49,13 @@ impl App {
         if let Some((x, y)) = self.input_cursor_position(footer_area) {
             frame.set_cursor_position((x, y));
         }
-        if self.mode == Mode::ItemEdit {
-            let popup_area = item_edit_popup_area(frame.area());
-            self.render_item_edit_popup(frame, popup_area);
-            if let Some((x, y)) = self.item_edit_cursor_position(popup_area) {
-                frame.set_cursor_position((x, y));
+        if self.mode == Mode::InputPanel {
+            if let Some(ref panel) = self.input_panel {
+                let popup_area = input_panel_popup_area(frame.area());
+                self.render_input_panel(frame, popup_area, panel);
+                if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
+                    frame.set_cursor_position((x, y));
+                }
             }
         }
         if self.mode == Mode::CategoryConfig {
@@ -86,7 +88,6 @@ impl App {
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
         match self.mode {
-            Mode::AddInput => Some("Add> "),
             Mode::NoteEdit => Some("Note> "),
             Mode::FilterInput => Some("Filter> "),
             Mode::ViewCreateName => Some("View create> "),
@@ -120,18 +121,25 @@ impl App {
         Some((cursor_x, inner_y))
     }
 
-    pub(crate) fn item_edit_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
-        if self.mode != Mode::ItemEdit {
+    pub(crate) fn input_panel_cursor_position(
+        &self,
+        popup_area: Rect,
+        panel: &input_panel::InputPanel,
+    ) -> Option<(u16, u16)> {
+        use input_panel::InputPanelFocus;
+
+        // No cursor while category picker overlay is open (it shows a list, not text)
+        if panel.category_picker_open() {
             return None;
         }
         if popup_area.width < 3 || popup_area.height < 3 {
             return None;
         }
-        let regions = item_edit_popup_regions(popup_area)?;
-        match self.item_edit_focus {
-            ItemEditFocus::Text => {
+        let regions = input_panel_popup_regions(popup_area, panel.kind)?;
+        match panel.focus {
+            InputPanelFocus::Text => {
                 let prefix_len = "  Text> ".chars().count().min(u16::MAX as usize) as u16;
-                let input_chars = self.clamped_input_cursor().min(u16::MAX as usize) as u16;
+                let input_chars = panel.text.cursor().min(u16::MAX as usize) as u16;
                 let max_x = regions
                     .text
                     .x
@@ -144,36 +152,34 @@ impl App {
                     .min(max_x);
                 Some((cursor_x, regions.text.y))
             }
-            ItemEditFocus::Note => {
-                if regions.note_inner.width == 0 || regions.note_inner.height == 0 {
+            InputPanelFocus::Note => {
+                let note_inner = regions.note_inner?;
+                if note_inner.width == 0 || note_inner.height == 0 {
                     return None;
                 }
-                let (line, col) = self.item_edit_note.line_col();
-                let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
+                let note_rect = regions.note?;
+                let (line, col) = panel.note.line_col();
+                let scroll = list_scroll_for_selected_line(note_rect, Some(line)) as usize;
                 let visible_line = line.saturating_sub(scroll);
-                let max_x = regions
-                    .note_inner
+                let max_x = note_inner
                     .x
-                    .saturating_add(regions.note_inner.width.saturating_sub(1));
-                let max_y = regions
-                    .note_inner
+                    .saturating_add(note_inner.width.saturating_sub(1));
+                let max_y = note_inner
                     .y
-                    .saturating_add(regions.note_inner.height.saturating_sub(1));
-                let cursor_x = regions
-                    .note_inner
+                    .saturating_add(note_inner.height.saturating_sub(1));
+                let cursor_x = note_inner
                     .x
                     .saturating_add(col.min(u16::MAX as usize) as u16)
                     .min(max_x);
-                let cursor_y = regions
-                    .note_inner
+                let cursor_y = note_inner
                     .y
                     .saturating_add(visible_line.min(u16::MAX as usize) as u16)
                     .min(max_y);
                 Some((cursor_x, cursor_y))
             }
-            ItemEditFocus::CategoriesButton
-            | ItemEditFocus::SaveButton
-            | ItemEditFocus::CancelButton => None,
+            InputPanelFocus::CategoriesButton
+            | InputPanelFocus::SaveButton
+            | InputPanelFocus::CancelButton => None,
         }
     }
 
@@ -682,7 +688,6 @@ impl App {
 
     pub(crate) fn render_footer(&self) -> Paragraph<'_> {
         let prompt = match self.mode {
-            Mode::AddInput => format!("Add> {}", self.input.text()),
             Mode::NoteEdit => format!("Note> {}", self.input.text()),
             Mode::FilterInput => format!("Filter> {}", self.input.text()),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
@@ -706,16 +711,32 @@ impl App {
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::InspectUnassign => "Select assignment".to_string(),
-            Mode::ItemEdit => format!(
-                "Edit item fields in popup (focus: {})",
-                match self.item_edit_focus {
-                    ItemEditFocus::Text => "Text",
-                    ItemEditFocus::Note => "Note",
-                    ItemEditFocus::CategoriesButton => "Categories",
-                    ItemEditFocus::SaveButton => "Save",
-                    ItemEditFocus::CancelButton => "Cancel",
+            Mode::InputPanel => {
+                if let Some(panel) = &self.input_panel {
+                    use input_panel::InputPanelFocus;
+                    if panel.category_picker_open() {
+                        "Category picker: j/k navigate, Space toggle, Enter/Esc close".to_string()
+                    } else {
+                        format!(
+                            "{} (focus: {})",
+                            match panel.kind {
+                                input_panel::InputPanelKind::AddItem => "Add item",
+                                input_panel::InputPanelKind::EditItem => "Edit item",
+                                input_panel::InputPanelKind::NameInput => "Name input",
+                            },
+                            match panel.focus {
+                                InputPanelFocus::Text => "Text",
+                                InputPanelFocus::Note => "Note",
+                                InputPanelFocus::CategoriesButton => "Categories",
+                                InputPanelFocus::SaveButton => "Save",
+                                InputPanelFocus::CancelButton => "Cancel",
+                            }
+                        )
+                    }
+                } else {
+                    self.status.clone()
                 }
-            ),
+            }
             _ => self.status.clone(),
         };
         let footer_title = match self.mode {
@@ -751,8 +772,12 @@ impl App {
             }
             Mode::ItemAssignPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Type category name, Enter:assign/create, Esc:back",
-            Mode::ItemEdit => {
-                "Edit popup: Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories"
+            Mode::InputPanel => {
+                if self.input_panel.as_ref().map_or(false, |p| p.category_picker_open()) {
+                    "j/k:navigate  Space:toggle  Enter/Esc:close picker"
+                } else {
+                    "Tab/Shift+Tab:cycle fields  Enter:activate button  Up/Down in note  Esc:cancel"
+                }
             }
             Mode::NoteEdit => "Edit selected note, Enter:save (empty clears), Esc:cancel",
             Mode::InspectUnassign => "j/k:select assignment  Enter:apply  Esc:cancel",
@@ -764,91 +789,212 @@ impl App {
         Paragraph::new(prompt).block(Block::default().title(footer_title).borders(Borders::ALL))
     }
 
-    pub(crate) fn render_item_edit_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+    pub(crate) fn render_input_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        panel: &input_panel::InputPanel,
+    ) {
+        use input_panel::{InputPanelFocus, InputPanelKind};
+
         frame.render_widget(Clear, area);
+
+        let title = match panel.kind {
+            InputPanelKind::AddItem => "Add Item",
+            InputPanelKind::EditItem => "Edit Item",
+            InputPanelKind::NameInput => "Name",
+        };
         let block = Block::default()
-            .title("Edit Item")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
         frame.render_widget(block, area);
-        let Some(regions) = item_edit_popup_regions(area) else {
+
+        // If category picker overlay is open, render it over the popup.
+        if panel.category_picker_open() {
+            self.render_input_panel_category_picker(frame, area, panel);
+            return;
+        }
+
+        let Some(regions) = input_panel_popup_regions(area, panel.kind) else {
             return;
         };
-        let text_marker = if self.item_edit_focus == ItemEditFocus::Text {
-            ">"
-        } else {
-            " "
+
+        // Heading
+        let heading_text = match panel.kind {
+            InputPanelKind::AddItem => "Create new item",
+            InputPanelKind::EditItem => "Edit selected item",
+            InputPanelKind::NameInput => "Enter name",
         };
-        let categories_button = if self.item_edit_focus == ItemEditFocus::CategoriesButton {
-            "[> Categories <]"
+        frame.render_widget(Paragraph::new(heading_text), regions.heading);
+
+        // Text field
+        let text_marker = if panel.focus == InputPanelFocus::Text { ">" } else { " " };
+        let text_label = if panel.kind == InputPanelKind::NameInput {
+            "Name"
         } else {
-            "[Categories]"
+            "Text"
         };
-        let save_button = if self.item_edit_focus == ItemEditFocus::SaveButton {
+        frame.render_widget(
+            Paragraph::new(format!("{text_marker} {text_label}> {}", panel.text.text())),
+            regions.text,
+        );
+
+        // Note and Categories (not shown for NameInput)
+        if let Some(note_rect) = regions.note {
+            let note_lines: Vec<Line<'_>> = if panel.note.is_empty() {
+                vec![Line::from("")]
+            } else {
+                panel.note.text().lines().map(Line::from).collect()
+            };
+            let note_focused = panel.focus == InputPanelFocus::Note;
+            let note_border_color = if note_focused { Color::Cyan } else { Color::Blue };
+            let note_title = if note_focused { "Note (> editable)" } else { "Note (editable)" };
+            let note_cursor_line = panel.note.line_col().0;
+            let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
+            frame.render_widget(
+                Paragraph::new(note_lines)
+                    .scroll((note_scroll, 0))
+                    .block(
+                        Block::default()
+                            .title(note_title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(note_border_color)),
+                    )
+                    .wrap(Wrap { trim: false }),
+                note_rect,
+            );
+            Self::render_vertical_scrollbar(
+                frame,
+                note_rect,
+                panel.note.text().lines().count().max(1),
+                note_scroll as usize,
+            );
+        }
+
+        if let Some(categories_rect) = regions.categories {
+            let cat_focused = panel.focus == InputPanelFocus::CategoriesButton;
+            let cat_marker = if cat_focused { "[> Categories <]" } else { "[Categories]" };
+            let cat_names = self.category_names_for_ids(&panel.categories);
+            let cat_display = if cat_names.is_empty() {
+                format!("{cat_marker}  (none)")
+            } else {
+                format!("{cat_marker}  {}", cat_names.join(", "))
+            };
+            frame.render_widget(Paragraph::new(cat_display), categories_rect);
+        }
+
+        if let Some(preview_rect) = regions.preview {
+            if !panel.preview_context.is_empty() {
+                frame.render_widget(
+                    Paragraph::new(panel.preview_context.as_str())
+                        .style(Style::default().fg(Color::DarkGray)),
+                    preview_rect,
+                );
+            }
+        }
+
+        // Buttons row
+        let save_button = if panel.focus == InputPanelFocus::SaveButton {
             "[> Save <]"
         } else {
             "[Save]"
         };
-        let cancel_button = if self.item_edit_focus == ItemEditFocus::CancelButton {
+        let cancel_button = if panel.focus == InputPanelFocus::CancelButton {
             "[> Cancel <]"
         } else {
             "[Cancel]"
         };
-
-        frame.render_widget(Paragraph::new("Edit selected item"), regions.heading);
         frame.render_widget(
-            Paragraph::new(format!("{text_marker} Text> {}", self.input.text())),
-            regions.text,
-        );
-
-        let note_lines: Vec<Line<'_>> = if self.item_edit_note.is_empty() {
-            vec![Line::from("")]
-        } else {
-            self.item_edit_note.text().lines().map(Line::from).collect()
-        };
-        let note_border_color = if self.item_edit_focus == ItemEditFocus::Note {
-            Color::Cyan
-        } else {
-            Color::Blue
-        };
-        let note_title = if self.item_edit_focus == ItemEditFocus::Note {
-            "Note (> editable)"
-        } else {
-            "Note (editable)"
-        };
-        let note_cursor_line = self.item_edit_note.line_col().0;
-        let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
-        frame.render_widget(
-            Paragraph::new(note_lines)
-                .scroll((note_scroll, 0))
-                .block(
-                    Block::default()
-                        .title(note_title)
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(note_border_color)),
-                )
-                .wrap(Wrap { trim: false }),
-            regions.note,
-        );
-        Self::render_vertical_scrollbar(
-            frame,
-            regions.note,
-            self.item_edit_note.text().lines().count().max(1),
-            note_scroll as usize,
-        );
-        frame.render_widget(
-            Paragraph::new(format!(
-                "  {}  {}  {}",
-                categories_button, save_button, cancel_button
-            )),
+            Paragraph::new(format!("  {save_button}  {cancel_button}")),
             regions.buttons,
         );
+
+        // Help row
         frame.render_widget(
-            Paragraph::new(
-                "Tab/Shift+Tab navigate  Enter activate  Up/Down note  Esc cancel  F3 categories",
-            ),
+            Paragraph::new("Tab/Shift+Tab:cycle  Enter:activate  Up/Down:note  Esc:cancel"),
             regions.help,
         );
+    }
+
+    /// Render the category picker overlay within the InputPanel popup area.
+    fn render_input_panel_category_picker(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        panel: &input_panel::InputPanel,
+    ) {
+        let picker_index = panel.picker_index().unwrap_or(0);
+        let category_names = self.category_names_for_ids(&panel.categories);
+        let selected_label = if category_names.is_empty() {
+            "(none selected)".to_string()
+        } else {
+            category_names.join(", ")
+        };
+
+        // Use inner area of the popup for the list
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.height < 2 {
+            return;
+        }
+        let chunks = ratatui::layout::Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
+
+        frame.render_widget(
+            Paragraph::new(format!("Selected: {selected_label}"))
+                .style(Style::default().fg(Color::Yellow)),
+            chunks[0],
+        );
+
+        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
+            vec![ListItem::new("(no categories available)")]
+        } else {
+            self.category_rows
+                .iter()
+                .map(|row| {
+                    let check = if panel.categories.contains(&row.id) {
+                        "■ "
+                    } else {
+                        "□ "
+                    };
+                    let indent = "  ".repeat(row.depth);
+                    let reserved = if row.is_reserved { " [reserved]" } else { "" };
+                    ListItem::new(format!("{check}{indent}{}{reserved}", row.name))
+                })
+                .collect()
+        };
+        let item_count = items.len();
+        let mut state = Self::list_state_for(chunks[1], Some(picker_index));
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style()),
+            chunks[1],
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
+    }
+
+    /// Returns the display names for a set of category IDs.
+    fn category_names_for_ids(
+        &self,
+        ids: &std::collections::HashSet<agenda_core::model::CategoryId>,
+    ) -> Vec<String> {
+        ids.iter()
+            .filter_map(|id| {
+                self.category_rows
+                    .iter()
+                    .find(|row| row.id == *id)
+                    .map(|row| row.name.clone())
+            })
+            .collect()
     }
 
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
