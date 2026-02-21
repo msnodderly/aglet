@@ -34,7 +34,7 @@ impl App {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(1),
-                Constraint::Length(3),
+                Constraint::Length(4),
             ])
             .split(frame.area());
 
@@ -675,7 +675,20 @@ impl App {
     }
 
     pub(crate) fn render_footer(&self) -> Paragraph<'_> {
-        let prompt = match self.mode {
+        let status = self.footer_status_text();
+        let hints = self.footer_hint_text();
+        let text = ratatui::text::Text::from(vec![
+            ratatui::text::Line::from(status),
+            ratatui::text::Line::from(ratatui::text::Span::styled(
+                hints,
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]);
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL))
+    }
+
+    fn footer_status_text(&self) -> String {
+        match self.mode {
             Mode::NoteEdit => format!("Note> {}", self.input.text()),
             Mode::FilterInput => format!("Filter> {}", self.input.text()),
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
@@ -699,7 +712,7 @@ impl App {
                 if let Some(panel) = &self.input_panel {
                     use input_panel::InputPanelFocus;
                     if panel.category_picker_open() {
-                        "Category picker: j/k navigate, Space toggle, Enter/Esc close".to_string()
+                        "Category picker open".to_string()
                     } else {
                         format!(
                             "{} (focus: {})",
@@ -722,22 +735,25 @@ impl App {
                 }
             }
             _ => self.status.clone(),
-        };
-        let footer_title = match self.mode {
+        }
+    }
+
+    fn footer_hint_text(&self) -> &'static str {
+        match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  Enter:config popup  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc/F9:close"
+                "j/k:row  Enter:config  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc:close"
             }
             Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDelete => "y:confirm delete  n:cancel",
             Mode::CategoryConfig => {
-                "Tab/Shift+Tab:focus  h/l:checkbox focus  Space:toggle  S:save (except note)  e/i/a:quick toggle  Esc:cancel"
+                "Tab/Shift+Tab:focus  Space:toggle  S:save  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
-                "j/k:select  Enter:switch  n:create  r:rename  x:delete  e:edit view  Esc:cancel"
+                "j/k:select  Enter:switch  N:new  r:rename  x:delete  e:edit  Esc:back"
             }
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewCreateCategory => {
-                "j/k:select category  +:include  -:exclude  Space:+include  Enter:create view  Esc:cancel"
+                "j/k:select  +:include  -:exclude  Space:toggle  Enter:create  Esc:cancel"
             }
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
@@ -750,8 +766,12 @@ impl App {
                     "Tab:region  S:save  Esc:cancel"
                 }
             }
-            Mode::ItemAssignPicker => "j/k:select category  Space:toggle add/remove  n or /:type name assign/create  Enter:done  Esc:cancel",
-            Mode::ItemAssignInput => "Type category name, Enter:assign/create, Esc:back",
+            Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
+            Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
+            Mode::ConfirmDelete => "y:confirm delete  n:cancel",
+            Mode::FilterInput => "Enter:apply  Esc:cancel",
+            Mode::NoteEdit => "S:save (empty=clear)  Esc:cancel",
+            Mode::InspectUnassign => "j/k:select  Enter:apply  Esc:cancel",
             Mode::InputPanel => {
                 if self.input_panel.as_ref().map_or(false, |p| p.category_picker_open()) {
                     "j/k:navigate  Space:toggle  Enter/Esc:close picker"
@@ -759,14 +779,8 @@ impl App {
                     "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Up/Down in note  Esc:cancel"
                 }
             }
-            Mode::NoteEdit => "Edit selected note, S:save (empty clears), Esc:cancel",
-            Mode::InspectUnassign => "j/k:select assignment  Enter:apply  Esc:cancel",
-            _ => {
-                "n:add  Enter/e:edit-item  a/u:item-categories  m:note  [/]:filter  v/F8:views  c/F9:categories  g:all-items  ,/.:view  p:preview  o:preview-mode  Tab/Shift+Tab:section  f:board/preview focus  []:move  r:remove  d/D:done-toggle  x:delete  J/K:preview-scroll  q:quit"
-            }
-        };
-
-        Paragraph::new(prompt).block(Block::default().title(footer_title).borders(Borders::ALL))
+            _ => "n:add  e:edit  d:done  x:delete  v:views  c:categories  /:filter  q:quit",
+        }
     }
 
     pub(crate) fn render_input_panel(
