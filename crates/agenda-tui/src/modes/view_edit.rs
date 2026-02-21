@@ -17,6 +17,7 @@ impl App {
                     self.slot_index = 0;
                     self.item_index = 0;
                     self.refresh(agenda.store())?;
+                    self.reset_section_filters();
                     let view_name = self
                         .current_view()
                         .map(|view| view.name.clone())
@@ -29,18 +30,20 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.mode = Mode::ViewCreateName;
-                self.clear_input();
                 self.view_pending_name = None;
                 self.view_pending_edit_name = None;
-                self.status = "Create view: type name and press Enter".to_string();
+                self.input_panel = Some(input_panel::InputPanel::new_name_input("", "New view name"));
+                self.name_input_context = Some(NameInputContext::ViewCreate);
+                self.mode = Mode::InputPanel;
+                self.status = "Create view: type name, Tab/Save to confirm, Esc to cancel".to_string();
             }
             KeyCode::Char('r') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
-                    self.mode = Mode::ViewRename;
-                    self.set_input(view.name.clone());
                     self.view_pending_edit_name = Some(view.name.clone());
-                    self.status = format!("Rename view {}: type name and Enter", view.name);
+                    self.input_panel = Some(input_panel::InputPanel::new_name_input(&view.name, "Rename view"));
+                    self.name_input_context = Some(NameInputContext::ViewRename);
+                    self.mode = Mode::InputPanel;
+                    self.status = format!("Rename view {}: edit name, Save to confirm, Esc to cancel", view.name);
                 } else {
                     self.status = "No selected view to rename".to_string();
                 }
@@ -122,39 +125,6 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.status = "Delete canceled".to_string();
             }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    pub(crate) fn handle_view_create_name_key(&mut self, code: KeyCode) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::ViewPicker;
-                self.clear_input();
-                self.view_pending_name = None;
-                self.status = "View create canceled".to_string();
-            }
-            KeyCode::Enter => {
-                let name = self.input.trimmed().to_string();
-                if name.is_empty() {
-                    self.mode = Mode::ViewPicker;
-                    self.clear_input();
-                    self.view_pending_name = None;
-                    self.status = "View create canceled (empty name)".to_string();
-                } else {
-                    self.view_pending_name = Some(name.clone());
-                    self.view_category_index =
-                        first_non_reserved_category_index(&self.category_rows);
-                    self.view_create_include_selection.clear();
-                    self.view_create_exclude_selection.clear();
-                    self.mode = Mode::ViewCreateCategory;
-                    self.clear_input();
-                    self.status =
-                        format!("Create view {name}: + include, - exclude, Enter creates");
-                }
-            }
-            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)
@@ -261,80 +231,6 @@ impl App {
                     }
                 }
             }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    pub(crate) fn handle_view_rename_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::ViewPicker;
-                self.clear_input();
-                self.view_pending_edit_name = None;
-                self.status = "View rename canceled".to_string();
-            }
-            KeyCode::Enter => {
-                let Some(view_name) = self.view_pending_edit_name.clone() else {
-                    self.mode = Mode::ViewPicker;
-                    self.clear_input();
-                    self.status = "View rename failed: no selected view".to_string();
-                    return Ok(false);
-                };
-
-                let new_name = self.input.trimmed().to_string();
-                if new_name.is_empty() {
-                    self.mode = Mode::ViewPicker;
-                    self.clear_input();
-                    self.view_pending_edit_name = None;
-                    self.status = "View rename canceled (empty name)".to_string();
-                    return Ok(false);
-                }
-
-                let Some(mut view) = self
-                    .views
-                    .iter()
-                    .find(|view| view.name.eq_ignore_ascii_case(&view_name))
-                    .cloned()
-                else {
-                    self.mode = Mode::ViewPicker;
-                    self.clear_input();
-                    self.view_pending_edit_name = None;
-                    self.status = "View rename failed: selected view not found".to_string();
-                    return Ok(false);
-                };
-
-                if view.name == new_name {
-                    self.mode = Mode::ViewPicker;
-                    self.clear_input();
-                    self.view_pending_edit_name = None;
-                    self.status = "View rename canceled (unchanged)".to_string();
-                    return Ok(false);
-                }
-
-                view.name = new_name.clone();
-                match agenda.store().update_view(&view) {
-                    Ok(()) => {
-                        self.refresh(agenda.store())?;
-                        self.set_view_selection_by_name(&new_name);
-                        self.mode = Mode::ViewPicker;
-                        self.clear_input();
-                        self.view_pending_edit_name = None;
-                        self.status = format!("Renamed view to {}", new_name);
-                    }
-                    Err(err) => {
-                        self.mode = Mode::ViewPicker;
-                        self.clear_input();
-                        self.view_pending_edit_name = None;
-                        self.status = format!("View rename failed: {err}");
-                    }
-                }
-            }
-            _ if self.handle_text_input_key(code) => {}
             _ => {}
         }
         Ok(false)

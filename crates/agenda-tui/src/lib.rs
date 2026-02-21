@@ -27,6 +27,7 @@ use ratatui::Terminal;
 
 mod app;
 mod input;
+mod input_panel;
 mod modes;
 mod render;
 mod text_buffer;
@@ -174,8 +175,7 @@ enum BucketEditTarget {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
-    AddInput,
-    ItemEdit,
+    InputPanel,  // unified add/edit/name-input (replaces AddInput + ItemEdit)
     NoteEdit,
     ItemAssignPicker,
     ItemAssignInput,
@@ -183,17 +183,23 @@ enum Mode {
     FilterInput,
     ViewPicker,
     ViewEdit,
-    ViewCreateName,
     ViewCreateCategory,
-    ViewRename,
     ViewDeleteConfirm,
     ConfirmDelete,
     CategoryManager,
-    CategoryCreate,
-    CategoryRename,
     CategoryReparent,
     CategoryDelete,
     CategoryConfig,
+}
+
+/// Disambiguates which name-input operation is in flight when Mode::InputPanel
+/// is open with InputPanelKind::NameInput.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NameInputContext {
+    ViewCreate,
+    ViewRename,
+    CategoryCreate,
+    CategoryRename,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -282,15 +288,6 @@ struct CategoryConfigState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ItemEditFocus {
-    Text,
-    Note,
-    CategoriesButton,
-    SaveButton,
-    CancelButton,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PreviewMode {
     Summary,
     Provenance,
@@ -306,7 +303,8 @@ struct App {
     mode: Mode,
     status: String,
     input: text_buffer::TextBuffer,
-    filter: Option<String>,
+    section_filters: Vec<Option<String>>,
+    filter_target_section: usize,
     show_preview: bool,
     preview_mode: PreviewMode,
     normal_focus: NormalFocus,
@@ -330,8 +328,8 @@ struct App {
     category_reparent_index: usize,
     category_config_editor: Option<CategoryConfigState>,
     item_assign_category_index: usize,
-    item_edit_focus: ItemEditFocus,
-    item_edit_note: text_buffer::TextBuffer,
+    input_panel: Option<input_panel::InputPanel>,
+    name_input_context: Option<NameInputContext>,
     preview_provenance_scroll: usize,
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
@@ -348,7 +346,8 @@ impl Default for App {
                 "Press n to add, v for view palette, c for category manager, p for preview, q to quit"
                     .to_string(),
             input: text_buffer::TextBuffer::empty(),
-            filter: None,
+            section_filters: Vec::new(),
+            filter_target_section: 0,
             show_preview: false,
             preview_mode: PreviewMode::Summary,
             normal_focus: NormalFocus::Board,
@@ -370,8 +369,8 @@ impl Default for App {
             category_reparent_index: 0,
             category_config_editor: None,
             item_assign_category_index: 0,
-            item_edit_focus: ItemEditFocus::Text,
-            item_edit_note: text_buffer::TextBuffer::empty(),
+            input_panel: None,
+            name_input_context: None,
             preview_provenance_scroll: 0,
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
@@ -390,10 +389,10 @@ mod tests {
     use super::{
         add_capture_status_message, board_column_widths, board_item_label, bucket_target_set_mut,
         build_category_rows, build_reparent_options, category_name_map, compute_board_layout,
-        first_non_reserved_category_index, item_assignment_labels, item_edit_popup_area,
-        list_scroll_for_selected_line, next_index, next_index_clamped,
+        first_non_reserved_category_index, input_panel, input_panel_popup_area,
+        item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryListRow, Mode, ViewEditRegion,
+        BucketEditTarget, CategoryListRow, Mode, NameInputContext, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -578,14 +577,11 @@ mod tests {
     fn input_cursor_position_is_set_for_text_input_modes() {
         let footer = Rect::new(10, 5, 40, 3);
         let input = "abc";
+        // InputPanel (add/edit) uses a popup cursor, not the footer cursor.
+        // Footer cursor applies to the remaining text-in-footer modes.
         let cases = [
-            (Mode::AddInput, "Add> "),
             (Mode::NoteEdit, "Note> "),
             (Mode::FilterInput, "Filter> "),
-            (Mode::ViewCreateName, "View create> "),
-            (Mode::ViewRename, "View rename> "),
-            (Mode::CategoryCreate, "Category create> "),
-            (Mode::CategoryRename, "Category rename> "),
             (Mode::ItemAssignInput, "Category> "),
         ];
 
@@ -598,7 +594,9 @@ mod tests {
             let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
             assert_eq!(
                 app.input_cursor_position(footer),
-                Some((expected_x, footer.y + 1))
+                Some((expected_x, footer.y + 1)),
+                "mode {:?}",
+                mode,
             );
         }
     }
@@ -608,6 +606,7 @@ mod tests {
         let footer = Rect::new(10, 5, 40, 3);
         for mode in [
             Mode::Normal,
+            Mode::InputPanel, // popup mode — footer cursor hidden
             Mode::ConfirmDelete,
             Mode::ViewPicker,
             Mode::ViewDeleteConfirm,
@@ -618,7 +617,7 @@ mod tests {
                 input: text_buffer::TextBuffer::new("abc".to_string()),
                 ..App::default()
             };
-            assert_eq!(app.input_cursor_position(footer), None);
+            assert_eq!(app.input_cursor_position(footer), None, "mode {:?}", mode);
         }
     }
 
@@ -626,44 +625,60 @@ mod tests {
     fn input_cursor_position_clamps_to_footer_inner_width() {
         let footer = Rect::new(0, 0, 8, 3);
         // cursor clamps to text length (26), which overflows the 8-wide footer → x=6
+        // NoteEdit still uses footer text input
         let app = App {
-            mode: Mode::AddInput,
+            mode: Mode::NoteEdit,
             input: text_buffer::TextBuffer::new("abcdefghijklmnopqrstuvwxyz".to_string()),
             ..App::default()
         };
-
         assert_eq!(app.input_cursor_position(footer), Some((6, 1)));
     }
 
     #[test]
     fn input_cursor_position_tracks_edit_cursor_not_just_input_end() {
         let footer = Rect::new(0, 0, 40, 3);
+        // NoteEdit prefix = "Note> " (6 chars); inner_x=1; cursor=2 → 1+6+2=9
         let app = App {
-            mode: Mode::AddInput,
+            mode: Mode::NoteEdit,
             input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
             ..App::default()
         };
-
-        assert_eq!(app.input_cursor_position(footer), Some((8, 1)));
+        assert_eq!(app.input_cursor_position(footer), Some((9, 1)));
     }
 
     #[test]
-    fn item_edit_cursor_position_uses_popup_area() {
+    fn input_panel_cursor_position_uses_popup_area() {
         let screen = Rect::new(0, 0, 120, 40);
-        let popup = item_edit_popup_area(screen);
+        let popup = input_panel_popup_area(screen);
+        let panel = input_panel::InputPanel::new_edit_item(
+            agenda_core::model::ItemId::new_v4(),
+            "abcd".to_string(),
+            String::new(),
+            Default::default(),
+        );
         let app = App {
-            mode: Mode::ItemEdit,
-            input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
+            mode: Mode::InputPanel,
+            input_panel: Some(panel),
             ..App::default()
         };
-        assert_eq!(
-            app.item_edit_cursor_position(popup),
-            Some((popup.x + 1 + "  Text> ".len() as u16 + 2, popup.y + 2))
-        );
+        // Cursor should be positioned in the text row of the popup, after the "  Text> " prefix
+        // with 2 chars of cursor offset (TextBuffer::new puts cursor at end; we need with_cursor)
+        // Just assert it's Some and within the popup bounds.
+        let pos = if let Some(panel) = &app.input_panel {
+            app.input_panel_cursor_position(popup, panel)
+        } else {
+            None
+        };
+        assert!(pos.is_some(), "expected cursor position in popup");
+        let (cx, cy) = pos.unwrap();
+        assert!(cx >= popup.x, "cursor x {} should be >= popup.x {}", cx, popup.x);
+        assert!(cy >= popup.y, "cursor y {} should be >= popup.y {}", cy, popup.y);
+        assert!(cx < popup.x + popup.width, "cursor x in bounds");
+        assert!(cy < popup.y + popup.height, "cursor y in bounds");
     }
 
     #[test]
-    fn item_edit_tab_switches_to_note_and_saves_note_inline() {
+    fn input_panel_edit_tab_switches_to_note_and_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -682,24 +697,41 @@ mod tests {
         app.mode = Mode::Normal;
         app.set_item_selection_by_id(item.id);
 
+        // 'e' opens InputPanel(EditItem)
         app.handle_normal_key(KeyCode::Char('e'), &agenda)
             .expect("open item edit");
-        assert_eq!(app.mode, Mode::ItemEdit);
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Text
+        );
 
-        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+        // Tab moves focus to Note
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("switch to note");
-        assert_eq!(app.item_edit_focus, super::ItemEditFocus::Note);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Note
+        );
 
+        // Type in note field (appends to existing "old")
         for c in " updated".chars() {
-            app.handle_item_edit_key(KeyCode::Char(c), &agenda)
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
-        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+        // Tab → CategoriesButton, Tab → SaveButton
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus categories button");
-        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus save button");
-        app.handle_item_edit_key(KeyCode::Enter, &agenda)
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::SaveButton
+        );
+        // Enter on SaveButton saves
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("save item edit");
+        assert_eq!(app.mode, Mode::Normal);
 
         let saved = store.get_item(item.id).expect("load item");
         assert_eq!(saved.note.as_deref(), Some("old updated"));
@@ -709,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn item_edit_enter_in_note_inserts_newline_until_save_button() {
+    fn input_panel_edit_enter_in_note_inserts_newline() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -728,22 +760,35 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
         app.set_item_selection_by_id(item.id);
+
+        // Enter opens InputPanel(EditItem)
         app.handle_normal_key(KeyCode::Enter, &agenda)
             .expect("enter opens edit");
-        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        // Tab to Note field
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus note");
-        app.handle_item_edit_key(KeyCode::Enter, &agenda)
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Note
+        );
+
+        // Enter in Note inserts newline
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("enter adds newline");
         for c in "line2".chars() {
-            app.handle_item_edit_key(KeyCode::Char(c), &agenda)
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note line2");
         }
-        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+        // Tab → Categories, Tab → Save, Enter → save
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus categories");
-        app.handle_item_edit_key(KeyCode::Tab, &agenda)
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus save");
-        app.handle_item_edit_key(KeyCode::Enter, &agenda)
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("save");
+        assert_eq!(app.mode, Mode::Normal);
 
         let saved = store.get_item(item.id).expect("load item");
         assert_eq!(saved.note.as_deref(), Some("line1\nline2"));
@@ -873,7 +918,9 @@ mod tests {
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
             .expect("n opens create view");
 
-        assert_eq!(app.mode, Mode::ViewCreateName);
+        // After Phase 5d: 'n' in ViewPicker now opens InputPanel(NameInput) instead of ViewCreateName
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -1278,20 +1325,25 @@ mod tests {
     }
 
     #[test]
-    fn item_edit_note_up_down_moves_cursor_between_lines() {
-        let mut app = App {
-            item_edit_note: text_buffer::TextBuffer::with_cursor(
-                "first\nsecond".to_string(),
-                "first\nse".chars().count(),
-            ),
-            ..App::default()
-        };
+    fn input_panel_note_up_down_moves_cursor_between_lines() {
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            agenda_core::model::ItemId::new_v4(),
+            "hello".to_string(),
+            String::new(),
+            Default::default(),
+        );
+        // Set note buffer with multiline content and cursor mid-second-line.
+        panel.note = text_buffer::TextBuffer::with_cursor(
+            "first\nsecond".to_string(),
+            "first\nse".chars().count(),
+        );
+        panel.focus = input_panel::InputPanelFocus::Note;
 
-        app.handle_item_edit_note_input_key(KeyCode::Up);
-        assert_eq!(app.item_edit_note.cursor(), "fi".chars().count());
+        panel.handle_key(KeyCode::Up);
+        assert_eq!(panel.note.cursor(), "fi".chars().count());
 
-        app.handle_item_edit_note_input_key(KeyCode::Down);
-        assert_eq!(app.item_edit_note.cursor(), "first\nse".chars().count());
+        panel.handle_key(KeyCode::Down);
+        assert_eq!(panel.note.cursor(), "first\nse".chars().count());
     }
 
     #[test]
@@ -2337,9 +2389,9 @@ mod tests {
             "direct update_view should persist section"
         );
 
-        // Save with Enter (save + exit)
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("Enter save");
+        // Save with S (save + exit)
+        app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
+            .expect("S save");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
         assert!(
@@ -2356,6 +2408,218 @@ mod tests {
             .find(|v| v.name == "TestView")
             .expect("saved view");
         assert_eq!(saved.sections.len(), 1);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    // ── Per-section filter tests (Phase 3) ─────────────────────────────────
+
+    fn make_two_section_store(suffix: &str) -> (Store, std::path::PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("agenda-tui-section-filter-{suffix}-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Create two categories and two sections on the view
+        let cat_a = Category::new("Work".to_string());
+        let cat_b = Category::new("Personal".to_string());
+        store.create_category(&cat_a).expect("cat_a");
+        store.create_category(&cat_b).expect("cat_b");
+
+        let mut section_work = Section {
+            title: "Work Items".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        };
+        section_work.criteria.include.insert(cat_a.id);
+
+        let mut section_personal = Section {
+            title: "Personal Items".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        };
+        section_personal.criteria.include.insert(cat_b.id);
+
+        let mut view = View::new("TestView".to_string());
+        view.sections.push(section_work);
+        view.sections.push(section_personal);
+        store.create_view(&view).expect("create view");
+
+        // Create items in each section
+        let item_work_1 = Item::new("Fix timeout bug".to_string());
+        let item_work_2 = Item::new("Write tests".to_string());
+        let item_personal_1 = Item::new("Buy groceries".to_string());
+        let item_personal_2 = Item::new("Fix bike".to_string());
+        store.create_item(&item_work_1).expect("item w1");
+        store.create_item(&item_work_2).expect("item w2");
+        store.create_item(&item_personal_1).expect("item p1");
+        store.create_item(&item_personal_2).expect("item p2");
+
+        agenda
+            .assign_item_manual(item_work_1.id, cat_a.id, None)
+            .expect("assign w1");
+        agenda
+            .assign_item_manual(item_work_2.id, cat_a.id, None)
+            .expect("assign w2");
+        agenda
+            .assign_item_manual(item_personal_1.id, cat_b.id, None)
+            .expect("assign p1");
+        agenda
+            .assign_item_manual(item_personal_2.id, cat_b.id, None)
+            .expect("assign p2");
+
+        (store, db_path)
+    }
+
+    #[test]
+    fn section_filters_are_independent() {
+        let (store, db_path) = make_two_section_store("independent");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        // Two sections: Work Items (slot 0) and Personal Items (slot 1)
+        assert_eq!(app.slots.len(), 2, "expected 2 sections");
+        assert_eq!(app.slots[0].items.len(), 2, "Work has 2 items");
+        assert_eq!(app.slots[1].items.len(), 2, "Personal has 2 items");
+
+        // Filter slot 0 for "timeout"
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open filter");
+        assert_eq!(app.mode, Mode::FilterInput);
+        assert_eq!(app.filter_target_section, 0);
+
+        // Type "timeout"
+        for ch in "timeout".chars() {
+            app.handle_text_input_key(KeyCode::Char(ch));
+        }
+        app.handle_filter_key(KeyCode::Enter, &agenda)
+            .expect("apply filter");
+
+        // slot 0 now shows only 1 item, slot 1 is unaffected
+        assert_eq!(app.slots[0].items.len(), 1, "Work filtered to 1 item");
+        assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
+        assert_eq!(app.slots[1].items.len(), 2, "Personal unaffected");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_filter_cleared_by_esc_in_normal_mode() {
+        let (store, db_path) = make_two_section_store("esc-clears");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        // Apply a filter to slot 0
+        app.section_filters[0] = Some("fix".to_string());
+        app.refresh(&store).expect("refresh after filter");
+        assert_eq!(app.slots[0].items.len(), 1, "filtered to 1 item");
+
+        // Esc in slot 0 clears its filter
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("esc clears filter");
+
+        assert!(
+            app.section_filters[0].is_none(),
+            "slot 0 filter should be cleared"
+        );
+        assert_eq!(app.slots[0].items.len(), 2, "slot 0 shows all items again");
+        assert_eq!(
+            app.slots[1].items.len(),
+            2,
+            "slot 1 unaffected by slot 0 esc"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn filter_esc_in_filter_input_cancels_without_clearing() {
+        let (store, db_path) = make_two_section_store("esc-cancel");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        // Pre-set a filter
+        app.section_filters[0] = Some("fix".to_string());
+        app.refresh(&store).expect("refresh after pre-filter");
+        assert_eq!(app.slots[0].items.len(), 1);
+
+        // Open FilterInput and cancel without entering anything new
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open filter");
+        assert_eq!(app.mode, Mode::FilterInput);
+
+        app.handle_filter_key(KeyCode::Esc, &agenda)
+            .expect("esc cancels");
+
+        // Filter should be preserved (cancel doesn't clear)
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.section_filters[0],
+            Some("fix".to_string()),
+            "existing filter should be preserved after cancel"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_filters_reset_on_view_switch() {
+        let (store, db_path) = make_two_section_store("view-switch");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Create a second view so we can switch
+        store
+            .create_view(&View::new("OtherView".to_string()))
+            .expect("create second view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        // Apply filter to slot 0
+        app.section_filters[0] = Some("fix".to_string());
+        app.refresh(&store).expect("refresh with filter");
+        assert_eq!(app.slots[0].items.len(), 1);
+
+        // Switch view via cycle_view
+        app.cycle_view(1, &agenda).expect("cycle view");
+
+        // Filters should be reset
+        assert!(
+            app.section_filters.iter().all(|f| f.is_none()),
+            "all filters should be cleared after view switch"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }

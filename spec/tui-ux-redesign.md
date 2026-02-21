@@ -712,10 +712,29 @@ Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `v
 1. Fix FilterInput: Esc cancels the input and returns to Normal, preserving the existing filter for that section. Currently Esc clears the filter; this changes so that only Esc *from Normal mode* clears the current section's filter.
 2. Fix ViewCreateCategoryPicker: Esc returns to ViewPicker (fixed parent, unconditional).
 
-### Phase 5: Footer hint bar
-1. Add persistent hint bar to footer layout
-2. Compute hint text from current mode + sub-state
-3. Separate status messages from hints
+**Phase 5d: Name inputs → InputPanel — DONE (2026-02-21)**
+- ~~Removed ViewCreateName, ViewRename, CategoryCreate, CategoryRename from Mode enum (21 → 17 modes)~~
+- ~~Entry points now open InputPanel(NameInput) with NameInputContext discriminant~~
+- ~~save_input_panel_name dispatches on context; cancel returns to correct parent mode~~
+
+**Phase 5e: Change save key from Enter → S — DONE (2026-02-21)**
+- ~~In InputPanel: Char('S') saves from any focus~~
+- ~~In ViewEdit: Enter save → Char('S'), footer hints updated~~
+
+**Footer hint bar — DONE (2026-02-21)**
+- ~~Two-row footer: status (transient) + hint bar (persistent, per-mode, darkgray)~~
+- ~~Footer height 3→4 rows; render_footer split into footer_status_text + footer_hint_text~~
+- ~~All modes have explicit curated hints; Normal hints match spec §9~~
+- ~~Closes FR `afe45b4e`~~
+
+**Phase 3: Per-section text filters — DONE (2026-02-21)**
+- ~~Replace filter: Option<String> with section_filters: Vec<Option<String>> + filter_target_section: usize~~
+- ~~Reset on view switch, ViewEdit save; resize if slot count changes~~
+- ~~/` scopes to focused section; Esc in Normal clears focused section only~~
+- ~~FilterInput Esc cancels without clearing~~
+- ~~Section header shows filter:needle; header shows filters:N count~~
+- ~~4 new tests (isolation, esc-clears, esc-cancels, view-switch-reset)~~
+- ~~Closes FR `882a75b0`~~
 
 ## 12. Current Implementation State
 
@@ -727,9 +746,9 @@ Last updated: 2026-02-20. Tracking issues are in `feature-requests.ag`.
 
 | Spec says | Code does | Tracking |
 |-----------|-----------|----------|
-| `S` (capital S) saves the view | `Enter` saves the view | FR `94f2f053` |
+| `S` (capital S) saves the view | `S` saves the view | FR `94f2f053` — **RESOLVED** (Phase 5e) |
 
-The spec §4.7 describes S as the save key and Enter as "activate/expand." The Phase 2a implementation used Enter for save instead. This is a known deviation. Until FR `94f2f053` is resolved, `Enter` saves in ViewEdit.
+Phase 5e (2026-02-21) changed ViewEdit save from `Enter` to `S`. InputPanel also accepts `S` from any focus as a shortcut save.
 
 ### 12.2 ViewEdit Regions (§4, §5.2)
 
@@ -759,14 +778,14 @@ Follows from 12.2 — no Columns region means no column-width inline edit.
 
 | Area | Spec target | Current code | Gap FR |
 |------|-------------|--------------|--------|
-| ViewEdit save key | `S` | `Enter` | `94f2f053` |
+| ViewEdit save key | `S` | `S` ✓ | `94f2f053` resolved |
 | ViewEdit regions | 4 (Criteria/Columns/Sections/Unmatched) | 3 (no Columns) | `cf6b7dd8` |
 | ViewEditInlineInput | ColumnWidth variant | Missing | `cf6b7dd8` |
 | ViewCriteriaRow | join_is_or + depth | Not present | — (blocked by query model) |
-| Item add flow | InputPanel (Phase 5) | Mode::AddInput (bare text) | `cfb526a4` |
-| Item edit flow | InputPanel (Phase 5) | Mode::ItemEdit (separate popup) | `0ce92977` |
-| Footer hint bar | Persistent per-mode hint bar (Phase 5) | Hints embedded in status messages | `afe45b4e` |
-| Per-section filters | Vec<Option<String>> (Phase 3) | Single view-wide filter | `882a75b0` |
+| Item add flow | InputPanel (Phase 5) | InputPanel(AddItem) ✓ | `cfb526a4` resolved |
+| Item edit flow | InputPanel (Phase 5) | InputPanel(EditItem) ✓ | `0ce92977` resolved |
+| Footer hint bar | Persistent per-mode hint bar | 2-row footer ✓ | `afe45b4e` resolved |
+| Per-section filters | Vec<Option<String>> | section_filters ✓ | `882a75b0` resolved |
 
 ## 13. What This Proposal Does NOT Change
 
@@ -783,7 +802,7 @@ Key binding changes that existing users will notice. **Note**: items marked `(sp
 | Old | New | Context |
 |-----|-----|---------|
 | `v` then `V` to enter View Manager | `v` then `e` to enter ViewEdit | View Manager is gone |
-| `s` in View Manager to save criteria | `Enter` in ViewEdit to save (current); `S` when FR `94f2f053` ships (spec) | Capital S is the target |
+| `s` in View Manager to save criteria | `S` in ViewEdit to save (Phase 5e) | |
 | `t` in View Manager Definition pane to toggle Criteria/Columns | `Tab` in ViewEdit cycles Criteria → Sections → Unmatched (current); will include Columns when FR `cf6b7dd8` ships | No Columns region yet |
 | `e` in ViewPicker to open View Editor overlay | `e` in ViewPicker to open ViewEdit (full-screen) | Same key, different presentation |
-| `Enter` in View Editor to save | `Enter` in ViewEdit to save (current); `S` when FR `94f2f053` ships (spec) | |
+| `Enter` in View Editor to save | `S` in ViewEdit to save (Phase 5e) | |
