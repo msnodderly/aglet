@@ -119,15 +119,13 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') => self.move_slot_cursor(1),
             KeyCode::Left | KeyCode::Char('h') => self.move_slot_cursor(-1),
             KeyCode::Char('n') => {
-                self.mode = Mode::AddInput;
-                self.clear_input();
-                self.status = "Add item: type text and press Enter".to_string();
+                self.open_input_panel_add_item();
             }
             KeyCode::Char('e') => {
-                self.open_item_edit_for_selected_item();
+                self.open_input_panel_edit_item();
             }
             KeyCode::Enter => {
-                self.open_item_edit_for_selected_item();
+                self.open_input_panel_edit_item();
             }
             KeyCode::Char('m') => {
                 if let Some(item) = self.selected_item() {
@@ -271,158 +269,319 @@ impl App {
         Ok(false)
     }
 
-    pub(crate) fn open_item_edit_for_selected_item(&mut self) {
+    /// Open an InputPanel for adding a new item in the current section.
+    pub(crate) fn open_input_panel_add_item(&mut self) {
+        let (section_title, on_insert_assign) = self
+            .current_slot()
+            .map(|slot| {
+                let title = slot.title.clone();
+                let on_insert = match &slot.context {
+                    SlotContext::GeneratedSection { on_insert_assign, .. } => {
+                        on_insert_assign.clone()
+                    }
+                    SlotContext::Section { section_index } => {
+                        let idx = *section_index;
+                        self.current_view()
+                            .and_then(|v| v.sections.get(idx))
+                            .map(|s| s.on_insert_assign.clone())
+                            .unwrap_or_default()
+                    }
+                    SlotContext::Unmatched => HashSet::new(),
+                };
+                (title, on_insert)
+            })
+            .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
+
+        self.input_panel = Some(input_panel::InputPanel::new_add_item(
+            &section_title,
+            &on_insert_assign,
+        ));
+        self.mode = Mode::InputPanel;
+        self.status =
+            "Add item: type text, Tab for note/categories, Enter on Save to submit, Esc to cancel"
+                .to_string();
+    }
+
+    /// Open an InputPanel for editing the currently selected item.
+    pub(crate) fn open_input_panel_edit_item(&mut self) {
         if let Some(item) = self.selected_item() {
-            let existing_text = item.text.clone();
-            let existing_note = item.note.clone().unwrap_or_default();
-            self.mode = Mode::ItemEdit;
-            self.set_input(existing_text);
-            self.item_edit_focus = ItemEditFocus::Text;
-            self.item_edit_note.set(existing_note);
+            let text = item.text.clone();
+            let note = item.note.clone().unwrap_or_default();
+            // Collect manually-assigned category IDs for the draft.
+            let categories: HashSet<agenda_core::model::CategoryId> = item
+                .assignments
+                .iter()
+                .filter(|(_, a)| {
+                    matches!(
+                        a.source,
+                        agenda_core::model::AssignmentSource::Manual
+                            | agenda_core::model::AssignmentSource::Action
+                    )
+                })
+                .map(|(id, _)| *id)
+                .collect();
+            let item_id = item.id;
+            self.input_panel = Some(input_panel::InputPanel::new_edit_item(
+                item_id, text, note, categories,
+            ));
+            self.mode = Mode::InputPanel;
             self.status =
-                "Edit item: Tab cycles fields/buttons, Enter activates focused control, Up/Down in note"
-                    .to_string();
+                "Edit item: Tab cycles fields, Enter on Save to submit, Esc to cancel".to_string();
         } else {
             self.status = "No selected item to edit".to_string();
         }
     }
 
-    pub(crate) fn handle_add_key(
+    /// Handle a key event while in Mode::InputPanel.
+    pub(crate) fn handle_input_panel_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
-                self.clear_input();
-                self.status = "Add canceled".to_string();
-            }
-            KeyCode::Enter => {
-                let text = self.input.trimmed();
-                if !text.is_empty() {
-                    let text_value = text.to_string();
-                    let category_names: Vec<String> = agenda
-                        .store()
-                        .get_hierarchy()
-                        .map_err(|e| e.to_string())?
-                        .into_iter()
-                        .map(|category| category.name)
-                        .collect();
-                    let unknown_hashtags = unknown_hashtag_tokens(&text_value, &category_names);
-                    let parsed_when = self.create_item_in_current_context(agenda, text_value)?;
-                    self.status = add_capture_status_message(parsed_when, &unknown_hashtags);
-                }
-                self.mode = Mode::Normal;
-                self.clear_input();
-            }
-            _ if self.handle_text_input_key(code) => {}
-            _ => {}
+        // If the category picker overlay is open, route keys to it.
+        if self.input_panel.as_ref().map_or(false, |p| p.category_picker_open()) {
+            self.handle_input_panel_picker_key(code);
+            return Ok(false);
         }
-        Ok(false)
-    }
 
-    pub(crate) fn handle_item_edit_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
-                self.clear_input();
-                self.item_edit_note.clear();
-                self.item_edit_focus = ItemEditFocus::Text;
-                self.status = "Edit canceled".to_string();
-            }
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.cycle_item_edit_focus(if matches!(code, KeyCode::BackTab) {
-                    -1
-                } else {
-                    1
-                });
-            }
-            KeyCode::F(3) => {
-                self.item_edit_focus = ItemEditFocus::CategoriesButton;
-                self.open_item_assign_picker_from_item_edit();
-            }
-            KeyCode::Enter => match self.item_edit_focus {
-                ItemEditFocus::Text => {
-                    self.cycle_item_edit_focus(1);
-                }
-                ItemEditFocus::Note => {
-                    self.item_edit_note.handle_key(KeyCode::Enter, true);
-                }
-                ItemEditFocus::CategoriesButton => {
-                    self.open_item_assign_picker_from_item_edit();
-                }
-                ItemEditFocus::SaveButton => {
-                    self.save_item_edit(agenda)?;
-                }
-                ItemEditFocus::CancelButton => {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.item_edit_note.clear();
-                    self.item_edit_focus = ItemEditFocus::Text;
-                    self.status = "Edit canceled".to_string();
-                }
-            },
-            _ if self.handle_item_edit_field_input_key(code) => {}
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    pub(crate) fn open_item_assign_picker_from_item_edit(&mut self) {
-        if self.selected_item_id().is_none() {
-            self.status = "No selected item to edit categories".to_string();
-            return;
-        }
-        if self.category_rows.is_empty() {
-            self.status = "No categories available".to_string();
-            return;
-        }
-        self.mode = Mode::ItemAssignPicker;
-        self.item_assign_category_index = first_non_reserved_category_index(&self.category_rows);
-        self.status =
-            "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
-                .to_string();
-    }
-
-    pub(crate) fn save_item_edit(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        let Some(item_id) = self.selected_item_id() else {
+        let Some(panel) = &mut self.input_panel else {
             self.mode = Mode::Normal;
-            self.clear_input();
-            self.item_edit_note.clear();
-            self.item_edit_focus = ItemEditFocus::Text;
-            self.status = "Edit failed: no selected item".to_string();
-            return Ok(());
+            self.status = "InputPanel error: no panel state".to_string();
+            return Ok(false);
         };
 
-        let updated_text = self.input.trimmed().to_string();
+        let action = panel.handle_key(code);
+
+        use input_panel::InputPanelAction;
+        match action {
+            InputPanelAction::Cancel => {
+                self.input_panel = None;
+                self.mode = Mode::Normal;
+                self.status = "Canceled".to_string();
+            }
+            InputPanelAction::Save => {
+                let kind = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.kind)
+                    .unwrap_or(input_panel::InputPanelKind::AddItem);
+                match kind {
+                    input_panel::InputPanelKind::AddItem => {
+                        self.save_input_panel_add(agenda)?;
+                    }
+                    input_panel::InputPanelKind::EditItem => {
+                        self.save_input_panel_edit(agenda)?;
+                    }
+                    input_panel::InputPanelKind::NameInput => {
+                        // NameInput save is handled by the caller that set up the panel.
+                        // For now: no-op (NameInput migration is Phase 5d).
+                        let name = self
+                            .input_panel
+                            .as_ref()
+                            .map(|p| p.text.trimmed().to_string())
+                            .unwrap_or_default();
+                        if name.is_empty() {
+                            self.status = "Name cannot be empty".to_string();
+                        } else {
+                            self.status = format!("NameInput save not yet wired: {name}");
+                        }
+                    }
+                }
+            }
+            InputPanelAction::OpenCategoryPicker => {
+                if self.category_rows.is_empty() {
+                    self.status = "No categories available".to_string();
+                } else {
+                    let initial = first_non_reserved_category_index(&self.category_rows);
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.open_category_picker(initial);
+                    }
+                    self.status =
+                        "Categories: j/k navigate, Space toggle, Enter/Esc close".to_string();
+                }
+            }
+            InputPanelAction::FocusNext
+            | InputPanelAction::FocusPrev
+            | InputPanelAction::Handled
+            | InputPanelAction::Unhandled => {}
+        }
+        Ok(false)
+    }
+
+    /// Handle key events while the InputPanel's category picker overlay is open.
+    fn handle_input_panel_picker_key(&mut self, code: KeyCode) {
+        let list_len = self.category_rows.len();
+        match code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(panel) = &mut self.input_panel {
+                    panel.move_picker_cursor(list_len, 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(panel) = &mut self.input_panel {
+                    panel.move_picker_cursor(list_len, -1);
+                }
+            }
+            KeyCode::Char(' ') => {
+                // Read index and row first, then mutate panel.
+                let idx = self
+                    .input_panel
+                    .as_ref()
+                    .and_then(|p| p.picker_index())
+                    .unwrap_or(0);
+                let row = self.category_rows.get(idx).cloned();
+                if let Some(row) = row {
+                    if !row.is_reserved {
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.toggle_category(row.id);
+                        }
+                        let selected = self
+                            .input_panel
+                            .as_ref()
+                            .map(|p| p.categories.len())
+                            .unwrap_or(0);
+                        self.status = format!(
+                            "Category '{}' toggled — {} selected",
+                            row.name, selected
+                        );
+                    } else {
+                        self.status = format!("'{}' cannot be assigned here", row.name);
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Esc => {
+                if let Some(panel) = &mut self.input_panel {
+                    panel.close_category_picker();
+                }
+                let count = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.categories.len())
+                    .unwrap_or(0);
+                self.status = format!("{} categories selected", count);
+            }
+            _ => {}
+        }
+    }
+
+    /// Save an InputPanel(AddItem) to the store.
+    fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(panel) = &self.input_panel else {
+            self.mode = Mode::Normal;
+            return Ok(());
+        };
+        let text = panel.text.trimmed().to_string();
+        if text.is_empty() {
+            self.status = "Cannot save: text cannot be empty".to_string();
+            return Ok(());
+        }
+        let note_raw = panel.note.trimmed().to_string();
+        let note = if note_raw.is_empty() { None } else { Some(note_raw) };
+        let categories_to_assign: Vec<_> = panel.categories.iter().copied().collect();
+
+        // Create item (parses When, applies on_insert_assign via insert_into_context).
+        let item = Item::new(text.clone());
+        let reference_date = Local::now().date_naive();
+        agenda
+            .create_item_with_reference_date(&item, reference_date)
+            .map_err(|e| e.to_string())?;
+
+        // Set note if provided.
+        if note.is_some() {
+            let mut loaded = agenda.store().get_item(item.id).map_err(|e| e.to_string())?;
+            loaded.note = note;
+            loaded.modified_at = Utc::now();
+            agenda
+                .update_item_with_reference_date(&loaded, reference_date)
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Assign explicitly selected categories.
+        for cat_id in &categories_to_assign {
+            let _ = agenda.assign_item_manual(
+                item.id,
+                *cat_id,
+                Some("manual:input_panel.add".to_string()),
+            );
+        }
+
+        // Insert into section context (applies on_insert_assign rules).
+        if let Some(view) = self.current_view().cloned() {
+            if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
+                self.insert_into_context(agenda, item.id, &view, &context)?;
+            }
+        }
+
+        let category_names: Vec<String> = agenda
+            .store()
+            .get_hierarchy()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        let unknown_hashtags = unknown_hashtag_tokens(&text, &category_names);
+        let created = agenda.store().get_item(item.id).map_err(|e| e.to_string())?;
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(item.id);
+        self.input_panel = None;
+        self.mode = Mode::Normal;
+        self.status = add_capture_status_message(created.when_date, &unknown_hashtags);
+        Ok(())
+    }
+
+    /// Save an InputPanel(EditItem) to the store (text, note, and category diff).
+    fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(panel) = &self.input_panel else {
+            self.mode = Mode::Normal;
+            return Ok(());
+        };
+        let Some(item_id) = panel.item_id else {
+            self.input_panel = None;
+            self.mode = Mode::Normal;
+            self.status = "Edit failed: no item ID".to_string();
+            return Ok(());
+        };
+        let updated_text = panel.text.trimmed().to_string();
         if updated_text.is_empty() {
             self.status = "Cannot save: text cannot be empty".to_string();
             return Ok(());
         }
-        let updated_note = if self.item_edit_note.trimmed().is_empty() {
+        let updated_note = if panel.note.trimmed().is_empty() {
             None
         } else {
-            Some(self.item_edit_note.text().to_string())
+            Some(panel.note.text().to_string())
         };
+        let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
 
-        let mut item = agenda
-            .store()
-            .get_item(item_id)
-            .map_err(|e| e.to_string())?;
-        if item.text == updated_text && item.note == updated_note {
+        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+
+        // Compute category diff: which to add, which to remove.
+        let existing_categories: HashSet<_> = item
+            .assignments
+            .iter()
+            .filter(|(_, a)| {
+                matches!(
+                    a.source,
+                    agenda_core::model::AssignmentSource::Manual
+                        | agenda_core::model::AssignmentSource::Action
+                )
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        let no_text_change = item.text == updated_text;
+        let no_note_change = item.note == updated_note;
+        let no_cat_change = existing_categories == new_categories;
+
+        if no_text_change && no_note_change && no_cat_change {
+            self.input_panel = None;
             self.mode = Mode::Normal;
-            self.clear_input();
-            self.item_edit_note.clear();
-            self.item_edit_focus = ItemEditFocus::Text;
             self.status = "Edit canceled: no changes".to_string();
             return Ok(());
         }
 
+        // Update text and note.
         item.text = updated_text;
         item.note = updated_note;
         item.modified_at = Utc::now();
@@ -430,12 +589,23 @@ impl App {
         agenda
             .update_item_with_reference_date(&item, reference_date)
             .map_err(|e| e.to_string())?;
+
+        // Apply category changes.
+        for cat_id in new_categories.difference(&existing_categories) {
+            let _ = agenda.assign_item_manual(
+                item_id,
+                *cat_id,
+                Some("manual:input_panel.edit".to_string()),
+            );
+        }
+        for cat_id in existing_categories.difference(&new_categories) {
+            let _ = agenda.unassign_item_manual(item_id, *cat_id);
+        }
+
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(item_id);
+        self.input_panel = None;
         self.mode = Mode::Normal;
-        self.clear_input();
-        self.item_edit_note.clear();
-        self.item_edit_focus = ItemEditFocus::Text;
         self.status = "Item updated".to_string();
         Ok(())
     }

@@ -228,31 +228,6 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn create_item_in_current_context(
-        &mut self,
-        agenda: &Agenda<'_>,
-        text: String,
-    ) -> Result<Option<NaiveDateTime>, String> {
-        let item = Item::new(text);
-        let reference_date = Local::now().date_naive();
-        agenda
-            .create_item_with_reference_date(&item, reference_date)
-            .map_err(|e| e.to_string())?;
-
-        if let Some(view) = self.current_view().cloned() {
-            if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
-                self.insert_into_context(agenda, item.id, &view, &context)?;
-            }
-        }
-
-        let created = agenda
-            .store()
-            .get_item(item.id)
-            .map_err(|e| e.to_string())?;
-        self.refresh(agenda.store())?;
-        self.set_item_selection_by_id(item.id);
-        Ok(created.when_date)
-    }
 
     pub(crate) fn remove_from_context(
         &self,

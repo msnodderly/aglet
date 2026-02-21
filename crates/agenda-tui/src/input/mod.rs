@@ -8,8 +8,7 @@ impl App {
     ) -> Result<bool, String> {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
-            Mode::AddInput => self.handle_add_key(code, agenda),
-            Mode::ItemEdit => self.handle_item_edit_key(code, agenda),
+            Mode::InputPanel => self.handle_input_panel_key(code, agenda),
             Mode::NoteEdit => self.handle_note_edit_key(code, agenda),
             Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),
             Mode::ItemAssignInput => {
@@ -47,20 +46,6 @@ impl App {
 
     pub(crate) fn handle_text_input_key(&mut self, code: KeyCode) -> bool {
         self.input.handle_key(code, false)
-    }
-
-    pub(crate) fn handle_item_edit_note_input_key(&mut self, code: KeyCode) -> bool {
-        self.item_edit_note.handle_key(code, true)
-    }
-
-    pub(crate) fn handle_item_edit_field_input_key(&mut self, code: KeyCode) -> bool {
-        match self.item_edit_focus {
-            ItemEditFocus::Text => self.handle_text_input_key(code),
-            ItemEditFocus::Note => self.handle_item_edit_note_input_key(code),
-            ItemEditFocus::CategoriesButton
-            | ItemEditFocus::SaveButton
-            | ItemEditFocus::CancelButton => false,
-        }
     }
 
     pub(crate) fn selected_category_is_reserved(&self) -> bool {
@@ -129,18 +114,4 @@ impl App {
         }
     }
 
-    pub(crate) fn cycle_item_edit_focus(&mut self, delta: i32) {
-        self.item_edit_focus = match (self.item_edit_focus, delta.signum()) {
-            (ItemEditFocus::Text, d) if d >= 0 => ItemEditFocus::Note,
-            (ItemEditFocus::Note, d) if d >= 0 => ItemEditFocus::CategoriesButton,
-            (ItemEditFocus::CategoriesButton, d) if d >= 0 => ItemEditFocus::SaveButton,
-            (ItemEditFocus::SaveButton, d) if d >= 0 => ItemEditFocus::CancelButton,
-            (ItemEditFocus::CancelButton, d) if d >= 0 => ItemEditFocus::Text,
-            (ItemEditFocus::Text, _) => ItemEditFocus::CancelButton,
-            (ItemEditFocus::Note, _) => ItemEditFocus::Text,
-            (ItemEditFocus::CategoriesButton, _) => ItemEditFocus::Note,
-            (ItemEditFocus::SaveButton, _) => ItemEditFocus::CategoriesButton,
-            (ItemEditFocus::CancelButton, _) => ItemEditFocus::SaveButton,
-        };
-    }
 }
