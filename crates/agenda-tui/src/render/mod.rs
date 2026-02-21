@@ -777,8 +777,8 @@ impl App {
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
-                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle +/-  ]/[:when-buckets  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Sections => "n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Sections => "Enter:expand  n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
                         ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
                     }
                 } else {
@@ -1465,7 +1465,7 @@ impl App {
             return;
         };
 
-        // Split into 3 vertical regions
+        // Split into 3 vertical regions: Criteria / Sections / Unmatched
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1574,7 +1574,7 @@ impl App {
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
             if state.draft.sections.is_empty() {
-                items.push(ListItem::new(Line::from("  (no sections)")));
+                items.push(ListItem::new(Line::from("  (no sections — n:add)")));
             } else {
                 for (i, section) in state.draft.sections.iter().enumerate() {
                     if i == state.section_index {
@@ -1586,6 +1586,8 @@ impl App {
                         } else {
                             " "
                         };
+                    let is_expanded = state.section_expanded == Some(i);
+                    let expand_icon = if is_expanded { "▾" } else { "▸" };
 
                     let title = if inline_editing_section == Some(i) {
                         format!(
@@ -1595,7 +1597,7 @@ impl App {
                             state.inline_buf.text()
                         )
                     } else {
-                        format!("{}  {}. {}", cursor, i + 1, section.title)
+                        format!("{} {} {}. {}", cursor, expand_icon, i + 1, section.title)
                     };
 
                     let style =
@@ -1606,65 +1608,68 @@ impl App {
                         };
                     items.push(ListItem::new(Line::from(title)).style(style));
 
-                    let mut inc: Vec<String> = section
-                        .criteria
-                        .include
-                        .iter()
-                        .map(|id| {
-                            category_names
-                                .get(id)
-                                .cloned()
-                                .unwrap_or_else(|| id.to_string())
-                        })
-                        .collect();
-                    inc.sort_by_key(|name| name.to_ascii_lowercase());
-                    let mut exc: Vec<String> = section
-                        .criteria
-                        .exclude
-                        .iter()
-                        .map(|id| {
-                            category_names
-                                .get(id)
-                                .cloned()
-                                .unwrap_or_else(|| id.to_string())
-                        })
-                        .collect();
-                    exc.sort_by_key(|name| name.to_ascii_lowercase());
-                    if !inc.is_empty() {
-                        items.push(ListItem::new(Line::from(format!(
-                            "     include: {}",
-                            inc.join(", ")
-                        ))));
-                    }
-                    if !exc.is_empty() {
-                        items.push(ListItem::new(Line::from(format!(
-                            "     exclude: {}",
-                            exc.join(", ")
-                        ))));
-                    }
-                    let section_columns: Vec<String> = if section.columns.is_empty() {
-                        vec!["(none)".to_string()]
-                    } else {
-                        section
-                            .columns
+                    // Only render detail lines for the expanded section
+                    if is_expanded {
+                        let mut inc: Vec<String> = section
+                            .criteria
+                            .include
                             .iter()
-                            .map(|column| {
-                                let name = category_names
-                                    .get(&column.heading)
+                            .map(|id| {
+                                category_names
+                                    .get(id)
                                     .cloned()
-                                    .unwrap_or_else(|| "(deleted)".to_string());
-                                format!("{name}[w:{}]", column.width)
+                                    .unwrap_or_else(|| id.to_string())
                             })
-                            .collect()
-                    };
-                    items.push(ListItem::new(Line::from(format!(
-                        "     columns: {}",
-                        section_columns.join(", ")
-                    ))));
-                    items.push(ListItem::new(Line::from(format!(
-                        "     children:{} (e/t:title  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
-                        if section.show_children { "yes" } else { "no" }
-                    ))));
+                            .collect();
+                        inc.sort_by_key(|name| name.to_ascii_lowercase());
+                        let mut exc: Vec<String> = section
+                            .criteria
+                            .exclude
+                            .iter()
+                            .map(|id| {
+                                category_names
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| id.to_string())
+                            })
+                            .collect();
+                        exc.sort_by_key(|name| name.to_ascii_lowercase());
+                        if !inc.is_empty() {
+                            items.push(ListItem::new(Line::from(format!(
+                                "     include: {}",
+                                inc.join(", ")
+                            ))));
+                        }
+                        if !exc.is_empty() {
+                            items.push(ListItem::new(Line::from(format!(
+                                "     exclude: {}",
+                                exc.join(", ")
+                            ))));
+                        }
+                        let section_columns: Vec<String> = if section.columns.is_empty() {
+                            vec!["(none)".to_string()]
+                        } else {
+                            section
+                                .columns
+                                .iter()
+                                .map(|column| {
+                                    let name = category_names
+                                        .get(&column.heading)
+                                        .cloned()
+                                        .unwrap_or_else(|| "(deleted)".to_string());
+                                    format!("{name}[w:{}]", column.width)
+                                })
+                                .collect()
+                        };
+                        items.push(ListItem::new(Line::from(format!(
+                            "     columns: {}",
+                            section_columns.join(", ")
+                        ))));
+                        items.push(ListItem::new(Line::from(format!(
+                            "     children:{}  (e/t:title  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
+                            if section.show_children { "yes" } else { "no" }
+                        ))));
+                    }
                 }
             }
 
