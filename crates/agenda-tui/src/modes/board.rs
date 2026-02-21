@@ -139,12 +139,23 @@ impl App {
                 }
             }
             KeyCode::Char('/') => {
+                let target = self.slot_index;
+                self.filter_target_section = target;
                 self.mode = Mode::FilterInput;
-                self.set_input(self.filter.clone().unwrap_or_default());
-                self.status = "Filter: type query and press Enter (Esc clears)".to_string();
+                let existing = self
+                    .section_filters
+                    .get(target)
+                    .and_then(|f| f.clone())
+                    .unwrap_or_default();
+                self.set_input(existing);
+                self.status = "Filter section: type query and Enter to apply, Esc to cancel"
+                    .to_string();
             }
             KeyCode::Esc => {
-                if self.filter.take().is_some() {
+                let target = self.slot_index;
+                if target < self.section_filters.len()
+                    && self.section_filters[target].take().is_some()
+                {
                     self.refresh(agenda.store())?;
                     self.status = "Filter cleared".to_string();
                 }
@@ -1076,23 +1087,27 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
+                // Cancel — preserve existing filter for this section
                 self.mode = Mode::Normal;
-                self.filter = None;
                 self.clear_input();
-                self.refresh(agenda.store())?;
-                self.status = "Filter cleared".to_string();
+                self.status = "Filter cancelled".to_string();
             }
             KeyCode::Enter => {
                 self.mode = Mode::Normal;
                 let value = self.input.trimmed().to_string();
-                self.filter = if value.is_empty() { None } else { Some(value) };
-                self.refresh(agenda.store())?;
-                self.status = if self.filter.is_some() {
-                    "Filter applied".to_string()
-                } else {
-                    "Filter cleared".to_string()
-                };
+                let target = self.filter_target_section;
+                if target < self.section_filters.len() {
+                    self.section_filters[target] =
+                        if value.is_empty() { None } else { Some(value) };
+                }
                 self.clear_input();
+                self.refresh(agenda.store())?;
+                self.status =
+                    if self.section_filters.get(target).is_some_and(|f| f.is_some()) {
+                        "Filter applied".to_string()
+                    } else {
+                        "Filter cleared".to_string()
+                    };
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}
