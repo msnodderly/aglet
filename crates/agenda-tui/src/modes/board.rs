@@ -175,7 +175,7 @@ impl App {
             .unwrap_or_default()
     }
 
-    fn get_current_suggest_matches(&self) -> Vec<CategoryId> {
+    pub(crate) fn get_current_suggest_matches(&self) -> Vec<CategoryId> {
         let child_ids = self.get_current_column_child_ids();
         filter_child_categories(&child_ids, &self.categories, self.input.text())
     }
