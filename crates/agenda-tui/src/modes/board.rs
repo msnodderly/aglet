@@ -96,19 +96,27 @@ impl App {
     }
 
     pub(crate) fn open_category_direct_edit(&mut self) {
-        let Some(slot) = self.current_slot() else { return; };
-        let Some(item) = self.selected_item() else { return; };
-        let Some(view) = self.current_view() else { return; };
+        let Some(slot) = self.current_slot() else {
+            return;
+        };
+        let Some(item) = self.selected_item() else {
+            return;
+        };
+        let Some(view) = self.current_view() else {
+            return;
+        };
 
         let columns = match slot.context {
             SlotContext::Section { section_index }
-            | SlotContext::GeneratedSection {
-                section_index, ..
-            } => view.sections.get(section_index).map(|s| &s.columns),
+            | SlotContext::GeneratedSection { section_index, .. } => {
+                view.sections.get(section_index).map(|s| &s.columns)
+            }
             _ => None,
         };
 
-        let Some(columns) = columns else { return; };
+        let Some(columns) = columns else {
+            return;
+        };
         if self.column_index == 0 || self.column_index > columns.len() {
             return;
         }
@@ -127,11 +135,127 @@ impl App {
             .map(|c| c.children.clone())
             .unwrap_or_default();
         let value = standard_column_value(item, &child_ids, &category_names);
-        let input_value = if value == "\u{2013}" { String::new() } else { value };
+        let input_value = if value == "\u{2013}" {
+            String::new()
+        } else {
+            value
+        };
 
         self.mode = Mode::CategoryDirectEdit;
         self.set_input(input_value);
+        self.category_suggest = None;
         self.status = "Edit category: Enter to save, Esc to cancel".to_string();
+    }
+
+    fn get_current_column_child_ids(&self) -> Vec<CategoryId> {
+        let Some(slot) = self.current_slot() else {
+            return Vec::new();
+        };
+        let Some(view) = self.current_view() else {
+            return Vec::new();
+        };
+        let columns = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => {
+                view.sections.get(section_index).map(|s| &s.columns)
+            }
+            _ => None,
+        };
+        let Some(columns) = columns else {
+            return Vec::new();
+        };
+        if self.column_index == 0 || self.column_index > columns.len() {
+            return Vec::new();
+        }
+        let column = &columns[self.column_index - 1];
+        self.categories
+            .iter()
+            .find(|c| c.id == column.heading)
+            .map(|c| c.children.clone())
+            .unwrap_or_default()
+    }
+
+    fn get_current_suggest_matches(&self) -> Vec<CategoryId> {
+        let child_ids = self.get_current_column_child_ids();
+        filter_child_categories(&child_ids, &self.categories, self.input.text())
+    }
+
+    fn update_suggestions(&mut self) {
+        let text = self.input.text();
+        if text.is_empty() {
+            self.category_suggest = None;
+            return;
+        }
+        let matches = self.get_current_suggest_matches();
+        if matches.is_empty() {
+            self.category_suggest = None;
+        } else {
+            let new_index = match &self.category_suggest {
+                Some(state) => state.suggest_index.min(matches.len() - 1),
+                None => 0,
+            };
+            self.category_suggest = Some(CategorySuggestState {
+                suggest_index: new_index,
+            });
+        }
+    }
+
+    fn move_suggest_cursor(&mut self, delta: i32) {
+        let matches = self.get_current_suggest_matches();
+        let len = matches.len();
+        if len == 0 {
+            return;
+        }
+        let Some(suggest) = &self.category_suggest else {
+            return;
+        };
+        let current_idx = suggest.suggest_index;
+        let new_idx = (current_idx as i64 + delta as i64).rem_euclid(len as i64) as usize;
+        if let Some(ref mut suggest) = self.category_suggest {
+            suggest.suggest_index = new_idx;
+        }
+    }
+
+    fn autocomplete_from_suggestion(&mut self) {
+        let matches = self.get_current_suggest_matches();
+        let Some(suggest) = &self.category_suggest else {
+            return;
+        };
+        let Some(&id) = matches.get(suggest.suggest_index) else {
+            return;
+        };
+        let Some(cat) = self.categories.iter().find(|c| c.id == id) else {
+            return;
+        };
+        self.input.set(cat.name.clone());
+        self.category_suggest = None;
+    }
+
+    fn assign_selected_suggestion(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let matches = self.get_current_suggest_matches();
+        let Some(suggest) = &self.category_suggest else {
+            return Ok(());
+        };
+        let Some(&id) = matches.get(suggest.suggest_index) else {
+            return Ok(());
+        };
+        let Some(item_id) = self.selected_item_id() else {
+            return Ok(());
+        };
+        agenda
+            .assign_item_manual(item_id, id, Some("manual:tui.direct_edit".into()))
+            .map_err(|e| e.to_string())?;
+        self.mode = Mode::Normal;
+        self.category_suggest = None;
+        self.refresh(agenda.store())?;
+        let cat_name = self
+            .categories
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.as_str())
+            .unwrap_or("?");
+        self.status = format!("Assigned '{}'", cat_name);
+        Ok(())
     }
 
     pub(crate) fn handle_normal_key(
@@ -204,8 +328,8 @@ impl App {
                     .and_then(|f| f.clone())
                     .unwrap_or_default();
                 self.set_input(existing);
-                self.status = "Filter section: type query and Enter to apply, Esc to cancel"
-                    .to_string();
+                self.status =
+                    "Filter section: type query and Enter to apply, Esc to cancel".to_string();
             }
             KeyCode::Esc => {
                 let target = self.slot_index;
@@ -343,9 +467,9 @@ impl App {
             .map(|slot| {
                 let title = slot.title.clone();
                 let on_insert = match &slot.context {
-                    SlotContext::GeneratedSection { on_insert_assign, .. } => {
-                        on_insert_assign.clone()
-                    }
+                    SlotContext::GeneratedSection {
+                        on_insert_assign, ..
+                    } => on_insert_assign.clone(),
                     SlotContext::Section { section_index } => {
                         let idx = *section_index;
                         self.current_view()
@@ -365,8 +489,7 @@ impl App {
         ));
         self.mode = Mode::InputPanel;
         self.status =
-            "Add item: type text, S to save, Tab for note/categories, Esc to cancel"
-                .to_string();
+            "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
     }
 
     pub(crate) fn handle_category_direct_edit_key(
@@ -374,18 +497,47 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        if let Some(ref mut _suggest) = self.category_suggest {
+            match code {
+                KeyCode::Up => {
+                    self.move_suggest_cursor(-1);
+                    return Ok(false);
+                }
+                KeyCode::Down => {
+                    self.move_suggest_cursor(1);
+                    return Ok(false);
+                }
+                KeyCode::Tab => {
+                    self.autocomplete_from_suggestion();
+                    return Ok(false);
+                }
+                KeyCode::Enter => {
+                    self.assign_selected_suggestion(agenda)?;
+                    return Ok(false);
+                }
+                KeyCode::Esc => {
+                    self.category_suggest = None;
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.status = "Cancelled".to_string();
                 self.clear_input();
+                self.category_suggest = None;
             }
             KeyCode::Enter => {
                 let text = self.input.text().to_string();
                 self.commit_category_direct_edit(&text, agenda)?;
+                self.category_suggest = None;
             }
             _ => {
                 self.input.handle_key(code, false);
+                self.update_suggestions();
             }
         }
         Ok(false)
@@ -407,9 +559,9 @@ impl App {
         };
         let columns = match slot.context {
             SlotContext::Section { section_index }
-            | SlotContext::GeneratedSection {
-                section_index, ..
-            } => view.sections.get(section_index).map(|s| &s.columns),
+            | SlotContext::GeneratedSection { section_index, .. } => {
+                view.sections.get(section_index).map(|s| &s.columns)
+            }
             _ => None,
         };
         let Some(columns) = columns else {
@@ -459,7 +611,11 @@ impl App {
 
         if let Some(category_id) = existing {
             agenda
-                .assign_item_manual(item_id, *category_id, Some("manual:tui.direct_edit".to_string()))
+                .assign_item_manual(
+                    item_id,
+                    *category_id,
+                    Some("manual:tui.direct_edit".to_string()),
+                )
                 .map_err(|e| e.to_string())?;
             self.mode = Mode::Normal;
             self.status = format!("Assigned '{}'", target_name);
@@ -496,7 +652,11 @@ impl App {
 
                     if let Some(item_id) = self.selected_item_id() {
                         agenda
-                            .assign_item_manual(item_id, cat_id, Some("manual:tui.direct_edit".to_string()))
+                            .assign_item_manual(
+                                item_id,
+                                cat_id,
+                                Some("manual:tui.direct_edit".to_string()),
+                            )
                             .map_err(|e| e.to_string())?;
                     }
 
@@ -537,8 +697,7 @@ impl App {
                 item_id, text, note, categories,
             ));
             self.mode = Mode::InputPanel;
-            self.status =
-                "Edit item: S to save, Tab cycles fields, Esc to cancel".to_string();
+            self.status = "Edit item: S to save, Tab cycles fields, Esc to cancel".to_string();
         } else {
             self.status = "No selected item to edit".to_string();
         }
@@ -551,7 +710,11 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         // If the category picker overlay is open, route keys to it.
-        if self.input_panel.as_ref().map_or(false, |p| p.category_picker_open()) {
+        if self
+            .input_panel
+            .as_ref()
+            .map_or(false, |p| p.category_picker_open())
+        {
             self.handle_input_panel_picker_key(code);
             return Ok(false);
         }
@@ -666,10 +829,8 @@ impl App {
                             .as_ref()
                             .map(|p| p.categories.len())
                             .unwrap_or(0);
-                        self.status = format!(
-                            "Category '{}' toggled — {} selected",
-                            row.name, selected
-                        );
+                        self.status =
+                            format!("Category '{}' toggled — {} selected", row.name, selected);
                     } else {
                         self.status = format!("'{}' cannot be assigned here", row.name);
                     }
@@ -702,7 +863,11 @@ impl App {
             return Ok(());
         }
         let note_raw = panel.note.trimmed().to_string();
-        let note = if note_raw.is_empty() { None } else { Some(note_raw) };
+        let note = if note_raw.is_empty() {
+            None
+        } else {
+            Some(note_raw)
+        };
         let categories_to_assign: Vec<_> = panel.categories.iter().copied().collect();
 
         // Create item (parses When, applies on_insert_assign via insert_into_context).
@@ -714,7 +879,10 @@ impl App {
 
         // Set note if provided.
         if note.is_some() {
-            let mut loaded = agenda.store().get_item(item.id).map_err(|e| e.to_string())?;
+            let mut loaded = agenda
+                .store()
+                .get_item(item.id)
+                .map_err(|e| e.to_string())?;
             loaded.note = note;
             loaded.modified_at = Utc::now();
             agenda
@@ -746,7 +914,10 @@ impl App {
             .map(|c| c.name)
             .collect();
         let unknown_hashtags = unknown_hashtag_tokens(&text, &category_names);
-        let created = agenda.store().get_item(item.id).map_err(|e| e.to_string())?;
+        let created = agenda
+            .store()
+            .get_item(item.id)
+            .map_err(|e| e.to_string())?;
 
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(item.id);
@@ -780,7 +951,10 @@ impl App {
         };
         let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
 
-        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+        let mut item = agenda
+            .store()
+            .get_item(item_id)
+            .map_err(|e| e.to_string())?;
 
         // Compute category diff: which to add, which to remove.
         let existing_categories: HashSet<_> = item
@@ -971,7 +1145,9 @@ impl App {
                     return Ok(());
                 }
                 category.name = name.clone();
-                let result = agenda.update_category(&category).map_err(|e| e.to_string())?;
+                let result = agenda
+                    .update_category(&category)
+                    .map_err(|e| e.to_string())?;
                 self.refresh(agenda.store())?;
                 self.set_category_selection_by_id(category_id);
                 self.input_panel = None;
@@ -1303,12 +1479,15 @@ impl App {
                 }
                 self.clear_input();
                 self.refresh(agenda.store())?;
-                self.status =
-                    if self.section_filters.get(target).is_some_and(|f| f.is_some()) {
-                        "Filter applied".to_string()
-                    } else {
-                        "Filter cleared".to_string()
-                    };
+                self.status = if self
+                    .section_filters
+                    .get(target)
+                    .is_some_and(|f| f.is_some())
+                {
+                    "Filter applied".to_string()
+                } else {
+                    "Filter cleared".to_string()
+                };
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}

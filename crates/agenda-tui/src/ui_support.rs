@@ -471,6 +471,31 @@ pub(super) fn is_reserved_category_name(name: &str) -> bool {
         || name.eq_ignore_ascii_case("Done")
 }
 
+pub(super) fn filter_child_categories(
+    child_ids: &[CategoryId],
+    categories: &[Category],
+    query: &str,
+) -> Vec<CategoryId> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let query_lower = query.to_ascii_lowercase();
+    child_ids
+        .iter()
+        .filter(|id| {
+            categories
+                .iter()
+                .find(|c| c.id == **id)
+                .map(|c| {
+                    !c.name.eq_ignore_ascii_case("When")
+                        && c.name.to_ascii_lowercase().contains(&query_lower)
+                })
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
 pub(super) fn first_non_reserved_category_index(category_rows: &[CategoryListRow]) -> usize {
     category_rows
         .iter()
@@ -665,5 +690,99 @@ pub(super) fn add_capture_status_message(
     match parsed_when {
         Some(when) => format!("Item added (parsed when: {when}{warning})"),
         None => format!("Item added{warning}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agenda_core::model::Category;
+    use chrono::Utc;
+
+    fn make_category(name: &str) -> Category {
+        Category {
+            id: CategoryId::new_v4(),
+            name: name.to_string(),
+            parent: None,
+            children: Vec::new(),
+            is_exclusive: false,
+            is_actionable: false,
+            enable_implicit_string: false,
+            note: None,
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            conditions: Vec::new(),
+            actions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn filter_basic_substring_match() {
+        let high = make_category("High");
+        let medium = make_category("Medium");
+        let low = make_category("Low");
+        let categories = vec![high.clone(), medium.clone(), low.clone()];
+        let child_ids: Vec<CategoryId> = categories.iter().map(|c| c.id).collect();
+
+        let result = filter_child_categories(&child_ids, &categories, "hig");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], high.id);
+    }
+
+    #[test]
+    fn filter_case_insensitive() {
+        let high = make_category("High");
+        let categories = vec![high.clone()];
+        let child_ids: Vec<CategoryId> = vec![high.id];
+
+        let result = filter_child_categories(&child_ids, &categories, "HIG");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], high.id);
+    }
+
+    #[test]
+    fn filter_empty_query_returns_empty() {
+        let high = make_category("High");
+        let categories = vec![high.clone()];
+        let child_ids: Vec<CategoryId> = vec![high.id];
+
+        let result = filter_child_categories(&child_ids, &categories, "");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_excludes_when() {
+        let when_cat = make_category("When");
+        let high = make_category("High");
+        let categories = vec![when_cat.clone(), high.clone()];
+        let child_ids: Vec<CategoryId> = vec![when_cat.id, high.id];
+
+        let result = filter_child_categories(&child_ids, &categories, "h");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], high.id);
+    }
+
+    #[test]
+    fn filter_includes_done() {
+        let done = make_category("Done");
+        let categories = vec![done.clone()];
+        let child_ids: Vec<CategoryId> = vec![done.id];
+
+        let result = filter_child_categories(&child_ids, &categories, "done");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], done.id);
+    }
+
+    #[test]
+    fn filter_multiple_matches() {
+        let high = make_category("High");
+        let medium = make_category("Medium");
+        let low = make_category("Low");
+        let categories = vec![high.clone(), medium.clone(), low.clone()];
+        let child_ids: Vec<CategoryId> = categories.iter().map(|c| c.id).collect();
+
+        let result = filter_child_categories(&child_ids, &categories, "m");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], medium.id);
     }
 }
