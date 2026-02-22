@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
-use agenda_core::model::{Category, CategoryId, Item, ItemId, Query, View};
+use agenda_core::model::{Category, CategoryId, CriterionMode, Item, ItemId, Query, View};
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use chrono::{Local, NaiveDateTime};
@@ -544,20 +544,23 @@ fn cmd_category(
                             println!("  - ImplicitString");
                         }
                         agenda_core::model::Condition::Profile { criteria } => {
-                            let inc: Vec<&str> = criteria
-                                .include
-                                .iter()
-                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                            let and_names: Vec<&str> = criteria
+                                .and_category_ids()
+                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
                                 .collect();
-                            let exc: Vec<&str> = criteria
-                                .exclude
-                                .iter()
-                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
+                            let not_names: Vec<&str> = criteria
+                                .not_category_ids()
+                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
+                                .collect();
+                            let or_names: Vec<&str> = criteria
+                                .or_category_ids()
+                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
                                 .collect();
                             println!(
-                                "  - Profile (include=[{}], exclude=[{}])",
-                                inc.join(", "),
-                                exc.join(", ")
+                                "  - Profile (and=[{}], not=[{}], or=[{}])",
+                                and_names.join(", "),
+                                not_names.join(", "),
+                                or_names.join(", ")
                             );
                         }
                     }
@@ -797,11 +800,12 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             }
             for view in views {
                 println!(
-                    "{} (sections={}, include={}, exclude={})",
+                    "{} (sections={}, and={}, not={}, or={})",
                     view.name,
                     view.sections.len(),
-                    view.criteria.include.len(),
-                    view.criteria.exclude.len()
+                    view.criteria.and_category_ids().count(),
+                    view.criteria.not_category_ids().count(),
+                    view.criteria.or_category_ids().count()
                 );
             }
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
@@ -824,8 +828,12 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let mut view = View::new(name);
             view.show_unmatched = !hide_unmatched;
-            view.criteria.include = names_to_category_ids(&categories, &include)?;
-            view.criteria.exclude = names_to_category_ids(&categories, &exclude)?;
+            for id in names_to_category_ids(&categories, &include)? {
+                view.criteria.set_criterion(CriterionMode::And, id);
+            }
+            for id in names_to_category_ids(&categories, &exclude)? {
+                view.criteria.set_criterion(CriterionMode::Not, id);
+            }
 
             store.create_view(&view).map_err(|e| e.to_string())?;
             println!("created view {}", view.name);

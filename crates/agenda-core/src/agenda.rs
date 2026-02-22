@@ -142,8 +142,8 @@ impl<'a> Agenda<'a> {
         section: &Section,
     ) -> Result<ProcessItemResult> {
         let mut targets = section.on_insert_assign.clone();
-        targets.extend(section.criteria.include.iter().copied());
-        targets.extend(view.criteria.include.iter().copied());
+        targets.extend(section.criteria.and_category_ids());
+        targets.extend(view.criteria.and_category_ids());
 
         self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
         process_item(self.store, self.classifier, item_id)
@@ -154,7 +154,8 @@ impl<'a> Agenda<'a> {
         item_id: ItemId,
         view: &View,
     ) -> Result<ProcessItemResult> {
-        self.assign_manual_categories(item_id, &view.criteria.include, "edit:view.insert")?;
+        let view_include: HashSet<CategoryId> = view.criteria.and_category_ids().collect();
+        self.assign_manual_categories(item_id, &view_include, "edit:view.insert")?;
         process_item(self.store, self.classifier, item_id)
     }
 
@@ -440,8 +441,8 @@ mod tests {
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
-        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, Query,
-        Section, View, WhenBucket,
+        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, CriterionMode, Item,
+        Query, Section, View, WhenBucket,
     };
     use crate::query::{resolve_view, resolve_when_bucket};
     use crate::store::Store;
@@ -743,7 +744,7 @@ mod tests {
 
         let mut escalated = category("Escalated", false);
         let mut criteria = Query::default();
-        criteria.include.insert(urgent.id);
+        criteria.set_criterion(CriterionMode::And, urgent.id);
         escalated.conditions.push(Condition::Profile {
             criteria: Box::new(criteria),
         });
@@ -976,7 +977,7 @@ mod tests {
         for index in 0..10 {
             let mut stage = store.get_category(stages[index].id).unwrap();
             let mut criteria = Query::default();
-            criteria.include.insert(stages[index + 1].id);
+            criteria.set_criterion(CriterionMode::And, stages[index + 1].id);
             stage.conditions = vec![Condition::Profile {
                 criteria: Box::new(criteria),
             }];
@@ -1053,7 +1054,7 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.include.insert(work.id);
+        current_view.criteria.set_criterion(CriterionMode::And, work.id);
         let mut current_section = section("Urgent");
         current_section.on_insert_assign.insert(urgent.id);
 
@@ -1090,7 +1091,7 @@ mod tests {
 
         let current_view = view("Board");
         let mut current_section = section("P0");
-        current_section.criteria.include.insert(p0.id);
+        current_section.criteria.set_criterion(CriterionMode::And, p0.id);
 
         agenda
             .insert_item_in_section(item.id, &current_view, &current_section)
@@ -1117,8 +1118,8 @@ mod tests {
 
         let mut escalated = category("Escalated", false);
         let mut criteria = Query::default();
-        criteria.include.insert(work.id);
-        criteria.include.insert(urgent.id);
+        criteria.set_criterion(CriterionMode::And, work.id);
+        criteria.set_criterion(CriterionMode::And, urgent.id);
         escalated.conditions.push(Condition::Profile {
             criteria: Box::new(criteria),
         });
@@ -1128,7 +1129,7 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.include.insert(work.id);
+        current_view.criteria.set_criterion(CriterionMode::And, work.id);
         let mut current_section = section("Urgent");
         current_section.on_insert_assign.insert(urgent.id);
 
@@ -1156,7 +1157,7 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("Project Y Board");
-        current_view.criteria.include.insert(project_y.id);
+        current_view.criteria.set_criterion(CriterionMode::And, project_y.id);
         let mut current_section = section("Project Y");
         current_section.on_insert_assign.insert(project_y.id);
 
@@ -1258,7 +1259,7 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.include.insert(work.id);
+        current_view.criteria.set_criterion(CriterionMode::And, work.id);
 
         agenda
             .insert_item_in_unmatched(item.id, &current_view)
@@ -1287,7 +1288,9 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("Project Y Board");
-        current_view.criteria.include.insert(project_y.id);
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, project_y.id);
 
         agenda
             .insert_item_in_unmatched(item.id, &current_view)
@@ -1352,7 +1355,9 @@ mod tests {
             .unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.include.insert(work.id);
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
         let mut current_section = section("Work");
         current_section.on_insert_assign.insert(work.id);
 
@@ -1438,8 +1443,9 @@ mod tests {
         assert!(collaborative_assignments.contains_key(&high.id));
 
         let mut view = view("Miguel Without Alice");
-        view.criteria.include.extend([work.id, miguel.id]);
-        view.criteria.exclude.insert(alice.id);
+        view.criteria.set_criterion(CriterionMode::And, work.id);
+        view.criteria.set_criterion(CriterionMode::And, miguel.id);
+        view.criteria.set_criterion(CriterionMode::Not, alice.id);
         store.create_view(&view).unwrap();
 
         let persisted_view = store.get_view(view.id).unwrap();
