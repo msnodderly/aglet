@@ -32,18 +32,26 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.view_pending_name = None;
                 self.view_pending_edit_name = None;
-                self.input_panel = Some(input_panel::InputPanel::new_name_input("", "New view name"));
+                self.input_panel =
+                    Some(input_panel::InputPanel::new_name_input("", "New view name"));
                 self.name_input_context = Some(NameInputContext::ViewCreate);
                 self.mode = Mode::InputPanel;
-                self.status = "Create view: type name, Tab/Save to confirm, Esc to cancel".to_string();
+                self.status =
+                    "Create view: type name, Tab/Save to confirm, Esc to cancel".to_string();
             }
             KeyCode::Char('r') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
                     self.view_pending_edit_name = Some(view.name.clone());
-                    self.input_panel = Some(input_panel::InputPanel::new_name_input(&view.name, "Rename view"));
+                    self.input_panel = Some(input_panel::InputPanel::new_name_input(
+                        &view.name,
+                        "Rename view",
+                    ));
                     self.name_input_context = Some(NameInputContext::ViewRename);
                     self.mode = Mode::InputPanel;
-                    self.status = format!("Rename view {}: edit name, Save to confirm, Esc to cancel", view.name);
+                    self.status = format!(
+                        "Rename view {}: edit name, Save to confirm, Esc to cancel",
+                        view.name
+                    );
                 } else {
                     self.status = "No selected view to rename".to_string();
                 }
@@ -191,8 +199,7 @@ impl App {
                     && self.view_create_exclude_selection.is_empty()
                 {
                     if let Some(row) = self.category_rows.get(self.view_category_index) {
-                        view.criteria
-                            .set_criterion(CriterionMode::And, row.id);
+                        view.criteria.set_criterion(CriterionMode::And, row.id);
                     }
                 } else {
                     for &id in &self.view_create_include_selection {

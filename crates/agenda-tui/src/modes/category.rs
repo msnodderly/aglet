@@ -27,22 +27,34 @@ impl App {
                 self.input_panel = Some(input_panel::InputPanel::new_name_input("", &label));
                 self.name_input_context = Some(NameInputContext::CategoryCreate);
                 self.mode = Mode::InputPanel;
-                self.status = format!("Create subcategory under {parent}: type name, Save to confirm, Esc to cancel");
+                self.status = format!(
+                    "Create subcategory under {parent}: type name, Save to confirm, Esc to cancel"
+                );
             }
             KeyCode::Char('N') => {
                 self.category_create_parent = None;
-                self.input_panel = Some(input_panel::InputPanel::new_name_input("", "New top-level category"));
+                self.input_panel = Some(input_panel::InputPanel::new_name_input(
+                    "",
+                    "New top-level category",
+                ));
                 self.name_input_context = Some(NameInputContext::CategoryCreate);
                 self.mode = Mode::InputPanel;
-                self.status = "Create top-level category: type name, Save to confirm, Esc to cancel".to_string();
+                self.status =
+                    "Create top-level category: type name, Save to confirm, Esc to cancel"
+                        .to_string();
             }
             KeyCode::Char('r') => {
                 if let Some(row) = self.selected_category_row() {
                     let row_name = row.name.clone();
-                    self.input_panel = Some(input_panel::InputPanel::new_name_input(&row_name, "Rename category"));
+                    self.input_panel = Some(input_panel::InputPanel::new_name_input(
+                        &row_name,
+                        "Rename category",
+                    ));
                     self.name_input_context = Some(NameInputContext::CategoryRename);
                     self.mode = Mode::InputPanel;
-                    self.status = format!("Rename category {row_name}: edit name, Save to confirm, Esc to cancel");
+                    self.status = format!(
+                        "Rename category {row_name}: edit name, Save to confirm, Esc to cancel"
+                    );
                 }
             }
             KeyCode::Char('p') => {

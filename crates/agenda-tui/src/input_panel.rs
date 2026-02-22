@@ -361,8 +361,12 @@ mod tests {
             InputPanelFocus::CancelButton,
         ] {
             p.focus = focus;
-            assert_eq!(p.handle_key(KeyCode::Esc), InputPanelAction::Cancel,
-                       "expected Cancel at focus {:?}", focus);
+            assert_eq!(
+                p.handle_key(KeyCode::Esc),
+                InputPanelAction::Cancel,
+                "expected Cancel at focus {:?}",
+                focus
+            );
         }
     }
 
@@ -393,14 +397,20 @@ mod tests {
     fn enter_on_categories_button_opens_picker() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::CategoriesButton;
-        assert_eq!(p.handle_key(KeyCode::Enter), InputPanelAction::OpenCategoryPicker);
+        assert_eq!(
+            p.handle_key(KeyCode::Enter),
+            InputPanelAction::OpenCategoryPicker
+        );
     }
 
     #[test]
     fn space_on_categories_button_opens_picker() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::CategoriesButton;
-        assert_eq!(p.handle_key(KeyCode::Char(' ')), InputPanelAction::OpenCategoryPicker);
+        assert_eq!(
+            p.handle_key(KeyCode::Char(' ')),
+            InputPanelAction::OpenCategoryPicker
+        );
     }
 
     // --- Text input routing ---
@@ -425,7 +435,10 @@ mod tests {
     fn char_not_consumed_on_save_button() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::SaveButton;
-        assert_eq!(p.handle_key(KeyCode::Char('z')), InputPanelAction::Unhandled);
+        assert_eq!(
+            p.handle_key(KeyCode::Char('z')),
+            InputPanelAction::Unhandled
+        );
         assert!(p.text.is_empty());
     }
 
@@ -525,7 +538,11 @@ mod tests {
         cats.insert(CategoryId::new_v4());
         cats.insert(CategoryId::new_v4());
         let p = InputPanel::new_add_item("Backlog", &cats);
-        assert!(p.preview_context.contains("2 categories"), "got: {}", p.preview_context);
+        assert!(
+            p.preview_context.contains("2 categories"),
+            "got: {}",
+            p.preview_context
+        );
     }
 
     #[test]

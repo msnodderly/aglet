@@ -50,7 +50,10 @@ impl App {
                     if state.draft.criteria.mode_for(cat_id).is_some() {
                         state.draft.criteria.remove_criterion(cat_id);
                     } else {
-                        state.draft.criteria.set_criterion(CriterionMode::And, cat_id);
+                        state
+                            .draft
+                            .criteria
+                            .set_criterion(CriterionMode::And, cat_id);
                     }
                 }
                 CategoryEditTarget::SectionCriteria => {

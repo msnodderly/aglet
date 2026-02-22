@@ -235,7 +235,6 @@ impl App {
         Ok(())
     }
 
-
     pub(crate) fn remove_from_context(
         &self,
         agenda: &Agenda<'_>,
