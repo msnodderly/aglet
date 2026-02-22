@@ -169,6 +169,7 @@ impl App {
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
+        self.column_index = 0;
     }
 
     pub(crate) fn move_item_cursor(&mut self, delta: i32) {
@@ -309,6 +310,28 @@ impl App {
 
     pub(crate) fn current_slot(&self) -> Option<&Slot> {
         self.slots.get(self.slot_index)
+    }
+
+    pub(crate) fn current_slot_column_count(&self) -> usize {
+        let Some(slot) = self.current_slot() else {
+            return 0;
+        };
+        let Some(view) = self.current_view() else {
+            return 0;
+        };
+        match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection {
+                section_index,
+                on_insert_assign: _,
+                on_remove_unassign: _,
+            } => view
+                .sections
+                .get(section_index)
+                .map(|s| s.columns.len())
+                .unwrap_or(0),
+            SlotContext::Unmatched => 0,
+        }
     }
 
     pub(crate) fn selected_item(&self) -> Option<&Item> {

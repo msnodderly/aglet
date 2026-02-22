@@ -95,6 +95,44 @@ impl App {
         self.status = "Select assignment to unassign (j/k, Enter, Esc)".to_string();
     }
 
+    pub(crate) fn open_category_direct_edit(&mut self) {
+        let Some(slot) = self.current_slot() else { return; };
+        let Some(item) = self.selected_item() else { return; };
+        let Some(view) = self.current_view() else { return; };
+
+        let columns = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection {
+                section_index, ..
+            } => view.sections.get(section_index).map(|s| &s.columns),
+            _ => None,
+        };
+
+        let Some(columns) = columns else { return; };
+        if self.column_index == 0 || self.column_index > columns.len() {
+            return;
+        }
+
+        let column = &columns[self.column_index - 1];
+        if column.kind == ColumnKind::When {
+            self.status = "Editing 'When' date not yet implemented inline".to_string();
+            return;
+        }
+
+        let category_names = category_name_map(&self.categories);
+        let child_ids: Vec<CategoryId> = self
+            .categories
+            .iter()
+            .find(|c| c.id == column.heading)
+            .map(|c| c.children.clone())
+            .unwrap_or_default();
+        let value = standard_column_value(item, &child_ids, &category_names);
+
+        self.mode = Mode::CategoryDirectEdit;
+        self.set_input(value);
+        self.status = "Edit category: Enter to save, Esc to cancel".to_string();
+    }
+
     pub(crate) fn handle_normal_key(
         &mut self,
         code: KeyCode,
@@ -116,8 +154,21 @@ impl App {
                     self.move_item_cursor(-1);
                 }
             }
-            KeyCode::Right | KeyCode::Char('l') => self.move_slot_cursor(1),
-            KeyCode::Left | KeyCode::Char('h') => self.move_slot_cursor(-1),
+            KeyCode::Right | KeyCode::Char('l') => {
+                let max_cols = self.current_slot_column_count();
+                if self.column_index < max_cols {
+                    self.column_index += 1;
+                } else {
+                    self.move_slot_cursor(1);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if self.column_index > 0 {
+                    self.column_index -= 1;
+                } else {
+                    self.move_slot_cursor(-1);
+                }
+            }
             KeyCode::Char('n') => {
                 self.open_input_panel_add_item();
             }
@@ -125,7 +176,11 @@ impl App {
                 self.open_input_panel_edit_item();
             }
             KeyCode::Enter => {
-                self.open_input_panel_edit_item();
+                if self.column_index > 0 {
+                    self.open_category_direct_edit();
+                } else {
+                    self.open_input_panel_edit_item();
+                }
             }
             KeyCode::Char('m') => {
                 if let Some(item) = self.selected_item() {
@@ -311,6 +366,153 @@ impl App {
         self.status =
             "Add item: type text, S to save, Tab for note/categories, Esc to cancel"
                 .to_string();
+    }
+
+    pub(crate) fn handle_category_direct_edit_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Cancelled".to_string();
+                self.clear_input();
+                Ok(true)
+            }
+            KeyCode::Enter => {
+                let text = self.input.text().to_string();
+                self.commit_category_direct_edit(&text, agenda)
+            }
+            _ => {
+                self.input.handle_key(code, false);
+                Ok(true)
+            }
+        }
+    }
+
+    fn commit_category_direct_edit(
+        &mut self,
+        text: &str,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        let Some(slot) = self.current_slot() else {
+            return Ok(true);
+        };
+        let Some(item) = self.selected_item() else {
+            return Ok(true);
+        };
+        let Some(view) = self.current_view() else {
+            return Ok(true);
+        };
+        let columns = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection {
+                section_index, ..
+            } => view.sections.get(section_index).map(|s| &s.columns),
+            _ => None,
+        };
+        let Some(columns) = columns else {
+            return Ok(true);
+        };
+        if self.column_index == 0 || self.column_index > columns.len() {
+            return Ok(true);
+        }
+        let column = &columns[self.column_index - 1];
+        let child_ids: Vec<CategoryId> = self
+            .categories
+            .iter()
+            .find(|c| c.id == column.heading)
+            .map(|c| c.children.clone())
+            .unwrap_or_default();
+
+        if text.trim().is_empty() {
+            let child_id_set: HashSet<CategoryId> = child_ids.iter().cloned().collect();
+            let to_remove: Vec<CategoryId> = item
+                .assignments
+                .keys()
+                .filter(|id| child_id_set.contains(id))
+                .cloned()
+                .collect();
+
+            let item_id = item.id;
+            for id in to_remove {
+                agenda
+                    .unassign_item_manual(item_id, id)
+                    .map_err(|e| e.to_string())?;
+            }
+            self.mode = Mode::Normal;
+            self.status = "Cleared category".to_string();
+            self.refresh(agenda.store())?;
+            return Ok(true);
+        }
+
+        let item_id = item.id;
+        let target_name = text.trim();
+        let existing = child_ids.iter().find(|&id| {
+            self.categories
+                .iter()
+                .find(|c| c.id == *id)
+                .map(|c| c.name.eq_ignore_ascii_case(target_name))
+                .unwrap_or(false)
+        });
+
+        if let Some(category_id) = existing {
+            agenda
+                .assign_item_manual(item_id, *category_id, Some("manual:tui.direct_edit".to_string()))
+                .map_err(|e| e.to_string())?;
+            self.mode = Mode::Normal;
+            self.status = format!("Assigned '{}'", target_name);
+            self.refresh(agenda.store())?;
+        } else {
+            self.mode = Mode::CategoryCreateConfirm {
+                name: target_name.to_string(),
+                parent_id: column.heading,
+            };
+            self.status = format!(
+                "Category '{}' does not exist. Create it? (y/n)",
+                target_name
+            );
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn handle_category_create_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Mode::CategoryCreateConfirm { name, parent_id } = self.mode.clone() {
+                    let mut category = Category::new(name.clone());
+                    category.parent = Some(parent_id);
+                    category.enable_implicit_string = true;
+                    let cat_id = category.id;
+
+                    agenda
+                        .create_category(&category)
+                        .map_err(|e| e.to_string())?;
+
+                    if let Some(item_id) = self.selected_item_id() {
+                        agenda
+                            .assign_item_manual(item_id, cat_id, Some("manual:tui.direct_edit".to_string()))
+                            .map_err(|e| e.to_string())?;
+                    }
+
+                    self.mode = Mode::Normal;
+                    self.status = format!("Created and assigned '{}'", name);
+                    self.refresh(agenda.store())?;
+                }
+                Ok(true)
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Cancelled creation".to_string();
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
     }
 
     /// Open an InputPanel for editing the currently selected item.
