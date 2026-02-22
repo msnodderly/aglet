@@ -1151,7 +1151,8 @@ impl Store {
 mod tests {
     use super::*;
     use crate::model::{
-        Assignment, AssignmentSource, Category, Column, ColumnKind, Item, Query, Section, View,
+        Assignment, AssignmentSource, Category, Column, ColumnKind, CriterionMode, Item, Query,
+        Section, View,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
@@ -1319,7 +1320,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(view.name, "All Items");
-        assert!(view.criteria.include.is_empty());
+        assert!(view.criteria.criteria.is_empty());
         assert!(view.sections.is_empty());
     }
 
@@ -1831,10 +1832,11 @@ mod tests {
         let when_category = make_category(&store, "WhenColumn");
 
         let mut view = new_view("Inbox");
-        view.criteria.include.insert(when_category);
+        view.criteria
+            .set_criterion(CriterionMode::And, when_category);
 
         let mut section_criteria = Query::default();
-        section_criteria.include.insert(when_category);
+        section_criteria.set_criterion(CriterionMode::And, when_category);
         view.sections.push(Section {
             title: "Due Soon".to_string(),
             criteria: section_criteria,
@@ -1856,7 +1858,7 @@ mod tests {
         let loaded = store.get_view(view.id).unwrap();
         assert_eq!(loaded.id, view.id);
         assert_eq!(loaded.name, "Inbox");
-        assert_eq!(loaded.criteria.include, view.criteria.include);
+        assert_eq!(loaded.criteria.criteria, view.criteria.criteria);
         assert_eq!(loaded.sections.len(), 1);
         assert_eq!(loaded.sections[0].title, "Due Soon");
         assert!(loaded.sections[0].show_children);
@@ -1903,7 +1905,8 @@ mod tests {
 
         let category_id = make_category(&store, "Schedule");
         view.name = "Daily Agenda".to_string();
-        view.criteria.include.insert(category_id);
+        view.criteria
+            .set_criterion(CriterionMode::And, category_id);
         view.sections.push(Section {
             title: "Today".to_string(),
             criteria: Query::default(),
@@ -1920,7 +1923,7 @@ mod tests {
 
         let loaded = store.get_view(view.id).unwrap();
         assert_eq!(loaded.name, "Daily Agenda");
-        assert_eq!(loaded.criteria.include, HashSet::from([category_id]));
+        assert!(loaded.criteria.and_category_ids().any(|id| id == category_id));
         assert_eq!(loaded.sections.len(), 1);
         assert!(!loaded.show_unmatched);
         assert_eq!(loaded.unmatched_label, "Unsectioned");

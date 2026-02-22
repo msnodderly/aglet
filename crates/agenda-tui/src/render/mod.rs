@@ -710,7 +710,7 @@ impl App {
             ratatui::text::Line::from(status),
             ratatui::text::Line::from(ratatui::text::Span::styled(
                 hints,
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Rgb(140, 140, 140)),
             )),
         ]);
         Paragraph::new(text).block(Block::default().borders(Borders::ALL))
@@ -1517,17 +1517,20 @@ impl App {
                 .border_style(Style::default().fg(border_for(ViewEditRegion::Criteria)));
 
             let mut items: Vec<ListItem<'_>> = state
-                .criteria_rows
+                .draft
+                .criteria
+                .criteria
                 .iter()
                 .enumerate()
-                .map(|(i, row)| {
+                .map(|(i, criterion)| {
                     let name = category_names
-                        .get(&row.category_id)
+                        .get(&criterion.category_id)
                         .cloned()
                         .unwrap_or_else(|| "(deleted)".to_string());
-                    let sign = match row.sign {
-                        ViewCriteriaSign::Include => "+",
-                        ViewCriteriaSign::Exclude => "-",
+                    let sign = match criterion.mode {
+                        CriterionMode::And => "+",
+                        CriterionMode::Not => "-",
+                        CriterionMode::Or => "|",
                     };
                     let label = format!("  {sign}{name}");
                     let style =
@@ -1628,40 +1631,28 @@ impl App {
 
                     // Only render detail lines for the expanded section
                     if is_expanded {
-                        let mut inc: Vec<String> = section
-                            .criteria
-                            .include
-                            .iter()
-                            .map(|id| {
-                                category_names
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| id.to_string())
-                            })
-                            .collect();
-                        inc.sort_by_key(|name| name.to_ascii_lowercase());
-                        let mut exc: Vec<String> = section
-                            .criteria
-                            .exclude
-                            .iter()
-                            .map(|id| {
-                                category_names
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| id.to_string())
-                            })
-                            .collect();
-                        exc.sort_by_key(|name| name.to_ascii_lowercase());
-                        if !inc.is_empty() {
+                        if !section.criteria.criteria.is_empty() {
+                            let mut parts: Vec<String> = section
+                                .criteria
+                                .criteria
+                                .iter()
+                                .map(|c| {
+                                    let prefix = match c.mode {
+                                        CriterionMode::And => "+",
+                                        CriterionMode::Not => "-",
+                                        CriterionMode::Or => "|",
+                                    };
+                                    let name = category_names
+                                        .get(&c.category_id)
+                                        .cloned()
+                                        .unwrap_or_else(|| c.category_id.to_string());
+                                    format!("{prefix}{name}")
+                                })
+                                .collect();
+                            parts.sort_by_key(|s| s.to_ascii_lowercase());
                             items.push(ListItem::new(Line::from(format!(
-                                "     include: {}",
-                                inc.join(", ")
-                            ))));
-                        }
-                        if !exc.is_empty() {
-                            items.push(ListItem::new(Line::from(format!(
-                                "     exclude: {}",
-                                exc.join(", ")
+                                "     criteria: {}",
+                                parts.join(" ")
                             ))));
                         }
                         let section_columns: Vec<String> = if section.columns.is_empty() {
@@ -1684,7 +1675,7 @@ impl App {
                             section_columns.join(", ")
                         ))));
                         items.push(ListItem::new(Line::from(format!(
-                            "     children:{}  (e/t:title  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
+                            "     children:{}  (e/t:title  f:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
                             if section.show_children { "yes" } else { "no" }
                         ))));
                     }
@@ -1751,20 +1742,14 @@ impl App {
                         .map(|(i, row)| {
                             let indent = "  ".repeat(row.depth);
                             let checked = match target {
-                                CategoryEditTarget::ViewInclude => {
-                                    state.draft.criteria.include.contains(&row.id)
+                                CategoryEditTarget::ViewCriteria => {
+                                    state.draft.criteria.mode_for(row.id).is_some()
                                 }
-                                CategoryEditTarget::SectionCriteriaInclude => state
+                                CategoryEditTarget::SectionCriteria => state
                                     .draft
                                     .sections
                                     .get(section_expanded)
-                                    .map(|section| section.criteria.include.contains(&row.id))
-                                    .unwrap_or(false),
-                                CategoryEditTarget::SectionCriteriaExclude => state
-                                    .draft
-                                    .sections
-                                    .get(section_expanded)
-                                    .map(|section| section.criteria.exclude.contains(&row.id))
+                                    .map(|section| section.criteria.mode_for(row.id).is_some())
                                     .unwrap_or(false),
                                 CategoryEditTarget::SectionColumns => state
                                     .draft

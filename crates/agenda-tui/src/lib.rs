@@ -5,7 +5,8 @@ use std::path::Path;
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, Column, ColumnKind, Item, ItemId, Query, Section, View, WhenBucket,
+    Category, CategoryId, Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, View,
+    WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -158,9 +159,8 @@ struct ReparentOptionRow {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryEditTarget {
-    ViewInclude,
-    SectionCriteriaInclude,
-    SectionCriteriaExclude,
+    ViewCriteria,
+    SectionCriteria,
     SectionColumns,
     SectionOnInsertAssign,
     SectionOnRemoveUnassign,
@@ -256,19 +256,6 @@ struct ViewEditState {
     inline_buf: text_buffer::TextBuffer,
     picker_index: usize,
     preview_count: usize,
-    criteria_rows: Vec<ViewCriteriaRow>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ViewCriteriaSign {
-    Include,
-    Exclude,
-}
-
-#[derive(Clone)]
-struct ViewCriteriaRow {
-    sign: ViewCriteriaSign,
-    category_id: CategoryId,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -404,8 +391,8 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Assignment, AssignmentSource, Category, CategoryId, Column, ColumnKind, Item, Query,
-        Section, View, WhenBucket,
+        Assignment, AssignmentSource, Category, CategoryId, Column, ColumnKind, CriterionMode,
+        Item, Query, Section, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -1207,7 +1194,9 @@ mod tests {
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
         };
-        section_alpha.criteria.include.insert(alpha.id);
+        section_alpha
+            .criteria
+            .set_criterion(CriterionMode::And, alpha.id);
         let mut section_beta = Section {
             title: "Beta".to_string(),
             criteria: Query::default(),
@@ -1216,7 +1205,9 @@ mod tests {
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
         };
-        section_beta.criteria.include.insert(beta.id);
+        section_beta
+            .criteria
+            .set_criterion(CriterionMode::And, beta.id);
         view.sections.push(section_alpha);
         view.sections.push(section_beta);
         store.create_view(&view).expect("create board view");
@@ -1705,8 +1696,14 @@ mod tests {
             .into_iter()
             .find(|view| view.name == "Mixed")
             .expect("created view exists");
-        assert!(created.criteria.include.contains(&include_cat.id));
-        assert!(created.criteria.exclude.contains(&exclude_cat.id));
+        assert!(created
+            .criteria
+            .and_category_ids()
+            .any(|id| id == include_cat.id));
+        assert!(created
+            .criteria
+            .not_category_ids()
+            .any(|id| id == exclude_cat.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -2149,8 +2146,8 @@ mod tests {
             .unwrap()
             .draft
             .criteria
-            .include
-            .contains(&work.id));
+            .mode_for(work.id)
+            .is_some());
 
         if let Some(state) = &mut app.view_edit_state {
             state.picker_index = home_idx;
@@ -2163,8 +2160,8 @@ mod tests {
             .unwrap()
             .draft
             .criteria
-            .include
-            .contains(&home.id));
+            .mode_for(home.id)
+            .is_some());
         assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
@@ -2209,8 +2206,8 @@ mod tests {
         );
         assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
 
-        app.handle_view_edit_key(KeyCode::Char('+'), &agenda)
-            .expect("open section include picker");
+        app.handle_view_edit_key(KeyCode::Char('f'), &agenda)
+            .expect("open section criteria picker");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().section_expanded,
             Some(0)
@@ -2218,7 +2215,7 @@ mod tests {
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().overlay,
             Some(super::ViewEditOverlay::CategoryPicker {
-                target: super::CategoryEditTarget::SectionCriteriaInclude
+                target: super::CategoryEditTarget::SectionCriteria
             })
         ));
 
@@ -2427,7 +2424,9 @@ mod tests {
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
         };
-        section_work.criteria.include.insert(cat_a.id);
+        section_work
+            .criteria
+            .set_criterion(CriterionMode::And, cat_a.id);
 
         let mut section_personal = Section {
             title: "Personal Items".to_string(),
@@ -2437,7 +2436,9 @@ mod tests {
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
         };
-        section_personal.criteria.include.insert(cat_b.id);
+        section_personal
+            .criteria
+            .set_criterion(CriterionMode::And, cat_b.id);
 
         let mut view = View::new("TestView".to_string());
         view.sections.push(section_work);
