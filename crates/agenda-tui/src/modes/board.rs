@@ -645,7 +645,7 @@ impl App {
                     .unwrap_or("(root)");
                 self.mode = Mode::Normal;
                 self.status = format!(
-                    "Category '{}' already exists under '{}'. Use exact name to assign.",
+                    "Category '{}' exists under '{}'. Cannot create duplicate.",
                     target_name, parent_name
                 );
             } else {
@@ -654,7 +654,7 @@ impl App {
                     parent_id: column.heading,
                 };
                 self.status = format!(
-                    "Category '{}' does not exist. Create it? (y/n/Enter)",
+                    "Category '{}' does not exist. Create it? (Y/n)",
                     target_name
                 );
             }
