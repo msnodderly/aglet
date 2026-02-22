@@ -655,7 +655,11 @@ impl App {
                                     synthetic_categories_width,
                                 )));
                             }
-                            Row::new(cells)
+                            let mut row = Row::new(cells);
+                            if is_selected {
+                                row = row.style(selected_board_row_style());
+                            }
+                            row
                         })
                         .collect()
                 };
@@ -722,7 +726,7 @@ impl App {
                             } else {
                                 categories.join(", ")
                             };
-                            Row::new(vec![
+                            let mut row = Row::new(vec![
                                 Cell::from(marker_cell),
                                 Cell::from(truncate_board_cell(&when, widths.when)),
                                 Cell::from(note_cell),
@@ -731,7 +735,11 @@ impl App {
                                     &categories_text,
                                     widths.categories,
                                 )),
-                            ])
+                            ]);
+                            if is_selected {
+                                row = row.style(selected_board_row_style());
+                            }
+                            row
                         })
                         .collect()
                 };
@@ -748,7 +756,6 @@ impl App {
                             ])
                             .style(Style::default().add_modifier(Modifier::BOLD)),
                         )
-                        .row_highlight_style(selected_row_style())
                         .block(
                             Block::default()
                                 .title(title)
