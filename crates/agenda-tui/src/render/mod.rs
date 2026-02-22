@@ -69,15 +69,69 @@ impl App {
         if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
-        if matches!(
-            self.mode,
-            Mode::ItemAssignPicker | Mode::ItemAssignInput
-        ) {
+        if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
         if matches!(self.mode, Mode::ViewCreateCategory) {
             self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
         }
+        if self.mode == Mode::CategoryDirectEdit {
+            if let Some(ref suggest) = self.category_suggest {
+                let matches = self.get_current_suggest_matches();
+                if !matches.is_empty() {
+                    self.render_category_suggest_popup(frame, &matches, suggest.suggest_index);
+                }
+            }
+        }
+    }
+
+    fn render_category_suggest_popup(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        matches: &[CategoryId],
+        selected_idx: usize,
+    ) {
+        let area = frame.area();
+        let max_items = 8usize;
+        let visible_count = matches.len().min(max_items);
+        let popup_height = (visible_count + 2) as u16;
+
+        let popup_width = 30u16;
+        let popup_x = area.x.saturating_add(2);
+        let popup_y = area
+            .y
+            .saturating_add(area.height)
+            .saturating_sub(popup_height + 5);
+
+        let popup_rect = Rect {
+            x: popup_x,
+            y: popup_y,
+            width: popup_width.min(area.width.saturating_sub(4)),
+            height: popup_height.min(area.height.saturating_sub(5)),
+        };
+
+        frame.render_widget(Clear, popup_rect);
+
+        let items: Vec<ListItem> = matches
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let cat = self.categories.iter().find(|c| c.id == id);
+                let name = cat.map(|c| c.name.as_str()).unwrap_or("?");
+                let style = if i == selected_idx {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(name).style(style)
+            })
+            .collect();
+
+        let list =
+            List::new(items).block(Block::default().borders(Borders::ALL).title("Suggestions"));
+        frame.render_widget(list, popup_rect);
     }
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
@@ -221,11 +275,7 @@ impl App {
             .map(|view| view.name.as_str())
             .unwrap_or("(none)");
         let mode = format!("{:?}", self.mode);
-        let active_filters = self
-            .section_filters
-            .iter()
-            .filter(|f| f.is_some())
-            .count();
+        let active_filters = self.section_filters.iter().filter(|f| f.is_some()).count();
         let filter = if active_filters > 0 {
             format!(" filters:{active_filters}")
         } else {
@@ -422,47 +472,43 @@ impl App {
                             } else {
                                 " "
                             };
-                            let mut cells = vec![
-                                Cell::from(marker_cell),
-                                Cell::from(note_cell),
-                                {
-                                    let content = truncate_board_cell(
-                                        &board_item_label(item),
-                                        item_width,
-                                    );
-                                    let mut cell = Cell::from(content);
-                                    if is_selected && self.column_index == 0 {
-                                        cell = cell.style(focused_cell_style());
-                                    }
-                                    cell
-                                }
-                            ];
-                            cells.extend(layout.columns.iter().enumerate().map(|(col_idx, column)| {
-                                let value = if self.mode == Mode::CategoryDirectEdit
-                                    && is_selected
-                                    && self.column_index == col_idx + 1
-                                {
-                                    self.input.text().to_string()
-                                } else {
-                                    match column.kind {
-                                        ColumnKind::When => item
-                                            .when_date
-                                            .map(|dt| dt.to_string())
-                                            .unwrap_or_else(|| "\u{2013}".to_string()),
-                                        ColumnKind::Standard => standard_column_value(
-                                            item,
-                                            &column.child_ids,
-                                            &category_names,
-                                        ),
-                                    }
-                                };
-                                let content = truncate_board_cell(&value, column.width);
+                            let mut cells = vec![Cell::from(marker_cell), Cell::from(note_cell), {
+                                let content =
+                                    truncate_board_cell(&board_item_label(item), item_width);
                                 let mut cell = Cell::from(content);
-                                if is_selected && self.column_index == col_idx + 1 {
+                                if is_selected && self.column_index == 0 {
                                     cell = cell.style(focused_cell_style());
                                 }
                                 cell
-                            }));
+                            }];
+                            cells.extend(layout.columns.iter().enumerate().map(
+                                |(col_idx, column)| {
+                                    let value = if self.mode == Mode::CategoryDirectEdit
+                                        && is_selected
+                                        && self.column_index == col_idx + 1
+                                    {
+                                        self.input.text().to_string()
+                                    } else {
+                                        match column.kind {
+                                            ColumnKind::When => item
+                                                .when_date
+                                                .map(|dt| dt.to_string())
+                                                .unwrap_or_else(|| "\u{2013}".to_string()),
+                                            ColumnKind::Standard => standard_column_value(
+                                                item,
+                                                &column.child_ids,
+                                                &category_names,
+                                            ),
+                                        }
+                                    };
+                                    let content = truncate_board_cell(&value, column.width);
+                                    let mut cell = Cell::from(content);
+                                    if is_selected && self.column_index == col_idx + 1 {
+                                        cell = cell.style(focused_cell_style());
+                                    }
+                                    cell
+                                },
+                            ));
                             if synthetic_categories_width > 0 {
                                 let categories = item_assignment_labels(item, &category_names);
                                 let categories_text = if categories.is_empty() {
@@ -730,9 +776,7 @@ impl App {
             }
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
-            Mode::ViewCreateCategory => {
-                "Set include/exclude categories for new view".to_string()
-            }
+            Mode::ViewCreateCategory => "Set include/exclude categories for new view".to_string(),
             Mode::CategoryReparent => "Select category parent".to_string(),
             Mode::CategoryDelete => "Delete selected category? y/n".to_string(),
             Mode::CategoryConfig => {
@@ -860,7 +904,11 @@ impl App {
         frame.render_widget(Paragraph::new(heading_text), regions.heading);
 
         // Text field
-        let text_marker = if panel.focus == InputPanelFocus::Text { ">" } else { " " };
+        let text_marker = if panel.focus == InputPanelFocus::Text {
+            ">"
+        } else {
+            " "
+        };
         let text_label = if panel.kind == InputPanelKind::NameInput {
             "Name"
         } else {
@@ -879,8 +927,16 @@ impl App {
                 panel.note.text().lines().map(Line::from).collect()
             };
             let note_focused = panel.focus == InputPanelFocus::Note;
-            let note_border_color = if note_focused { Color::Cyan } else { Color::Blue };
-            let note_title = if note_focused { "Note (> editable)" } else { "Note (editable)" };
+            let note_border_color = if note_focused {
+                Color::Cyan
+            } else {
+                Color::Blue
+            };
+            let note_title = if note_focused {
+                "Note (> editable)"
+            } else {
+                "Note (editable)"
+            };
             let note_cursor_line = panel.note.line_col().0;
             let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
             frame.render_widget(
@@ -905,7 +961,11 @@ impl App {
 
         if let Some(categories_rect) = regions.categories {
             let cat_focused = panel.focus == InputPanelFocus::CategoriesButton;
-            let cat_marker = if cat_focused { "[> Categories <]" } else { "[Categories]" };
+            let cat_marker = if cat_focused {
+                "[> Categories <]"
+            } else {
+                "[Categories]"
+            };
             let cat_names = self.category_names_for_ids(&panel.categories);
             let cat_display = if cat_names.is_empty() {
                 format!("{cat_marker}  (none)")
@@ -1509,10 +1569,7 @@ impl App {
         // ── Criteria region ──────────────────────────────────────────────────
         {
             let block = Block::default()
-                .title(format!(
-                    " VIEW CRITERIA  matches:{} ",
-                    state.preview_count
-                ))
+                .title(format!(" VIEW CRITERIA  matches:{} ", state.preview_count))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_for(ViewEditRegion::Criteria)));
 
