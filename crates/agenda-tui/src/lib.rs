@@ -282,6 +282,32 @@ struct CategorySuggestState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CategoryDirectEditFocus {
+    Entries,
+    Input,
+    Suggestions,
+}
+
+#[derive(Clone)]
+struct CategoryDirectEditRow {
+    input: text_buffer::TextBuffer,
+    category_id: Option<CategoryId>,
+}
+
+#[derive(Clone)]
+struct CategoryDirectEditState {
+    parent_id: CategoryId,
+    parent_name: String,
+    item_id: ItemId,
+    item_label: String,
+    rows: Vec<CategoryDirectEditRow>,
+    active_row: usize,
+    focus: CategoryDirectEditFocus,
+    suggest_index: usize,
+    create_confirm_name: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PreviewMode {
     Summary,
     Provenance,
@@ -322,6 +348,7 @@ struct App {
     category_reparent_index: usize,
     category_config_editor: Option<CategoryConfigState>,
     category_suggest: Option<CategorySuggestState>,
+    category_direct_edit: Option<CategoryDirectEditState>,
     category_direct_edit_create_confirm: Option<String>,
     item_assign_category_index: usize,
     input_panel: Option<input_panel::InputPanel>,
@@ -366,6 +393,7 @@ impl Default for App {
             category_reparent_index: 0,
             category_config_editor: None,
             category_suggest: None,
+            category_direct_edit: None,
             category_direct_edit_create_confirm: None,
             item_assign_category_index: 0,
             input_panel: None,

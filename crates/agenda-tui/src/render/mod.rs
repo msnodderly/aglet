@@ -117,31 +117,40 @@ impl App {
             .split(inner);
 
         let context_text = self
-            .current_view()
-            .and_then(|view| {
-                self.current_slot().and_then(|slot| {
-                    let columns = match slot.context {
-                        SlotContext::Section { section_index }
-                        | SlotContext::GeneratedSection { section_index, .. } => {
-                            view.sections.get(section_index).map(|s| &s.columns)
+            .category_direct_edit_state()
+            .map(|state| {
+                format!(
+                    "Column: {}  Item: {}",
+                    state.parent_name,
+                    truncate_board_cell(&state.item_label, 40)
+                )
+            })
+            .or_else(|| {
+                self.current_view().and_then(|view| {
+                    self.current_slot().and_then(|slot| {
+                        let columns = match slot.context {
+                            SlotContext::Section { section_index }
+                            | SlotContext::GeneratedSection { section_index, .. } => {
+                                view.sections.get(section_index).map(|s| &s.columns)
+                            }
+                            _ => None,
+                        }?;
+                        if self.column_index == 0 || self.column_index > columns.len() {
+                            return None;
                         }
-                        _ => None,
-                    }?;
-                    if self.column_index == 0 || self.column_index > columns.len() {
-                        return None;
-                    }
-                    let column = &columns[self.column_index - 1];
-                    let heading = self
-                        .categories
-                        .iter()
-                        .find(|c| c.id == column.heading)
-                        .map(|c| c.name.as_str())
-                        .unwrap_or("?");
-                    let item_label = self
-                        .selected_item()
-                        .map(|item| truncate_board_cell(&board_item_label(item), 40))
-                        .unwrap_or_else(|| "(no item)".to_string());
-                    Some(format!("Column: {heading}  Item: {item_label}"))
+                        let column = &columns[self.column_index - 1];
+                        let heading = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == column.heading)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("?");
+                        let item_label = self
+                            .selected_item()
+                            .map(|item| truncate_board_cell(&board_item_label(item), 40))
+                            .unwrap_or_else(|| "(no item)".to_string());
+                        Some(format!("Column: {heading}  Item: {item_label}"))
+                    })
                 })
             })
             .unwrap_or_else(|| "Set category".to_string());
@@ -158,7 +167,11 @@ impl App {
             chunks[1],
         );
 
-        if let Some(name) = &self.category_direct_edit_create_confirm {
+        let inline_create_name = self
+            .category_direct_edit_state()
+            .and_then(|state| state.create_confirm_name.as_deref())
+            .or(self.category_direct_edit_create_confirm.as_deref());
+        if let Some(name) = inline_create_name {
             frame.render_widget(
                 Paragraph::new(format!(
                     "Create \"{}\" as a new child category in this column?",

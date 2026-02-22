@@ -982,17 +982,17 @@ land small refactors first, then behavior changes.
 
 ### Phase 0: CategoryDirectEdit State Extraction (No UX Change Yet)
 
-- [ ] Add `CategoryDirectEditState` struct(s) in `crates/agenda-tui/src/lib.rs`
-- [ ] Add `CategoryDirectEditRow` struct with per-row `TextBuffer` + resolved category
-- [ ] Add `CategoryDirectEditFocus` enum (`Entries`, `Input`, `Suggestions`)
-- [ ] Add `category_direct_edit: Option<CategoryDirectEditState>` to `App`
-- [ ] Initialize `category_direct_edit: None` in `App::default()`
-- [ ] Keep existing `Mode::CategoryDirectEdit` mode enum (do not replace mode yet)
-- [ ] Update `open_category_direct_edit` to initialize `category_direct_edit` draft state
-- [ ] Ensure existing `category_suggest` / inline create state are reset consistently on open
-- [ ] Add helper accessors for direct-edit state (`current`, `current_mut`, etc.)
-- [ ] Keep current single-entry behavior functionally unchanged after refactor
-- [ ] Run `cargo test -p agenda-tui --lib`
+- [x] Add `CategoryDirectEditState` struct(s) in `crates/agenda-tui/src/lib.rs`
+- [x] Add `CategoryDirectEditRow` struct with per-row `TextBuffer` + resolved category
+- [x] Add `CategoryDirectEditFocus` enum (`Entries`, `Input`, `Suggestions`)
+- [x] Add `category_direct_edit: Option<CategoryDirectEditState>` to `App`
+- [x] Initialize `category_direct_edit: None` in `App::default()`
+- [x] Keep existing `Mode::CategoryDirectEdit` mode enum (do not replace mode yet)
+- [x] Update `open_category_direct_edit` to initialize `category_direct_edit` draft state
+- [x] Ensure existing `category_suggest` / inline create state are reset consistently on open
+- [x] Add helper accessors for direct-edit state (`current`, `current_mut`, etc.)
+- [x] Keep current single-entry behavior functionally unchanged after refactor
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 1: Multi-Entry Draft Initialization + Data Helpers
 

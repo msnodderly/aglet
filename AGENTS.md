@@ -72,6 +72,10 @@ Views defined: All Items, Backlog, CLI, Deferred, High Priority, Pending, UX.
 Every item should have Priority, Status, and at least one Area category. If
 you see an item missing any of these in `view show "All Items"`, assign them.
 
+Manual TUI testing against `feature-requests.ag` can create SQLite sidecar files
+`feature-requests.ag-wal` and `feature-requests.ag-shm`. Treat these as local
+runtime artifacts and do not commit them.
+
 ## CLI Grooming Patterns
 
 **Do not use shell variable shorthand for commands.** This does NOT work:
@@ -139,4 +143,3 @@ bottom of each phase section** before assuming the spec describes current code:
 When writing TUI code, check `lib.rs` for the actual struct definitions rather
 than trusting the spec shapes verbatim. File a feature request if you find a
 gap that matters.
-
