@@ -127,9 +127,10 @@ impl App {
             .map(|c| c.children.clone())
             .unwrap_or_default();
         let value = standard_column_value(item, &child_ids, &category_names);
+        let input_value = if value == "\u{2013}" { String::new() } else { value };
 
         self.mode = Mode::CategoryDirectEdit;
-        self.set_input(value);
+        self.set_input(input_value);
         self.status = "Edit category: Enter to save, Esc to cancel".to_string();
     }
 
