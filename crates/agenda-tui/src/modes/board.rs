@@ -17,6 +17,159 @@ impl App {
         self.category_direct_edit_create_confirm = None;
     }
 
+    pub(crate) fn active_category_direct_edit_row(&self) -> Option<&CategoryDirectEditRow> {
+        self.category_direct_edit_state()?.active_row()
+    }
+
+    fn active_category_direct_edit_row_mut(&mut self) -> Option<&mut CategoryDirectEditRow> {
+        self.category_direct_edit_state_mut()?.active_row_mut()
+    }
+
+    pub(crate) fn active_category_direct_edit_input_text(&self) -> Option<&str> {
+        self.active_category_direct_edit_row().map(|row| row.input.text())
+    }
+
+    fn current_category_direct_edit_column_meta(&self) -> Option<CategoryDirectEditColumnMeta> {
+        let slot = self.current_slot()?;
+        let item = self.selected_item()?;
+        let view = self.current_view()?;
+
+        let (section_index, is_generated_section) = match slot.context {
+            SlotContext::Section { section_index } => (section_index, false),
+            SlotContext::GeneratedSection { section_index, .. } => (section_index, true),
+            SlotContext::Unmatched => return None,
+        };
+
+        if self.column_index == 0 {
+            return None;
+        }
+        let section = view.sections.get(section_index)?;
+        let section_column_index = self.column_index - 1;
+        let column = section.columns.get(section_column_index)?;
+        let parent = self.categories.iter().find(|c| c.id == column.heading)?;
+
+        Some(CategoryDirectEditColumnMeta {
+            parent_id: parent.id,
+            parent_name: parent.name.clone(),
+            column_kind: column.kind,
+            anchor: CategoryDirectEditAnchor {
+                slot_index: self.slot_index,
+                section_index,
+                section_column_index,
+                board_column_index: self.column_index,
+                is_generated_section,
+            },
+            item_id: item.id,
+            item_label: board_item_label(item),
+        })
+    }
+
+    fn collect_assigned_child_categories_for_parent(
+        &self,
+        item: &Item,
+        parent_id: CategoryId,
+    ) -> Vec<CategoryId> {
+        let mut assigned_child_ids: HashSet<CategoryId> = item
+            .assignments
+            .keys()
+            .filter(|id| {
+                self.categories
+                    .iter()
+                    .find(|c| c.id == **id)
+                    .and_then(|c| c.parent)
+                    .map(|pid| pid == parent_id)
+                    .unwrap_or(false)
+            })
+            .copied()
+            .collect();
+
+        if assigned_child_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let mut ordered = Vec::new();
+        if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
+            for child_id in &parent.children {
+                if assigned_child_ids.remove(child_id) {
+                    ordered.push(*child_id);
+                }
+            }
+        }
+
+        let mut extras: Vec<CategoryId> = assigned_child_ids.into_iter().collect();
+        extras.sort_by(|a, b| {
+            let a_name = self
+                .categories
+                .iter()
+                .find(|c| c.id == *a)
+                .map(|c| c.name.to_ascii_lowercase())
+                .unwrap_or_else(|| a.to_string());
+            let b_name = self
+                .categories
+                .iter()
+                .find(|c| c.id == *b)
+                .map(|c| c.name.to_ascii_lowercase())
+                .unwrap_or_else(|| b.to_string());
+            a_name.cmp(&b_name).then_with(|| a.to_string().cmp(&b.to_string()))
+        });
+        ordered.extend(extras);
+        ordered
+    }
+
+    fn current_column_assigned_child_ids(&self) -> Vec<CategoryId> {
+        let Some(meta) = self.current_category_direct_edit_column_meta() else {
+            return Vec::new();
+        };
+        let Some(item) = self.selected_item() else {
+            return Vec::new();
+        };
+        self.collect_assigned_child_categories_for_parent(item, meta.parent_id)
+    }
+
+    fn build_current_column_direct_edit_rows(&self) -> Vec<CategoryDirectEditRow> {
+        let assigned_child_ids = self.current_column_assigned_child_ids();
+        let mut rows: Vec<CategoryDirectEditRow> = assigned_child_ids
+            .into_iter()
+            .map(|category_id| {
+                let name = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == category_id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| category_id.to_string());
+                CategoryDirectEditRow::resolved(category_id, name)
+            })
+            .collect();
+        if rows.is_empty() {
+            rows.push(CategoryDirectEditRow::blank());
+        }
+        rows
+    }
+
+    fn current_column_parent_is_exclusive(&self) -> bool {
+        let Some(meta) = self.current_category_direct_edit_column_meta() else {
+            return false;
+        };
+        self.categories
+            .iter()
+            .find(|c| c.id == meta.parent_id)
+            .map(|c| c.is_exclusive)
+            .unwrap_or(false)
+    }
+
+    fn category_direct_edit_add_blank_row_guarded(&mut self) -> bool {
+        let is_exclusive = self.current_column_parent_is_exclusive();
+        let Some(state) = self.category_direct_edit_state_mut() else {
+            return false;
+        };
+        if is_exclusive && !state.rows.is_empty() {
+            self.status = format!("'{}' is exclusive; only one row allowed", state.parent_name);
+            return false;
+        }
+        state.add_blank_row();
+        true
+    }
+
     pub(crate) fn toggle_preview(&mut self) {
         self.show_preview = !self.show_preview;
         if self.show_preview {
@@ -112,89 +265,27 @@ impl App {
     }
 
     pub(crate) fn open_category_direct_edit(&mut self) {
-        let Some(slot) = self.current_slot() else {
-            return;
-        };
-        let Some(item) = self.selected_item() else {
-            return;
-        };
-        let Some(view) = self.current_view() else {
+        let Some(meta) = self.current_category_direct_edit_column_meta() else {
             return;
         };
 
-        let columns = match slot.context {
-            SlotContext::Section { section_index }
-            | SlotContext::GeneratedSection { section_index, .. } => {
-                view.sections.get(section_index).map(|s| &s.columns)
-            }
-            _ => None,
-        };
-
-        let Some(columns) = columns else {
-            return;
-        };
-        if self.column_index == 0 || self.column_index > columns.len() {
-            return;
-        }
-
-        let column = &columns[self.column_index - 1];
-        if column.kind == ColumnKind::When {
+        if meta.column_kind == ColumnKind::When {
             self.status = "Editing 'When' date not yet implemented inline".to_string();
             return;
         }
-        let column_heading = column.heading;
-
-        let category_names = category_name_map(&self.categories);
-        let child_ids: Vec<CategoryId> = self
-            .categories
-            .iter()
-            .find(|c| c.id == column_heading)
-            .map(|c| c.children.clone())
+        let rows = self.build_current_column_direct_edit_rows();
+        let input_value = rows
+            .first()
+            .map(|row| row.input.text().to_string())
             .unwrap_or_default();
-        let value = standard_column_value(item, &child_ids, &category_names);
-        let input_value = if value == "\u{2013}" {
-            String::new()
-        } else {
-            value
-        };
-        let parent_name = self
-            .categories
-            .iter()
-            .find(|c| c.id == column_heading)
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "?".to_string());
-        let item_id = item.id;
-        let item_label = board_item_label(item);
-        let mut rows: Vec<CategoryDirectEditRow> = child_ids
-            .iter()
-            .filter(|cid| item.assignments.contains_key(cid))
-            .map(|cid| {
-                let name = self
-                    .categories
-                    .iter()
-                    .find(|c| c.id == *cid)
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| cid.to_string());
-                CategoryDirectEditRow {
-                    input: text_buffer::TextBuffer::new(name),
-                    category_id: Some(*cid),
-                }
-            })
-            .collect();
-        rows.sort_by_key(|row| row.input.text().to_ascii_lowercase());
-        if rows.is_empty() {
-            rows.push(CategoryDirectEditRow {
-                input: text_buffer::TextBuffer::empty(),
-                category_id: None,
-            });
-        }
 
         self.mode = Mode::CategoryDirectEdit;
         self.category_direct_edit = Some(CategoryDirectEditState {
-            parent_id: column_heading,
-            parent_name,
-            item_id,
-            item_label,
+            anchor: meta.anchor,
+            parent_id: meta.parent_id,
+            parent_name: meta.parent_name,
+            item_id: meta.item_id,
+            item_label: meta.item_label,
             rows,
             active_row: 0,
             focus: CategoryDirectEditFocus::Input,
@@ -209,36 +300,20 @@ impl App {
     }
 
     fn get_current_column_child_ids(&self) -> Vec<CategoryId> {
-        let Some(slot) = self.current_slot() else {
+        let Some(meta) = self.current_category_direct_edit_column_meta() else {
             return Vec::new();
         };
-        let Some(view) = self.current_view() else {
-            return Vec::new();
-        };
-        let columns = match slot.context {
-            SlotContext::Section { section_index }
-            | SlotContext::GeneratedSection { section_index, .. } => {
-                view.sections.get(section_index).map(|s| &s.columns)
-            }
-            _ => None,
-        };
-        let Some(columns) = columns else {
-            return Vec::new();
-        };
-        if self.column_index == 0 || self.column_index > columns.len() {
-            return Vec::new();
-        }
-        let column = &columns[self.column_index - 1];
         self.categories
             .iter()
-            .find(|c| c.id == column.heading)
+            .find(|c| c.id == meta.parent_id)
             .map(|c| c.children.clone())
             .unwrap_or_default()
     }
 
     pub(crate) fn get_current_suggest_matches(&self) -> Vec<CategoryId> {
         let child_ids = self.get_current_column_child_ids();
-        if self.input.text().trim().is_empty() {
+        let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
+        if active_input.trim().is_empty() {
             child_ids
                 .into_iter()
                 .filter(|id| {
@@ -250,7 +325,7 @@ impl App {
                 })
                 .collect()
         } else {
-            filter_child_categories(&child_ids, &self.categories, self.input.text())
+            filter_child_categories(&child_ids, &self.categories, active_input)
         }
     }
 
@@ -258,23 +333,26 @@ impl App {
         if self.category_direct_edit_create_confirm.is_some() {
             return;
         }
-        let text = self.input.text();
+        let text = self
+            .active_category_direct_edit_input_text()
+            .unwrap_or("")
+            .to_string();
         let matches = self.get_current_suggest_matches();
         if matches.is_empty() {
             self.category_suggest = None;
+            if let Some(state) = self.category_direct_edit_state_mut() {
+                state.suggest_index = 0;
+            }
             self.status = if text.trim().is_empty() {
                 "No categories in this column yet. Enter clears current value.".to_string()
             } else {
                 "No categories found. Enter creates a new child category.".to_string()
             };
         } else {
-            let new_index = match &self.category_suggest {
-                Some(state) => state.suggest_index.min(matches.len() - 1),
-                None => 0,
-            };
-            self.category_suggest = Some(CategorySuggestState {
-                suggest_index: new_index,
-            });
+            if let Some(state) = self.category_direct_edit_state_mut() {
+                state.suggest_index = state.suggest_index.min(matches.len() - 1);
+            }
+            self.category_suggest = Some(CategorySuggestState { suggest_index: 0 });
             self.status =
                 "Choose category: type to narrow, ↑↓ select, Enter apply, Esc cancel".to_string();
         }
@@ -289,13 +367,13 @@ impl App {
         if len == 0 {
             return;
         }
-        let Some(suggest) = &self.category_suggest else {
+        let Some(state) = self.category_direct_edit_state() else {
             return;
         };
-        let current_idx = suggest.suggest_index;
+        let current_idx = state.suggest_index.min(len - 1);
         let new_idx = (current_idx as i64 + delta as i64).rem_euclid(len as i64) as usize;
-        if let Some(ref mut suggest) = self.category_suggest {
-            suggest.suggest_index = new_idx;
+        if let Some(state) = self.category_direct_edit_state_mut() {
+            state.suggest_index = new_idx;
         }
     }
 
@@ -304,25 +382,32 @@ impl App {
             return;
         }
         let matches = self.get_current_suggest_matches();
-        let Some(suggest) = &self.category_suggest else {
+        let Some(state) = self.category_direct_edit_state() else {
             return;
         };
-        let Some(&id) = matches.get(suggest.suggest_index) else {
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
             return;
         };
-        let Some(cat) = self.categories.iter().find(|c| c.id == id) else {
+        let Some(cat_name) = self
+            .categories
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.clone())
+        else {
             return;
         };
-        self.input.set(cat.name.clone());
+        if let Some(row) = self.active_category_direct_edit_row_mut() {
+            row.input.set(cat_name);
+        }
         self.update_suggestions();
     }
 
     fn assign_selected_suggestion(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         let matches = self.get_current_suggest_matches();
-        let Some(suggest) = &self.category_suggest else {
+        let Some(state) = self.category_direct_edit_state() else {
             return Ok(());
         };
-        let Some(&id) = matches.get(suggest.suggest_index) else {
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
             return Ok(());
         };
         let Some(item_id) = self.selected_item_id() else {
@@ -343,7 +428,7 @@ impl App {
     }
 
     fn exact_current_column_child_match_id(&self) -> Option<CategoryId> {
-        let target_name = self.input.text().trim();
+        let target_name = self.active_category_direct_edit_input_text()?.trim();
         if target_name.is_empty() {
             return None;
         }
@@ -717,8 +802,12 @@ impl App {
                 return Ok(false);
             }
             KeyCode::Enter => {
-                if self.input.text().trim().is_empty() {
-                    let text = self.input.text().to_string();
+                let active_text = self
+                    .active_category_direct_edit_input_text()
+                    .unwrap_or("")
+                    .to_string();
+                if active_text.trim().is_empty() {
+                    let text = active_text;
                     self.commit_category_direct_edit(&text, agenda)?;
                     self.category_suggest = None;
                 } else if let Some(category_id) = self.exact_current_column_child_match_id() {
@@ -736,10 +825,10 @@ impl App {
                         .map(|c| c.name.as_str())
                         .unwrap_or("?");
                     self.status = format!("Assigned '{}'", cat_name);
-                } else if self.category_suggest.is_some() {
+                } else if !self.get_current_suggest_matches().is_empty() {
                     self.assign_selected_suggestion(agenda)?;
                 } else {
-                    let text = self.input.text().to_string();
+                    let text = active_text;
                     self.commit_category_direct_edit(&text, agenda)?;
                     self.category_suggest = None;
                 }
@@ -756,7 +845,10 @@ impl App {
                 self.clear_category_direct_edit_session();
             }
             _ => {
-                self.input.handle_key(code, false);
+                if let Some(row) = self.active_category_direct_edit_row_mut() {
+                    row.input.handle_key(code, false);
+                    row.category_id = None;
+                }
                 self.update_suggestions();
             }
         }
@@ -1861,5 +1953,179 @@ mod tests {
         let to_clear = exclusive_siblings_to_clear(&rows, 1);
         assert_eq!(to_clear, vec![low]);
         assert!(!to_clear.contains(&open));
+    }
+
+    #[test]
+    fn current_column_parent_is_exclusive_detects_parent_flag() {
+        let mut parent = Category::new("Status".to_string());
+        parent.is_exclusive = true;
+        let mut child = Category::new("Pending".to_string());
+        child.parent = Some(parent.id);
+        parent.children = vec![child.id];
+        let item = Item::new("Demo".to_string());
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+        });
+
+        let app = App {
+            categories: vec![parent.clone(), child],
+            views: vec![view],
+            slots: vec![Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+
+        assert!(app.current_column_parent_is_exclusive());
+    }
+
+    #[test]
+    fn add_blank_row_guard_blocks_second_row_for_exclusive_parent() {
+        let parent_id = CategoryId::new_v4();
+        let item_id = ItemId::new_v4();
+
+        let mut app = App {
+            categories: vec![{
+                let mut c = Category::new("Priority".to_string());
+                c.id = parent_id;
+                c.is_exclusive = true;
+                c
+            }],
+            category_direct_edit: Some(CategoryDirectEditState {
+                anchor: CategoryDirectEditAnchor {
+                    slot_index: 0,
+                    section_index: 0,
+                    section_column_index: 0,
+                    board_column_index: 1,
+                    is_generated_section: false,
+                },
+                parent_id,
+                parent_name: "Priority".to_string(),
+                item_id,
+                item_label: "Demo".to_string(),
+                rows: vec![CategoryDirectEditRow::blank()],
+                active_row: 0,
+                focus: CategoryDirectEditFocus::Input,
+                suggest_index: 0,
+                create_confirm_name: None,
+            }),
+            ..App::default()
+        };
+
+        // Build enough board context for the current-column helper path.
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent_id,
+                width: 12,
+            }],
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+        });
+        app.views = vec![view];
+        app.slots = vec![Slot {
+            title: "Main".to_string(),
+            items: vec![Item {
+                id: item_id,
+                ..Item::new("Demo".to_string())
+            }],
+            context: SlotContext::Section { section_index: 0 },
+        }];
+        app.view_index = 0;
+        app.slot_index = 0;
+        app.item_index = 0;
+        app.column_index = 1;
+
+        assert!(!app.category_direct_edit_add_blank_row_guarded());
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.rows.len(), 1);
+        assert!(app.status.contains("exclusive"));
+    }
+
+    #[test]
+    fn add_blank_row_guard_allows_non_exclusive_parent() {
+        let parent_id = CategoryId::new_v4();
+        let item_id = ItemId::new_v4();
+
+        let mut app = App {
+            categories: vec![{
+                let mut c = Category::new("Tags".to_string());
+                c.id = parent_id;
+                c.is_exclusive = false;
+                c
+            }],
+            category_direct_edit: Some(CategoryDirectEditState {
+                anchor: CategoryDirectEditAnchor {
+                    slot_index: 0,
+                    section_index: 0,
+                    section_column_index: 0,
+                    board_column_index: 1,
+                    is_generated_section: false,
+                },
+                parent_id,
+                parent_name: "Tags".to_string(),
+                item_id,
+                item_label: "Demo".to_string(),
+                rows: vec![CategoryDirectEditRow::blank()],
+                active_row: 0,
+                focus: CategoryDirectEditFocus::Input,
+                suggest_index: 0,
+                create_confirm_name: None,
+            }),
+            ..App::default()
+        };
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent_id,
+                width: 12,
+            }],
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+        });
+        app.views = vec![view];
+        app.slots = vec![Slot {
+            title: "Main".to_string(),
+            items: vec![Item {
+                id: item_id,
+                ..Item::new("Demo".to_string())
+            }],
+            context: SlotContext::Section { section_index: 0 },
+        }];
+        app.view_index = 0;
+        app.slot_index = 0;
+        app.item_index = 0;
+        app.column_index = 1;
+
+        assert!(app.category_direct_edit_add_blank_row_guarded());
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.rows.len(), 2);
+        assert_eq!(state.active_row, 1);
     }
 }

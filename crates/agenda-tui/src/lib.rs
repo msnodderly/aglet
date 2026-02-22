@@ -288,6 +288,25 @@ enum CategoryDirectEditFocus {
     Suggestions,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct CategoryDirectEditAnchor {
+    slot_index: usize,
+    section_index: usize,
+    section_column_index: usize,
+    board_column_index: usize,
+    is_generated_section: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct CategoryDirectEditColumnMeta {
+    parent_id: CategoryId,
+    parent_name: String,
+    column_kind: ColumnKind,
+    anchor: CategoryDirectEditAnchor,
+    item_id: ItemId,
+    item_label: String,
+}
+
 #[derive(Clone)]
 struct CategoryDirectEditRow {
     input: text_buffer::TextBuffer,
@@ -296,6 +315,7 @@ struct CategoryDirectEditRow {
 
 #[derive(Clone)]
 struct CategoryDirectEditState {
+    anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
     parent_name: String,
     item_id: ItemId,
@@ -305,6 +325,82 @@ struct CategoryDirectEditState {
     focus: CategoryDirectEditFocus,
     suggest_index: usize,
     create_confirm_name: Option<String>,
+}
+
+impl CategoryDirectEditRow {
+    fn blank() -> Self {
+        Self {
+            input: text_buffer::TextBuffer::empty(),
+            category_id: None,
+        }
+    }
+
+    fn resolved(category_id: CategoryId, name: String) -> Self {
+        Self {
+            input: text_buffer::TextBuffer::new(name),
+            category_id: Some(category_id),
+        }
+    }
+}
+
+impl CategoryDirectEditState {
+    fn active_row(&self) -> Option<&CategoryDirectEditRow> {
+        self.rows.get(self.active_row)
+    }
+
+    fn active_row_mut(&mut self) -> Option<&mut CategoryDirectEditRow> {
+        self.rows.get_mut(self.active_row)
+    }
+
+    fn clamp_active_row(&mut self) {
+        if self.rows.is_empty() {
+            self.active_row = 0;
+            return;
+        }
+        self.active_row = self.active_row.min(self.rows.len() - 1);
+    }
+
+    fn add_blank_row(&mut self) -> usize {
+        self.rows.push(CategoryDirectEditRow::blank());
+        self.active_row = self.rows.len().saturating_sub(1);
+        self.active_row
+    }
+
+    fn remove_row(&mut self, index: usize) -> Option<CategoryDirectEditRow> {
+        if index >= self.rows.len() {
+            return None;
+        }
+        let removed = self.rows.remove(index);
+        if index < self.active_row {
+            self.active_row = self.active_row.saturating_sub(1);
+        }
+        self.ensure_one_row();
+        self.clamp_active_row();
+        Some(removed)
+    }
+
+    fn ensure_one_row(&mut self) {
+        if self.rows.is_empty() {
+            self.rows.push(CategoryDirectEditRow::blank());
+            self.active_row = 0;
+        } else {
+            self.clamp_active_row();
+        }
+    }
+
+    fn row_would_duplicate_category_id(&self, row_index: usize, category_id: CategoryId) -> bool {
+        self.rows.iter().enumerate().any(|(idx, row)| {
+            idx != row_index && row.category_id.map(|id| id == category_id).unwrap_or(false)
+        })
+    }
+
+    fn has_duplicate_resolved_category_ids(&self) -> bool {
+        let mut seen = HashSet::new();
+        self.rows
+            .iter()
+            .filter_map(|row| row.category_id)
+            .any(|category_id| !seen.insert(category_id))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -420,13 +516,14 @@ mod tests {
         first_non_reserved_category_index, input_panel, input_panel_popup_area,
         item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
-        BucketEditTarget, CategoryListRow, Mode, NameInputContext, ViewEditRegion,
+        BucketEditTarget, CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
+        CategoryDirectEditState, CategoryListRow, Mode, NameInputContext, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Assignment, AssignmentSource, Category, CategoryId, Column, ColumnKind, CriterionMode,
-        Item, Query, Section, View, WhenBucket,
+        Item, ItemId, Query, Section, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -435,6 +532,430 @@ mod tests {
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
         rows.iter().map(|row| (row.id, row.depth)).collect()
+    }
+
+    #[test]
+    fn open_category_direct_edit_initializes_rows_in_parent_order_with_alpha_fallback() {
+        let mut parent = Category::new("Priority".to_string());
+        let mut medium = Category::new("Medium".to_string());
+        medium.parent = Some(parent.id);
+        let mut high = Category::new("High".to_string());
+        high.parent = Some(parent.id);
+        let mut zebra = Category::new("Zebra".to_string());
+        zebra.parent = Some(parent.id);
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let unrelated = Category::new("Elsewhere".to_string());
+
+        // Intentionally non-alphabetical to verify we preserve explicit child order first.
+        parent.children = vec![medium.id, high.id];
+
+        let mut item = Item::new("Draft row ordering".to_string());
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: chrono::Utc::now(),
+            sticky: false,
+            origin: None,
+        };
+        item.assignments.insert(high.id, assignment.clone());
+        item.assignments.insert(medium.id, assignment.clone());
+        // Assigned direct children missing from parent.children should fall back alphabetically.
+        item.assignments.insert(zebra.id, assignment.clone());
+        item.assignments.insert(alpha.id, assignment.clone());
+        // Non-child assignment should be ignored for this column.
+        item.assignments.insert(unrelated.id, assignment);
+
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![
+                parent.clone(),
+                medium.clone(),
+                high.clone(),
+                zebra.clone(),
+                alpha.clone(),
+                unrelated.clone(),
+            ],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item.clone()],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+
+        app.open_category_direct_edit();
+
+        assert_eq!(app.mode, Mode::CategoryDirectEdit);
+        let state = app
+            .category_direct_edit_state()
+            .expect("direct edit state should open");
+        assert_eq!(state.parent_id, parent.id);
+        assert_eq!(state.parent_name, "Priority");
+        assert_eq!(state.item_id, item.id);
+        assert_eq!(state.item_label, "Draft row ordering");
+        assert_eq!(
+            state.anchor,
+            CategoryDirectEditAnchor {
+                slot_index: 0,
+                section_index: 0,
+                section_column_index: 0,
+                board_column_index: 1,
+                is_generated_section: false,
+            }
+        );
+
+        let row_ids: Vec<Option<CategoryId>> = state.rows.iter().map(|row| row.category_id).collect();
+        assert_eq!(
+            row_ids,
+            vec![Some(medium.id), Some(high.id), Some(alpha.id), Some(zebra.id)]
+        );
+
+        let row_names: Vec<String> = state
+            .rows
+            .iter()
+            .map(|row| row.input.text().to_string())
+            .collect();
+        assert_eq!(row_names, vec!["Medium", "High", "Alpha", "Zebra"]);
+
+        // Phase 1 still mirrors the active row into the shared filter buffer.
+        assert_eq!(app.input.text(), "Medium");
+    }
+
+    #[test]
+    fn open_category_direct_edit_adds_single_blank_row_when_no_child_assignment_exists() {
+        let parent = Category::new("Status".to_string());
+        let mut child = Category::new("Pending".to_string());
+        child.parent = Some(parent.id);
+
+        let item = Item::new("No status yet".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent, child],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+
+        app.open_category_direct_edit();
+
+        let state = app
+            .category_direct_edit_state()
+            .expect("direct edit state should open");
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.rows[0].category_id, None);
+        assert!(state.rows[0].input.text().is_empty());
+        assert_eq!(state.active_row, 0);
+        assert_eq!(app.input.text(), "");
+    }
+
+    #[test]
+    fn category_direct_edit_row_helpers_keep_state_invariants() {
+        let duplicate_a = CategoryId::new_v4();
+        let duplicate_b = CategoryId::new_v4();
+        let mut state = CategoryDirectEditState {
+            anchor: CategoryDirectEditAnchor {
+                slot_index: 0,
+                section_index: 0,
+                section_column_index: 0,
+                board_column_index: 1,
+                is_generated_section: false,
+            },
+            parent_id: CategoryId::new_v4(),
+            parent_name: "Parent".to_string(),
+            item_id: agenda_core::model::ItemId::new_v4(),
+            item_label: "Item".to_string(),
+            rows: Vec::new(),
+            active_row: 7,
+            focus: CategoryDirectEditFocus::Input,
+            suggest_index: 0,
+            create_confirm_name: None,
+        };
+
+        assert!(state.active_row().is_none());
+        state.ensure_one_row();
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.active_row, 0);
+        assert!(state.active_row().is_some());
+        assert_eq!(state.active_row().and_then(|row| row.category_id), None);
+
+        state
+            .active_row_mut()
+            .expect("row exists")
+            .input
+            .set("First".to_string());
+        let new_index = state.add_blank_row();
+        assert_eq!(new_index, 1);
+        assert_eq!(state.active_row, 1);
+        assert_eq!(state.rows.len(), 2);
+
+        state.active_row = 99;
+        state.clamp_active_row();
+        assert_eq!(state.active_row, 1);
+
+        let removed = state.remove_row(0).expect("remove existing row");
+        assert_eq!(removed.input.text(), "First");
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.active_row, 0);
+
+        let removed_last = state.remove_row(0).expect("remove last row");
+        assert!(removed_last.category_id.is_none());
+        assert_eq!(state.rows.len(), 1, "last-row removal should keep one blank row");
+        assert_eq!(state.active_row, 0);
+        assert_eq!(state.rows[0].category_id, None);
+        assert!(state.rows[0].input.text().is_empty());
+
+        assert!(state.remove_row(99).is_none());
+        assert_eq!(state.rows.len(), 1);
+
+        state.rows = vec![
+            CategoryDirectEditRow::resolved(duplicate_a, "A".to_string()),
+            CategoryDirectEditRow::resolved(duplicate_b, "B".to_string()),
+            CategoryDirectEditRow::resolved(duplicate_a, "A".to_string()),
+        ];
+        state.active_row = 1;
+        assert!(state.has_duplicate_resolved_category_ids());
+        assert!(state.row_would_duplicate_category_id(1, duplicate_a));
+        assert!(!state.row_would_duplicate_category_id(1, duplicate_b));
+        assert!(!state.row_would_duplicate_category_id(1, CategoryId::new_v4()));
+
+        let _ = CategoryDirectEditRow::blank();
+    }
+
+    #[test]
+    fn category_direct_edit_empty_input_shows_full_child_suggestions_excluding_when() {
+        let mut parent = Category::new("Context".to_string());
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let mut when_child = Category::new("When".to_string());
+        when_child.parent = Some(parent.id);
+        let mut beta = Category::new("Beta".to_string());
+        beta.parent = Some(parent.id);
+        parent.children = vec![alpha.id, when_child.id, beta.id];
+
+        let item = Item::new("Demo".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent.clone(), alpha.clone(), when_child, beta.clone()],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+        app.open_category_direct_edit();
+        if let Some(state) = app.category_direct_edit_state_mut() {
+            state.rows[0].input.clear();
+        }
+
+        let matches = app.get_current_suggest_matches();
+        assert_eq!(matches, vec![alpha.id, beta.id]);
+    }
+
+    #[test]
+    fn category_direct_edit_suggestions_follow_active_row_input() {
+        let mut parent = Category::new("Tags".to_string());
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let mut beta = Category::new("Beta".to_string());
+        beta.parent = Some(parent.id);
+        let mut gamma = Category::new("Gamma".to_string());
+        gamma.parent = Some(parent.id);
+        parent.children = vec![alpha.id, beta.id, gamma.id];
+
+        let mut state = CategoryDirectEditState {
+            anchor: CategoryDirectEditAnchor {
+                slot_index: 0,
+                section_index: 0,
+                section_column_index: 0,
+                board_column_index: 1,
+                is_generated_section: false,
+            },
+            parent_id: parent.id,
+            parent_name: "Tags".to_string(),
+            item_id: ItemId::new_v4(),
+            item_label: "Demo".to_string(),
+            rows: vec![
+                CategoryDirectEditRow {
+                    input: text_buffer::TextBuffer::new("al".to_string()),
+                    category_id: None,
+                },
+                CategoryDirectEditRow {
+                    input: text_buffer::TextBuffer::new("be".to_string()),
+                    category_id: None,
+                },
+            ],
+            active_row: 0,
+            focus: CategoryDirectEditFocus::Input,
+            suggest_index: 0,
+            create_confirm_name: None,
+        };
+
+        let mut app = App {
+            categories: vec![parent.clone(), alpha.clone(), beta.clone(), gamma.clone()],
+            views: vec![{
+                let mut v = View::new("Board".to_string());
+                v.sections.push(Section {
+                    title: "Main".to_string(),
+                    criteria: Query::default(),
+                    columns: vec![Column {
+                        kind: ColumnKind::Standard,
+                        heading: parent.id,
+                        width: 12,
+                    }],
+                    on_insert_assign: std::collections::HashSet::new(),
+                    on_remove_unassign: std::collections::HashSet::new(),
+                    show_children: false,
+                });
+                v
+            }],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![Item::new("Demo".to_string())],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            category_direct_edit: Some(state.clone()),
+            ..App::default()
+        };
+
+        let matches_row0 = app.get_current_suggest_matches();
+        assert_eq!(matches_row0, vec![alpha.id]);
+
+        state.active_row = 1;
+        app.category_direct_edit = Some(state);
+        let matches_row1 = app.get_current_suggest_matches();
+        assert_eq!(matches_row1, vec![beta.id]);
+    }
+
+    #[test]
+    fn category_direct_edit_enter_prefers_exact_match_over_highlighted_suggestion() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-direct-edit-exact-precedence-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut parent = Category::new("Project".to_string());
+        let mut alpha_beta = Category::new("AlphaBeta".to_string());
+        alpha_beta.parent = Some(parent.id);
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        parent.children = vec![alpha_beta.id, alpha.id];
+        store.create_category(&parent).expect("create parent");
+        store.create_category(&alpha_beta).expect("create alpha_beta");
+        store.create_category(&alpha).expect("create alpha");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board view");
+        app.column_index = 1;
+        app.slot_index = 0;
+        app.item_index = 0;
+        app.open_category_direct_edit();
+
+        let state = app
+            .category_direct_edit_state_mut()
+            .expect("direct edit state present");
+        state.rows[0].input.set("Alpha".to_string());
+        state.rows[0].category_id = None;
+        state.suggest_index = 0; // Highlights AlphaBeta first, exact match should still win.
+
+        app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter handled");
+
+        let saved = store.get_item(item.id).expect("load item");
+        assert!(saved.assignments.contains_key(&alpha.id));
+        assert!(!saved.assignments.contains_key(&alpha_beta.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
