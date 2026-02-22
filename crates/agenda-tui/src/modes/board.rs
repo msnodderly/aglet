@@ -378,17 +378,16 @@ impl App {
                 self.mode = Mode::Normal;
                 self.status = "Cancelled".to_string();
                 self.clear_input();
-                Ok(true)
             }
             KeyCode::Enter => {
                 let text = self.input.text().to_string();
-                self.commit_category_direct_edit(&text, agenda)
+                self.commit_category_direct_edit(&text, agenda)?;
             }
             _ => {
                 self.input.handle_key(code, false);
-                Ok(true)
             }
         }
+        Ok(false)
     }
 
     fn commit_category_direct_edit(
@@ -397,13 +396,13 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         let Some(slot) = self.current_slot() else {
-            return Ok(true);
+            return Ok(false);
         };
         let Some(item) = self.selected_item() else {
-            return Ok(true);
+            return Ok(false);
         };
         let Some(view) = self.current_view() else {
-            return Ok(true);
+            return Ok(false);
         };
         let columns = match slot.context {
             SlotContext::Section { section_index }
@@ -413,10 +412,10 @@ impl App {
             _ => None,
         };
         let Some(columns) = columns else {
-            return Ok(true);
+            return Ok(false);
         };
         if self.column_index == 0 || self.column_index > columns.len() {
-            return Ok(true);
+            return Ok(false);
         }
         let column = &columns[self.column_index - 1];
         let child_ids: Vec<CategoryId> = self
@@ -444,7 +443,7 @@ impl App {
             self.mode = Mode::Normal;
             self.status = "Cleared category".to_string();
             self.refresh(agenda.store())?;
-            return Ok(true);
+            return Ok(false);
         }
 
         let item_id = item.id;
@@ -474,7 +473,7 @@ impl App {
                 target_name
             );
         }
-        Ok(true)
+        Ok(false)
     }
 
     pub(crate) fn handle_category_create_confirm_key(
@@ -504,15 +503,14 @@ impl App {
                     self.status = format!("Created and assigned '{}'", name);
                     self.refresh(agenda.store())?;
                 }
-                Ok(true)
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.status = "Cancelled creation".to_string();
-                Ok(true)
             }
-            _ => Ok(true),
+            _ => {}
         }
+        Ok(false)
     }
 
     /// Open an InputPanel for editing the currently selected item.
