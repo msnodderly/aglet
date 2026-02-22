@@ -425,24 +425,43 @@ impl App {
                             let mut cells = vec![
                                 Cell::from(marker_cell),
                                 Cell::from(note_cell),
-                                Cell::from(truncate_board_cell(
-                                    &board_item_label(item),
-                                    item_width,
-                                )),
+                                {
+                                    let content = truncate_board_cell(
+                                        &board_item_label(item),
+                                        item_width,
+                                    );
+                                    let mut cell = Cell::from(content);
+                                    if is_selected && self.column_index == 0 {
+                                        cell = cell.style(focused_cell_style());
+                                    }
+                                    cell
+                                }
                             ];
-                            cells.extend(layout.columns.iter().map(|column| {
-                                let value = match column.kind {
-                                    ColumnKind::When => item
-                                        .when_date
-                                        .map(|dt| dt.to_string())
-                                        .unwrap_or_else(|| "\u{2013}".to_string()),
-                                    ColumnKind::Standard => standard_column_value(
-                                        item,
-                                        &column.child_ids,
-                                        &category_names,
-                                    ),
+                            cells.extend(layout.columns.iter().enumerate().map(|(col_idx, column)| {
+                                let value = if self.mode == Mode::CategoryDirectEdit
+                                    && is_selected
+                                    && self.column_index == col_idx + 1
+                                {
+                                    self.input.text().to_string()
+                                } else {
+                                    match column.kind {
+                                        ColumnKind::When => item
+                                            .when_date
+                                            .map(|dt| dt.to_string())
+                                            .unwrap_or_else(|| "\u{2013}".to_string()),
+                                        ColumnKind::Standard => standard_column_value(
+                                            item,
+                                            &column.child_ids,
+                                            &category_names,
+                                        ),
+                                    }
                                 };
-                                Cell::from(truncate_board_cell(&value, column.width))
+                                let content = truncate_board_cell(&value, column.width);
+                                let mut cell = Cell::from(content);
+                                if is_selected && self.column_index == col_idx + 1 {
+                                    cell = cell.style(focused_cell_style());
+                                }
+                                cell
                             }));
                             if synthetic_categories_width > 0 {
                                 let categories = item_assignment_labels(item, &category_names);
@@ -468,7 +487,6 @@ impl App {
                             Row::new(header_cells)
                                 .style(Style::default().add_modifier(Modifier::BOLD)),
                         )
-                        .row_highlight_style(selected_row_style())
                         .block(
                             Block::default()
                                 .title(title)
