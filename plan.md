@@ -441,6 +441,17 @@ Manual testing scenarios:
 - [x] **5.5** Update status message when popup is open
   - Consider showing hint: "Enter to select, Tab to autocomplete, Esc to close"
 
+- [x] **5.6** Handle edge case: category name exists elsewhere
+  - Check if category name already exists under different parent
+  - Show helpful error message with parent location
+  - Don't prompt to create duplicate
+
+- [x] **5.7** Handle edge case: reserved category names
+  - Block creation of "When", "Entry", "Done" categories
+
+- [x] **5.8** Accept Enter in create confirmation
+  - Enter key acts as 'yes' in CategoryCreateConfirm prompt
+
 ### Phase 6: Testing & Verification
 
 - [x] **6.1** Manual test: Basic filtering ("hig" → "High")
