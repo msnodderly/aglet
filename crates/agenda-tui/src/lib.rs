@@ -175,7 +175,7 @@ enum BucketEditTarget {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
-    InputPanel,  // unified add/edit/name-input (replaces AddInput + ItemEdit)
+    InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     NoteEdit,
     ItemAssignPicker,
     ItemAssignInput,
@@ -191,10 +191,7 @@ enum Mode {
     CategoryDelete,
     CategoryConfig,
     CategoryDirectEdit,
-    CategoryCreateConfirm {
-        name: String,
-        parent_id: CategoryId,
-    },
+    CategoryCreateConfirm { name: String, parent_id: CategoryId },
 }
 
 /// Disambiguates which name-input operation is in flight when Mode::InputPanel
@@ -279,6 +276,11 @@ struct CategoryConfigState {
     focus: CategoryConfigFocus,
 }
 
+#[derive(Clone, Debug)]
+struct CategorySuggestState {
+    suggest_index: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PreviewMode {
     Summary,
@@ -319,6 +321,7 @@ struct App {
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
     category_config_editor: Option<CategoryConfigState>,
+    category_suggest: Option<CategorySuggestState>,
     item_assign_category_index: usize,
     input_panel: Option<input_panel::InputPanel>,
     name_input_context: Option<NameInputContext>,
@@ -361,6 +364,7 @@ impl Default for App {
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
             category_config_editor: None,
+            category_suggest: None,
             item_assign_category_index: 0,
             input_panel: None,
             name_input_context: None,
@@ -417,14 +421,14 @@ mod tests {
             items: Vec::new(),
             context: super::SlotContext::Unmatched,
         });
-        
+
         // Move to slot 0, column 1 (simulate)
         app.slot_index = 0;
         app.column_index = 1;
-        
+
         // Move to slot 1
         app.move_slot_cursor(1);
-        
+
         assert_eq!(app.slot_index, 1);
         assert_eq!(app.column_index, 0);
     }
@@ -691,8 +695,18 @@ mod tests {
         };
         assert!(pos.is_some(), "expected cursor position in popup");
         let (cx, cy) = pos.unwrap();
-        assert!(cx >= popup.x, "cursor x {} should be >= popup.x {}", cx, popup.x);
-        assert!(cy >= popup.y, "cursor y {} should be >= popup.y {}", cy, popup.y);
+        assert!(
+            cx >= popup.x,
+            "cursor x {} should be >= popup.x {}",
+            cx,
+            popup.x
+        );
+        assert!(
+            cy >= popup.y,
+            "cursor y {} should be >= popup.y {}",
+            cy,
+            popup.y
+        );
         assert!(cx < popup.x + popup.width, "cursor x in bounds");
         assert!(cy < popup.y + popup.height, "cursor y in bounds");
     }
@@ -2404,8 +2418,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-section-filter-{suffix}-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-section-filter-{suffix}-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
