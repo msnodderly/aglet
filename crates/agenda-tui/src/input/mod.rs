@@ -11,9 +11,7 @@ impl App {
             Mode::InputPanel => self.handle_input_panel_key(code, agenda),
             Mode::NoteEdit => self.handle_note_edit_key(code, agenda),
             Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),
-            Mode::ItemAssignInput => {
-                self.handle_item_assign_category_input_key(code, agenda)
-            }
+            Mode::ItemAssignInput => self.handle_item_assign_category_input_key(code, agenda),
             Mode::InspectUnassign => self.handle_inspect_unassign_key(code, agenda),
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
@@ -113,5 +111,4 @@ impl App {
             editor.is_actionable = !editor.is_actionable;
         }
     }
-
 }
