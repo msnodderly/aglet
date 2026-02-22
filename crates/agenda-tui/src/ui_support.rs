@@ -363,6 +363,10 @@ pub(super) fn selected_row_style() -> Style {
     Style::default().fg(Color::Black).bg(Color::Cyan)
 }
 
+pub(super) fn selected_board_row_style() -> Style {
+    Style::default().bg(Color::DarkGray)
+}
+
 pub(super) fn focused_cell_style() -> Style {
     Style::default()
         .fg(Color::Black)
