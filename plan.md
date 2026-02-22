@@ -48,6 +48,14 @@ That suggests our primary UX should remain:
 Checkbox-style hierarchy toggling should remain a separate item-level workflow
 (similar to the existing `ItemAssignPicker` / assignment profile behavior).
 
+## Companion Docs
+
+- `decisions.md`: accepted decisions and defaults that this plan assumes during implementation
+- `questions.md`: open questions (and resolved history) to review before starting new phases
+
+When `plan.md` and `decisions.md` differ, treat `decisions.md` as the current
+source of truth for confirmed choices and update `plan.md` accordingly.
+
 ### Why the current `CategoryDirectEdit` is insufficient
 
 The current UI (recently improved) is still single-entry in practice:
@@ -149,10 +157,9 @@ Column behavior depends on the parent category:
 - If parent category is **exclusive**:
   - Editor may still use the same UI
   - But only one entry is allowed
-  - Adding a second entry should either:
-    - replace the existing entry, or
-    - be blocked with a clear status message
-  - Recommendation: **block with message** and keep UX explicit
+  - Adding a second entry should be **blocked immediately** with a clear status message
+  - Do not auto-replace implicitly
+  - Do not defer the error until save/apply
 
 - If parent category is **non-exclusive**:
   - Multiple entries are allowed
@@ -172,6 +179,8 @@ We previously bound empty `Enter` to "clear column value".
 With multi-entry support:
 
 - Empty `Enter` should operate on the **active row**, not auto-select suggestion row
+- Empty `Enter` removes the active row if multiple rows exist
+- Empty `Enter` keeps a single blank row if it is the only row
 - `x` should remove the current row explicitly
 - `S` commits resulting entry list (including zero entries => clear all values in that column)
 
@@ -377,8 +386,8 @@ current single-line behavior as the default.
 - `multi-line` mode (new)
   - item text can wrap across multiple lines
   - category column values render one category per line
-  - cap visible category lines per cell/row (e.g. 8) and summarize overflow
-    (e.g. `+3 more`)
+  - cap visible category lines per cell/row at `8` and summarize overflow
+    (e.g. `+3 more` / `+N more`)
 - configurable at:
   - view level (default for all sections)
   - section level (optional override)
@@ -418,10 +427,10 @@ modernized for macOS/laptop terminal usage.
 5. Confirm insertion
 6. Column is inserted left/right of current column in the relevant scope
 
-#### Scope decision (initial recommendation)
+#### Scope decision (initial release)
 
-Start with **current section only** insertion to reduce ambiguity and avoid
-surprising view-wide structural edits. View-wide insertion can be a follow-up.
+Start with **current section only** insertion (confirmed) to reduce ambiguity and
+avoid surprising view-wide structural edits. View-wide insertion can be a follow-up.
 
 #### Keybindings (modern/laptop-friendly)
 
@@ -1004,7 +1013,7 @@ land small refactors first, then behavior changes.
 - [ ] Add helper to collect currently assigned child categories for the active column
 - [ ] Initialize draft rows from current child assignments (one row per category)
 - [ ] Add one blank row if there are no existing column-child assignments
-- [ ] Define how row order is initialized (alphabetical vs assignment order)
+- [ ] Implement row ordering on open using parent category child order (`parent.children`) with alphabetical fallback
 - [ ] Add row-level helpers:
   - [ ] get active row
   - [ ] get active row mutable
@@ -1014,6 +1023,7 @@ land small refactors first, then behavior changes.
   - [ ] ensure at least one row exists
 - [ ] Add duplicate prevention helper (draft-level check)
 - [ ] Add exclusivity helper (is current column parent exclusive?)
+- [ ] Add helper/guard to block adding a second row immediately for exclusive parents
 - [ ] Add unit tests for draft initialization and row helper invariants
 - [ ] Run `cargo test -p agenda-tui --lib`
 
@@ -1044,12 +1054,13 @@ land small refactors first, then behavior changes.
 - [ ] Implement active-row text editing using row-local `TextBuffer`
 - [ ] Implement `Tab` to copy highlighted suggestion into active row input
 - [ ] Implement `Enter` on active row:
-  - [ ] empty row => clear/remove row (draft behavior)
+  - [ ] empty row => remove row if multiple rows exist; keep one blank row if it is the only row
   - [ ] exact typed match => resolve active row
   - [ ] highlighted suggestion => resolve active row
   - [ ] no match => open inline create confirmation
 - [ ] Ensure empty `Enter` never auto-applies the first suggestion
 - [ ] Add status/help copy for each substate (normal edit / create confirm / exclusive restriction)
+- [ ] Add status/help copy for empty-row `Enter` behavior (remove-row vs keep-single-blank-row)
 - [ ] Add tests for row add/remove/navigation and `Enter` semantics where feasible
 - [ ] Run `cargo test -p agenda-tui --lib`
 
@@ -1083,7 +1094,7 @@ land small refactors first, then behavior changes.
 - [ ] Preserve non-column assignments
 - [ ] Handle duplicates gracefully (ignore duplicates in draft or collapse on apply)
 - [ ] Handle exclusive-parent columns:
-  - [ ] block multiple resolved rows before apply
+  - [ ] revalidate exclusivity at apply even though UI blocks second-row add earlier
   - [ ] show clear status error
 - [ ] Ensure selection and board focus restore correctly after apply
 - [ ] Ensure draft state clears on apply and on cancel
@@ -1128,6 +1139,7 @@ land small refactors first, then behavior changes.
   - [ ] single-line comma-joined
   - [ ] multi-line one-per-line
   - [ ] overflow summary line (`+N more`)
+- [ ] Add constants for multi-line defaults (category-line cap = `8`, overflow label formatting)
 - [ ] Add helper(s) for wrapped item text in multi-line mode
 - [ ] Add row-height calculation for board rows in multi-line mode
 - [ ] Update board render path to support variable-height rows
@@ -1136,6 +1148,7 @@ land small refactors first, then behavior changes.
 - [ ] Revisit scrollbar/offset calculations if row heights vary
 - [ ] Add config-aware rendering branch:
   - [ ] effective mode = section override or view default
+- [ ] Ensure item text wraps to full available item-column width in multi-line mode
 - [ ] Add tests for formatting helpers
 - [ ] Manual test with category-heavy items and long item text
 - [ ] Verify single-line mode remains byte-for-byte/visually unchanged where possible
@@ -1167,6 +1180,7 @@ land small refactors first, then behavior changes.
   - [ ] direction (`Left` / `Right`)
 - [ ] Add `Ctrl-L` / `Ctrl-R` commands in board mode (post-KeyEvent refactor)
 - [ ] Add fallback commands if modifier support is deferred (document temporary mapping)
+- [ ] Enforce/implement initial scope as current-section-only insertion (confirmed)
 - [ ] Open an add-column picker modal using shared typeahead UI patterns
 - [ ] Scope suggestions to all categories valid for column headings (clarify filtering)
 - [ ] Support exact-match select + inline create-confirm in add-column workflow
