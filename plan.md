@@ -1005,44 +1005,44 @@ land small refactors first, then behavior changes.
 
 ### Phase 1: Multi-Entry Draft Initialization + Data Helpers
 
-- [ ] Add helper to collect current column metadata:
-  - [ ] parent category id
-  - [ ] parent category name
-  - [ ] current section/column anchor info
-  - [ ] selected item id + label
-- [ ] Add helper to collect currently assigned child categories for the active column
-- [ ] Initialize draft rows from current child assignments (one row per category)
-- [ ] Add one blank row if there are no existing column-child assignments
-- [ ] Implement row ordering on open using parent category child order (`parent.children`) with alphabetical fallback
-- [ ] Add row-level helpers:
-  - [ ] get active row
-  - [ ] get active row mutable
-  - [ ] clamp active row index
-  - [ ] add blank row
-  - [ ] remove row by index
-  - [ ] ensure at least one row exists
-- [ ] Add duplicate prevention helper (draft-level check)
-- [ ] Add exclusivity helper (is current column parent exclusive?)
-- [ ] Add helper/guard to block adding a second row immediately for exclusive parents
-- [ ] Add unit tests for draft initialization and row helper invariants
-- [ ] Run `cargo test -p agenda-tui --lib`
+- [x] Add helper to collect current column metadata:
+  - [x] parent category id
+  - [x] parent category name
+  - [x] current section/column anchor info
+  - [x] selected item id + label
+- [x] Add helper to collect currently assigned child categories for the active column
+- [x] Initialize draft rows from current child assignments (one row per category)
+- [x] Add one blank row if there are no existing column-child assignments
+- [x] Implement row ordering on open using parent category child order (`parent.children`) with alphabetical fallback
+- [x] Add row-level helpers:
+  - [x] get active row
+  - [x] get active row mutable
+  - [x] clamp active row index
+  - [x] add blank row
+  - [x] remove row by index
+  - [x] ensure at least one row exists
+- [x] Add duplicate prevention helper (draft-level check)
+- [x] Add exclusivity helper (is current column parent exclusive?)
+- [x] Add helper/guard to block adding a second row immediately for exclusive parents
+- [x] Add unit tests for draft initialization and row helper invariants
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 2: Suggestions + Matching for Active Row
 
-- [ ] Refactor suggestions to read from active row input instead of shared `self.input`
-- [ ] Preserve existing matching scope: current column's child categories only
-- [ ] Preserve "full list on empty input" behavior
-- [ ] Preserve `When` exclusion from suggestions
-- [ ] Ensure exact typed match helper reads from active row input
-- [ ] Ensure exact typed match takes precedence over highlighted suggestion on `Enter`
-- [ ] Track suggestion cursor per editor state (not global ad hoc state)
-- [ ] Decide whether suggestion cursor is global-per-editor or per-row
-- [ ] Implement clamped/wrapping suggestion navigation helpers
-- [ ] Add tests for:
-  - [ ] full suggestions on empty
-  - [ ] exact-match precedence
-  - [ ] active-row suggestion updates when switching rows
-- [ ] Run `cargo test -p agenda-tui --lib`
+- [x] Refactor suggestions to read from active row input instead of shared `self.input`
+- [x] Preserve existing matching scope: current column's child categories only
+- [x] Preserve "full list on empty input" behavior
+- [x] Preserve `When` exclusion from suggestions
+- [x] Ensure exact typed match helper reads from active row input
+- [x] Ensure exact typed match takes precedence over highlighted suggestion on `Enter`
+- [x] Track suggestion cursor per editor state (not global ad hoc state)
+- [x] Decide whether suggestion cursor is global-per-editor or per-row
+- [x] Implement clamped/wrapping suggestion navigation helpers
+- [x] Add tests for:
+  - [x] full suggestions on empty
+  - [x] exact-match precedence
+  - [x] active-row suggestion updates when switching rows
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 3: Multi-Entry Keyboard Model (Draft Editing, Not Apply Yet)
 

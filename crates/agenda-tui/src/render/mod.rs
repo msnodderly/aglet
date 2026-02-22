@@ -162,7 +162,7 @@ impl App {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("Filter> ", Style::default().fg(Color::Yellow)),
-                Span::raw(self.input.text()),
+                Span::raw(self.active_category_direct_edit_input_text().unwrap_or("")),
             ])),
             chunks[1],
         );
@@ -193,9 +193,12 @@ impl App {
             return;
         }
 
-        let help_text = if self.input.text().trim().is_empty() {
+        let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
+        let matches = self.get_current_suggest_matches();
+        let has_matches = !matches.is_empty();
+        let help_text = if active_input.trim().is_empty() {
             "Start typing to narrow. Enter clears the current value. Esc cancels."
-        } else if self.category_suggest.is_some() {
+        } else if has_matches {
             "Up/Down move  Tab copy name  Enter apply category  Esc cancel"
         } else {
             "No category found. Enter creates a new child category. Esc cancel"
@@ -205,9 +208,8 @@ impl App {
             chunks[2],
         );
 
-        let matches = self.get_current_suggest_matches();
         if matches.is_empty() {
-            let empty_msg = if self.input.text().trim().is_empty() {
+            let empty_msg = if active_input.trim().is_empty() {
                 "(no suggestions yet)"
             } else {
                 "(no matches)"
@@ -224,8 +226,7 @@ impl App {
         }
 
         let selected_idx = self
-            .category_suggest
-            .as_ref()
+            .category_direct_edit_state()
             .map(|s| s.suggest_index.min(matches.len() - 1))
             .unwrap_or(0);
 
@@ -266,7 +267,11 @@ impl App {
         let inner_y = area.y.saturating_add(1);
         let filter_row_y = inner_y.saturating_add(1);
         let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
-        let cursor_chars = self.input.cursor().min(u16::MAX as usize) as u16;
+        let cursor_chars = self
+            .active_category_direct_edit_row()
+            .map(|row| row.input.cursor())
+            .unwrap_or_else(|| self.input.cursor())
+            .min(u16::MAX as usize) as u16;
         let max_x = area.x.saturating_add(area.width.saturating_sub(2));
         let x = inner_x
             .saturating_add(prefix_len)
