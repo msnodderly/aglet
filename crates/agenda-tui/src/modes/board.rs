@@ -625,15 +625,39 @@ impl App {
             self.mode = Mode::Normal;
             self.status = format!("Assigned '{}'", target_name);
             self.refresh(agenda.store())?;
-        } else {
-            self.mode = Mode::CategoryCreateConfirm {
-                name: target_name.to_string(),
-                parent_id: column.heading,
-            };
+        } else if is_reserved_category_name(target_name) {
+            self.mode = Mode::Normal;
             self.status = format!(
-                "Category '{}' does not exist. Create it? (y/n)",
+                "Cannot create reserved category '{}'. Use a different name.",
                 target_name
             );
+        } else {
+            // Check if category already exists elsewhere in the system
+            let existing_elsewhere = self
+                .categories
+                .iter()
+                .find(|c| c.name.eq_ignore_ascii_case(target_name));
+            if let Some(existing_cat) = existing_elsewhere {
+                let parent_name = existing_cat
+                    .parent
+                    .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("(root)");
+                self.mode = Mode::Normal;
+                self.status = format!(
+                    "Category '{}' already exists under '{}'. Use exact name to assign.",
+                    target_name, parent_name
+                );
+            } else {
+                self.mode = Mode::CategoryCreateConfirm {
+                    name: target_name.to_string(),
+                    parent_id: column.heading,
+                };
+                self.status = format!(
+                    "Category '{}' does not exist. Create it? (y/n/Enter)",
+                    target_name
+                );
+            }
         }
         Ok(false)
     }
@@ -644,7 +668,7 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 if let Mode::CategoryCreateConfirm { name, parent_id } = self.mode.clone() {
                     let mut category = Category::new(name.clone());
                     category.parent = Some(parent_id);
