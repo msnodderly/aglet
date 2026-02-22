@@ -1,41 +1,8 @@
 use crate::*;
 
 impl App {
-    /// Build criteria rows from a view's criteria, sorted include-then-exclude alphabetically.
-    fn build_view_edit_criteria_rows(&self, view: &View) -> Vec<ViewCriteriaRow> {
-        let category_names = category_name_map(&self.categories);
-        let mut rows: Vec<ViewCriteriaRow> = view
-            .criteria
-            .include
-            .iter()
-            .map(|&id| ViewCriteriaRow {
-                sign: ViewCriteriaSign::Include,
-                category_id: id,
-            })
-            .chain(view.criteria.exclude.iter().map(|&id| ViewCriteriaRow {
-                sign: ViewCriteriaSign::Exclude,
-                category_id: id,
-            }))
-            .collect();
-        rows.sort_by(|a, b| {
-            let a_name = category_names
-                .get(&a.category_id)
-                .cloned()
-                .unwrap_or_else(|| a.category_id.to_string());
-            let b_name = category_names
-                .get(&b.category_id)
-                .cloned()
-                .unwrap_or_else(|| b.category_id.to_string());
-            let a_sign = matches!(a.sign, ViewCriteriaSign::Exclude) as u8;
-            let b_sign = matches!(b.sign, ViewCriteriaSign::Exclude) as u8;
-            (a_sign, a_name.to_ascii_lowercase()).cmp(&(b_sign, b_name.to_ascii_lowercase()))
-        });
-        rows
-    }
-
     /// Open the unified ViewEdit screen for `view`.
     pub(crate) fn open_view_edit(&mut self, view: View) {
-        let criteria_rows = self.build_view_edit_criteria_rows(&view);
         let preview_count = self.preview_count_for_query(&view.criteria);
         self.view_edit_state = Some(ViewEditState {
             draft: view,
@@ -48,7 +15,6 @@ impl App {
             inline_buf: text_buffer::TextBuffer::empty(),
             picker_index: 0,
             preview_count,
-            criteria_rows,
         });
         self.mode = Mode::ViewEdit;
         self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
@@ -78,31 +44,21 @@ impl App {
         section_expanded: usize,
         cat_id: CategoryId,
     ) {
-        let mut needs_criteria_rebuild = false;
         if let Some(state) = &mut self.view_edit_state {
             match target {
-                CategoryEditTarget::ViewInclude => {
-                    if !state.draft.criteria.include.remove(&cat_id) {
-                        state.draft.criteria.include.insert(cat_id);
-                        state.draft.criteria.exclude.remove(&cat_id);
-                        needs_criteria_rebuild = true;
+                CategoryEditTarget::ViewCriteria => {
+                    if state.draft.criteria.mode_for(cat_id).is_some() {
+                        state.draft.criteria.remove_criterion(cat_id);
                     } else {
-                        needs_criteria_rebuild = true;
+                        state.draft.criteria.set_criterion(CriterionMode::And, cat_id);
                     }
                 }
-                CategoryEditTarget::SectionCriteriaInclude => {
+                CategoryEditTarget::SectionCriteria => {
                     if let Some(section) = state.draft.sections.get_mut(section_expanded) {
-                        if !section.criteria.include.remove(&cat_id) {
-                            section.criteria.include.insert(cat_id);
-                            section.criteria.exclude.remove(&cat_id);
-                        }
-                    }
-                }
-                CategoryEditTarget::SectionCriteriaExclude => {
-                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
-                        if !section.criteria.exclude.remove(&cat_id) {
-                            section.criteria.exclude.insert(cat_id);
-                            section.criteria.include.remove(&cat_id);
+                        if section.criteria.mode_for(cat_id).is_some() {
+                            section.criteria.remove_criterion(cat_id);
+                        } else {
+                            section.criteria.set_criterion(CriterionMode::And, cat_id);
                         }
                     }
                 }
@@ -134,16 +90,6 @@ impl App {
                             section.on_remove_unassign.insert(cat_id);
                         }
                     }
-                }
-            }
-        }
-
-        if needs_criteria_rebuild {
-            if let Some(state) = &self.view_edit_state {
-                let draft = state.draft.clone();
-                let rows = self.build_view_edit_criteria_rows(&draft);
-                if let Some(state) = &mut self.view_edit_state {
-                    state.criteria_rows = rows;
                 }
             }
         }
@@ -388,7 +334,7 @@ impl App {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
-        let len = state.criteria_rows.len();
+        let len = state.draft.criteria.criteria.len();
         let idx = state.criteria_index;
 
         match code {
@@ -406,7 +352,7 @@ impl App {
                 let first = first_non_reserved_category_index(&self.category_rows);
                 if let Some(state) = &mut self.view_edit_state {
                     state.overlay = Some(ViewEditOverlay::CategoryPicker {
-                        target: CategoryEditTarget::ViewInclude,
+                        target: CategoryEditTarget::ViewCriteria,
                     });
                     state.picker_index = first;
                 }
@@ -414,17 +360,9 @@ impl App {
             }
             KeyCode::Char('x') => {
                 if let Some(state) = &mut self.view_edit_state {
-                    if idx < state.criteria_rows.len() {
-                        let removed = state.criteria_rows.remove(idx);
-                        match removed.sign {
-                            ViewCriteriaSign::Include => {
-                                state.draft.criteria.include.remove(&removed.category_id);
-                            }
-                            ViewCriteriaSign::Exclude => {
-                                state.draft.criteria.exclude.remove(&removed.category_id);
-                            }
-                        }
-                        let new_len = state.criteria_rows.len();
+                    if idx < state.draft.criteria.criteria.len() {
+                        state.draft.criteria.criteria.remove(idx);
+                        let new_len = state.draft.criteria.criteria.len();
                         if state.criteria_index >= new_len && new_len > 0 {
                             state.criteria_index = new_len - 1;
                         }
@@ -433,23 +371,16 @@ impl App {
                 }
             }
             KeyCode::Char(' ') => {
-                // Toggle include/exclude on selected row
+                // Cycle mode: And → Not → Or → And
                 if let Some(state) = &mut self.view_edit_state {
-                    if let Some(row) = state.criteria_rows.get_mut(idx) {
-                        let id = row.category_id;
-                        match row.sign {
-                            ViewCriteriaSign::Include => {
-                                row.sign = ViewCriteriaSign::Exclude;
-                                state.draft.criteria.include.remove(&id);
-                                state.draft.criteria.exclude.insert(id);
-                            }
-                            ViewCriteriaSign::Exclude => {
-                                row.sign = ViewCriteriaSign::Include;
-                                state.draft.criteria.exclude.remove(&id);
-                                state.draft.criteria.include.insert(id);
-                            }
-                        }
+                    if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx) {
+                        criterion.mode = match criterion.mode {
+                            CriterionMode::And => CriterionMode::Not,
+                            CriterionMode::Not => CriterionMode::Or,
+                            CriterionMode::Or => CriterionMode::And,
+                        };
                     }
+                    self.refresh_view_edit_preview();
                 }
             }
             KeyCode::Char(']') => {
@@ -563,24 +494,12 @@ impl App {
                 self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
             }
             // Expanded section detail keys
-            KeyCode::Char('+') => {
+            KeyCode::Char('f') => {
                 if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
-                            target: CategoryEditTarget::SectionCriteriaInclude,
-                        });
-                        state.section_expanded = Some(idx);
-                        state.picker_index = first;
-                    }
-                }
-            }
-            KeyCode::Char('-') => {
-                if idx < len {
-                    let first = first_non_reserved_category_index(&self.category_rows);
-                    if let Some(state) = &mut self.view_edit_state {
-                        state.overlay = Some(ViewEditOverlay::CategoryPicker {
-                            target: CategoryEditTarget::SectionCriteriaExclude,
+                            target: CategoryEditTarget::SectionCriteria,
                         });
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
