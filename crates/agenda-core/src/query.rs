@@ -225,16 +225,23 @@ fn show_children_parent_category_id(section: &Section) -> Option<CategoryId> {
         return None;
     }
 
-    if !section.criteria.exclude.is_empty()
-        || !section.criteria.virtual_include.is_empty()
+    if !section.criteria.virtual_include.is_empty()
         || !section.criteria.virtual_exclude.is_empty()
         || section.criteria.text_search.is_some()
-        || section.criteria.include.len() != 1
     {
         return None;
     }
 
-    section.criteria.include.iter().next().copied()
+    // Exactly 1 And criterion, 0 Not, 0 Or
+    let and_ids: Vec<CategoryId> = section.criteria.and_category_ids().collect();
+    let not_count = section.criteria.not_category_ids().count();
+    let or_count = section.criteria.or_category_ids().count();
+
+    if and_ids.len() != 1 || not_count != 0 || or_count != 0 {
+        return None;
+    }
+
+    Some(and_ids[0])
 }
 
 fn item_matches_query(
@@ -243,19 +250,29 @@ fn item_matches_query(
     reference_date: NaiveDate,
     normalized_search: Option<&str>,
 ) -> bool {
-    let include_matches = query
-        .include
-        .iter()
-        .all(|category_id| item.assignments.contains_key(category_id));
-    if !include_matches {
+    // And: ALL And-mode categories must be present
+    let and_matches = query
+        .and_category_ids()
+        .all(|category_id| item.assignments.contains_key(&category_id));
+    if !and_matches {
         return false;
     }
 
-    let exclude_matches = query
-        .exclude
-        .iter()
-        .all(|category_id| !item.assignments.contains_key(category_id));
-    if !exclude_matches {
+    // Not: ALL Not-mode categories must be absent
+    let not_matches = query
+        .not_category_ids()
+        .all(|category_id| !item.assignments.contains_key(&category_id));
+    if !not_matches {
+        return false;
+    }
+
+    // Or: If any Or criteria exist, at least ONE must be present
+    let or_ids: Vec<CategoryId> = query.or_category_ids().collect();
+    if !or_ids.is_empty()
+        && !or_ids
+            .iter()
+            .any(|category_id| item.assignments.contains_key(category_id))
+    {
         return false;
     }
 
@@ -318,7 +335,8 @@ mod tests {
 
     use super::{evaluate_query, resolve_view, resolve_when_bucket};
     use crate::model::{
-        Assignment, AssignmentSource, Category, CategoryId, Item, Query, Section, View, WhenBucket,
+        Assignment, AssignmentSource, Category, CategoryId, CriterionMode, Item, Query, Section,
+        View, WhenBucket,
     };
 
     fn day(year: i32, month: u32, date: u32) -> NaiveDate {
@@ -366,7 +384,7 @@ mod tests {
 
     fn include_query(category_id: CategoryId) -> Query {
         let mut query = Query::default();
-        query.include.insert(category_id);
+        query.set_criterion(CriterionMode::And, category_id);
         query
     }
 
@@ -435,7 +453,7 @@ mod tests {
         ];
 
         let mut query = Query::default();
-        query.include.insert(category_a);
+        query.set_criterion(CriterionMode::And, category_a);
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id]);
@@ -453,7 +471,8 @@ mod tests {
         ];
 
         let mut query = Query::default();
-        query.include.extend([category_a, category_b]);
+        query.set_criterion(CriterionMode::And, category_a);
+        query.set_criterion(CriterionMode::And, category_b);
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[0].id]);
@@ -469,7 +488,7 @@ mod tests {
         ];
 
         let mut query = Query::default();
-        query.exclude.insert(category_a);
+        query.set_criterion(CriterionMode::Not, category_a);
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[1].id]);
@@ -487,7 +506,8 @@ mod tests {
         ];
 
         let mut query = Query::default();
-        query.exclude.extend([category_a, category_b]);
+        query.set_criterion(CriterionMode::Not, category_a);
+        query.set_criterion(CriterionMode::Not, category_b);
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[2].id]);
@@ -504,8 +524,8 @@ mod tests {
         ];
 
         let mut query = Query::default();
-        query.include.insert(category_a);
-        query.exclude.insert(category_b);
+        query.set_criterion(CriterionMode::And, category_a);
+        query.set_criterion(CriterionMode::Not, category_b);
 
         let result = evaluate_query(&query, &items, reference);
         assert_eq!(ids(&result), vec![items[1].id]);
@@ -623,8 +643,8 @@ mod tests {
             text_search: Some("meeting".to_string()),
             ..Query::default()
         };
-        query.include.insert(category_a);
-        query.exclude.insert(category_b);
+        query.set_criterion(CriterionMode::And, category_a);
+        query.set_criterion(CriterionMode::Not, category_b);
         query.virtual_include.insert(WhenBucket::Today);
 
         let result = evaluate_query(&query, &items, reference);
@@ -795,8 +815,9 @@ mod tests {
         ];
 
         let mut criteria = Query::default();
-        criteria.include.extend([work, miguel]);
-        criteria.exclude.insert(alice);
+        criteria.set_criterion(CriterionMode::And, work);
+        criteria.set_criterion(CriterionMode::And, miguel);
+        criteria.set_criterion(CriterionMode::Not, alice);
         let view = view(criteria, vec![], true, "Unassigned");
 
         let result = resolve_view(&view, &items, &[], reference);
@@ -839,8 +860,9 @@ mod tests {
         ];
 
         let mut criteria = Query::default();
-        criteria.include.extend([project_atlas, high]);
-        criteria.exclude.insert(sarah);
+        criteria.set_criterion(CriterionMode::And, project_atlas);
+        criteria.set_criterion(CriterionMode::And, high);
+        criteria.set_criterion(CriterionMode::Not, sarah);
         let view = view(criteria, vec![], true, "Unassigned");
 
         let result = resolve_view(&view, &items, &[], reference);
@@ -876,8 +898,8 @@ mod tests {
         ];
 
         let mut high_without_priority = Query::default();
-        high_without_priority.include.insert(high);
-        high_without_priority.exclude.insert(priority);
+        high_without_priority.set_criterion(CriterionMode::And, high);
+        high_without_priority.set_criterion(CriterionMode::Not, priority);
         let high_without_priority_view = view(high_without_priority, vec![], true, "Unassigned");
         let high_without_priority_result =
             resolve_view(&high_without_priority_view, &items, &[], reference);
@@ -890,8 +912,8 @@ mod tests {
             .is_empty());
 
         let mut cicada_without_priya = Query::default();
-        cicada_without_priya.include.insert(project_cicada);
-        cicada_without_priya.exclude.insert(priya);
+        cicada_without_priya.set_criterion(CriterionMode::And, project_cicada);
+        cicada_without_priya.set_criterion(CriterionMode::Not, priya);
         let cicada_without_priya_view = view(cicada_without_priya, vec![], true, "Unassigned");
         let cicada_without_priya_result =
             resolve_view(&cicada_without_priya_view, &items, &[], reference);
@@ -1209,7 +1231,8 @@ mod tests {
         );
 
         let mut complex_query = Query::default();
-        complex_query.include.extend([parent, child_alpha]);
+        complex_query.set_criterion(CriterionMode::And, parent);
+        complex_query.set_criterion(CriterionMode::And, child_alpha);
         let mut complex = section("Complex", complex_query);
         complex.show_children = true;
         let complex_view = view(Query::default(), vec![complex], true, "View Unmatched");

@@ -191,21 +191,22 @@ impl App {
                     && self.view_create_exclude_selection.is_empty()
                 {
                     if let Some(row) = self.category_rows.get(self.view_category_index) {
-                        view.criteria.include.insert(row.id);
+                        view.criteria
+                            .set_criterion(CriterionMode::And, row.id);
                     }
                 } else {
-                    view.criteria
-                        .include
-                        .extend(self.view_create_include_selection.iter().copied());
-                    view.criteria
-                        .exclude
-                        .extend(self.view_create_exclude_selection.iter().copied());
+                    for &id in &self.view_create_include_selection {
+                        view.criteria.set_criterion(CriterionMode::And, id);
+                    }
+                    for &id in &self.view_create_exclude_selection {
+                        view.criteria.set_criterion(CriterionMode::Not, id);
+                    }
                 }
 
                 match agenda.store().create_view(&view) {
                     Ok(()) => {
-                        let include_count = view.criteria.include.len();
-                        let exclude_count = view.criteria.exclude.len();
+                        let include_count = view.criteria.and_category_ids().count();
+                        let exclude_count = view.criteria.not_category_ids().count();
                         let view_name = view.name.clone();
                         self.refresh(agenda.store())?;
                         self.view_pending_name = None;

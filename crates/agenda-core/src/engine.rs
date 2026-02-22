@@ -231,13 +231,15 @@ fn evaluate_category_match(
 
 fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignment>) -> bool {
     criteria
-        .include
-        .iter()
-        .all(|category_id| assignments.contains_key(category_id))
+        .and_category_ids()
+        .all(|category_id| assignments.contains_key(&category_id))
         && criteria
-            .exclude
-            .iter()
-            .all(|category_id| !assignments.contains_key(category_id))
+            .not_category_ids()
+            .all(|category_id| !assignments.contains_key(&category_id))
+        && {
+            let or_ids: Vec<_> = criteria.or_category_ids().collect();
+            or_ids.is_empty() || or_ids.iter().any(|id| assignments.contains_key(id))
+        }
 }
 
 fn fire_actions(
@@ -488,7 +490,8 @@ mod tests {
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
-        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, Item, ItemId, Query,
+        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, CriterionMode, Item,
+        ItemId, Query,
     };
     use crate::store::Store;
 
@@ -531,8 +534,12 @@ mod tests {
     ) -> Category {
         let mut category = category(name, false);
         let mut criteria = Query::default();
-        criteria.include.extend(include.iter().copied());
-        criteria.exclude.extend(exclude.iter().copied());
+        for &id in include {
+            criteria.set_criterion(CriterionMode::And, id);
+        }
+        for &id in exclude {
+            criteria.set_criterion(CriterionMode::Not, id);
+        }
         category.conditions.push(Condition::Profile {
             criteria: Box::new(criteria),
         });
@@ -1172,7 +1179,7 @@ mod tests {
         for index in 0..10 {
             let mut stage = store.get_category(stages[index].id).unwrap();
             let mut criteria = Query::default();
-            criteria.include.insert(stages[index + 1].id);
+            criteria.set_criterion(CriterionMode::And, stages[index + 1].id);
             stage.conditions = vec![Condition::Profile {
                 criteria: Box::new(criteria),
             }];
