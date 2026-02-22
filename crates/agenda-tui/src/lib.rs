@@ -172,7 +172,7 @@ enum BucketEditTarget {
     ViewVirtualExclude,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
     InputPanel,  // unified add/edit/name-input (replaces AddInput + ItemEdit)
@@ -190,6 +190,11 @@ enum Mode {
     CategoryReparent,
     CategoryDelete,
     CategoryConfig,
+    CategoryDirectEdit,
+    CategoryCreateConfirm {
+        name: String,
+        parent_id: CategoryId,
+    },
 }
 
 /// Disambiguates which name-input operation is in flight when Mode::InputPanel
@@ -336,6 +341,7 @@ struct App {
     slots: Vec<Slot>,
     slot_index: usize,
     item_index: usize,
+    column_index: usize,
 }
 
 impl Default for App {
@@ -377,6 +383,7 @@ impl Default for App {
             slots: Vec::new(),
             slot_index: 0,
             item_index: 0,
+            column_index: 0,
         }
     }
 }
@@ -407,6 +414,32 @@ mod tests {
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
         rows.iter().map(|row| (row.id, row.depth)).collect()
+    }
+
+    #[test]
+    fn move_slot_cursor_resets_column_index() {
+        let mut app = App::default();
+        // Setup 2 slots
+        app.slots.push(super::Slot {
+            title: "A".to_string(),
+            items: Vec::new(),
+            context: super::SlotContext::Unmatched,
+        });
+        app.slots.push(super::Slot {
+            title: "B".to_string(),
+            items: Vec::new(),
+            context: super::SlotContext::Unmatched,
+        });
+        
+        // Move to slot 0, column 1 (simulate)
+        app.slot_index = 0;
+        app.column_index = 1;
+        
+        // Move to slot 1
+        app.move_slot_cursor(1);
+        
+        assert_eq!(app.slot_index, 1);
+        assert_eq!(app.column_index, 0);
     }
 
     #[test]
@@ -587,7 +620,7 @@ mod tests {
 
         for (mode, prefix) in cases {
             let app = App {
-                mode,
+                mode: mode.clone(),
                 input: text_buffer::TextBuffer::new(input.to_string()),
                 ..App::default()
             };
@@ -613,7 +646,7 @@ mod tests {
             Mode::CategoryManager,
         ] {
             let app = App {
-                mode,
+                mode: mode.clone(),
                 input: text_buffer::TextBuffer::new("abc".to_string()),
                 ..App::default()
             };

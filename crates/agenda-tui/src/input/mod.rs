@@ -25,6 +25,10 @@ impl App {
             Mode::CategoryReparent => self.handle_category_reparent_key(code, agenda),
             Mode::CategoryDelete => self.handle_category_delete_key(code, agenda),
             Mode::CategoryConfig => self.handle_category_config_editor_key(code, agenda),
+            Mode::CategoryDirectEdit => self.handle_category_direct_edit_key(code, agenda),
+            Mode::CategoryCreateConfirm { .. } => {
+                self.handle_category_create_confirm_key(code, agenda)
+            }
         }
     }
 
