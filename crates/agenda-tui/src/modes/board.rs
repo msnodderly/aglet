@@ -184,11 +184,13 @@ impl App {
         let text = self.input.text();
         if text.is_empty() {
             self.category_suggest = None;
+            self.status = "Edit category: Enter to save, Esc to cancel".to_string();
             return;
         }
         let matches = self.get_current_suggest_matches();
         if matches.is_empty() {
             self.category_suggest = None;
+            self.status = "Edit category: Enter to save, Esc to cancel".to_string();
         } else {
             let new_index = match &self.category_suggest {
                 Some(state) => state.suggest_index.min(matches.len() - 1),
@@ -197,6 +199,7 @@ impl App {
             self.category_suggest = Some(CategorySuggestState {
                 suggest_index: new_index,
             });
+            self.status = "↑↓ navigate, Tab autocomplete, Enter select, Esc close".to_string();
         }
     }
 
@@ -229,6 +232,7 @@ impl App {
         };
         self.input.set(cat.name.clone());
         self.category_suggest = None;
+        self.status = "Edit category: Enter to save, Esc to cancel".to_string();
     }
 
     fn assign_selected_suggestion(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
@@ -517,6 +521,7 @@ impl App {
                 }
                 KeyCode::Esc => {
                     self.category_suggest = None;
+                    self.status = "Edit category: Enter to save, Esc to cancel".to_string();
                     return Ok(false);
                 }
                 _ => {}
