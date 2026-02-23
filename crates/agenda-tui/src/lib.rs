@@ -1236,6 +1236,126 @@ mod tests {
     }
 
     #[test]
+    fn category_direct_edit_input_focus_plus_is_blocked_for_exclusive_parent() {
+        let mut parent = Category::new("Priority".to_string());
+        parent.is_exclusive = true;
+        let mut child = Category::new("High".to_string());
+        child.parent = Some(parent.id);
+        parent.children = vec![child.id];
+
+        let item = Item::new("Demo".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent, child],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+        app.open_category_direct_edit();
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        app.handle_category_direct_edit_key(KeyCode::Char('+'), &agenda)
+            .expect("plus handled");
+
+        let state = app.category_direct_edit_state().expect("direct edit state");
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.focus, CategoryDirectEditFocus::Input);
+        assert!(app.status.contains("exclusive"));
+    }
+
+    #[test]
+    fn category_direct_edit_entries_focus_n_and_x_still_add_and_remove_rows() {
+        let parent = Category::new("Tags".to_string());
+        let mut child = Category::new("Alpha".to_string());
+        child.parent = Some(parent.id);
+        let item = Item::new("Demo".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent, child],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+        app.open_category_direct_edit();
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to suggestions");
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to entries");
+        assert_eq!(
+            app.category_direct_edit_state().expect("state").focus,
+            CategoryDirectEditFocus::Entries
+        );
+
+        app.handle_category_direct_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("entries n adds row");
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.rows.len(), 2);
+        assert_eq!(state.focus, CategoryDirectEditFocus::Input);
+
+        app.handle_category_direct_edit_key(KeyCode::BackTab, &agenda)
+            .expect("backtab to entries");
+        app.handle_category_direct_edit_key(KeyCode::Char('x'), &agenda)
+            .expect("entries x removes row");
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.rows.len(), 1);
+        assert!(app.status.contains("Removed row"));
+    }
+
+    #[test]
     fn category_direct_edit_tab_cycles_focus_instead_of_autocomplete_from_suggestions() {
         let parent = Category::new("Tags".to_string());
         let mut alpha = Category::new("Alpha".to_string());
