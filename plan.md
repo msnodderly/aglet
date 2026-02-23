@@ -1063,7 +1063,7 @@ land small refactors first, then behavior changes.
 - [x] Implement `x` to remove active row (with safe behavior for last row)
 - [x] Implement active-row text editing using row-local `TextBuffer`
 - [x] Implement `Tab` to copy highlighted suggestion into active row input
-- [ ] Implement `Enter` on active row:
+- [x] Implement `Enter` on active row:
   - [x] empty row => remove row if multiple rows exist; keep one blank row if it is the only row
   - [x] exact typed match => resolve active row
   - [x] highlighted suggestion => resolve active row
