@@ -6,9 +6,11 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        self.ensure_category_manager_session();
         match code {
             KeyCode::Esc | KeyCode::F(9) => {
                 self.mode = Mode::Normal;
+                self.close_category_manager_session();
                 self.clear_input();
                 self.category_create_parent = None;
                 self.category_reparent_options.clear();

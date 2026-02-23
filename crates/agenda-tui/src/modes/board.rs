@@ -1983,6 +1983,7 @@ impl App {
             }
             KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
+                self.open_category_manager_session();
                 self.category_config_editor = None;
                 self.status =
                     "Category manager: Enter config popup, e/i/a quick toggles (exclusive/match-name/actionable), n/N create, r rename, p reparent, x delete".to_string();

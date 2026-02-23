@@ -45,9 +45,19 @@ impl App {
         self.views = store.list_views().map_err(|e| e.to_string())?;
         self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
         self.category_rows = build_category_rows(&self.categories);
+        if let Some(category_id) = self
+            .category_manager
+            .as_ref()
+            .and_then(|state| state.selected_category_id)
+        {
+            if let Some(index) = self.category_rows.iter().position(|row| row.id == category_id) {
+                self.category_index = index;
+            }
+        }
         self.category_index = self
             .category_index
             .min(self.category_rows.len().saturating_sub(1));
+        self.sync_category_manager_state_from_selection();
         let items = store.list_items().map_err(|e| e.to_string())?;
         self.all_items = items.clone();
 
@@ -473,6 +483,38 @@ impl App {
             .position(|row| row.id == category_id)
         {
             self.category_index = index;
+        }
+        self.sync_category_manager_state_from_selection();
+    }
+
+    pub(crate) fn open_category_manager_session(&mut self) {
+        let selected_category_id = self.selected_category_id();
+        self.category_manager = Some(CategoryManagerState {
+            focus: CategoryManagerFocus::Tree,
+            filter: text_buffer::TextBuffer::empty(),
+            tree_index: self.category_index,
+            selected_category_id,
+        });
+    }
+
+    pub(crate) fn close_category_manager_session(&mut self) {
+        self.category_manager = None;
+    }
+
+    pub(crate) fn ensure_category_manager_session(&mut self) {
+        if self.category_manager.is_none() {
+            self.open_category_manager_session();
+        } else {
+            self.sync_category_manager_state_from_selection();
+        }
+    }
+
+    pub(crate) fn sync_category_manager_state_from_selection(&mut self) {
+        let selected_category_id = self.selected_category_id();
+        let tree_index = self.category_index.min(self.category_rows.len().saturating_sub(1));
+        if let Some(state) = &mut self.category_manager {
+            state.tree_index = tree_index;
+            state.selected_category_id = selected_category_id;
         }
     }
 

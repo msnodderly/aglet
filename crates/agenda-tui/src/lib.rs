@@ -268,6 +268,21 @@ enum CategoryConfigFocus {
     CancelButton,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CategoryManagerFocus {
+    Tree,
+    Filter,
+    Details,
+}
+
+#[derive(Clone)]
+struct CategoryManagerState {
+    focus: CategoryManagerFocus,
+    filter: text_buffer::TextBuffer,
+    tree_index: usize,
+    selected_category_id: Option<CategoryId>,
+}
+
 #[derive(Clone)]
 struct CategoryConfigState {
     category_id: CategoryId,
@@ -512,6 +527,7 @@ struct App {
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
+    category_manager: Option<CategoryManagerState>,
     category_create_parent: Option<CategoryId>,
     category_reparent_options: Vec<ReparentOptionRow>,
     category_reparent_index: usize,
@@ -561,6 +577,7 @@ impl Default for App {
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
+            category_manager: None,
             category_create_parent: None,
             category_reparent_options: Vec::new(),
             category_reparent_index: 0,
@@ -599,7 +616,7 @@ mod tests {
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
         AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
         CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryListRow,
-        Mode, NameInputContext, ViewEditRegion,
+        CategoryManagerFocus, Mode, NameInputContext, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4197,6 +4214,87 @@ mod tests {
             .get(app.category_reparent_index)
             .and_then(|option| option.parent_id);
         assert_eq!(selected_parent, Some(parent.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-category-manager-state-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_category_selection_by_id(category.id);
+
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        let state = app.category_manager.as_ref().expect("manager state initialized");
+        assert_eq!(state.focus, CategoryManagerFocus::Tree);
+        assert_eq!(state.selected_category_id, Some(category.id));
+        assert_eq!(state.tree_index, app.category_index);
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("close category manager");
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn refresh_preserves_category_manager_selection_by_id() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-category-manager-refresh-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.open_category_manager_session();
+        app.set_category_selection_by_id(beta.id);
+        assert_eq!(
+            app.category_manager
+                .as_ref()
+                .and_then(|state| state.selected_category_id),
+            Some(beta.id)
+        );
+
+        // Insert another root category and refresh; selection should remain by ID.
+        let gamma = Category::new("Gamma".to_string());
+        store.create_category(&gamma).expect("create gamma");
+        app.refresh(&store).expect("refresh after create");
+
+        assert_eq!(app.selected_category_id(), Some(beta.id));
+        assert_eq!(
+            app.category_manager
+                .as_ref()
+                .and_then(|state| state.selected_category_id),
+            Some(beta.id)
+        );
+        assert_eq!(
+            app.category_manager.as_ref().map(|state| state.tree_index),
+            Some(app.category_index)
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
