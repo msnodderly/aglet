@@ -2247,6 +2247,95 @@ mod tests {
     }
 
     #[test]
+    fn board_item_column_enter_still_opens_item_editor() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cat = Category::new("Area".to_string());
+        store.create_category(&cat).expect("create category");
+        store
+            .create_item(&Item::new("Demo".to_string()))
+            .expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cat.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 0; // item column
+
+        app.handle_key(KeyCode::Enter, &agenda).expect("enter");
+        assert_eq!(app.mode, Mode::InputPanel);
+    }
+
+    #[test]
+    fn board_when_column_enter_keeps_when_not_implemented_status() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let when_cat = Category::new("When".to_string());
+        let item = Item::new("Demo".to_string());
+
+        let mut app = App {
+            categories: vec![when_cat.clone()],
+            views: vec![{
+                let mut view = View::new("Board".to_string());
+                view.sections.push(Section {
+                    title: "Main".to_string(),
+                    criteria: Query::default(),
+                    columns: vec![Column {
+                        kind: ColumnKind::When,
+                        heading: when_cat.id,
+                        width: 12,
+                    }],
+                    item_column_index: 0,
+                    on_insert_assign: std::collections::HashSet::new(),
+                    on_remove_unassign: std::collections::HashSet::new(),
+                    show_children: false,
+                    board_display_mode_override: None,
+                });
+                view
+            }],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+
+        app.handle_key(KeyCode::Enter, &agenda).expect("enter");
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("When' date not yet implemented inline"),
+            "unexpected status: {}",
+            app.status
+        );
+    }
+
+    #[test]
     fn normal_mode_plus_opens_add_column_picker_from_item_column_any_position() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;

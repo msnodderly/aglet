@@ -447,8 +447,8 @@ Legend:
 - [x] Add test: exclusive picker cannot stage multiple selections.
 - [x] Add test: create-child flow from picker creates under correct parent and selects/toggles new child.
 - [x] Add test: reserved-name create rejection in picker mode.
-- [ ] Add test: item-column `Enter` still opens item editor.
-- [ ] Add test: `When` column path still shows existing “not implemented inline” status.
+- [x] Add test: item-column `Enter` still opens item editor.
+- [x] Add test: `When` column path still shows existing “not implemented inline” status.
 - [ ] Run targeted `agenda-tui` test subset and then full `agenda-tui` tests. (Targeted subsets done for new picker, direct-edit, and board-add-column; full suite pending.)
 
 #### 11.16 Phase 2 Manual Verification
