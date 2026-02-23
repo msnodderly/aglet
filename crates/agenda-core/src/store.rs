@@ -1861,10 +1861,11 @@ mod tests {
                 heading: when_category,
                 width: 18,
             }],
+            item_column_index: 0,
             on_insert_assign: HashSet::from([when_category]),
             on_remove_unassign: HashSet::new(),
             show_children: true,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         view.show_unmatched = false;
         view.unmatched_label = "Other".to_string();
@@ -1922,16 +1923,16 @@ mod tests {
 
         let category_id = make_category(&store, "Schedule");
         view.name = "Daily Agenda".to_string();
-        view.criteria
-            .set_criterion(CriterionMode::And, category_id);
+        view.criteria.set_criterion(CriterionMode::And, category_id);
         view.sections.push(Section {
             title: "Today".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: HashSet::from([category_id]),
             on_remove_unassign: HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         view.show_unmatched = false;
         view.unmatched_label = "Unsectioned".to_string();
@@ -1941,7 +1942,10 @@ mod tests {
 
         let loaded = store.get_view(view.id).unwrap();
         assert_eq!(loaded.name, "Daily Agenda");
-        assert!(loaded.criteria.and_category_ids().any(|id| id == category_id));
+        assert!(loaded
+            .criteria
+            .and_category_ids()
+            .any(|id| id == category_id));
         assert_eq!(loaded.sections.len(), 1);
         assert!(!loaded.show_unmatched);
         assert_eq!(loaded.unmatched_label, "Unsectioned");
@@ -1974,6 +1978,7 @@ mod tests {
             title: "One".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 1,
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
@@ -1987,6 +1992,10 @@ mod tests {
             loaded.sections[0].board_display_mode_override,
             Some(BoardDisplayMode::SingleLine)
         );
+        assert_eq!(
+            loaded.sections[0].item_column_index, 1,
+            "roundtrips section field"
+        );
     }
 
     #[test]
@@ -1994,6 +2003,7 @@ mod tests {
         let legacy_json = r#"[{"title":"Legacy","criteria":{},"columns":[],"on_insert_assign":[],"on_remove_unassign":[],"show_children":false}]"#;
         let sections: Vec<Section> = serde_json::from_str(legacy_json).expect("legacy json parses");
         assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].item_column_index, 0);
         assert_eq!(sections[0].board_display_mode_override, None);
     }
 

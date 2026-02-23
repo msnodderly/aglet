@@ -12,10 +12,14 @@ fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyActi
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             InlineCreateConfirmKeyAction::Confirm
         }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => InlineCreateConfirmKeyAction::Cancel,
-        KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right => {
-            InlineCreateConfirmKeyAction::DismissAndContinue
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            InlineCreateConfirmKeyAction::Cancel
         }
+        KeyCode::Char(_)
+        | KeyCode::Backspace
+        | KeyCode::Delete
+        | KeyCode::Left
+        | KeyCode::Right => InlineCreateConfirmKeyAction::DismissAndContinue,
         _ => InlineCreateConfirmKeyAction::None,
     }
 }
@@ -83,7 +87,8 @@ impl App {
     }
 
     pub(crate) fn active_category_direct_edit_input_text(&self) -> Option<&str> {
-        self.active_category_direct_edit_row().map(|row| row.input.text())
+        self.active_category_direct_edit_row()
+            .map(|row| row.input.text())
     }
 
     fn direct_edit_create_confirm_name(&self) -> Option<&str> {
@@ -128,7 +133,11 @@ impl App {
     fn cycle_category_direct_edit_focus(&mut self, forward: bool) {
         let mut new_focus = None;
         if let Some(state) = self.category_direct_edit_state_mut() {
-            state.focus = if forward { state.focus.next() } else { state.focus.prev() };
+            state.focus = if forward {
+                state.focus.next()
+            } else {
+                state.focus.prev()
+            };
             new_focus = Some(state.focus);
         }
         self.sync_category_direct_edit_input_mirror();
@@ -206,7 +215,8 @@ impl App {
         let Some(state) = self.category_direct_edit_state() else {
             return Ok(false);
         };
-        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1)))
+        else {
             return Ok(false);
         };
         self.resolve_active_category_direct_edit_row(id)
@@ -254,7 +264,8 @@ impl App {
             return Vec::new();
         };
         let mut seen = HashSet::new();
-        state.rows
+        state
+            .rows
             .iter()
             .filter_map(|row| row.category_id)
             .filter(|id| seen.insert(*id))
@@ -283,11 +294,9 @@ impl App {
             SlotContext::Unmatched => return None,
         };
 
-        if self.column_index == 0 {
-            return None;
-        }
         let section = view.sections.get(section_index)?;
-        let section_column_index = self.column_index - 1;
+        let section_column_index =
+            Self::board_column_to_section_column_index(section, self.column_index)?;
         let column = section.columns.get(section_column_index)?;
         let parent = self.categories.iter().find(|c| c.id == column.heading)?;
 
@@ -328,24 +337,23 @@ impl App {
             .sections
             .get(section_index)
             .ok_or("Current section not found".to_string())?;
-
-        let (current_section_column_index, insert_index) = if self.column_index == 0 {
-            match direction {
-                AddColumnDirection::Left => {
-                    return Err("Cannot insert a category column left of the item column".to_string());
-                }
-                AddColumnDirection::Right => (0, 0),
-            }
+        if self.column_index > section.columns.len() {
+            return Err("Current column is out of range".to_string());
+        }
+        let item_column_index = Self::section_item_column_index(section);
+        let current_section_column_index = if self.column_index == item_column_index {
+            item_column_index
         } else {
-            let current_section_column_index = self.column_index - 1;
-            if current_section_column_index > section.columns.len() {
-                return Err("Current column is out of range".to_string());
-            }
-            let insert_index = match direction {
+            Self::board_column_to_section_column_index(section, self.column_index)
+                .ok_or("Current column is out of range".to_string())?
+        };
+        let insert_index = if self.column_index == item_column_index {
+            item_column_index
+        } else {
+            match direction {
                 AddColumnDirection::Left => current_section_column_index,
                 AddColumnDirection::Right => current_section_column_index + 1,
-            };
-            (current_section_column_index, insert_index)
+            }
         };
 
         Ok(BoardAddColumnAnchor {
@@ -353,6 +361,7 @@ impl App {
             section_index,
             current_board_column_index: self.column_index,
             current_section_column_index,
+            item_column_index_before: item_column_index,
             insert_index,
             direction,
             is_generated_section,
@@ -438,8 +447,7 @@ impl App {
             }
             self.category_suggest = Some(CategorySuggestState { suggest_index: 0 });
             self.status =
-                "Add column: type to filter, ↑↓ select, Tab autocomplete, Enter insert"
-                    .to_string();
+                "Add column: type to filter, ↑↓ select, Tab autocomplete, Enter insert".to_string();
         }
     }
 
@@ -466,7 +474,8 @@ impl App {
         let Some(state) = self.board_add_column_state() else {
             return;
         };
-        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1)))
+        else {
             return;
         };
         let Some(name) = self
@@ -529,7 +538,9 @@ impl App {
                 .find(|c| c.id == *b)
                 .map(|c| c.name.to_ascii_lowercase())
                 .unwrap_or_else(|| b.to_string());
-            a_name.cmp(&b_name).then_with(|| a.to_string().cmp(&b.to_string()))
+            a_name
+                .cmp(&b_name)
+                .then_with(|| a.to_string().cmp(&b.to_string()))
         });
         ordered.extend(extras);
         ordered
@@ -754,7 +765,9 @@ impl App {
                     "Category '{}' exists under '{}'. Column headings must be top-level categories with children (or When).",
                     existing_cat.name, parent_label
                 );
-            } else if existing_cat.children.is_empty() && !existing_cat.name.eq_ignore_ascii_case("When") {
+            } else if existing_cat.children.is_empty()
+                && !existing_cat.name.eq_ignore_ascii_case("When")
+            {
                 self.status = format!(
                     "Category '{}' is top-level but has no subcategories, so it cannot be a column heading yet.",
                     existing_cat.name
@@ -795,7 +808,7 @@ impl App {
                 .position(|col| col.heading == category_id)
                 .unwrap_or(0);
             self.status = "Column already exists in this section".to_string();
-            self.column_index = existing_idx + 1;
+            self.column_index = Self::section_column_to_board_column_index(section, existing_idx);
             return Ok(());
         }
 
@@ -823,6 +836,10 @@ impl App {
         };
 
         let insert_index = add_state.anchor.insert_index.min(section.columns.len());
+        let item_column_index_before = add_state
+            .anchor
+            .item_column_index_before
+            .min(section.columns.len());
         section.columns.insert(
             insert_index,
             Column {
@@ -831,6 +848,18 @@ impl App {
                 width: 12,
             },
         );
+        let inserted_board_index_before = match add_state.anchor.direction {
+            AddColumnDirection::Left => add_state.anchor.current_board_column_index,
+            AddColumnDirection::Right => add_state.anchor.current_board_column_index + 1,
+        };
+        let should_shift_item_right = inserted_board_index_before <= item_column_index_before;
+        let mut new_item_column_index = item_column_index_before;
+        if should_shift_item_right {
+            new_item_column_index += 1;
+        }
+        section.item_column_index = new_item_column_index.min(section.columns.len());
+        let inserted_board_column_index =
+            Self::section_column_to_board_column_index(section, insert_index);
 
         let view_name = view.name.clone();
         let selected_item_id = self.selected_item_id();
@@ -845,29 +874,44 @@ impl App {
         if let Some(item_id) = selected_item_id {
             self.set_item_selection_by_id(item_id);
         }
-        self.slot_index = add_state.anchor.slot_index.min(self.slots.len().saturating_sub(1));
-        self.column_index = (insert_index + 1).min(self.current_slot_column_count());
+        self.slot_index = add_state
+            .anchor
+            .slot_index
+            .min(self.slots.len().saturating_sub(1));
+        self.column_index = inserted_board_column_index.min(self.current_slot_column_count());
         let category_name = self
             .categories
             .iter()
             .find(|c| c.id == category_id)
             .map(|c| c.name.clone())
             .unwrap_or_else(|| "(unknown)".to_string());
-        self.status = format!("Inserted column '{}' {}", category_name, match add_state.anchor.direction {
-            AddColumnDirection::Left => "to the left",
-            AddColumnDirection::Right => "to the right",
-        });
+        self.status = format!(
+            "Inserted column '{}' {}",
+            category_name,
+            match add_state.anchor.direction {
+                AddColumnDirection::Left => "to the left",
+                AddColumnDirection::Right => "to the right",
+            }
+        );
         Ok(())
     }
 
-    fn confirm_inline_create_board_add_column(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        let Some(name) = self.board_add_column_create_confirm_name().map(str::to_string) else {
+    fn confirm_inline_create_board_add_column(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(name) = self
+            .board_add_column_create_confirm_name()
+            .map(str::to_string)
+        else {
             return Ok(());
         };
         let mut category = Category::new(name.clone());
         category.enable_implicit_string = true;
         let cat_id = category.id;
-        agenda.create_category(&category).map_err(|e| e.to_string())?;
+        agenda
+            .create_category(&category)
+            .map_err(|e| e.to_string())?;
         self.refresh_category_cache(agenda.store())?;
         self.set_board_add_column_create_confirm_name(None);
         self.insert_board_column_for_category(agenda, cat_id)?;
@@ -985,7 +1029,8 @@ impl App {
         let Some(state) = self.category_direct_edit_state() else {
             return;
         };
-        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1)))
+        else {
             return;
         };
         let Some(cat_name) = self
@@ -1025,17 +1070,16 @@ impl App {
         };
         let child_parent_id = self.current_view().and_then(|view| {
             self.current_slot().and_then(|slot| {
-                let columns = match slot.context {
+                let section = match slot.context {
                     SlotContext::Section { section_index }
                     | SlotContext::GeneratedSection { section_index, .. } => {
-                        view.sections.get(section_index).map(|s| &s.columns)
+                        view.sections.get(section_index)
                     }
                     _ => None,
                 }?;
-                if self.column_index == 0 || self.column_index > columns.len() {
-                    return None;
-                }
-                Some(columns[self.column_index - 1].heading)
+                let section_column_index =
+                    Self::board_column_to_section_column_index(section, self.column_index)?;
+                Some(section.columns.get(section_column_index)?.heading)
             })
         });
         let Some(parent_id) = child_parent_id else {
@@ -1071,14 +1115,16 @@ impl App {
             .map(|s| s.has_duplicate_resolved_category_ids())
             .unwrap_or(false)
         {
-            self.status = "Duplicate categories in draft; remove duplicates before saving".to_string();
+            self.status =
+                "Duplicate categories in draft; remove duplicates before saving".to_string();
             return Ok(());
         }
 
         let desired_ids = self.desired_child_ids_from_category_direct_edit_draft();
         if self.current_column_parent_is_exclusive() && desired_ids.len() > 1 {
-            self.status = "Cannot save: parent category is exclusive (only one row may be resolved)"
-                .to_string();
+            self.status =
+                "Cannot save: parent category is exclusive (only one row may be resolved)"
+                    .to_string();
             return Ok(());
         }
 
@@ -1111,7 +1157,11 @@ impl App {
         }
         for id in to_add {
             agenda
-                .assign_item_manual(item_id, id, Some("manual:tui.direct_edit.multi".to_string()))
+                .assign_item_manual(
+                    item_id,
+                    id,
+                    Some("manual:tui.direct_edit.multi".to_string()),
+                )
                 .map_err(|e| e.to_string())?;
         }
 
@@ -1124,7 +1174,10 @@ impl App {
         }
         self.set_item_selection_by_id(item_id);
         self.column_index = column_index.min(self.current_slot_column_count());
-        self.status = format!("Saved column edits for '{}'", truncate_board_cell(&item_label, 40));
+        self.status = format!(
+            "Saved column edits for '{}'",
+            truncate_board_cell(&item_label, 40)
+        );
         Ok(())
     }
 
@@ -1171,7 +1224,7 @@ impl App {
                 self.open_input_panel_edit_item();
             }
             KeyCode::Enter => {
-                if self.column_index > 0 {
+                if self.column_index != self.current_slot_item_column_index() {
                     self.open_category_direct_edit();
                 } else {
                     self.open_input_panel_edit_item();
@@ -1336,7 +1389,9 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         let ctrl_only = key.modifiers.contains(KeyModifiers::CONTROL)
-            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER);
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SUPER);
         if ctrl_only {
             match key.code {
                 KeyCode::Char('l') | KeyCode::Char('L') => {
@@ -1440,8 +1495,8 @@ impl App {
                 } else {
                     let matches = self.get_board_add_column_suggest_matches();
                     if let Some(state) = self.board_add_column_state() {
-                        if let Some(&category_id) = matches
-                            .get(state.suggest_index.min(matches.len().saturating_sub(1)))
+                        if let Some(&category_id) =
+                            matches.get(state.suggest_index.min(matches.len().saturating_sub(1)))
                         {
                             self.insert_board_column_for_category(agenda, category_id)?;
                         } else {
@@ -1533,7 +1588,9 @@ impl App {
                     .active_category_direct_edit_focus()
                     .unwrap_or(CategoryDirectEditFocus::Input)
                 {
-                    CategoryDirectEditFocus::Entries => self.move_category_direct_edit_active_row(delta),
+                    CategoryDirectEditFocus::Entries => {
+                        self.move_category_direct_edit_active_row(delta)
+                    }
                     CategoryDirectEditFocus::Suggestions => self.move_suggest_cursor(delta),
                     CategoryDirectEditFocus::Input => {}
                 }
@@ -1545,12 +1602,18 @@ impl App {
                     Some(CategoryDirectEditFocus::Input)
                 ) =>
             {
-                let delta = if matches!(code, KeyCode::Char('k')) { -1 } else { 1 };
+                let delta = if matches!(code, KeyCode::Char('k')) {
+                    -1
+                } else {
+                    1
+                };
                 match self
                     .active_category_direct_edit_focus()
                     .unwrap_or(CategoryDirectEditFocus::Input)
                 {
-                    CategoryDirectEditFocus::Entries => self.move_category_direct_edit_active_row(delta),
+                    CategoryDirectEditFocus::Entries => {
+                        self.move_category_direct_edit_active_row(delta)
+                    }
                     CategoryDirectEditFocus::Suggestions => self.move_suggest_cursor(delta),
                     CategoryDirectEditFocus::Input => {}
                 }
@@ -1568,7 +1631,8 @@ impl App {
                         .unwrap_or(0);
                     self.remove_active_category_direct_edit_row();
                     self.status = if row_count <= 1 {
-                        "Empty row kept (must keep one row). Press S to save cleared column".to_string()
+                        "Empty row kept (must keep one row). Press S to save cleared column"
+                            .to_string()
                     } else {
                         "Removed empty row".to_string()
                     };
@@ -2717,10 +2781,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
 
         let app = App {
@@ -2784,10 +2849,11 @@ mod tests {
                 heading: parent_id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         app.views = vec![view];
         app.slots = vec![Slot {
@@ -2851,10 +2917,11 @@ mod tests {
                 heading: parent_id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         app.views = vec![view];
         app.slots = vec![Slot {

@@ -464,10 +464,11 @@ mod tests {
             title: title.to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         }
     }
 
@@ -1055,7 +1056,9 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.set_criterion(CriterionMode::And, work.id);
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
         let mut current_section = section("Urgent");
         current_section.on_insert_assign.insert(urgent.id);
 
@@ -1092,7 +1095,9 @@ mod tests {
 
         let current_view = view("Board");
         let mut current_section = section("P0");
-        current_section.criteria.set_criterion(CriterionMode::And, p0.id);
+        current_section
+            .criteria
+            .set_criterion(CriterionMode::And, p0.id);
 
         agenda
             .insert_item_in_section(item.id, &current_view, &current_section)
@@ -1130,7 +1135,9 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.set_criterion(CriterionMode::And, work.id);
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
         let mut current_section = section("Urgent");
         current_section.on_insert_assign.insert(urgent.id);
 
@@ -1158,7 +1165,9 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("Project Y Board");
-        current_view.criteria.set_criterion(CriterionMode::And, project_y.id);
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, project_y.id);
         let mut current_section = section("Project Y");
         current_section.on_insert_assign.insert(project_y.id);
 
@@ -1260,7 +1269,9 @@ mod tests {
         store.create_item(&item).unwrap();
 
         let mut current_view = view("My Work");
-        current_view.criteria.set_criterion(CriterionMode::And, work.id);
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
 
         agenda
             .insert_item_in_unmatched(item.id, &current_view)

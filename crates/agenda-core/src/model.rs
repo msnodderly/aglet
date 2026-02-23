@@ -92,6 +92,8 @@ pub struct Section {
     pub criteria: Query,
     #[serde(default)]
     pub columns: Vec<Column>,
+    #[serde(default)]
+    pub item_column_index: usize,
     pub on_insert_assign: HashSet<CategoryId>,
     pub on_remove_unassign: HashSet<CategoryId>,
     pub show_children: bool,
@@ -162,7 +164,11 @@ impl Query {
 
     /// Add or replace a criterion for the given category ID. No duplicate cat_ids.
     pub fn set_criterion(&mut self, mode: CriterionMode, category_id: CategoryId) {
-        if let Some(existing) = self.criteria.iter_mut().find(|c| c.category_id == category_id) {
+        if let Some(existing) = self
+            .criteria
+            .iter_mut()
+            .find(|c| c.category_id == category_id)
+        {
             existing.mode = mode;
         } else {
             self.criteria.push(Criterion { mode, category_id });

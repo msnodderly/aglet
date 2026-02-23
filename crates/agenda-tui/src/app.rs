@@ -169,7 +169,7 @@ impl App {
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
-        self.column_index = 0;
+        self.column_index = self.current_slot_item_column_index();
     }
 
     pub(crate) fn move_item_cursor(&mut self, delta: i32) {
@@ -309,6 +309,58 @@ impl App {
 
     pub(crate) fn current_slot(&self) -> Option<&Slot> {
         self.slots.get(self.slot_index)
+    }
+
+    pub(crate) fn section_item_column_index(section: &Section) -> usize {
+        section.item_column_index.min(section.columns.len())
+    }
+
+    pub(crate) fn slot_item_column_index(&self, slot: &Slot) -> usize {
+        let Some(view) = self.current_view() else {
+            return 0;
+        };
+        match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => view
+                .sections
+                .get(section_index)
+                .map(Self::section_item_column_index)
+                .unwrap_or(0),
+            SlotContext::Unmatched => 0,
+        }
+    }
+
+    pub(crate) fn current_slot_item_column_index(&self) -> usize {
+        self.current_slot()
+            .map(|slot| self.slot_item_column_index(slot))
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn board_column_to_section_column_index(
+        section: &Section,
+        board_column_index: usize,
+    ) -> Option<usize> {
+        let item_column_index = Self::section_item_column_index(section);
+        if board_column_index > section.columns.len() || board_column_index == item_column_index {
+            return None;
+        }
+        Some(if board_column_index < item_column_index {
+            board_column_index
+        } else {
+            board_column_index - 1
+        })
+    }
+
+    pub(crate) fn section_column_to_board_column_index(
+        section: &Section,
+        section_column_index: usize,
+    ) -> usize {
+        let item_column_index = Self::section_item_column_index(section);
+        if section_column_index < item_column_index {
+            section_column_index
+        } else {
+            section_column_index + 1
+        }
     }
 
     pub(crate) fn current_slot_column_count(&self) -> usize {

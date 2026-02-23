@@ -458,10 +458,11 @@ impl App {
                         title: "New section".to_string(),
                         criteria: Query::default(),
                         columns: Vec::new(),
+                        item_column_index: 0,
                         on_insert_assign: HashSet::new(),
                         on_remove_unassign: HashSet::new(),
                         show_children: false,
-        board_display_mode_override: None,
+                        board_display_mode_override: None,
                     };
                     state.draft.sections.push(new_section);
                     state.section_index = state.draft.sections.len() - 1;

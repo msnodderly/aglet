@@ -8,6 +8,7 @@ pub(super) fn generated_section(
         title: "generated".to_string(),
         criteria: Query::default(),
         columns: Vec::new(),
+        item_column_index: 0,
         on_insert_assign,
         on_remove_unassign,
         show_children: false,
