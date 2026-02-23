@@ -192,6 +192,7 @@ enum Mode {
     CategoryDelete,
     CategoryConfig,
     CategoryDirectEdit,
+    CategoryColumnPicker,
     BoardAddColumnPicker,
     CategoryCreateConfirm { name: String, parent_id: CategoryId },
 }
@@ -378,6 +379,27 @@ struct CategoryDirectEditState {
     create_confirm_name: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CategoryColumnPickerFocus {
+    FilterInput,
+    List,
+}
+
+#[derive(Clone)]
+struct CategoryColumnPickerState {
+    anchor: CategoryDirectEditAnchor,
+    parent_id: CategoryId,
+    parent_name: String,
+    item_id: ItemId,
+    item_label: String,
+    is_exclusive: bool,
+    filter: text_buffer::TextBuffer,
+    focus: CategoryColumnPickerFocus,
+    list_index: usize,
+    selected_ids: HashSet<CategoryId>,
+    create_confirm_name: Option<String>,
+}
+
 impl CategoryDirectEditRow {
     fn blank() -> Self {
         Self {
@@ -497,6 +519,7 @@ struct App {
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
     category_direct_edit_create_confirm: Option<String>,
+    category_column_picker: Option<CategoryColumnPickerState>,
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
     input_panel: Option<input_panel::InputPanel>,
@@ -545,6 +568,7 @@ impl Default for App {
             category_suggest: None,
             category_direct_edit: None,
             category_direct_edit_create_confirm: None,
+            category_column_picker: None,
             board_add_column: None,
             item_assign_category_index: 0,
             input_panel: None,
@@ -1649,6 +1673,253 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_cell_enter_opens_category_column_picker_for_non_exclusive_parent() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut area = Category::new("Area".to_string());
+        let mut cli = Category::new("CLI".to_string());
+        cli.parent = Some(area.id);
+        let mut ux = Category::new("UX".to_string());
+        ux.parent = Some(area.id);
+        area.children = vec![cli.id, ux.id];
+        for cat in [&area, &cli, &ux] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ux.id, None)
+            .expect("assign ux");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda).expect("enter");
+
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+        let state = app.category_column_picker.as_ref().expect("picker");
+        assert_eq!(state.parent_name, "Area");
+        assert!(state.selected_ids.contains(&ux.id));
+        assert!(!state.selected_ids.contains(&cli.id));
+    }
+
+    #[test]
+    fn board_cell_enter_still_opens_direct_edit_for_exclusive_parent() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        status.children = vec![pending.id];
+        for cat in [&status, &pending] {
+            store.create_category(cat).expect("create category");
+        }
+        store
+            .create_item(&Item::new("Demo".to_string()))
+            .expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: status.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda).expect("enter");
+        assert_eq!(app.mode, Mode::CategoryDirectEdit);
+    }
+
+    #[test]
+    fn category_column_picker_multi_toggle_save_applies_diff_and_preserves_other_assignments() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-column-picker-save-diff-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut area = Category::new("Area".to_string());
+        let mut cli = Category::new("CLI".to_string());
+        cli.parent = Some(area.id);
+        let mut ux = Category::new("UX".to_string());
+        ux.parent = Some(area.id);
+        let mut validation = Category::new("Validation".to_string());
+        validation.parent = Some(area.id);
+        area.children = vec![cli.id, ux.id, validation.id];
+        let outside = Category::new("Outside".to_string());
+        for cat in [&area, &cli, &ux, &validation, &outside] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ux.id, None)
+            .expect("assign ux");
+        agenda
+            .assign_item_manual(item.id, outside.id, None)
+            .expect("assign outside");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open picker");
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+
+        for ch in "CLI".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type cli");
+        }
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle cli on");
+
+        app.handle_key(KeyCode::Tab, &agenda).expect("focus filter");
+        for _ in 0..3 {
+            app.handle_key(KeyCode::Backspace, &agenda)
+                .expect("clear filter");
+        }
+        for ch in "UX".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type ux");
+        }
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle ux off");
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save picker");
+        assert_eq!(app.mode, Mode::Normal);
+
+        let saved = store.get_item(item.id).expect("load item");
+        assert!(saved.assignments.contains_key(&cli.id), "CLI added");
+        assert!(!saved.assignments.contains_key(&ux.id), "UX removed");
+        assert!(
+            saved.assignments.contains_key(&outside.id),
+            "outside assignment preserved"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_column_picker_cancel_discards_staged_changes() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut area = Category::new("Area".to_string());
+        let mut cli = Category::new("CLI".to_string());
+        cli.parent = Some(area.id);
+        area.children = vec![cli.id];
+        for cat in [&area, &cli] {
+            store.create_category(cat).expect("create category");
+        }
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open picker");
+        for ch in "CLI".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
+        }
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle on");
+        app.handle_key(KeyCode::Esc, &agenda).expect("cancel");
+
+        assert_eq!(app.mode, Mode::Normal);
+        let saved = store.get_item(item.id).expect("load item");
+        assert!(!saved.assignments.contains_key(&cli.id));
     }
 
     #[test]

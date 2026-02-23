@@ -25,6 +25,18 @@ fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyActi
 }
 
 impl App {
+    pub(crate) fn category_column_picker_state(&self) -> Option<&CategoryColumnPickerState> {
+        self.category_column_picker.as_ref()
+    }
+
+    fn category_column_picker_state_mut(&mut self) -> Option<&mut CategoryColumnPickerState> {
+        self.category_column_picker.as_mut()
+    }
+
+    fn clear_category_column_picker_session(&mut self) {
+        self.category_column_picker = None;
+    }
+
     pub(crate) fn category_direct_edit_state(&self) -> Option<&CategoryDirectEditState> {
         self.category_direct_edit.as_ref()
     }
@@ -71,6 +83,27 @@ impl App {
     fn set_board_add_column_create_confirm_name(&mut self, name: Option<String>) {
         if let Some(state) = self.board_add_column_state_mut() {
             state.create_confirm_name = name;
+        }
+    }
+
+    fn category_column_picker_filter_text(&self) -> Option<&str> {
+        self.category_column_picker_state().map(|s| s.filter.text())
+    }
+
+    pub(crate) fn category_column_picker_matches(&self) -> Vec<CategoryId> {
+        let child_ids = self.get_current_column_child_ids();
+        let query = self.category_column_picker_filter_text().unwrap_or("");
+        filter_category_ids_by_query(&child_ids, &self.categories, query, true, true)
+    }
+
+    fn clamp_category_column_picker_list_index(&mut self) {
+        let len = self.category_column_picker_matches().len();
+        if let Some(state) = self.category_column_picker_state_mut() {
+            state.list_index = if len == 0 {
+                0
+            } else {
+                state.list_index.min(len - 1)
+            };
         }
     }
 
@@ -1252,6 +1285,215 @@ impl App {
         self.update_suggestions();
     }
 
+    pub(crate) fn open_category_column_editor(&mut self) {
+        let Some(meta) = self.current_category_direct_edit_column_meta() else {
+            return;
+        };
+        if meta.column_kind == ColumnKind::When {
+            self.status = "Editing 'When' date not yet implemented inline".to_string();
+            return;
+        }
+        let is_exclusive = self
+            .categories
+            .iter()
+            .find(|c| c.id == meta.parent_id)
+            .map(|c| c.is_exclusive)
+            .unwrap_or(false);
+        if is_exclusive {
+            self.open_category_direct_edit();
+            return;
+        }
+
+        let selected_ids: HashSet<CategoryId> = self
+            .current_column_assigned_child_ids()
+            .into_iter()
+            .collect();
+        self.mode = Mode::CategoryColumnPicker;
+        self.category_column_picker = Some(CategoryColumnPickerState {
+            anchor: meta.anchor,
+            parent_id: meta.parent_id,
+            parent_name: meta.parent_name.clone(),
+            item_id: meta.item_id,
+            item_label: meta.item_label,
+            is_exclusive,
+            filter: text_buffer::TextBuffer::empty(),
+            focus: CategoryColumnPickerFocus::FilterInput,
+            list_index: 0,
+            selected_ids,
+            create_confirm_name: None,
+        });
+        self.category_suggest = None;
+        self.clear_input();
+        self.clamp_category_column_picker_list_index();
+        self.status = format!(
+            "Set {}: type to filter, Space toggle, Enter save, Esc cancel",
+            meta.parent_name
+        );
+    }
+
+    fn move_category_column_picker_list(&mut self, delta: i32) {
+        let matches = self.category_column_picker_matches();
+        let len = matches.len();
+        if len == 0 {
+            return;
+        }
+        if let Some(state) = self.category_column_picker_state_mut() {
+            let cur = state.list_index.min(len - 1);
+            state.list_index = (cur as i64 + delta as i64).rem_euclid(len as i64) as usize;
+            state.focus = CategoryColumnPickerFocus::List;
+        }
+    }
+
+    fn toggle_category_column_picker_selected(&mut self) {
+        let matches = self.category_column_picker_matches();
+        let Some(state_ro) = self.category_column_picker_state() else {
+            return;
+        };
+        let Some(&id) = matches.get(state_ro.list_index.min(matches.len().saturating_sub(1)))
+        else {
+            self.status = "No category to toggle".to_string();
+            return;
+        };
+        let _ = state_ro;
+        if let Some(state) = self.category_column_picker_state_mut() {
+            if !state.selected_ids.insert(id) {
+                state.selected_ids.remove(&id);
+            }
+            state.focus = CategoryColumnPickerFocus::List;
+        }
+        let label = self
+            .categories
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.as_str())
+            .unwrap_or("(missing)");
+        self.status = format!("Toggled '{label}'. Enter saves, Esc cancels");
+    }
+
+    fn apply_category_column_picker_selection(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(state) = self.category_column_picker_state().cloned() else {
+            return Ok(());
+        };
+        let desired_set: HashSet<CategoryId> = state.selected_ids.clone();
+        let current_ids = self.current_column_assigned_child_ids();
+        let current_set: HashSet<CategoryId> = current_ids.iter().copied().collect();
+        let to_remove: Vec<CategoryId> = current_ids
+            .iter()
+            .copied()
+            .filter(|id| !desired_set.contains(id))
+            .collect();
+        let to_add: Vec<CategoryId> = desired_set
+            .iter()
+            .copied()
+            .filter(|id| !current_set.contains(id))
+            .collect();
+
+        let item_id = state.item_id;
+        let item_label = state.item_label.clone();
+        let view_name = self.current_view().map(|v| v.name.clone());
+        let column_index = self.column_index;
+
+        for id in to_remove {
+            agenda
+                .unassign_item_manual(item_id, id)
+                .map_err(|e| e.to_string())?;
+        }
+        for id in to_add {
+            agenda
+                .assign_item_manual(
+                    item_id,
+                    id,
+                    Some("manual:tui.column_picker.multi".to_string()),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+
+        self.mode = Mode::Normal;
+        self.clear_category_column_picker_session();
+        self.refresh(agenda.store())?;
+        if let Some(name) = view_name {
+            self.set_view_selection_by_name(&name);
+        }
+        self.set_item_selection_by_id(item_id);
+        self.column_index = column_index.min(self.current_slot_column_count());
+        self.status = format!(
+            "Saved column edits for '{}'",
+            truncate_board_cell(&item_label, 40)
+        );
+        Ok(())
+    }
+
+    pub(crate) fn handle_category_column_picker_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.clear_category_column_picker_session();
+                self.status = "Cancelled column edits".to_string();
+                return Ok(false);
+            }
+            KeyCode::Enter => {
+                self.apply_category_column_picker_selection(agenda)?;
+                return Ok(false);
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                if let Some(state) = self.category_column_picker_state_mut() {
+                    state.focus = match state.focus {
+                        CategoryColumnPickerFocus::FilterInput => CategoryColumnPickerFocus::List,
+                        CategoryColumnPickerFocus::List => CategoryColumnPickerFocus::FilterInput,
+                    };
+                }
+                return Ok(false);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_category_column_picker_list(-1);
+                return Ok(false);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_category_column_picker_list(1);
+                return Ok(false);
+            }
+            KeyCode::Char(' ') => {
+                self.toggle_category_column_picker_selected();
+                return Ok(false);
+            }
+            _ => {}
+        }
+
+        let mut edited = false;
+        if let Some(state) = self.category_column_picker_state_mut() {
+            if matches!(state.focus, CategoryColumnPickerFocus::FilterInput) {
+                edited = state.filter.handle_key(code, false);
+                if edited {
+                    state.create_confirm_name = None;
+                }
+            }
+        }
+        if edited {
+            self.clamp_category_column_picker_list_index();
+            let typed = self
+                .category_column_picker_filter_text()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let no_matches = self.category_column_picker_matches().is_empty();
+            self.status = if typed.is_empty() {
+                "Type to filter categories. Space toggles highlighted row, Enter saves".to_string()
+            } else if no_matches {
+                "No categories found. Enter saves current selection (create flow next).".to_string()
+            } else {
+                "Space toggles highlighted category. Enter saves, Esc cancels".to_string()
+            };
+        }
+        Ok(false)
+    }
+
     fn get_current_column_child_ids(&self) -> Vec<CategoryId> {
         let Some(meta) = self.current_category_direct_edit_column_meta() else {
             return Vec::new();
@@ -1560,7 +1802,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if self.column_index != self.current_slot_item_column_index() {
-                    self.open_category_direct_edit();
+                    self.open_category_column_editor();
                 } else {
                     self.open_input_panel_edit_item();
                 }

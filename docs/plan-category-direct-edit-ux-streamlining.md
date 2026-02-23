@@ -355,35 +355,35 @@ Legend:
 
 #### 11.7 New Mode/State Plumbing
 
-- [ ] Add new mode enum variant(s) for picker-based category editing in `/Users/mds/src/aglet/crates/agenda-tui/src/lib.rs` (preferred over replacing row mode in one step).
-- [ ] Add picker state struct(s) in `/Users/mds/src/aglet/crates/agenda-tui/src/lib.rs`:
-  - [ ] metadata (anchor/item/parent)
-  - [ ] filter input buffer
-  - [ ] focus state
-  - [ ] list cursor
-  - [ ] selected IDs / selected ID
-  - [ ] create-confirm state
-- [ ] Add helpers to initialize picker state from current item assignments under the active parent.
-- [ ] Add helpers to compute filtered matches scoped to the current parent’s child categories.
+- [x] Add new mode enum variant(s) for picker-based category editing in `/Users/mds/src/aglet/crates/agenda-tui/src/lib.rs` (preferred over replacing row mode in one step).
+- [x] Add picker state struct(s) in `/Users/mds/src/aglet/crates/agenda-tui/src/lib.rs`:
+  - [x] metadata (anchor/item/parent)
+  - [x] filter input buffer
+  - [x] focus state
+  - [x] list cursor
+  - [x] selected IDs / selected ID
+  - [x] create-confirm state
+- [x] Add helpers to initialize picker state from current item assignments under the active parent.
+- [x] Add helpers to compute filtered matches scoped to the current parent’s child categories.
 - [ ] Add helper(s) to detect exact match, selected item presence, and create eligibility.
 
 #### 11.8 Entry Routing and Mode Dispatch
 
-- [ ] Update `Enter` handling from board cell edit entry path to open picker mode instead of row-based direct edit (behind a temporary internal switch if needed).
-- [ ] Preserve item-column `Enter` path to item edit.
-- [ ] Preserve `When` column special-case messaging (no picker yet).
-- [ ] Add status message on picker open that matches final UX.
-- [ ] Ensure mode cleanup on cancel/save restores normal mode, selection, and column position.
+- [x] Update `Enter` handling from board cell edit entry path to open picker mode instead of row-based direct edit (behind a temporary internal switch if needed).
+- [x] Preserve item-column `Enter` path to item edit.
+- [x] Preserve `When` column special-case messaging (no picker yet).
+- [x] Add status message on picker open that matches final UX.
+- [x] Ensure mode cleanup on cancel/save restores normal mode, selection, and column position.
 
 #### 11.9 Input Handling - Non-Exclusive Multi-Select Picker
 
-- [ ] Implement typing/editing in filter input and live suggestion refresh.
-- [ ] Implement list navigation (`j/k`, arrows).
-- [ ] Implement `Space` to toggle highlighted category on/off.
-- [ ] Implement visual/list cursor clamping on filter result changes.
-- [ ] Implement duplicate-safe toggling semantics (toggling same category twice returns to previous state cleanly).
-- [ ] Implement `Enter` to save and close (per approved design).
-- [ ] Implement `Esc` cancel without persisting changes.
+- [x] Implement typing/editing in filter input and live suggestion refresh.
+- [x] Implement list navigation (`j/k`, arrows).
+- [x] Implement `Space` to toggle highlighted category on/off.
+- [x] Implement visual/list cursor clamping on filter result changes.
+- [x] Implement duplicate-safe toggling semantics (toggling same category twice returns to previous state cleanly).
+- [x] Implement `Enter` to save and close (per approved design).
+- [x] Implement `Esc` cancel without persisting changes.
 - [ ] Implement optional quick-clear behavior for filter input (if desired) and document key.
 
 #### 11.10 Input Handling - Exclusive Single-Select Picker
@@ -409,47 +409,47 @@ Legend:
 
 #### 11.12 Render Layer - Picker UI
 
-- [ ] Add picker rendering branch in `/Users/mds/src/aglet/crates/agenda-tui/src/render/mod.rs`.
+- [x] Add picker rendering branch in `/Users/mds/src/aglet/crates/agenda-tui/src/render/mod.rs`.
 - [ ] Render compact header with item label, column/parent name, and exclusivity indicator.
-- [ ] Render filter input panel.
+- [x] Render filter input panel.
 - [ ] Render filtered list with selected markers:
-  - [ ] ASCII-safe selected marker for multi-select
+  - [x] ASCII-safe selected marker for multi-select
   - [ ] ASCII-safe selected marker for single-select
 - [ ] Render create affordance row (if applicable).
-- [ ] Render clear footer hints for picker mode.
-- [ ] Ensure focus styling is clear if picker uses multiple focus regions.
+- [x] Render clear footer hints for picker mode.
+- [x] Ensure focus styling is clear if picker uses multiple focus regions.
 - [ ] Verify layout works on narrower terminal widths/heights (no truncation crashes or unusable footers).
 
 #### 11.13 Apply Logic / Persistence
 
-- [ ] Implement picker save path using diff-based assign/unassign under the target parent.
+- [x] Implement picker save path using diff-based assign/unassign under the target parent.
 - [ ] Reuse logic from `apply_category_direct_edit_draft` where possible instead of duplicating behavior.
-- [ ] Ensure assignments outside the edited parent are preserved.
-- [ ] Ensure assignment source strings are set consistently for picker saves.
-- [ ] Refresh board state after save and restore user selection/column position.
-- [ ] Emit clear success status message identifying saved column edits.
+- [x] Ensure assignments outside the edited parent are preserved.
+- [x] Ensure assignment source strings are set consistently for picker saves.
+- [x] Refresh board state after save and restore user selection/column position.
+- [x] Emit clear success status message identifying saved column edits.
 
 #### 11.14 Transition and Fallback Handling
 
-- [ ] Keep legacy row-based direct edit code path temporarily available internally during Phase 2 implementation.
-- [ ] Update routing/tests to default to picker mode after feature is stable.
+- [x] Keep legacy row-based direct edit code path temporarily available internally during Phase 2 implementation.
+- [x] Update routing/tests to default to picker mode after feature is stable. (Non-exclusive columns now route to picker; exclusive columns still use direct edit.)
 - [ ] Remove temporary fallback branching once Phase 2 tests pass (or defer removal to Phase 3 if safer).
 
 #### 11.15 Phase 2 Tests (Unit/Regression)
 
-- [ ] Add test: opening picker from non-item category column enters correct mode/state.
-- [ ] Add test: non-exclusive picker initializes with current selections checked.
+- [x] Add test: opening picker from non-item category column enters correct mode/state.
+- [x] Add test: non-exclusive picker initializes with current selections checked.
 - [ ] Add test: multi-select toggle on/off updates staged selection only (before save).
-- [ ] Add test: `Enter` saves multi-select diff correctly (assign + unassign).
-- [ ] Add test: `Esc` cancels multi-select changes.
-- [ ] Add test: exclusive picker initializes with current single selection.
+- [x] Add test: `Enter` saves multi-select diff correctly (assign + unassign).
+- [x] Add test: `Esc` cancels multi-select changes.
+- [x] Add test: exclusive picker initializes with current single selection. (Routed to existing direct-edit mode for now.)
 - [ ] Add test: exclusive picker replaces selection correctly.
 - [ ] Add test: exclusive picker cannot stage multiple selections.
 - [ ] Add test: create-child flow from picker creates under correct parent and selects/toggles new child.
 - [ ] Add test: reserved-name create rejection in picker mode.
 - [ ] Add test: item-column `Enter` still opens item editor.
 - [ ] Add test: `When` column path still shows existing “not implemented inline” status.
-- [ ] Run targeted `agenda-tui` test subset and then full `agenda-tui` tests.
+- [ ] Run targeted `agenda-tui` test subset and then full `agenda-tui` tests. (Targeted subsets done for new picker, direct-edit, and board-add-column; full suite pending.)
 
 #### 11.16 Phase 2 Manual Verification
 
