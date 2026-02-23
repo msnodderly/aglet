@@ -89,6 +89,21 @@ impl<'a> Agenda<'a> {
         evaluate_all_items(self.store, self.classifier, category.id)
     }
 
+    pub fn move_category_within_parent(&self, category_id: CategoryId, delta: i32) -> Result<()> {
+        self.store.move_category_within_parent(category_id, delta)
+    }
+
+    pub fn move_category_to_parent(
+        &self,
+        category_id: CategoryId,
+        new_parent_id: Option<CategoryId>,
+        insert_index: Option<usize>,
+    ) -> Result<EvaluateAllItemsResult> {
+        self.store
+            .move_category_to_parent(category_id, new_parent_id, insert_index)?;
+        evaluate_all_items(self.store, self.classifier, category_id)
+    }
+
     pub fn assign_item_manual(
         &self,
         item_id: ItemId,
@@ -1559,5 +1574,45 @@ mod tests {
             .id;
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(!assignments.contains_key(&done_category_id));
+    }
+
+    #[test]
+    fn move_category_to_parent_reparents_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let left = category("Left", false);
+        let right = category("Right", false);
+        agenda.create_category(&left).unwrap();
+        agenda.create_category(&right).unwrap();
+
+        let child = child_category("Child", left.id, false);
+        agenda.create_category(&child).unwrap();
+
+        let result = agenda
+            .move_category_to_parent(child.id, Some(right.id), None)
+            .unwrap();
+        assert!(result.processed_items >= result.affected_items);
+        assert_eq!(store.get_category(child.id).unwrap().parent, Some(right.id));
+    }
+
+    #[test]
+    fn move_category_within_parent_reorders_children() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = category("Parent", false);
+        agenda.create_category(&parent).unwrap();
+        let alpha = child_category("Alpha", parent.id, false);
+        let beta = child_category("Beta", parent.id, false);
+        agenda.create_category(&alpha).unwrap();
+        agenda.create_category(&beta).unwrap();
+
+        agenda.move_category_within_parent(beta.id, -1).unwrap();
+
+        let loaded_parent = store.get_category(parent.id).unwrap();
+        assert_eq!(loaded_parent.children, vec![beta.id, alpha.id]);
     }
 }

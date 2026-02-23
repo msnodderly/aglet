@@ -423,6 +423,89 @@ impl Store {
         Ok(())
     }
 
+    /// Reorder a category among its siblings by `delta` positions.
+    /// Out-of-range moves are treated as no-ops.
+    pub fn move_category_within_parent(&self, category_id: CategoryId, delta: i32) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
+
+        let category = self.get_category(category_id)?;
+        let parent_id = category.parent;
+        let mut siblings = self.list_category_ids_for_parent(parent_id)?;
+        let Some(from_index) = siblings.iter().position(|id| *id == category_id) else {
+            return Err(AgendaError::NotFound {
+                entity: "Category",
+                id: category_id,
+            });
+        };
+
+        let to_index = (from_index as i64 + delta as i64).clamp(0, siblings.len() as i64 - 1);
+        let to_index = to_index as usize;
+        if from_index == to_index {
+            return Ok(());
+        }
+
+        let moved = siblings.remove(from_index);
+        siblings.insert(to_index, moved);
+
+        self.with_category_order_transaction(|store| {
+            store.rewrite_category_sort_orders_for_parent(parent_id, &siblings)
+        })
+    }
+
+    /// Reparent a category and optionally place it at a specific index among the
+    /// new parent's children. `None` appends to the end.
+    pub fn move_category_to_parent(
+        &self,
+        category_id: CategoryId,
+        new_parent_id: Option<CategoryId>,
+        insert_index: Option<usize>,
+    ) -> Result<()> {
+        let category = self.get_category(category_id)?;
+        if new_parent_id == Some(category_id) {
+            return Err(AgendaError::InvalidOperation {
+                message: "category cannot be its own parent".to_string(),
+            });
+        }
+        if let Some(parent_id) = new_parent_id {
+            self.get_category(parent_id)?;
+        }
+        self.validate_category_parent(category_id, new_parent_id)?;
+
+        let old_parent_id = category.parent;
+        let mut old_siblings = self.list_category_ids_for_parent(old_parent_id)?;
+        let Some(old_index) = old_siblings.iter().position(|id| *id == category_id) else {
+            return Err(AgendaError::NotFound {
+                entity: "Category",
+                id: category_id,
+            });
+        };
+        old_siblings.remove(old_index);
+
+        let mut new_siblings = if old_parent_id == new_parent_id {
+            old_siblings.clone()
+        } else {
+            self.list_category_ids_for_parent(new_parent_id)?
+                .into_iter()
+                .filter(|id| *id != category_id)
+                .collect()
+        };
+        let next_index = insert_index
+            .unwrap_or(new_siblings.len())
+            .min(new_siblings.len());
+        new_siblings.insert(next_index, category_id);
+
+        self.with_category_order_transaction(|store| {
+            if old_parent_id != new_parent_id {
+                store.update_category_parent_only(category_id, new_parent_id)?;
+                store.rewrite_category_sort_orders_for_parent(old_parent_id, &old_siblings)?;
+            }
+            store.rewrite_category_sort_orders_for_parent(new_parent_id, &new_siblings)?;
+            Ok(())
+        })
+    }
+
     pub fn delete_category(&self, id: CategoryId) -> Result<()> {
         let category = self.get_category(id)?;
         if Self::is_reserved_category_name(&category.name) {
@@ -876,6 +959,112 @@ impl Store {
         Ok(rows)
     }
 
+    fn list_category_ids_for_parent(
+        &self,
+        parent_id: Option<CategoryId>,
+    ) -> Result<Vec<CategoryId>> {
+        let sql_root = "SELECT id
+             FROM categories
+             WHERE parent_id IS NULL
+             ORDER BY sort_order ASC, name COLLATE NOCASE ASC";
+        let sql_child = "SELECT id
+             FROM categories
+             WHERE parent_id = ?1
+             ORDER BY sort_order ASC, name COLLATE NOCASE ASC";
+
+        let mut stmt = if parent_id.is_some() {
+            self.conn.prepare(sql_child)?
+        } else {
+            self.conn.prepare(sql_root)?
+        };
+        let rows = if let Some(parent_id) = parent_id {
+            stmt.query_map(params![parent_id.to_string()], |row| {
+                let id_str: String = row.get(0)?;
+                Ok(Uuid::parse_str(&id_str).unwrap_or_default())
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map([], |row| {
+                let id_str: String = row.get(0)?;
+                Ok(Uuid::parse_str(&id_str).unwrap_or_default())
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        Ok(rows)
+    }
+
+    fn rewrite_category_sort_orders_for_parent(
+        &self,
+        parent_id: Option<CategoryId>,
+        ordered_ids: &[CategoryId],
+    ) -> Result<()> {
+        let sql_root = "UPDATE categories
+             SET sort_order = ?1
+             WHERE id = ?2 AND parent_id IS NULL";
+        let sql_child = "UPDATE categories
+             SET sort_order = ?1
+             WHERE id = ?2 AND parent_id = ?3";
+
+        for (idx, category_id) in ordered_ids.iter().enumerate() {
+            let rows = if let Some(parent_id) = parent_id {
+                self.conn.execute(
+                    sql_child,
+                    params![idx as i64, category_id.to_string(), parent_id.to_string()],
+                )?
+            } else {
+                self.conn
+                    .execute(sql_root, params![idx as i64, category_id.to_string()])?
+            };
+            if rows == 0 {
+                return Err(AgendaError::NotFound {
+                    entity: "Category",
+                    id: *category_id,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn update_category_parent_only(
+        &self,
+        category_id: CategoryId,
+        new_parent_id: Option<CategoryId>,
+    ) -> Result<()> {
+        let modified_at = Utc::now();
+        let rows = self.conn.execute(
+            "UPDATE categories
+             SET parent_id = ?1, modified_at = ?2
+             WHERE id = ?3",
+            params![
+                new_parent_id.map(|id| id.to_string()),
+                modified_at.to_rfc3339(),
+                category_id.to_string()
+            ],
+        )?;
+        if rows == 0 {
+            return Err(AgendaError::NotFound {
+                entity: "Category",
+                id: category_id,
+            });
+        }
+        Ok(())
+    }
+
+    fn with_category_order_transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+        self.conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
+        let result = f(self);
+        match result {
+            Ok(value) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(value)
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+
     fn next_category_sort_order(&self, parent_id: Option<CategoryId>) -> Result<i64> {
         let sql_for_root =
             "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM categories WHERE parent_id IS NULL";
@@ -1193,6 +1382,34 @@ mod tests {
             )
             .unwrap();
         Uuid::parse_str(&id).unwrap()
+    }
+
+    fn child_names(store: &Store, parent_id: CategoryId) -> Vec<String> {
+        let hierarchy = store.get_hierarchy().unwrap();
+        let names_by_id: HashMap<CategoryId, String> = hierarchy
+            .iter()
+            .map(|category| (category.id, category.name.clone()))
+            .collect();
+        let parent = hierarchy
+            .into_iter()
+            .find(|category| category.id == parent_id)
+            .expect("parent exists");
+        parent
+            .children
+            .into_iter()
+            .map(|id| names_by_id.get(&id).cloned().expect("child name exists"))
+            .collect()
+    }
+
+    fn root_names(store: &Store) -> Vec<String> {
+        store
+            .get_hierarchy()
+            .unwrap()
+            .into_iter()
+            .filter(|category| category.parent.is_none())
+            .filter(|category| !Store::is_reserved_category_name(&category.name))
+            .map(|category| category.name)
+            .collect()
     }
 
     #[test]
@@ -1784,6 +2001,120 @@ mod tests {
 
         let result = store.update_category(&updated_root);
         assert!(matches!(result, Err(AgendaError::InvalidOperation { .. })));
+    }
+
+    #[test]
+    fn test_move_category_within_parent_reorders_root_siblings() {
+        let store = Store::open_memory().unwrap();
+        let a = new_category("A");
+        let b = new_category("B");
+        let c = new_category("C");
+        store.create_category(&a).unwrap();
+        store.create_category(&b).unwrap();
+        store.create_category(&c).unwrap();
+
+        store.move_category_within_parent(c.id, -1).unwrap();
+        assert_eq!(root_names(&store), vec!["A", "C", "B"]);
+
+        store.move_category_within_parent(c.id, -10).unwrap();
+        assert_eq!(root_names(&store), vec!["C", "A", "B"]);
+    }
+
+    #[test]
+    fn test_move_category_within_parent_reorders_nested_siblings() {
+        let store = Store::open_memory().unwrap();
+        let parent = new_category("Parent");
+        store.create_category(&parent).unwrap();
+
+        let mut alpha = new_category("Alpha");
+        alpha.parent = Some(parent.id);
+        let mut beta = new_category("Beta");
+        beta.parent = Some(parent.id);
+        let mut gamma = new_category("Gamma");
+        gamma.parent = Some(parent.id);
+        store.create_category(&alpha).unwrap();
+        store.create_category(&beta).unwrap();
+        store.create_category(&gamma).unwrap();
+
+        store.move_category_within_parent(gamma.id, -1).unwrap();
+        assert_eq!(
+            child_names(&store, parent.id),
+            vec!["Alpha", "Gamma", "Beta"]
+        );
+
+        store.move_category_within_parent(alpha.id, 10).unwrap();
+        assert_eq!(
+            child_names(&store, parent.id),
+            vec!["Gamma", "Beta", "Alpha"]
+        );
+    }
+
+    #[test]
+    fn test_move_category_to_parent_reparents_and_appends() {
+        let store = Store::open_memory().unwrap();
+        let left = new_category("Left");
+        let right = new_category("Right");
+        store.create_category(&left).unwrap();
+        store.create_category(&right).unwrap();
+
+        let mut child = new_category("Child");
+        child.parent = Some(left.id);
+        store.create_category(&child).unwrap();
+
+        store
+            .move_category_to_parent(child.id, Some(right.id), None)
+            .unwrap();
+
+        let loaded = store.get_category(child.id).unwrap();
+        assert_eq!(loaded.parent, Some(right.id));
+        assert_eq!(child_names(&store, left.id), Vec::<String>::new());
+        assert_eq!(child_names(&store, right.id), vec!["Child"]);
+    }
+
+    #[test]
+    fn test_move_category_to_parent_inserts_at_index() {
+        let store = Store::open_memory().unwrap();
+        let parent_a = new_category("ParentA");
+        let parent_b = new_category("ParentB");
+        store.create_category(&parent_a).unwrap();
+        store.create_category(&parent_b).unwrap();
+
+        let mut one = new_category("One");
+        one.parent = Some(parent_b.id);
+        let mut two = new_category("Two");
+        two.parent = Some(parent_b.id);
+        let mut moving = new_category("Moving");
+        moving.parent = Some(parent_a.id);
+        store.create_category(&one).unwrap();
+        store.create_category(&two).unwrap();
+        store.create_category(&moving).unwrap();
+
+        store
+            .move_category_to_parent(moving.id, Some(parent_b.id), Some(0))
+            .unwrap();
+
+        assert_eq!(
+            child_names(&store, parent_b.id),
+            vec!["Moving", "One", "Two"]
+        );
+    }
+
+    #[test]
+    fn test_move_category_to_parent_rejects_cycle() {
+        let store = Store::open_memory().unwrap();
+        let root = new_category("Root");
+        store.create_category(&root).unwrap();
+        let mut child = new_category("Child");
+        child.parent = Some(root.id);
+        store.create_category(&child).unwrap();
+        let mut grandchild = new_category("Grandchild");
+        grandchild.parent = Some(child.id);
+        store.create_category(&grandchild).unwrap();
+
+        let err = store
+            .move_category_to_parent(root.id, Some(grandchild.id), None)
+            .unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
     }
 
     #[test]
