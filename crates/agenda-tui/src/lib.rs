@@ -1380,8 +1380,11 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let priority = Category::new("Priority".to_string());
-        let status = Category::new("Status".to_string());
-        for cat in [&priority, &status] {
+        let mut status = Category::new("Status".to_string());
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        status.children = vec![pending.id];
+        for cat in [&priority, &status, &pending] {
             store.create_category(cat).expect("create category");
         }
 
@@ -1435,7 +1438,7 @@ mod tests {
     }
 
     #[test]
-    fn board_add_column_picker_create_confirm_can_cancel_and_confirm() {
+    fn board_add_column_picker_rejects_creating_new_leaf_heading() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
@@ -1478,20 +1481,14 @@ mod tests {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
         app.handle_key(KeyCode::Enter, &agenda)
-            .expect("open create confirm");
-        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
-        assert_eq!(app.board_add_column_create_confirm_name(), Some("BrandNew"));
-
-        app.handle_key(KeyCode::Esc, &agenda)
-            .expect("cancel create confirm");
+            .expect("attempt create");
         assert_eq!(app.mode, Mode::BoardAddColumnPicker);
         assert_eq!(app.board_add_column_create_confirm_name(), None);
-
-        app.handle_key(KeyCode::Enter, &agenda)
-            .expect("open create confirm again");
-        app.handle_key(KeyCode::Char('y'), &agenda)
-            .expect("confirm create and insert");
-        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("must already have subcategories"),
+            "unexpected status: {}",
+            app.status
+        );
 
         let saved = store
             .get_view(
@@ -1500,11 +1497,21 @@ mod tests {
                     .id,
             )
             .expect("saved view");
-        assert_eq!(saved.sections[0].columns.len(), 2);
-        let new_heading = saved.sections[0].columns[1].heading;
-        let created = store.get_category(new_heading).expect("new category exists");
-        assert_eq!(created.name, "BrandNew");
-        assert_eq!(created.parent, None);
+        assert_eq!(saved.sections[0].columns.len(), 1);
+        assert!(
+            store
+                .list_views()
+                .expect("views")
+                .iter()
+                .any(|v| v.name == "Board")
+        );
+        assert!(
+            store
+                .get_hierarchy()
+                .expect("categories")
+                .iter()
+                .all(|c| !c.name.eq_ignore_ascii_case("BrandNew"))
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -1519,8 +1526,11 @@ mod tests {
         let status = Category::new("Status".to_string());
         let mut test_child = Category::new("Test".to_string());
         test_child.parent = Some(status.id);
-        let base = Category::new("Base".to_string());
-        for cat in [&status, &test_child, &base] {
+        let mut base = Category::new("Base".to_string());
+        let mut base_child = Category::new("BaseChild".to_string());
+        base_child.parent = Some(base.id);
+        base.children = vec![base_child.id];
+        for cat in [&status, &test_child, &base, &base_child] {
             store.create_category(cat).expect("create category");
         }
 
@@ -1560,7 +1570,7 @@ mod tests {
         assert_eq!(app.mode, Mode::BoardAddColumnPicker);
         assert_eq!(app.board_add_column_create_confirm_name(), None);
         assert!(
-            app.status.contains("already exists under 'Status'"),
+            app.status.contains("exists under 'Status'"),
             "unexpected status: {}",
             app.status
         );

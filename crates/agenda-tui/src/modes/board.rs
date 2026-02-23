@@ -360,7 +360,13 @@ impl App {
     }
 
     fn is_valid_board_column_heading_category(category: &Category) -> bool {
-        category.parent.is_none() && !category.name.eq_ignore_ascii_case("Entry")
+        if category.name.eq_ignore_ascii_case("Entry") {
+            return false;
+        }
+        if category.name.eq_ignore_ascii_case("When") {
+            return category.parent.is_none();
+        }
+        category.parent.is_none() && !category.children.is_empty()
     }
 
     fn board_add_column_scope_ids(&self) -> Vec<CategoryId> {
@@ -401,9 +407,10 @@ impl App {
             }
             self.category_suggest = None;
             self.status = if typed.is_empty() {
-                "Add column: type to filter top-level categories".to_string()
+                "Add column: type to filter top-level categories with children (or When)"
+                    .to_string()
             } else {
-                "No matching top-level categories. Enter creates a new top-level category."
+                "No valid column heading match. Enter explains why (leaf headings are invalid)."
                     .to_string()
             };
         } else {
@@ -412,7 +419,7 @@ impl App {
             }
             self.category_suggest = Some(CategorySuggestState { suggest_index: 0 });
             self.status =
-                "Add column: type to filter, ↑↓ select, Tab autocomplete, Enter insert/create"
+                "Add column: type to filter, ↑↓ select, Tab autocomplete, Enter insert"
                     .to_string();
         }
     }
@@ -716,14 +723,28 @@ impl App {
                 .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
                 .map(|c| c.name.as_str())
                 .unwrap_or("(top level)");
-            self.status = format!(
-                "Category '{}' already exists under '{}'; cannot create duplicate top-level category.",
-                existing_cat.name, parent_label
-            );
+            if existing_cat.parent.is_some() {
+                self.status = format!(
+                    "Category '{}' exists under '{}'. Column headings must be top-level categories with children (or When).",
+                    existing_cat.name, parent_label
+                );
+            } else if existing_cat.children.is_empty() && !existing_cat.name.eq_ignore_ascii_case("When") {
+                self.status = format!(
+                    "Category '{}' is top-level but has no subcategories, so it cannot be a column heading yet.",
+                    existing_cat.name
+                );
+            } else {
+                self.status = format!(
+                    "Category '{}' already exists under '{}'; use Enter to insert it.",
+                    existing_cat.name, parent_label
+                );
+            }
             return;
         }
-        self.set_board_add_column_create_confirm_name(Some(typed.clone()));
-        self.status = format!("Create top-level category '{}' and insert column? (Y/n)", typed);
+        self.status = format!(
+            "Cannot create '{}' here: column headings must already have subcategories. Create the category and at least one child first.",
+            typed
+        );
     }
 
     fn insert_board_column_for_category(
@@ -752,18 +773,28 @@ impl App {
             return Ok(());
         }
 
-        let kind = self
-            .categories
-            .iter()
-            .find(|c| c.id == category_id)
-            .map(|c| {
-                if c.name.eq_ignore_ascii_case("When") {
-                    ColumnKind::When
-                } else {
-                    ColumnKind::Standard
-                }
-            })
-            .unwrap_or(ColumnKind::Standard);
+        let Some(heading_category) = self.categories.iter().find(|c| c.id == category_id) else {
+            self.status = "Selected category no longer exists".to_string();
+            return Ok(());
+        };
+        if !Self::is_valid_board_column_heading_category(heading_category) {
+            self.status = if heading_category.parent.is_some() {
+                "Invalid column heading: choose a top-level category with subcategories (or When)"
+                    .to_string()
+            } else {
+                format!(
+                    "Invalid column heading '{}': add subcategories first",
+                    heading_category.name
+                )
+            };
+            return Ok(());
+        }
+
+        let kind = if heading_category.name.eq_ignore_ascii_case("When") {
+            ColumnKind::When
+        } else {
+            ColumnKind::Standard
+        };
 
         let insert_index = add_state.anchor.insert_index.min(section.columns.len());
         section.columns.insert(
