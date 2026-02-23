@@ -242,6 +242,7 @@ impl App {
             target_category_id: category_id,
             target_category_name: target_category_name.clone(),
             filter: text_buffer::TextBuffer::empty(),
+            filter_editing: false,
             options,
             visible_option_indices,
             list_index,
@@ -631,6 +632,7 @@ impl App {
                 target_category_id,
                 target_category_name,
                 mut filter,
+                mut filter_editing,
                 options,
                 mut visible_option_indices,
                 mut list_index,
@@ -647,9 +649,15 @@ impl App {
                             CategoryParentPickerFocus::Filter => CategoryParentPickerFocus::List,
                             CategoryParentPickerFocus::List => CategoryParentPickerFocus::Filter,
                         };
+                        filter_editing = false;
                     }
                     KeyCode::Char('/') => {
                         focus = CategoryParentPickerFocus::Filter;
+                        filter_editing = true;
+                        self.status = format!(
+                            "Reparent {}: type to filter parents, Enter apply, Esc cancel",
+                            target_category_name
+                        );
                     }
                     KeyCode::Down | KeyCode::Char('j')
                         if focus == CategoryParentPickerFocus::List =>
@@ -677,7 +685,8 @@ impl App {
                         return Ok(true);
                     }
                     _ => {
-                        if focus == CategoryParentPickerFocus::Filter
+                        if filter_editing
+                            && focus == CategoryParentPickerFocus::Filter
                             && filter.handle_key(code, false)
                         {
                             visible_option_indices = Self::category_parent_picker_visible_indices(
@@ -709,6 +718,7 @@ impl App {
                     target_category_id,
                     target_category_name,
                     filter,
+                    filter_editing,
                     options,
                     visible_option_indices,
                     list_index,
@@ -728,11 +738,12 @@ impl App {
         if self.handle_category_manager_inline_action_key(code, agenda)? {
             return Ok(false);
         }
-        if matches!(
-            self.category_manager_focus(),
-            Some(CategoryManagerFocus::Filter)
-        ) {
+        if self.category_manager_filter_editing() {
             match code {
+                KeyCode::Char('/') => {
+                    self.set_category_manager_focus(CategoryManagerFocus::Filter);
+                    return Ok(false);
+                }
                 KeyCode::Esc
                 | KeyCode::F(9)
                 | KeyCode::Tab
@@ -740,7 +751,9 @@ impl App {
                 | KeyCode::Down
                 | KeyCode::Up
                 | KeyCode::Char('j')
-                | KeyCode::Char('k') => {}
+                | KeyCode::Char('k') => {
+                    self.set_category_manager_filter_editing(false);
+                }
                 _ => {
                     if let Some(filter) = self.category_manager_filter_mut() {
                         if filter.handle_key(code, false) {
@@ -762,16 +775,20 @@ impl App {
         }
         match code {
             KeyCode::Tab => {
+                self.set_category_manager_filter_editing(false);
                 self.cycle_category_manager_focus(1);
             }
             KeyCode::BackTab => {
+                self.set_category_manager_filter_editing(false);
                 self.cycle_category_manager_focus(-1);
             }
             KeyCode::Char('/') => {
                 self.set_category_manager_focus(CategoryManagerFocus::Filter);
+                self.set_category_manager_filter_editing(true);
                 self.status = "Category filter: type to narrow list, Esc clears filter".to_string();
             }
             KeyCode::Esc | KeyCode::F(9) => {
+                self.set_category_manager_filter_editing(false);
                 if self
                     .category_manager_filter_text()
                     .map_or(false, |t| !t.trim().is_empty())
@@ -793,8 +810,14 @@ impl App {
                     self.status = "Category manager closed".to_string();
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.set_category_manager_filter_editing(false);
+                self.move_category_cursor(1)
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.set_category_manager_filter_editing(false);
+                self.move_category_cursor(-1)
+            }
             KeyCode::Char('K') => {
                 self.reorder_selected_category_sibling(-1, agenda)?;
             }
