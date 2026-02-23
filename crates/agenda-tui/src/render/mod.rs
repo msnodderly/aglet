@@ -1628,7 +1628,7 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  Enter:config  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc:close"
+                "j/k:row  Enter:config  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc:close  (tree/filter/details scaffold)"
             }
             Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDelete => "y:confirm delete  n:cancel",
@@ -2099,19 +2099,60 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
             .split(area);
+        let manager_focus = self
+            .category_manager
+            .as_ref()
+            .map(|state| state.focus)
+            .unwrap_or(CategoryManagerFocus::Tree);
+        let filter_text = self
+            .category_manager
+            .as_ref()
+            .map(|state| state.filter.text().to_string())
+            .unwrap_or_default();
         frame.render_widget(
-            Paragraph::new("Categories are global. Enter opens config popup (checkboxes + note)."),
+            Paragraph::new(
+                "Categories are global. Tree editor scaffold: filter/details panes added; Enter still opens config popup.",
+            ),
             layout[0],
         );
 
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .split(layout[1]);
+        let left = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .split(body[0]);
+
+        let filter_border = if manager_focus == CategoryManagerFocus::Filter {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        frame.render_widget(
+            Paragraph::new(if filter_text.trim().is_empty() {
+                "Filter: (phase 2 scaffold; filtering not wired yet)".to_string()
+            } else {
+                format!("Filter: {}", filter_text)
+            })
+            .block(
+                Block::default()
+                    .title("Filter")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(filter_border)),
+            ),
+            left[0],
+        );
+
         let table_area = if self.mode == Mode::CategoryReparent {
-            let body = Layout::default()
+            let left_body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])
-                .split(layout[1]);
-            body[0]
+                .split(left[1]);
+            left_body[0]
         } else {
-            layout[1]
+            left[1]
         };
 
         let title_suffix = String::new();
@@ -2190,11 +2231,67 @@ impl App {
             state.offset(),
         );
 
+        let details_border = if manager_focus == CategoryManagerFocus::Details {
+            Color::Cyan
+        } else {
+            Color::Blue
+        };
+        let selected_summary = if let Some(row) = self.selected_category_row() {
+            let mut parent_name = "(root)".to_string();
+            if let Some(parent_id) = self
+                .categories
+                .iter()
+                .find(|c| c.id == row.id)
+                .and_then(|c| c.parent)
+            {
+                if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
+                    parent_name = parent.name.clone();
+                }
+            }
+            vec![
+                Line::from(format!("Selected: {}", row.name)),
+                Line::from(format!("Depth: {}", row.depth)),
+                Line::from(format!("Parent: {}", parent_name)),
+                Line::from(format!(
+                    "Flags: excl={} match={} todo={}",
+                    row.is_exclusive, row.enable_implicit_string, row.is_actionable
+                )),
+                Line::from(if row.is_reserved {
+                    "Reserved: yes".to_string()
+                } else {
+                    "Reserved: no".to_string()
+                }),
+                Line::from(""),
+                Line::from("Phase 2 scaffold"),
+                Line::from("- Tree + filter + details layout is now in place"),
+                Line::from("- Existing category commands remain unchanged"),
+                Line::from("- Inline create/reparent rewrite lands in later phases"),
+            ]
+        } else {
+            vec![
+                Line::from("No category selected"),
+                Line::from(""),
+                Line::from("Phase 2 scaffold"),
+                Line::from("- Tree + filter + details layout is now in place"),
+            ]
+        };
+        frame.render_widget(
+            Paragraph::new(selected_summary)
+                .wrap(Wrap { trim: false })
+                .block(
+                    Block::default()
+                        .title("Details (Scaffold)")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(details_border)),
+                ),
+            body[1],
+        );
+
         if self.mode == Mode::CategoryReparent {
-            let body = Layout::default()
+            let left_body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])
-                .split(layout[1]);
+                .split(left[1]);
             let reparent_items: Vec<ListItem<'_>> = if self.category_reparent_options.is_empty() {
                 vec![ListItem::new(Line::from("(no valid parent options)"))]
             } else {
@@ -2204,7 +2301,7 @@ impl App {
                     .collect()
             };
             let mut reparent_state = Self::list_state_for(
-                body[1],
+                left_body[1],
                 if self.category_reparent_options.is_empty() {
                     None
                 } else {
@@ -2225,10 +2322,10 @@ impl App {
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(Color::Green)),
                     ),
-                body[1],
+                left_body[1],
                 &mut reparent_state,
             );
-            Self::render_vertical_scrollbar(frame, body[1], item_count, reparent_state.offset());
+            Self::render_vertical_scrollbar(frame, left_body[1], item_count, reparent_state.offset());
         }
     }
 
