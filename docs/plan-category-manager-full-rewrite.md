@@ -659,45 +659,47 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Phase 1: Core Category Move/Reorder APIs (`agenda-core`)
 
-- [ ] Audit current category ordering behavior in `Store::get_hierarchy()` and category writes
-  - [ ] Confirm `sort_order` semantics for roots and child lists
-  - [ ] Confirm duplicate/negative gaps are tolerated and normalized only on writes
-- [ ] Design API signatures for structural edits (store layer)
-  - [ ] Choose final function names and argument shapes
-  - [ ] Decide on explicit `insert_pos` enum/type vs `before/after` helpers
-  - [ ] Decide if pure reorder APIs belong in `Store` only or also `Agenda`
-- [ ] Implement helper(s) in `crates/agenda-core/src/store.rs`
-  - [ ] Fetch siblings for a parent ordered by `sort_order`
-  - [ ] Rewrite sibling `sort_order` sequence transactionally
+- [x] Audit current category ordering behavior in `Store::get_hierarchy()` and category writes
+  - [x] Confirm `sort_order` semantics for roots and child lists
+  - [x] Confirm duplicate/negative gaps are tolerated and normalized only on writes
+- [x] Design API signatures for structural edits (store layer)
+  - [x] Choose final function names and argument shapes
+  - [x] Decide on explicit `insert_pos` enum/type vs `before/after` helpers
+  - [x] Decide if pure reorder APIs belong in `Store` only or also `Agenda`
+  - Note: implemented `Store::move_category_within_parent(category_id, delta)` and `Store::move_category_to_parent(category_id, new_parent_id, insert_index)`.
+- [x] Implement helper(s) in `crates/agenda-core/src/store.rs`
+  - [x] Fetch siblings for a parent ordered by `sort_order`
+  - [x] Rewrite sibling `sort_order` sequence transactionally
   - [ ] Normalize sibling sort orders helper (internal)
-  - [ ] Utility to insert/move an ID in a sibling vector
-- [ ] Implement store API: move category within same parent (reorder)
-  - [ ] Validate category exists
-  - [ ] Validate target movement is legal (same parent only for this API)
-  - [ ] Persist reordered sibling sort orders in one transaction
-- [ ] Implement store API: move category to new parent with ordering
-  - [ ] Validate category exists
-  - [ ] Validate parent exists when non-root
-  - [ ] Validate not self-parent
-  - [ ] Validate no cycle (cannot reparent under descendant)
-  - [ ] Update `parent_id`
-  - [ ] Reassign sort orders in old and new parent sibling lists transactionally
-- [ ] Implement agenda-level wrapper(s) in `crates/agenda-core/src/agenda.rs`
-  - [ ] Reparent wrapper that triggers re-evaluation and returns `EvaluateAllItemsResult`
-  - [ ] Reorder wrapper (decide whether to re-evaluate; document choice)
-- [ ] Add unit tests for store structural APIs
-  - [ ] reorder root siblings up/down
-  - [ ] reorder child siblings up/down
+  - [x] Utility to insert/move an ID in a sibling vector
+- [x] Implement store API: move category within same parent (reorder)
+  - [x] Validate category exists
+  - [x] Validate target movement is legal (same parent only for this API)
+  - [x] Persist reordered sibling sort orders in one transaction
+- [x] Implement store API: move category to new parent with ordering
+  - [x] Validate category exists
+  - [x] Validate parent exists when non-root
+  - [x] Validate not self-parent
+  - [x] Validate no cycle (cannot reparent under descendant)
+  - [x] Update `parent_id`
+  - [x] Reassign sort orders in old and new parent sibling lists transactionally
+- [x] Implement agenda-level wrapper(s) in `crates/agenda-core/src/agenda.rs`
+  - [x] Reparent wrapper that triggers re-evaluation and returns `EvaluateAllItemsResult`
+  - [x] Reorder wrapper (decide whether to re-evaluate; document choice)
+  - Note: reorder wrapper is store-only (`Result<()>`) because sibling order does not affect category assignment semantics.
+- [x] Add unit tests for store structural APIs
+  - [x] reorder root siblings up/down
+  - [x] reorder child siblings up/down
   - [ ] reparent root -> child
-  - [ ] reparent child -> root
-  - [ ] reparent child -> different parent
-  - [ ] cycle prevention
-  - [ ] self-parent rejection
-  - [ ] invalid parent not found
+  - [x] reparent child -> root
+  - [x] reparent child -> different parent
+  - [x] cycle prevention
+  - [x] self-parent rejection
+  - [x] invalid parent not found
   - [ ] stable hierarchy ordering after multiple moves
-- [ ] Add agenda tests for reparent side effects
-  - [ ] Ensure evaluation path still runs
-  - [ ] Ensure returned result is surfaced correctly
+- [x] Add agenda tests for reparent side effects
+  - [x] Ensure evaluation path still runs
+  - [x] Ensure returned result is surfaced correctly
 
 ### Phase 2: CategoryManagerState Scaffold + New Renderer Shell (`agenda-tui`)
 
