@@ -519,62 +519,71 @@ impl App {
             chunks[1],
         );
 
-        let matches = self.category_column_picker_matches();
-        let items: Vec<ListItem<'_>> = if matches.is_empty() {
-            let msg = if state.filter.text().trim().is_empty() {
-                "(type to filter child categories)"
+        if let Some(name) = state.create_confirm_name.as_deref() {
+            self.render_category_create_confirm_panel(
+                frame,
+                chunks[2],
+                name,
+                "as a new child category in this column?",
+            );
+        } else {
+            let matches = self.category_column_picker_matches();
+            let items: Vec<ListItem<'_>> = if matches.is_empty() {
+                let msg = if state.filter.text().trim().is_empty() {
+                    "(type to filter child categories)"
+                } else {
+                    "(no matches)"
+                };
+                vec![ListItem::new(msg)]
             } else {
-                "(no matches)"
-            };
-            vec![ListItem::new(msg)]
-        } else {
-            matches
-                .iter()
-                .map(|id| {
-                    let label = self
-                        .categories
-                        .iter()
-                        .find(|c| c.id == *id)
-                        .map(|c| c.name.as_str())
-                        .unwrap_or("(missing)");
-                    let mark = if state.selected_ids.contains(id) {
-                        "[x]"
-                    } else {
-                        "[ ]"
-                    };
-                    ListItem::new(format!("{mark} {label}"))
-                })
-                .collect()
-        };
-        let selected = if matches.is_empty() {
-            None
-        } else {
-            Some(state.list_index.min(matches.len() - 1))
-        };
-        let mut list_state = Self::list_state_for(chunks[2], selected);
-        frame.render_stateful_widget(
-            List::new(items)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Categories")
-                        .border_style(if state.focus == CategoryColumnPickerFocus::List {
-                            Style::default().fg(Color::Cyan)
+                matches
+                    .iter()
+                    .map(|id| {
+                        let label = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == *id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("(missing)");
+                        let mark = if state.selected_ids.contains(id) {
+                            "[x]"
                         } else {
-                            Style::default()
-                        }),
-                )
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style()),
-            chunks[2],
-            &mut list_state,
-        );
-        Self::render_vertical_scrollbar(
-            frame,
-            chunks[2],
-            matches.len().max(1),
-            list_state.offset(),
-        );
+                            "[ ]"
+                        };
+                        ListItem::new(format!("{mark} {label}"))
+                    })
+                    .collect()
+            };
+            let selected = if matches.is_empty() {
+                None
+            } else {
+                Some(state.list_index.min(matches.len() - 1))
+            };
+            let mut list_state = Self::list_state_for(chunks[2], selected);
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Categories")
+                            .border_style(if state.focus == CategoryColumnPickerFocus::List {
+                                Style::default().fg(Color::Cyan)
+                            } else {
+                                Style::default()
+                            }),
+                    )
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style()),
+                chunks[2],
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(
+                frame,
+                chunks[2],
+                matches.len().max(1),
+                list_state.offset(),
+            );
+        }
 
         frame.render_widget(
             Paragraph::new(

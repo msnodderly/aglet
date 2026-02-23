@@ -90,6 +90,22 @@ impl App {
         self.category_column_picker_state().map(|s| s.filter.text())
     }
 
+    fn category_column_picker_create_confirm_name(&self) -> Option<&str> {
+        self.category_column_picker_state()?
+            .create_confirm_name
+            .as_deref()
+    }
+
+    fn category_column_picker_create_confirm_open(&self) -> bool {
+        self.category_column_picker_create_confirm_name().is_some()
+    }
+
+    fn set_category_column_picker_create_confirm_name(&mut self, name: Option<String>) {
+        if let Some(state) = self.category_column_picker_state_mut() {
+            state.create_confirm_name = name;
+        }
+    }
+
     pub(crate) fn category_column_picker_matches(&self) -> Vec<CategoryId> {
         let child_ids = self.get_current_column_child_ids();
         let query = self.category_column_picker_filter_text().unwrap_or("");
@@ -1370,6 +1386,76 @@ impl App {
         self.status = format!("Toggled '{label}'. Enter saves, Esc cancels");
     }
 
+    fn open_category_column_picker_create_confirm(&mut self) {
+        let typed = self
+            .category_column_picker_filter_text()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if typed.is_empty() {
+            self.status = "Type a category name first".to_string();
+            return;
+        }
+        if is_reserved_category_name(&typed) {
+            self.status = format!(
+                "Cannot create reserved category '{}'. Use a different name.",
+                typed
+            );
+            return;
+        }
+        if let Some(existing_cat) = self
+            .categories
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(&typed))
+        {
+            let parent_name = existing_cat
+                .parent
+                .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(root)");
+            self.status = format!(
+                "Category '{}' exists under '{}'. Cannot create duplicate.",
+                typed, parent_name
+            );
+            return;
+        }
+        self.set_category_column_picker_create_confirm_name(Some(typed.clone()));
+        self.status = format!("Create new category '{}' in this column? (Y/n)", typed);
+    }
+
+    fn confirm_inline_create_category_column_picker(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(name) = self
+            .category_column_picker_create_confirm_name()
+            .map(str::to_string)
+        else {
+            return Ok(());
+        };
+        let Some(parent_id) = self.category_column_picker_state().map(|s| s.parent_id) else {
+            self.set_category_column_picker_create_confirm_name(None);
+            return Ok(());
+        };
+
+        let mut category = Category::new(name.clone());
+        category.parent = Some(parent_id);
+        category.enable_implicit_string = true;
+        let cat_id = category.id;
+        agenda
+            .create_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh_category_cache(agenda.store())?;
+        if let Some(state) = self.category_column_picker_state_mut() {
+            state.selected_ids.insert(cat_id);
+            state.create_confirm_name = None;
+            state.focus = CategoryColumnPickerFocus::FilterInput;
+        }
+        self.clamp_category_column_picker_list_index();
+        self.status = format!("Created category '{}' and selected it (Enter saves)", name);
+        Ok(())
+    }
+
     fn apply_category_column_picker_selection(
         &mut self,
         agenda: &Agenda<'_>,
@@ -1431,6 +1517,25 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        if self.category_column_picker_create_confirm_open() {
+            match inline_create_confirm_key_action(code) {
+                InlineCreateConfirmKeyAction::Confirm => {
+                    self.confirm_inline_create_category_column_picker(agenda)?;
+                    return Ok(false);
+                }
+                InlineCreateConfirmKeyAction::Cancel => {
+                    self.set_category_column_picker_create_confirm_name(None);
+                    self.status = "Create canceled. Continue editing category.".to_string();
+                    return Ok(false);
+                }
+                InlineCreateConfirmKeyAction::DismissAndContinue => {
+                    self.set_category_column_picker_create_confirm_name(None);
+                    self.status = "Create canceled. Continue editing category.".to_string();
+                }
+                InlineCreateConfirmKeyAction::None => {}
+            }
+        }
+
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -1439,7 +1544,16 @@ impl App {
                 return Ok(false);
             }
             KeyCode::Enter => {
-                self.apply_category_column_picker_selection(agenda)?;
+                let typed = self
+                    .category_column_picker_filter_text()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if self.category_column_picker_matches().is_empty() && !typed.is_empty() {
+                    self.open_category_column_picker_create_confirm();
+                } else {
+                    self.apply_category_column_picker_selection(agenda)?;
+                }
                 return Ok(false);
             }
             KeyCode::Tab | KeyCode::BackTab => {
@@ -1486,7 +1600,7 @@ impl App {
             self.status = if typed.is_empty() {
                 "Type to filter categories. Space toggles highlighted row, Enter saves".to_string()
             } else if no_matches {
-                "No categories found. Enter saves current selection (create flow next).".to_string()
+                "No categories found. Enter creates a new child category.".to_string()
             } else {
                 "Space toggles highlighted category. Enter saves, Esc cancels".to_string()
             };
