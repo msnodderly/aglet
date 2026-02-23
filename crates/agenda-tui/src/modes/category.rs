@@ -181,6 +181,75 @@ impl App {
         Ok(())
     }
 
+    fn reorder_selected_category_sibling(
+        &mut self,
+        delta: i32,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        if self
+            .category_manager_filter_text()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false)
+        {
+            self.status =
+                "Clear category filter before reordering (Phase 4 movement + filter behavior pending)"
+                    .to_string();
+            return Ok(());
+        }
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category order is read-only".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let Some(category) = self.categories.iter().find(|c| c.id == category_id) else {
+            self.status = "Selected category missing".to_string();
+            return Ok(());
+        };
+        let category_name = category.name.clone();
+        let parent_id = category.parent;
+        let sibling_ids: Vec<CategoryId> = if let Some(parent_id) = parent_id {
+            self.categories
+                .iter()
+                .find(|c| c.id == parent_id)
+                .map(|parent| parent.children.clone())
+                .unwrap_or_default()
+        } else {
+            self.categories
+                .iter()
+                .filter(|c| c.parent.is_none())
+                .map(|c| c.id)
+                .collect()
+        };
+        let Some(idx) = sibling_ids.iter().position(|id| *id == category_id) else {
+            self.status = "Reorder failed: category not found among siblings".to_string();
+            return Ok(());
+        };
+
+        if (delta < 0 && idx == 0) || (delta > 0 && idx + 1 >= sibling_ids.len()) {
+            self.status = if delta < 0 {
+                format!("{category_name} is already first among siblings")
+            } else {
+                format!("{category_name} is already last among siblings")
+            };
+            return Ok(());
+        }
+
+        agenda
+            .move_category_within_parent(category_id, delta.signum())
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.status = if delta < 0 {
+            format!("Moved {category_name} up among siblings")
+        } else {
+            format!("Moved {category_name} down among siblings")
+        };
+        Ok(())
+    }
+
     fn handle_category_manager_inline_action_key(
         &mut self,
         code: KeyCode,
@@ -414,6 +483,12 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => self.move_category_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_category_cursor(-1),
+            KeyCode::Char('K') => {
+                self.reorder_selected_category_sibling(-1, agenda)?;
+            }
+            KeyCode::Char('J') => {
+                self.reorder_selected_category_sibling(1, agenda)?;
+            }
             KeyCode::Char('n') => {
                 self.start_category_inline_create(self.selected_category_id());
             }
