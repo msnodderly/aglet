@@ -312,7 +312,7 @@ Legend:
 - [x] Confirm uppercase `S` behavior is unchanged.
 - [x] Add “add row” action from `Input` focus (implemented as `+`) while preserving existing `Entries`-focus behavior.
 - [x] Ensure add-row action is blocked with clear status message for exclusive parents.
-- [ ] Decide and implement `Tab` behavior change for suggestions (per approved option):
+- [x] Decide and implement `Tab` behavior change for suggestions (per approved option):
   - [x] Option A: `Tab` always cycles focus
   - [ ] Option B: keep autocomplete on `Tab` and add alternative focus key
 - [x] If autocomplete key changes, add new key handler (implemented `Right`) and ensure it only applies in `Suggestions`.
@@ -337,9 +337,9 @@ Legend:
 
 #### 11.5 Phase 1 Manual Verification
 
-- [ ] Manual verify two-category assignment in `Area` can be completed without entering `Entries` focus.
-- [ ] Manual verify `Status`/`Priority` still enforce exclusivity.
-- [ ] Manual verify existing create-category inline flow still works in current modal.
+- [x] Manual verify two-category assignment in `Area` can be completed without entering `Entries` focus. (Non-destructive spot-check of `+` row-add from `Input` in TUI; save/apply path covered by unit tests.)
+- [x] Manual verify `Status`/`Priority` still enforce exclusivity. (Spot-checked `+` in `Status` direct edit; exclusive-row status shown.)
+- [x] Manual verify existing create-category inline flow still works in current modal. (Spot-checked create-confirm open/cancel in direct edit; no save.)
 
 ### Phase 2 - Picker-Based Redesign (Main UX Replacement)
 
