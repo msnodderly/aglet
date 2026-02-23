@@ -133,6 +133,7 @@ pub(super) fn item_assignment_labels(
 
 pub(super) const BOARD_MULTI_CATEGORY_LINE_CAP: usize = 8;
 
+#[allow(dead_code)]
 pub(super) fn format_category_values_single_line(labels: &[String]) -> String {
     if labels.is_empty() {
         "-".to_string()
@@ -618,6 +619,7 @@ pub(super) fn exact_category_name_match_in_scope(
     })
 }
 
+#[allow(dead_code)]
 pub(super) fn filter_child_categories(
     child_ids: &[CategoryId],
     categories: &[Category],

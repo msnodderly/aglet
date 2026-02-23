@@ -194,7 +194,11 @@ enum Mode {
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
-    CategoryCreateConfirm { name: String, parent_id: CategoryId },
+    #[allow(dead_code)]
+    CategoryCreateConfirm {
+        name: String,
+        parent_id: CategoryId,
+    },
 }
 
 /// Disambiguates which name-input operation is in flight when Mode::InputPanel
@@ -281,11 +285,13 @@ struct CategoryConfigState {
 
 #[derive(Clone, Debug)]
 struct CategorySuggestState {
+    #[allow(dead_code)]
     suggest_index: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AddColumnDirection {
+    #[allow(dead_code)]
     Left,
     Right,
 }
@@ -367,6 +373,7 @@ struct CategoryDirectEditRow {
 
 #[derive(Clone)]
 struct CategoryDirectEditState {
+    #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
     parent_name: String,
@@ -387,6 +394,7 @@ enum CategoryColumnPickerFocus {
 
 #[derive(Clone)]
 struct CategoryColumnPickerState {
+    #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
     parent_name: String,
@@ -408,6 +416,7 @@ impl CategoryDirectEditRow {
         }
     }
 
+    #[allow(dead_code)]
     fn resolved(category_id: CategoryId, name: String) -> Self {
         Self {
             input: text_buffer::TextBuffer::new(name),
@@ -3044,7 +3053,11 @@ mod tests {
             .map(|c| c.heading)
             .collect();
         assert_eq!(first_headings, vec![a.id, b.id], "first section unchanged");
-        assert_eq!(second_headings, vec![b.id, a.id], "second section reordered");
+        assert_eq!(
+            second_headings,
+            vec![b.id, a.id],
+            "second section reordered"
+        );
         assert_eq!(app.slot_index, 1, "focus should remain on second section");
         assert_eq!(app.item_index, 0, "shared item selected in second section");
         assert_eq!(app.column_index, 1, "moved column remains selected");
