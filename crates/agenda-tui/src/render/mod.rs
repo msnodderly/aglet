@@ -268,18 +268,11 @@ impl App {
             .category_direct_edit_state()
             .and_then(|state| state.create_confirm_name.as_deref());
         if let Some(name) = inline_create_name {
-            frame.render_widget(
-                Paragraph::new(format!(
-                    "Create \"{}\" as a new child category in this column?\nEnter/Y confirm  N/Esc cancel",
-                    name
-                ))
-                    .style(Style::default().fg(MUTED_TEXT_COLOR))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Create Category"),
-                    ),
+            self.render_category_create_confirm_panel(
+                frame,
                 chunks[4],
+                name,
+                "as a new child category in this column?",
             );
             frame.render_widget(
                 Paragraph::new("S save draft  Esc cancel draft")
@@ -422,6 +415,24 @@ impl App {
         Some((x, input_y))
     }
 
+    fn render_category_create_confirm_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        name: &str,
+        description_suffix: &str,
+    ) {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Create \"{}\" {}\nEnter/Y confirm  N/Esc cancel",
+                name, description_suffix
+            ))
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .block(Block::default().borders(Borders::ALL).title("Create Category")),
+            area,
+        );
+    }
+
     fn render_board_add_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
         frame.render_widget(
@@ -488,14 +499,11 @@ impl App {
         );
 
         if let Some(name) = self.board_add_column_create_confirm_name() {
-            frame.render_widget(
-                Paragraph::new(format!(
-                    "Create \"{}\" as a new top-level category and insert its column?\nEnter/Y confirm  N/Esc cancel",
-                    name
-                ))
-                .style(Style::default().fg(MUTED_TEXT_COLOR))
-                .block(Block::default().borders(Borders::ALL).title("Create Category")),
+            self.render_category_create_confirm_panel(
+                frame,
                 chunks[2],
+                name,
+                "as a new top-level category and insert its column?",
             );
         } else {
             let matches = self.get_board_add_column_suggest_matches();

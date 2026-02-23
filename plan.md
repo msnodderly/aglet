@@ -662,6 +662,16 @@ This plan should produce a reusable category selection/editing primitive that ca
   Mitigation: isolate multi-line formatting + row-height calculation behind helpers and add focused rendering tests.
 - Modifier-key support (`Ctrl-L` / `Ctrl-R`) requires input dispatch refactor across modes.
   Mitigation: phase the `KeyEvent` plumbing first, then bind new commands.
+- Implemented `Ctrl-L`/`Ctrl-R` add-column insertion without a temporary fallback mapping.
+  Scope remains current-section-only (including generated-section lanes mapped back to the source section).
+- Add-column picker currently allows any non-`Entry` category heading and maps existing `When` to `ColumnKind::When`.
+  This is broader than a stricter "only top-level" policy and can be tightened later if needed.
+- Multi-entry direct-edit row shortcuts (`n/a/x`) are focus-scoped to `Entries` only after a regression where
+  those letters were swallowed while typing in the row input.
+- `cargo clippy -p agenda-core -p agenda-tui --all-targets --all-features` is green enough for triage but still reports
+  warnings (mostly dead-code leftovers and a few style suggestions like `collapsible_else_if` / `is_some_and`).
+- Manual interactive checks (TUI smoke tests, narrow terminal behavior, macOS Terminal/iTerm comparison) remain
+  pending and require a human-in-the-loop terminal session.
 
 
 ## Phase Guide (Why + Expected End Result)
@@ -1193,14 +1203,14 @@ land small refactors first, then behavior changes.
 
 ### Phase 12: Shared Picker Primitive Cleanup (Optional but Recommended)
 
-- [ ] Identify duplicated logic between:
-  - [ ] direct-edit multi-entry suggestions
-  - [ ] add-column picker suggestions
-  - [ ] inline create-confirm rendering and key handling
-- [ ] Extract shared helpers/components with minimal coupling
-- [ ] Standardize wording/copy across pickers
-- [ ] Standardize style tokens (muted text, titles, help rows)
-- [ ] Retest both flows after extraction
+- [x] Identify duplicated logic between:
+  - [x] direct-edit multi-entry suggestions
+  - [x] add-column picker suggestions
+  - [x] inline create-confirm rendering and key handling
+- [x] Extract shared helpers/components with minimal coupling
+- [x] Standardize wording/copy across pickers
+- [x] Standardize style tokens (muted text, titles, help rows)
+- [x] Retest both flows after extraction
 
 ### Phase 13: Final Verification / Polish Pass
 
@@ -1213,17 +1223,17 @@ land small refactors first, then behavior changes.
   - [ ] column insert left/right
 - [ ] Check behavior on narrow terminal sizes
 - [ ] Check behavior on macOS Terminal and iTerm (if available)
-- [ ] Run `cargo test` (or targeted crate tests) and summarize failures/warnings
-- [ ] Run `cargo clippy` (targeted crates if needed) and triage warnings
-- [ ] Update plan notes / implementation notes with deviations from original design
+- [x] Run `cargo test` (or targeted crate tests) and summarize failures/warnings
+- [x] Run `cargo clippy` (targeted crates if needed) and triage warnings
+- [x] Update plan notes / implementation notes with deviations from original design
 
 ## Suggested Milestones (Shipping Increments)
 
-- [ ] Milestone A: Multi-entry draft editor works + explicit apply/cancel (single-line board only)
-- [ ] Milestone B: Inline create confirm + exclusivity handling polished
-- [ ] Milestone C: Multi-line board rendering + config persistence
-- [ ] Milestone D: `Ctrl-L` / `Ctrl-R` column insertion (current-section scope)
-- [ ] Milestone E: Shared picker cleanup and UX polish
+- [x] Milestone A: Multi-entry draft editor works + explicit apply/cancel (single-line board only)
+- [x] Milestone B: Inline create confirm + exclusivity handling polished
+- [x] Milestone C: Multi-line board rendering + config persistence
+- [x] Milestone D: `Ctrl-L` / `Ctrl-R` column insertion (current-section scope)
+- [x] Milestone E: Shared picker cleanup and UX polish
 
 
 
