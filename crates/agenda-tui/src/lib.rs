@@ -5,8 +5,8 @@ use std::path::Path;
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    BoardDisplayMode, Category, CategoryId, Column, ColumnKind, CriterionMode, Item, ItemId,
-    Query, Section, View, WhenBucket,
+    BoardDisplayMode, Category, CategoryId, Column, ColumnKind, CriterionMode, Item, ItemId, Query,
+    Section, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -294,6 +294,7 @@ struct BoardAddColumnAnchor {
     section_index: usize,
     current_board_column_index: usize,
     current_section_column_index: usize,
+    item_column_index_before: usize,
     insert_index: usize,
     direction: AddColumnDirection,
     is_generated_section: bool,
@@ -561,10 +562,10 @@ mod tests {
         build_category_rows, build_reparent_options, category_name_map, compute_board_layout,
         first_non_reserved_category_index, input_panel, input_panel_popup_area,
         item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
-        should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options, App,
-        AddColumnDirection, BucketEditTarget, CategoryDirectEditAnchor, CategoryDirectEditFocus,
-        CategoryDirectEditRow, CategoryDirectEditState, CategoryListRow, Mode, NameInputContext,
-        ViewEditRegion,
+        should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
+        AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
+        CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryListRow,
+        Mode, NameInputContext, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -620,10 +621,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         let mut view = View::new("Board".to_string());
         view.sections.push(section);
@@ -671,10 +673,16 @@ mod tests {
             }
         );
 
-        let row_ids: Vec<Option<CategoryId>> = state.rows.iter().map(|row| row.category_id).collect();
+        let row_ids: Vec<Option<CategoryId>> =
+            state.rows.iter().map(|row| row.category_id).collect();
         assert_eq!(
             row_ids,
-            vec![Some(medium.id), Some(high.id), Some(alpha.id), Some(zebra.id)]
+            vec![
+                Some(medium.id),
+                Some(high.id),
+                Some(alpha.id),
+                Some(zebra.id)
+            ]
         );
 
         let row_names: Vec<String> = state
@@ -703,10 +711,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         let mut view = View::new("Board".to_string());
         view.sections.push(section);
@@ -789,7 +798,11 @@ mod tests {
 
         let removed_last = state.remove_row(0).expect("remove last row");
         assert!(removed_last.category_id.is_none());
-        assert_eq!(state.rows.len(), 1, "last-row removal should keep one blank row");
+        assert_eq!(
+            state.rows.len(),
+            1,
+            "last-row removal should keep one blank row"
+        );
         assert_eq!(state.active_row, 0);
         assert_eq!(state.rows[0].category_id, None);
         assert!(state.rows[0].input.text().is_empty());
@@ -831,10 +844,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         let mut view = View::new("Board".to_string());
         view.sections.push(section);
@@ -913,10 +927,11 @@ mod tests {
                         heading: parent.id,
                         width: 12,
                     }],
+                    item_column_index: 0,
                     on_insert_assign: std::collections::HashSet::new(),
                     on_remove_unassign: std::collections::HashSet::new(),
                     show_children: false,
-        board_display_mode_override: None,
+                    board_display_mode_override: None,
                 });
                 v
             }],
@@ -948,8 +963,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-direct-edit-exact-precedence-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-direct-edit-exact-precedence-{nanos}.ag"
+        ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -961,7 +977,9 @@ mod tests {
         alpha.parent = Some(parent.id);
         parent.children = vec![alpha_beta.id, alpha.id];
         store.create_category(&parent).expect("create parent");
-        store.create_category(&alpha_beta).expect("create alpha_beta");
+        store
+            .create_category(&alpha_beta)
+            .expect("create alpha_beta");
         store.create_category(&alpha).expect("create alpha");
 
         let mut view = View::new("Board".to_string());
@@ -973,10 +991,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         store.create_view(&view).expect("create board view");
 
@@ -1003,7 +1022,9 @@ mod tests {
             .expect("enter handled");
 
         // Enter resolves the draft row only (exact match still wins over highlighted suggestion).
-        let state = app.category_direct_edit_state().expect("direct edit state still open");
+        let state = app
+            .category_direct_edit_state()
+            .expect("direct edit state still open");
         assert_eq!(state.rows[0].category_id, Some(alpha.id));
         assert_eq!(state.rows[0].input.text(), "Alpha");
 
@@ -1096,6 +1117,7 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
@@ -1168,10 +1190,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         store.create_view(&view).expect("create view");
         let item = Item::new("Demo item".to_string());
@@ -1250,10 +1273,11 @@ mod tests {
                 heading: parent.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         store.create_view(&view).expect("create view");
 
@@ -1331,6 +1355,7 @@ mod tests {
                     width: 12,
                 },
             ],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
@@ -1354,7 +1379,8 @@ mod tests {
         assert_eq!(left_anchor.direction, AddColumnDirection::Left);
         assert_eq!(left_anchor.insert_index, 1);
 
-        app.handle_key(KeyCode::Esc, &agenda).expect("cancel picker");
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("cancel picker");
         assert_eq!(app.mode, Mode::Normal);
 
         app.handle_key_event(
@@ -1366,6 +1392,165 @@ mod tests {
         let right_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
         assert_eq!(right_anchor.direction, AddColumnDirection::Right);
         assert_eq!(right_anchor.insert_index, 2);
+    }
+
+    #[test]
+    fn normal_mode_ctrl_lr_open_add_column_picker_from_item_column_any_position() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Category::new("A".to_string());
+        let b = Category::new("B".to_string());
+        for cat in [&a, &b] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: a.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: b.id,
+                    width: 12,
+                },
+            ],
+            item_column_index: 2,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 2; // item column is rightmost
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-l handled on item");
+        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
+        let left_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
+        assert_eq!(left_anchor.direction, AddColumnDirection::Left);
+        assert_eq!(left_anchor.insert_index, 2);
+
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("cancel picker");
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r handled on item");
+        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
+        let right_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
+        assert_eq!(right_anchor.direction, AddColumnDirection::Right);
+        assert_eq!(right_anchor.insert_index, 2);
+    }
+
+    #[test]
+    fn board_add_column_picker_insert_right_of_rightmost_item_column_preserves_item_position() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-add-column-right-of-item-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut priority = Category::new("Priority".to_string());
+        let mut p1 = Category::new("P1".to_string());
+        p1.parent = Some(priority.id);
+        priority.children = vec![p1.id];
+
+        let mut status = Category::new("Status".to_string());
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        status.children = vec![pending.id];
+
+        let mut owner = Category::new("Owner".to_string());
+        let mut alice = Category::new("Alice".to_string());
+        alice.parent = Some(owner.id);
+        owner.children = vec![alice.id];
+
+        for cat in [&priority, &p1, &status, &pending, &owner, &alice] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: priority.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: status.id,
+                    width: 12,
+                },
+            ],
+            item_column_index: 2,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 2; // item column (rightmost)
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("open picker from item column");
+        for ch in "Owner".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type in picker");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("insert exact-match column");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.column_index, 3,
+            "new column selected to the right of item"
+        );
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        let headings: Vec<CategoryId> = saved.sections[0]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
+        assert_eq!(headings, vec![priority.id, status.id, owner.id]);
+        assert_eq!(saved.sections[0].item_column_index, 2);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
@@ -1397,6 +1582,7 @@ mod tests {
                 heading: priority.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
@@ -1416,7 +1602,8 @@ mod tests {
         )
         .expect("open add-column picker");
         for ch in "Status".chars() {
-            app.handle_key(KeyCode::Char(ch), &agenda).expect("type in picker");
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type in picker");
         }
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("insert exact-match column");
@@ -1424,13 +1611,13 @@ mod tests {
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.column_index, 2);
         let saved = store
-            .get_view(
-                app.current_view()
-                    .expect("current view")
-                    .id,
-            )
+            .get_view(app.current_view().expect("current view").id)
             .expect("saved view");
-        let headings: Vec<CategoryId> = saved.sections[0].columns.iter().map(|c| c.heading).collect();
+        let headings: Vec<CategoryId> = saved.sections[0]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
         assert_eq!(headings, vec![priority.id, status.id]);
 
         drop(store);
@@ -1459,6 +1646,7 @@ mod tests {
                 heading: base.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
@@ -1491,27 +1679,19 @@ mod tests {
         );
 
         let saved = store
-            .get_view(
-                app.current_view()
-                    .expect("current view")
-                    .id,
-            )
+            .get_view(app.current_view().expect("current view").id)
             .expect("saved view");
         assert_eq!(saved.sections[0].columns.len(), 1);
-        assert!(
-            store
-                .list_views()
-                .expect("views")
-                .iter()
-                .any(|v| v.name == "Board")
-        );
-        assert!(
-            store
-                .get_hierarchy()
-                .expect("categories")
-                .iter()
-                .all(|c| !c.name.eq_ignore_ascii_case("BrandNew"))
-        );
+        assert!(store
+            .list_views()
+            .expect("views")
+            .iter()
+            .any(|v| v.name == "Board"));
+        assert!(store
+            .get_hierarchy()
+            .expect("categories")
+            .iter()
+            .all(|c| !c.name.eq_ignore_ascii_case("BrandNew")));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -1543,6 +1723,7 @@ mod tests {
                 heading: base.id,
                 width: 12,
             }],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
@@ -1621,6 +1802,7 @@ mod tests {
                     width: 12,
                 },
             ],
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
@@ -2467,10 +2649,11 @@ mod tests {
             title: "Alpha".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         section_alpha
             .criteria
@@ -2479,10 +2662,11 @@ mod tests {
             title: "Beta".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         section_beta
             .criteria
@@ -3023,10 +3207,11 @@ mod tests {
             title: "One".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
 
         let view_virtual = bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualInclude)
@@ -3155,10 +3340,11 @@ mod tests {
             title: "Roundtrip".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         store.update_view(&updated).expect("update_view");
         let saved = store
@@ -3307,10 +3493,11 @@ mod tests {
             title: "Old Title".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         });
         app.open_view_edit(view);
 
@@ -3635,7 +3822,11 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle view display mode");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().draft.board_display_mode,
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .draft
+                .board_display_mode,
             BoardDisplayMode::MultiLine
         );
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -3729,10 +3920,11 @@ mod tests {
             title: "Work Items".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         section_work
             .criteria
@@ -3742,10 +3934,11 @@ mod tests {
             title: "Personal Items".to_string(),
             criteria: Query::default(),
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
             on_remove_unassign: std::collections::HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         };
         section_personal
             .criteria

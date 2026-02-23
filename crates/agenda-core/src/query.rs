@@ -393,10 +393,11 @@ mod tests {
             title: title.to_string(),
             criteria,
             columns: Vec::new(),
+            item_column_index: 0,
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
-        board_display_mode_override: None,
+            board_display_mode_override: None,
         }
     }
 

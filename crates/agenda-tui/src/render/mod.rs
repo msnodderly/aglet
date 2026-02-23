@@ -145,17 +145,16 @@ impl App {
             .or_else(|| {
                 self.current_view().and_then(|view| {
                     self.current_slot().and_then(|slot| {
-                        let columns = match slot.context {
+                        let section = match slot.context {
                             SlotContext::Section { section_index }
                             | SlotContext::GeneratedSection { section_index, .. } => {
-                                view.sections.get(section_index).map(|s| &s.columns)
+                                view.sections.get(section_index)
                             }
                             _ => None,
                         }?;
-                        if self.column_index == 0 || self.column_index > columns.len() {
-                            return None;
-                        }
-                        let column = &columns[self.column_index - 1];
+                        let section_column_index =
+                            Self::board_column_to_section_column_index(section, self.column_index)?;
+                        let column = section.columns.get(section_column_index)?;
                         let heading = self
                             .categories
                             .iter()
@@ -203,7 +202,8 @@ impl App {
         let active_row_index = direct_state.map(|s| s.active_row).unwrap_or(0);
         let rows: Vec<ListItem<'_>> = direct_state
             .map(|state| {
-                state.rows
+                state
+                    .rows
                     .iter()
                     .enumerate()
                     .map(|(idx, row)| {
@@ -214,7 +214,8 @@ impl App {
                         };
                         let resolved_marker = if row.category_id.is_some() { "" } else { " *" };
                         let prefix = format!("{:>2}. ", idx + 1);
-                        let style = if idx == state.active_row && focus != CategoryDirectEditFocus::Entries
+                        let style = if idx == state.active_row
+                            && focus != CategoryDirectEditFocus::Entries
                         {
                             Style::default().fg(Color::Cyan)
                         } else {
@@ -428,7 +429,11 @@ impl App {
                 name, description_suffix
             ))
             .style(Style::default().fg(MUTED_TEXT_COLOR))
-            .block(Block::default().borders(Borders::ALL).title("Create Category")),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Create Category"),
+            ),
             area,
         );
     }
@@ -528,10 +533,9 @@ impl App {
                     })
                     .collect()
             };
-            let selected = self
-                .board_add_column
-                .as_ref()
-                .and_then(|s| (!matches.is_empty()).then_some(s.suggest_index.min(matches.len() - 1)));
+            let selected = self.board_add_column.as_ref().and_then(|s| {
+                (!matches.is_empty()).then_some(s.suggest_index.min(matches.len() - 1))
+            });
             let mut list_state = Self::list_state_for(chunks[2], selected);
             frame.render_stateful_widget(
                 List::new(items)
@@ -858,15 +862,21 @@ impl App {
             } else {
                 Color::Blue
             };
-            let slot_columns_owned = match (&slot.context, current_view.as_ref()) {
-                (SlotContext::Section { section_index }, Some(view))
-                | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
-                    .sections
-                    .get(*section_index)
-                    .map(|section| section.columns.clone())
-                    .unwrap_or_default(),
-                _ => Vec::new(),
-            };
+            let (slot_columns_owned, slot_item_column_index) =
+                match (&slot.context, current_view.as_ref()) {
+                    (SlotContext::Section { section_index }, Some(view))
+                    | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                        .sections
+                        .get(*section_index)
+                        .map(|section| {
+                            (
+                                section.columns.clone(),
+                                Self::section_item_column_index(section),
+                            )
+                        })
+                        .unwrap_or_default(),
+                    _ => (Vec::new(), 0),
+                };
             let use_dynamic = !slot_columns_owned.is_empty();
             let include_all_categories_in_dynamic = use_dynamic
                 && !slot_columns_owned
@@ -891,29 +901,40 @@ impl App {
                         item_width = item_width.saturating_sub(synthetic_categories_width);
                     }
                 }
+                let item_board_column_index = slot_item_column_index.min(layout.columns.len());
                 let mut constraints = vec![
                     Constraint::Length(layout.marker.min(u16::MAX as usize) as u16),
                     Constraint::Length(layout.note.min(u16::MAX as usize) as u16),
-                    Constraint::Length(item_width.min(u16::MAX as usize) as u16),
                 ];
                 constraints.extend(
-                    layout.columns.iter().map(|column| {
-                        Constraint::Length(column.width.min(u16::MAX as usize) as u16)
-                    }),
+                    layout.columns[..item_board_column_index]
+                        .iter()
+                        .map(|column| {
+                            Constraint::Length(column.width.min(u16::MAX as usize) as u16)
+                        }),
+                );
+                constraints.push(Constraint::Length(item_width.min(u16::MAX as usize) as u16));
+                constraints.extend(
+                    layout.columns[item_board_column_index..]
+                        .iter()
+                        .map(|column| {
+                            Constraint::Length(column.width.min(u16::MAX as usize) as u16)
+                        }),
                 );
                 if synthetic_categories_width > 0 {
                     constraints.push(Constraint::Length(
                         synthetic_categories_width.min(u16::MAX as usize) as u16,
                     ));
                 }
-                let mut header_cells = vec![
-                    Cell::from(String::new()),
-                    Cell::from(String::new()),
-                    Cell::from(layout.item_label.clone()),
-                ];
+                let mut header_cells = vec![Cell::from(String::new()), Cell::from(String::new())];
                 header_cells.extend(
-                    layout
-                        .columns
+                    layout.columns[..item_board_column_index]
+                        .iter()
+                        .map(|column| Cell::from(column.label.clone())),
+                );
+                header_cells.push(Cell::from(layout.item_label.clone()));
+                header_cells.extend(
+                    layout.columns[item_board_column_index..]
                         .iter()
                         .map(|column| Cell::from(column.label.clone())),
                 );
@@ -922,12 +943,18 @@ impl App {
                 }
 
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
-                    let mut cells = vec![
-                        Cell::from(String::new()),
-                        Cell::from(String::new()),
-                        Cell::from("(no items)"),
-                    ];
-                    cells.extend(layout.columns.iter().map(|_| Cell::from(String::new())));
+                    let mut cells = vec![Cell::from(String::new()), Cell::from(String::new())];
+                    cells.extend(
+                        layout.columns[..item_board_column_index]
+                            .iter()
+                            .map(|_| Cell::from(String::new())),
+                    );
+                    cells.push(Cell::from("(no items)"));
+                    cells.extend(
+                        layout.columns[item_board_column_index..]
+                            .iter()
+                            .map(|_| Cell::from(String::new())),
+                    );
                     if synthetic_categories_width > 0 {
                         cells.push(Cell::from(String::new()));
                     }
@@ -944,24 +971,26 @@ impl App {
                             } else {
                                 " "
                             };
-                            let item_cell_content = if effective_display_mode
-                                == BoardDisplayMode::MultiLine
-                            {
-                                wrap_text_for_board_cell(&board_item_label(item), item_width)
-                                    .join("\n")
-                            } else {
-                                truncate_board_cell(&board_item_label(item), item_width)
-                            };
+                            let item_cell_content =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    wrap_text_for_board_cell(&board_item_label(item), item_width)
+                                        .join("\n")
+                                } else {
+                                    truncate_board_cell(&board_item_label(item), item_width)
+                                };
                             let mut row_height = item_cell_content.lines().count().max(1);
-                            let mut cells = vec![Cell::from(marker_cell), Cell::from(note_cell), {
+                            let item_cell = {
                                 let mut cell = Cell::from(item_cell_content);
-                                if is_selected && self.column_index == 0 {
+                                if is_selected && self.column_index == item_board_column_index {
                                     cell = cell.style(focused_cell_style());
                                 }
                                 cell
-                            }];
-                            cells.extend(layout.columns.iter().enumerate().map(
-                                |(col_idx, column)| {
+                            };
+                            let mut category_cells: Vec<Cell<'_>> = layout
+                                .columns
+                                .iter()
+                                .enumerate()
+                                .map(|(col_idx, column)| {
                                     let value = match column.kind {
                                         ColumnKind::When => item
                                             .when_date
@@ -980,10 +1009,8 @@ impl App {
                                         let lines = if value == "\u{2013}" {
                                             vec!["-".to_string()]
                                         } else {
-                                            let labels: Vec<String> = value
-                                                .split(", ")
-                                                .map(str::to_string)
-                                                .collect();
+                                            let labels: Vec<String> =
+                                                value.split(", ").map(str::to_string).collect();
                                             format_category_values_multi_line(
                                                 &labels,
                                                 BOARD_MULTI_CATEGORY_LINE_CAP,
@@ -995,12 +1022,22 @@ impl App {
                                     };
                                     row_height = row_height.max(content.lines().count().max(1));
                                     let mut cell = Cell::from(content);
-                                    if is_selected && self.column_index == col_idx + 1 {
+                                    let board_column_index = if col_idx < item_board_column_index {
+                                        col_idx
+                                    } else {
+                                        col_idx + 1
+                                    };
+                                    if is_selected && self.column_index == board_column_index {
                                         cell = cell.style(focused_cell_style());
                                     }
                                     cell
-                                },
-                            ));
+                                })
+                                .collect();
+                            let mut cells = vec![Cell::from(marker_cell), Cell::from(note_cell)];
+                            let right_cells = category_cells.split_off(item_board_column_index);
+                            cells.extend(category_cells);
+                            cells.push(item_cell);
+                            cells.extend(right_cells);
                             if synthetic_categories_width > 0 {
                                 let categories = item_assignment_labels(item, &category_names);
                                 let categories_text = if categories.is_empty() {
@@ -1016,12 +1053,15 @@ impl App {
                                         categories.join(", ")
                                     }
                                 };
-                                let content = if effective_display_mode == BoardDisplayMode::MultiLine
-                                {
-                                    categories_text
-                                } else {
-                                    truncate_board_cell(&categories_text, synthetic_categories_width)
-                                };
+                                let content =
+                                    if effective_display_mode == BoardDisplayMode::MultiLine {
+                                        categories_text
+                                    } else {
+                                        truncate_board_cell(
+                                            &categories_text,
+                                            synthetic_categories_width,
+                                        )
+                                    };
                                 row_height = row_height.max(content.lines().count().max(1));
                                 cells.push(Cell::from(content));
                             }
@@ -1107,16 +1147,18 @@ impl App {
                                     categories.join(", ")
                                 }
                             };
-                            let when_text = if effective_display_mode == BoardDisplayMode::MultiLine {
+                            let when_text = if effective_display_mode == BoardDisplayMode::MultiLine
+                            {
                                 truncate_board_cell(&when, widths.when)
                             } else {
                                 truncate_board_cell(&when, widths.when)
                             };
-                            let item_cell_text = if effective_display_mode == BoardDisplayMode::MultiLine {
-                                wrap_text_for_board_cell(&item_text, widths.item).join("\n")
-                            } else {
-                                truncate_board_cell(&item_text, widths.item)
-                            };
+                            let item_cell_text =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    wrap_text_for_board_cell(&item_text, widths.item).join("\n")
+                                } else {
+                                    truncate_board_cell(&item_text, widths.item)
+                                };
                             let categories_cell_text =
                                 if effective_display_mode == BoardDisplayMode::MultiLine {
                                     categories_text
@@ -1332,7 +1374,10 @@ impl App {
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::BoardAddColumnPicker => {
-                format!("Add column> {}", self.board_add_column_input_text().unwrap_or(""))
+                format!(
+                    "Add column> {}",
+                    self.board_add_column_input_text().unwrap_or("")
+                )
             }
             Mode::InspectUnassign => "Select assignment".to_string(),
             Mode::InputPanel => {
