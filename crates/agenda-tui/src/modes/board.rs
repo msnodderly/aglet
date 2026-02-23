@@ -1315,11 +1315,6 @@ impl App {
             .find(|c| c.id == meta.parent_id)
             .map(|c| c.is_exclusive)
             .unwrap_or(false);
-        if is_exclusive {
-            self.open_category_direct_edit();
-            return;
-        }
-
         let selected_ids: HashSet<CategoryId> = self
             .current_column_assigned_child_ids()
             .into_iter()
@@ -1370,9 +1365,13 @@ impl App {
             self.status = "No category to toggle".to_string();
             return;
         };
+        let is_exclusive = state_ro.is_exclusive;
         let _ = state_ro;
         if let Some(state) = self.category_column_picker_state_mut() {
-            if !state.selected_ids.insert(id) {
+            if is_exclusive {
+                state.selected_ids.clear();
+                state.selected_ids.insert(id);
+            } else if !state.selected_ids.insert(id) {
                 state.selected_ids.remove(&id);
             }
             state.focus = CategoryColumnPickerFocus::List;
@@ -1383,7 +1382,11 @@ impl App {
             .find(|c| c.id == id)
             .map(|c| c.name.as_str())
             .unwrap_or("(missing)");
-        self.status = format!("Toggled '{label}'. Enter saves, Esc cancels");
+        self.status = if is_exclusive {
+            format!("Selected '{label}'. Enter saves, Esc cancels")
+        } else {
+            format!("Toggled '{label}'. Enter saves, Esc cancels")
+        };
     }
 
     fn open_category_column_picker_create_confirm(&mut self) {
@@ -1447,6 +1450,9 @@ impl App {
             .map_err(|e| e.to_string())?;
         self.refresh_category_cache(agenda.store())?;
         if let Some(state) = self.category_column_picker_state_mut() {
+            if state.is_exclusive {
+                state.selected_ids.clear();
+            }
             state.selected_ids.insert(cat_id);
             state.create_confirm_name = None;
             state.focus = CategoryColumnPickerFocus::FilterInput;
@@ -1463,6 +1469,10 @@ impl App {
         let Some(state) = self.category_column_picker_state().cloned() else {
             return Ok(());
         };
+        if state.is_exclusive && state.selected_ids.len() > 1 {
+            self.status = "Cannot save: parent category is exclusive".to_string();
+            return Ok(());
+        }
         let desired_set: HashSet<CategoryId> = state.selected_ids.clone();
         let current_ids = self.current_column_assigned_child_ids();
         let current_set: HashSet<CategoryId> = current_ids.iter().copied().collect();
