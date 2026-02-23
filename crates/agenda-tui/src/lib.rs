@@ -276,11 +276,31 @@ enum CategoryManagerFocus {
 }
 
 #[derive(Clone)]
+enum CategoryInlineAction {
+    Create {
+        parent_id: Option<CategoryId>,
+        buf: text_buffer::TextBuffer,
+        confirm_name: Option<String>,
+    },
+    Rename {
+        category_id: CategoryId,
+        original_name: String,
+        buf: text_buffer::TextBuffer,
+    },
+    DeleteConfirm {
+        category_id: CategoryId,
+        category_name: String,
+    },
+}
+
+#[derive(Clone)]
 struct CategoryManagerState {
     focus: CategoryManagerFocus,
     filter: text_buffer::TextBuffer,
     tree_index: usize,
+    visible_row_indices: Vec<usize>,
     selected_category_id: Option<CategoryId>,
+    inline_action: Option<CategoryInlineAction>,
 }
 
 #[derive(Clone)]
@@ -615,8 +635,9 @@ mod tests {
         item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
         AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
-        CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryListRow,
-        CategoryManagerFocus, Mode, NameInputContext, ViewEditRegion,
+        CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
+        CategoryInlineAction, CategoryListRow, CategoryManagerFocus, Mode, NameInputContext,
+        ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3061,7 +3082,11 @@ mod tests {
             .map(|c| c.heading)
             .collect();
         assert_eq!(first_headings, vec![a.id, b.id], "first section unchanged");
-        assert_eq!(second_headings, vec![b.id, a.id], "second section reordered");
+        assert_eq!(
+            second_headings,
+            vec![b.id, a.id],
+            "second section reordered"
+        );
         assert_eq!(app.slot_index, 1, "focus should remain on second section");
         assert_eq!(app.item_index, 0, "shared item selected in second section");
         assert_eq!(app.column_index, 1, "moved column remains selected");
@@ -4225,7 +4250,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-category-manager-state-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-manager-state-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4240,7 +4266,10 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
         assert_eq!(app.mode, Mode::CategoryManager);
-        let state = app.category_manager.as_ref().expect("manager state initialized");
+        let state = app
+            .category_manager
+            .as_ref()
+            .expect("manager state initialized");
         assert_eq!(state.focus, CategoryManagerFocus::Tree);
         assert_eq!(state.selected_category_id, Some(category.id));
         assert_eq!(state.tree_index, app.category_index);
@@ -4260,7 +4289,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-category-manager-refresh-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-manager-refresh-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let alpha = Category::new("Alpha".to_string());
@@ -4294,6 +4324,207 @@ mod tests {
         assert_eq!(
             app.category_manager.as_ref().map(|state| state.tree_index),
             Some(app.category_index)
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_inline_create_root_avoids_input_panel_and_creates_category() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-inline-create-root-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.handle_category_manager_key(KeyCode::Char('N'), &agenda)
+            .expect("start inline create");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(
+            app.input_panel.is_none(),
+            "category create should stay inline"
+        );
+        assert!(matches!(
+            app.category_manager
+                .as_ref()
+                .and_then(|s| s.inline_action.as_ref()),
+            Some(CategoryInlineAction::Create { .. })
+        ));
+
+        for c in "Projects".chars() {
+            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+                .expect("type create name");
+        }
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open create confirm");
+        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm create");
+
+        assert!(app
+            .categories
+            .iter()
+            .any(|category| category.name == "Projects"));
+        assert!(app
+            .category_manager
+            .as_ref()
+            .and_then(|s| s.inline_action.as_ref())
+            .is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_inline_rename_avoids_input_panel_and_updates_name() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-inline-rename-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.handle_category_manager_key(KeyCode::Char('r'), &agenda)
+            .expect("start rename");
+        assert!(
+            app.input_panel.is_none(),
+            "category rename should stay inline"
+        );
+
+        for _ in 0.."Work".len() {
+            app.handle_category_manager_key(KeyCode::Backspace, &agenda)
+                .expect("clear rename buffer");
+        }
+        for c in "Office".chars() {
+            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+                .expect("type rename");
+        }
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("apply rename");
+
+        let loaded = store.get_category(category.id).expect("load renamed");
+        assert_eq!(loaded.name, "Office");
+        assert!(app
+            .category_manager
+            .as_ref()
+            .and_then(|s| s.inline_action.as_ref())
+            .is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_inline_delete_confirm_stays_in_manager_mode() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-inline-delete-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("TempDelete".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("open inline delete confirm");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(matches!(
+            app.category_manager
+                .as_ref()
+                .and_then(|s| s.inline_action.as_ref()),
+            Some(CategoryInlineAction::DeleteConfirm { .. })
+        ));
+
+        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm delete");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(matches!(
+            store.get_category(category.id),
+            Err(agenda_core::error::AgendaError::NotFound { .. })
+        ));
+        assert!(app
+            .category_manager
+            .as_ref()
+            .and_then(|s| s.inline_action.as_ref())
+            .is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_filter_focus_types_text_instead_of_triggering_commands() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-filter-focus-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        store
+            .create_category(&Category::new("Work".to_string()))
+            .expect("create work");
+        store
+            .create_category(&Category::new("Home".to_string()))
+            .expect("create home");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
+            .expect("focus filter");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Filter)
+        );
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("type filter n");
+        app.handle_category_manager_key(KeyCode::Char('o'), &agenda)
+            .expect("type filter o");
+
+        let state = app.category_manager.as_ref().expect("manager state");
+        assert_eq!(state.filter.text(), "no");
+        assert!(
+            state.visible_row_indices.len() < app.category_rows.len(),
+            "filter should narrow visible rows"
+        );
+        assert!(
+            state.inline_action.is_none(),
+            "typing 'n' in filter focus should not trigger create"
         );
 
         drop(store);
