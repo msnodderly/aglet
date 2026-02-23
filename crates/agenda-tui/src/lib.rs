@@ -4811,6 +4811,83 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_upper_k_reorders_selected_category_up_among_siblings() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-category-reorder-up-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Parent".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let mut beta = Category::new("Beta".to_string());
+        beta.parent = Some(parent.id);
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(beta.id);
+
+        app.handle_category_manager_key(KeyCode::Char('K'), &agenda)
+            .expect("reorder up");
+
+        let loaded_parent = store.get_category(parent.id).expect("load parent");
+        assert_eq!(loaded_parent.children, vec![beta.id, alpha.id]);
+        assert_eq!(app.selected_category_id(), Some(beta.id));
+        assert!(app.status.contains("Moved Beta up"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_upper_k_on_first_sibling_is_noop_with_status() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-reorder-boundary-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Parent".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let mut beta = Category::new("Beta".to_string());
+        beta.parent = Some(parent.id);
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(alpha.id);
+
+        app.handle_category_manager_key(KeyCode::Char('K'), &agenda)
+            .expect("reorder boundary noop");
+
+        let loaded_parent = store.get_category(parent.id).expect("load parent");
+        assert_eq!(loaded_parent.children, vec![alpha.id, beta.id]);
+        assert!(app.status.contains("already first"));
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn normal_mode_ga_jumps_to_all_items_view() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
