@@ -1360,6 +1360,13 @@ impl App {
                 format!("Filter [{section_name}]> {}", self.input.text())
             }
             Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
+            Mode::BoardColumnDeleteConfirm => {
+                if let Some(name) = &self.board_pending_delete_column_label {
+                    format!("WARNING: Delete column '{name}' from this section? [Y/n]")
+                } else {
+                    "WARNING: Delete selected column from this section? [Y/n]".to_string()
+                }
+            }
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategory => "Set include/exclude categories for new view".to_string(),
             Mode::CategoryReparent => "Select category parent".to_string(),
@@ -1447,6 +1454,7 @@ impl App {
                 "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"
             }
             Mode::ConfirmDelete => "y:confirm delete  n:cancel",
+            Mode::BoardColumnDeleteConfirm => "Enter/y:confirm delete  n/Esc:cancel",
             Mode::FilterInput => "Enter:apply  Esc:cancel",
             Mode::NoteEdit => "S:save (empty=clear)  Esc:cancel",
             Mode::InspectUnassign => "j/k:select  Enter:apply  Esc:cancel",
@@ -1457,7 +1465,7 @@ impl App {
                     "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Up/Down in note  Esc:cancel"
                 }
             }
-            _ => "n:add  e:edit  d:done  x:delete  v:views  c:categories  /:filter  q:quit",
+            _ => "h/l:move  H/L:reorder col  g(ga/gH/gL):prefix  +:add col  -:remove col  n:add item  e:edit  q:quit",
         }
     }
 
