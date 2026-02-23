@@ -1628,7 +1628,7 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  J/K:reorder  Enter:config  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:reparent  x:delete  Esc:close  (tree/filter/details scaffold)"
+                "j/k:row  H/L:reparent  J/K:reorder  Enter:config  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  Esc:clear/close"
             }
             Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDelete => "y:confirm delete  n:cancel",
@@ -2131,6 +2131,34 @@ impl App {
                 CategoryInlineAction::DeleteConfirm { category_name, .. } => {
                     format!("Delete '{}' ? (y/n)", category_name)
                 }
+                CategoryInlineAction::ParentPicker {
+                    target_category_name,
+                    filter,
+                    visible_option_indices,
+                    focus,
+                    ..
+                } => {
+                    let focus_label = match focus {
+                        CategoryParentPickerFocus::Filter => "filter",
+                        CategoryParentPickerFocus::List => "list",
+                    };
+                    if filter.text().trim().is_empty() {
+                        format!(
+                            "Reparent {} | parent filter ({}) [{}]",
+                            target_category_name,
+                            visible_option_indices.len(),
+                            focus_label
+                        )
+                    } else {
+                        format!(
+                            "Reparent {} | parent filter> {} ({}) [{}]",
+                            target_category_name,
+                            filter.text(),
+                            visible_option_indices.len(),
+                            focus_label
+                        )
+                    }
+                }
             });
         frame.render_widget(
             Paragraph::new(
@@ -2174,7 +2202,11 @@ impl App {
             left[0],
         );
 
-        let table_area = if self.mode == Mode::CategoryReparent {
+        let show_inline_parent_picker = matches!(
+            self.category_manager_inline_action(),
+            Some(CategoryInlineAction::ParentPicker { .. })
+        );
+        let table_area = if self.mode == Mode::CategoryReparent || show_inline_parent_picker {
             let left_body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])
@@ -2321,7 +2353,63 @@ impl App {
             body[1],
         );
 
-        if self.mode == Mode::CategoryReparent {
+        if show_inline_parent_picker {
+            let left_body = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(60), Constraint::Min(4)])
+                .split(left[1]);
+            if let Some(CategoryInlineAction::ParentPicker {
+                options,
+                visible_option_indices,
+                list_index,
+                focus,
+                ..
+            }) = self.category_manager_inline_action()
+            {
+                let parent_items: Vec<ListItem<'_>> = if visible_option_indices.is_empty() {
+                    vec![ListItem::new(Line::from("(no matching parent options)"))]
+                } else {
+                    visible_option_indices
+                        .iter()
+                        .filter_map(|idx| options.get(*idx))
+                        .map(|option| ListItem::new(Line::from(option.label.clone())))
+                        .collect()
+                };
+                let mut parent_state = Self::list_state_for(
+                    left_body[1],
+                    if visible_option_indices.is_empty() {
+                        None
+                    } else {
+                        Some((*list_index).min(visible_option_indices.len().saturating_sub(1)))
+                    },
+                );
+                let item_count = parent_items.len();
+                let border_color = if *focus == CategoryParentPickerFocus::List {
+                    Color::Cyan
+                } else {
+                    Color::Blue
+                };
+                frame.render_stateful_widget(
+                    List::new(parent_items)
+                        .highlight_symbol("> ")
+                        .highlight_style(selected_row_style())
+                        .block(
+                            Block::default()
+                                .title("Parent Picker")
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(border_color)),
+                        ),
+                    left_body[1],
+                    &mut parent_state,
+                );
+                Self::render_vertical_scrollbar(
+                    frame,
+                    left_body[1],
+                    item_count,
+                    parent_state.offset(),
+                );
+            }
+        } else if self.mode == Mode::CategoryReparent {
             let left_body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])

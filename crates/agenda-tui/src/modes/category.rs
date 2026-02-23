@@ -181,19 +181,242 @@ impl App {
         Ok(())
     }
 
+    fn category_manager_has_active_filter(&self) -> bool {
+        self.category_manager_filter_text()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    fn block_direct_structure_move_while_filtered(&mut self) -> bool {
+        if self.category_manager_has_active_filter() {
+            self.status = "Clear category filter before direct H/L/J/K moves (use p for precise reparent while filtered)".to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn category_parent_picker_visible_indices(
+        options: &[ReparentOptionRow],
+        query: &str,
+    ) -> Vec<usize> {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return (0..options.len()).collect();
+        }
+        options
+            .iter()
+            .enumerate()
+            .filter(|(_, option)| option.label.to_ascii_lowercase().contains(&query))
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    fn start_category_parent_picker(&mut self) {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category structure is read-only".to_string();
+            return;
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return;
+        };
+        let Some(category) = self.categories.iter().find(|c| c.id == category_id) else {
+            self.status = "Selected category missing".to_string();
+            return;
+        };
+        let target_category_name = category.name.clone();
+        let current_parent_id = category.parent;
+        let options = build_reparent_options(&self.category_rows, &self.categories, category_id);
+        let visible_option_indices = Self::category_parent_picker_visible_indices(&options, "");
+        let selected_option_index = options
+            .iter()
+            .position(|option| option.parent_id == current_parent_id)
+            .unwrap_or(0);
+        let list_index = visible_option_indices
+            .iter()
+            .position(|idx| *idx == selected_option_index)
+            .unwrap_or(0)
+            .min(visible_option_indices.len().saturating_sub(1));
+        self.set_category_manager_inline_action(Some(CategoryInlineAction::ParentPicker {
+            target_category_id: category_id,
+            target_category_name: target_category_name.clone(),
+            filter: text_buffer::TextBuffer::empty(),
+            options,
+            visible_option_indices,
+            list_index,
+            focus: CategoryParentPickerFocus::List,
+        }));
+        self.status = format!(
+            "Reparent {}: j/k select, / filter, Tab toggle focus, Enter apply, Esc cancel",
+            target_category_name
+        );
+    }
+
+    fn apply_category_parent_picker_reparent(
+        &mut self,
+        agenda: &Agenda<'_>,
+        target_category_id: CategoryId,
+        target_category_name: String,
+        options: Vec<ReparentOptionRow>,
+        visible_option_indices: Vec<usize>,
+        list_index: usize,
+    ) -> Result<(), String> {
+        let Some(selected_option_row_index) = visible_option_indices.get(list_index).copied()
+        else {
+            self.status = "Category reparent failed: no parent selected".to_string();
+            return Ok(());
+        };
+        let Some(option) = options.get(selected_option_row_index) else {
+            self.status = "Category reparent failed: invalid parent selection".to_string();
+            return Ok(());
+        };
+        let current_parent_id = self
+            .categories
+            .iter()
+            .find(|category| category.id == target_category_id)
+            .and_then(|category| category.parent);
+        if current_parent_id == option.parent_id {
+            self.set_category_manager_inline_action(None);
+            self.status = "Category reparent canceled (unchanged)".to_string();
+            return Ok(());
+        }
+
+        let target_parent_id = option.parent_id;
+        let result = agenda
+            .move_category_to_parent(target_category_id, target_parent_id, None)
+            .map_err(|e| e.to_string())?;
+        let parent_label = self.category_manager_parent_label(target_parent_id);
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(target_category_id);
+        self.set_category_manager_inline_action(None);
+        self.status = format!(
+            "Reparented {} to {} (processed_items={}, affected_items={})",
+            target_category_name, parent_label, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
+    fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.block_direct_structure_move_while_filtered() {
+            return Ok(());
+        }
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category structure is read-only".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let Some(category) = self.categories.iter().find(|c| c.id == category_id) else {
+            self.status = "Selected category missing".to_string();
+            return Ok(());
+        };
+        let category_name = category.name.clone();
+        let Some(parent_id) = category.parent else {
+            self.status = format!("{category_name} is already at the top level");
+            return Ok(());
+        };
+        let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) else {
+            self.status = "Outdent failed: parent category missing".to_string();
+            return Ok(());
+        };
+        let new_parent_id = parent.parent;
+        let target_siblings: Vec<CategoryId> = if let Some(grandparent_id) = new_parent_id {
+            self.categories
+                .iter()
+                .find(|c| c.id == grandparent_id)
+                .map(|grandparent| grandparent.children.clone())
+                .unwrap_or_default()
+        } else {
+            self.categories
+                .iter()
+                .filter(|c| c.parent.is_none())
+                .map(|c| c.id)
+                .collect()
+        };
+        let insert_index = Some(
+            target_siblings
+                .iter()
+                .position(|id| *id == parent_id)
+                .map(|idx| idx + 1)
+                .unwrap_or(target_siblings.len()),
+        );
+        let new_parent_label = self.category_manager_parent_label(new_parent_id);
+        let result = agenda
+            .move_category_to_parent(category_id, new_parent_id, insert_index)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.status = format!(
+            "Outdented {} to {} (processed_items={}, affected_items={})",
+            category_name, new_parent_label, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
+    fn indent_selected_category_under_previous_sibling(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        if self.block_direct_structure_move_while_filtered() {
+            return Ok(());
+        }
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category structure is read-only".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let Some(category) = self.categories.iter().find(|c| c.id == category_id) else {
+            self.status = "Selected category missing".to_string();
+            return Ok(());
+        };
+        let category_name = category.name.clone();
+        let sibling_ids: Vec<CategoryId> = if let Some(parent_id) = category.parent {
+            self.categories
+                .iter()
+                .find(|c| c.id == parent_id)
+                .map(|parent| parent.children.clone())
+                .unwrap_or_default()
+        } else {
+            self.categories
+                .iter()
+                .filter(|c| c.parent.is_none())
+                .map(|c| c.id)
+                .collect()
+        };
+        let Some(idx) = sibling_ids.iter().position(|id| *id == category_id) else {
+            self.status = "Indent failed: category not found among siblings".to_string();
+            return Ok(());
+        };
+        if idx == 0 {
+            self.status = format!("{category_name} has no previous sibling to indent under");
+            return Ok(());
+        }
+        let new_parent_id = Some(sibling_ids[idx - 1]);
+        let new_parent_label = self.category_manager_parent_label(new_parent_id);
+        let result = agenda
+            .move_category_to_parent(category_id, new_parent_id, None)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.status = format!(
+            "Indented {} under {} (processed_items={}, affected_items={})",
+            category_name, new_parent_label, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
     fn reorder_selected_category_sibling(
         &mut self,
         delta: i32,
         agenda: &Agenda<'_>,
     ) -> Result<(), String> {
-        if self
-            .category_manager_filter_text()
-            .map(|t| !t.trim().is_empty())
-            .unwrap_or(false)
-        {
-            self.status =
-                "Clear category filter before reordering (Phase 4 movement + filter behavior pending)"
-                    .to_string();
+        if self.block_direct_structure_move_while_filtered() {
             return Ok(());
         }
         if self.selected_category_is_reserved() {
@@ -404,6 +627,95 @@ impl App {
                 }
                 Ok(true)
             }
+            CategoryInlineAction::ParentPicker {
+                target_category_id,
+                target_category_name,
+                mut filter,
+                options,
+                mut visible_option_indices,
+                mut list_index,
+                mut focus,
+            } => {
+                match code {
+                    KeyCode::Esc => {
+                        self.set_category_manager_inline_action(None);
+                        self.status = "Category reparent canceled".to_string();
+                        return Ok(true);
+                    }
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        focus = match focus {
+                            CategoryParentPickerFocus::Filter => CategoryParentPickerFocus::List,
+                            CategoryParentPickerFocus::List => CategoryParentPickerFocus::Filter,
+                        };
+                    }
+                    KeyCode::Char('/') => {
+                        focus = CategoryParentPickerFocus::Filter;
+                    }
+                    KeyCode::Down | KeyCode::Char('j')
+                        if focus == CategoryParentPickerFocus::List =>
+                    {
+                        if !visible_option_indices.is_empty() {
+                            list_index = next_index(list_index, visible_option_indices.len(), 1);
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k')
+                        if focus == CategoryParentPickerFocus::List =>
+                    {
+                        if !visible_option_indices.is_empty() {
+                            list_index = next_index(list_index, visible_option_indices.len(), -1);
+                        }
+                    }
+                    KeyCode::Enter => {
+                        self.apply_category_parent_picker_reparent(
+                            agenda,
+                            target_category_id,
+                            target_category_name,
+                            options,
+                            visible_option_indices,
+                            list_index,
+                        )?;
+                        return Ok(true);
+                    }
+                    _ => {
+                        if focus == CategoryParentPickerFocus::Filter
+                            && filter.handle_key(code, false)
+                        {
+                            visible_option_indices = Self::category_parent_picker_visible_indices(
+                                &options,
+                                filter.text(),
+                            );
+                            list_index = if visible_option_indices.is_empty() {
+                                0
+                            } else {
+                                list_index.min(visible_option_indices.len() - 1)
+                            };
+                            self.status = if visible_option_indices.is_empty() {
+                                format!(
+                                    "Reparent {}: no parent options match filter",
+                                    target_category_name
+                                )
+                            } else {
+                                format!(
+                                    "Reparent {}: {} parent options match",
+                                    target_category_name,
+                                    visible_option_indices.len()
+                                )
+                            };
+                        }
+                    }
+                }
+
+                self.set_category_manager_inline_action(Some(CategoryInlineAction::ParentPicker {
+                    target_category_id,
+                    target_category_name,
+                    filter,
+                    options,
+                    visible_option_indices,
+                    list_index,
+                    focus,
+                }));
+                Ok(true)
+            }
         }
     }
 
@@ -489,6 +801,12 @@ impl App {
             KeyCode::Char('J') => {
                 self.reorder_selected_category_sibling(1, agenda)?;
             }
+            KeyCode::Char('H') => {
+                self.outdent_selected_category(agenda)?;
+            }
+            KeyCode::Char('L') => {
+                self.indent_selected_category_under_previous_sibling(agenda)?;
+            }
             KeyCode::Char('n') => {
                 self.start_category_inline_create(self.selected_category_id());
             }
@@ -499,16 +817,7 @@ impl App {
                 self.start_category_inline_rename();
             }
             KeyCode::Char('p') => {
-                if let Some(category_id) = self.selected_category_id() {
-                    self.category_reparent_options =
-                        build_reparent_options(&self.category_rows, &self.categories, category_id);
-                    self.category_reparent_index = self
-                        .selected_category_parent_index(category_id)
-                        .unwrap_or(0)
-                        .min(self.category_reparent_options.len().saturating_sub(1));
-                    self.mode = Mode::CategoryReparent;
-                    self.status = "Reparent category: j/k select parent, Enter apply".to_string();
-                }
+                self.start_category_parent_picker();
             }
             KeyCode::Char('e') => {
                 self.toggle_selected_category_exclusive(agenda)?;
