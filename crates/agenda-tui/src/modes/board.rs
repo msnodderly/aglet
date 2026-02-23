@@ -370,11 +370,30 @@ impl App {
     }
 
     fn board_add_column_scope_ids(&self) -> Vec<CategoryId> {
+        let existing_in_section: HashSet<CategoryId> = self
+            .board_add_column_state()
+            .and_then(|state| {
+                self.current_view()
+                    .and_then(|v| v.sections.get(state.anchor.section_index))
+                    .map(|section| section.columns.iter().map(|c| c.heading).collect())
+            })
+            .unwrap_or_default();
         self.categories
             .iter()
             .filter(|c| Self::is_valid_board_column_heading_category(c))
+            .filter(|c| !existing_in_section.contains(&c.id))
             .map(|c| c.id)
             .collect()
+    }
+
+    fn current_board_add_column_section_has_heading(&self, category_id: CategoryId) -> bool {
+        self.board_add_column_state()
+            .and_then(|state| {
+                self.current_view()
+                    .and_then(|v| v.sections.get(state.anchor.section_index))
+            })
+            .map(|section| section.columns.iter().any(|c| c.heading == category_id))
+            .unwrap_or(false)
     }
 
     pub(crate) fn get_board_add_column_suggest_matches(&self) -> Vec<CategoryId> {
@@ -718,6 +737,13 @@ impl App {
             .iter()
             .find(|c| c.name.eq_ignore_ascii_case(&typed))
         {
+            if self.current_board_add_column_section_has_heading(existing_cat.id) {
+                self.status = format!(
+                    "Column '{}' already exists in this section.",
+                    existing_cat.name
+                );
+                return;
+            }
             let parent_label = existing_cat
                 .parent
                 .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
