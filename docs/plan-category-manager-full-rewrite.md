@@ -782,17 +782,17 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 - [x] Stop using `InputPanel(NameInput)` for category manager create/rename path
   - [x] Remove category-manager-specific transitions into `Mode::InputPanel`
   - [x] Keep `InputPanel` category flows for other modes untouched
-- [ ] Add TUI tests for inline create/rename/delete flows
+- [x] Add TUI tests for inline create/rename/delete flows
   - [x] create root success
-  - [ ] create child success
-  - [ ] create duplicate rejected
-  - [ ] reserved-name create rejected
+  - [x] create child success
+  - [x] create duplicate rejected
+  - [x] reserved-name create rejected
   - [x] rename success
-  - [ ] rename unchanged cancels cleanly
-  - [ ] reserved rename blocked
-  - [ ] delete cancel
+  - [x] rename unchanged cancels cleanly
+  - [x] reserved rename blocked
+  - [x] delete cancel
   - [x] delete leaf success
-  - [ ] delete non-leaf error remains in manager
+  - [x] delete non-leaf error remains in manager
   - [x] filter focus typing does not trigger command actions (added)
 
 ### Phase 4: Reparent + Reorder (Primary Structural Editing UX)
