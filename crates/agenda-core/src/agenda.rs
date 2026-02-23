@@ -467,6 +467,7 @@ mod tests {
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
+        board_display_mode_override: None,
         }
     }
 

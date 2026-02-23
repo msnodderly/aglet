@@ -1,6 +1,17 @@
 use crate::*;
 
 impl App {
+    pub(crate) fn handle_key_event(
+        &mut self,
+        key: KeyEvent,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match self.mode {
+            Mode::Normal => self.handle_normal_key_event(key, agenda),
+            _ => self.handle_key(key.code, agenda),
+        }
+    }
+
     pub(crate) fn handle_key(
         &mut self,
         code: KeyCode,
@@ -24,6 +35,7 @@ impl App {
             Mode::CategoryDelete => self.handle_category_delete_key(code, agenda),
             Mode::CategoryConfig => self.handle_category_config_editor_key(code, agenda),
             Mode::CategoryDirectEdit => self.handle_category_direct_edit_key(code, agenda),
+            Mode::BoardAddColumnPicker => self.handle_board_add_column_key(code, agenda),
             Mode::CategoryCreateConfirm { .. } => {
                 self.handle_category_create_confirm_key(code, agenda)
             }
