@@ -1730,7 +1730,7 @@ mod tests {
     }
 
     #[test]
-    fn board_cell_enter_still_opens_direct_edit_for_exclusive_parent() {
+    fn board_cell_enter_opens_category_column_picker_for_exclusive_parent() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -1771,7 +1771,9 @@ mod tests {
         app.column_index = 1;
 
         app.handle_key(KeyCode::Enter, &agenda).expect("enter");
-        assert_eq!(app.mode, Mode::CategoryDirectEdit);
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+        let state = app.category_column_picker.as_ref().expect("picker");
+        assert!(state.is_exclusive);
     }
 
     #[test]
@@ -1920,6 +1922,91 @@ mod tests {
         assert_eq!(app.mode, Mode::Normal);
         let saved = store.get_item(item.id).expect("load item");
         assert!(!saved.assignments.contains_key(&cli.id));
+    }
+
+    #[test]
+    fn category_column_picker_exclusive_selection_replaces_previous_and_never_stages_multiple() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-column-picker-exclusive-replace-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        let mut deferred = Category::new("Deferred".to_string());
+        deferred.parent = Some(status.id);
+        status.children = vec![pending.id, deferred.id];
+        for cat in [&status, &pending, &deferred] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, pending.id, None)
+            .expect("assign pending");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: status.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open picker");
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+        {
+            let state = app.category_column_picker.as_ref().expect("picker");
+            assert!(state.selected_ids.contains(&pending.id));
+            assert_eq!(state.selected_ids.len(), 1);
+            assert!(state.is_exclusive);
+        }
+
+        for ch in "Deferred".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
+        }
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("select deferred");
+        {
+            let state = app.category_column_picker.as_ref().expect("picker");
+            assert!(state.selected_ids.contains(&deferred.id));
+            assert!(!state.selected_ids.contains(&pending.id));
+            assert_eq!(state.selected_ids.len(), 1, "radio behavior");
+        }
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save picker");
+        let saved = store.get_item(item.id).expect("load item");
+        assert!(!saved.assignments.contains_key(&pending.id));
+        assert!(saved.assignments.contains_key(&deferred.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]

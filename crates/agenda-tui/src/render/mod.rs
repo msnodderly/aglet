@@ -490,10 +490,15 @@ impl App {
         };
         frame.render_widget(
             Paragraph::new(format!(
-                "Column: {}  Item: {}\nSelected: {}",
+                "Column: {}  Item: {}\nSelected: {}  Mode: {}",
                 state.parent_name,
                 truncate_board_cell(&state.item_label, 28),
-                truncate_board_cell(&selected_display, 40)
+                truncate_board_cell(&selected_display, 28),
+                if state.is_exclusive {
+                    "single"
+                } else {
+                    "multi"
+                }
             ))
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
@@ -545,7 +550,13 @@ impl App {
                             .find(|c| c.id == *id)
                             .map(|c| c.name.as_str())
                             .unwrap_or("(missing)");
-                        let mark = if state.selected_ids.contains(id) {
+                        let mark = if state.is_exclusive {
+                            if state.selected_ids.contains(id) {
+                                "(*)"
+                            } else {
+                                "( )"
+                            }
+                        } else if state.selected_ids.contains(id) {
                             "[x]"
                         } else {
                             "[ ]"

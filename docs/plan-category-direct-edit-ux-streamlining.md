@@ -388,12 +388,12 @@ Legend:
 
 #### 11.10 Input Handling - Exclusive Single-Select Picker
 
-- [ ] Reuse picker layout and filtering behavior for exclusive parent columns.
-- [ ] Implement single-selection behavior (radio semantics).
-- [ ] Prevent multiple selected values in interaction state.
-- [ ] Implement `Enter` behavior per approved design (select+close or select then save).
-- [ ] Ensure replacing existing selection removes prior assignment under the same parent.
-- [ ] Ensure cancel restores original assignment untouched.
+- [x] Reuse picker layout and filtering behavior for exclusive parent columns.
+- [x] Implement single-selection behavior (radio semantics).
+- [x] Prevent multiple selected values in interaction state.
+- [x] Implement `Enter` behavior per approved design (select+close or select then save). (Current behavior: `Space` selects, `Enter` saves.)
+- [x] Ensure replacing existing selection removes prior assignment under the same parent.
+- [x] Ensure cancel restores original assignment untouched.
 
 #### 11.11 Inline Create Flow (Picker Mode)
 
@@ -403,18 +403,18 @@ Legend:
 - [x] Create new child category under the current column parent.
 - [x] Refresh category cache after create.
 - [ ] Apply post-create behavior per approved UX:
-  - [ ] exclusive picker: new category becomes selected
+  - [x] exclusive picker: new category becomes selected
   - [x] non-exclusive picker: new category toggled on
 - [x] Confirm create cancel returns user to picker with filter preserved (or explicitly cleared, per chosen design). (Preserves typed filter in current implementation.)
 
 #### 11.12 Render Layer - Picker UI
 
 - [x] Add picker rendering branch in `/Users/mds/src/aglet/crates/agenda-tui/src/render/mod.rs`.
-- [ ] Render compact header with item label, column/parent name, and exclusivity indicator.
+- [x] Render compact header with item label, column/parent name, and exclusivity indicator.
 - [x] Render filter input panel.
 - [ ] Render filtered list with selected markers:
   - [x] ASCII-safe selected marker for multi-select
-  - [ ] ASCII-safe selected marker for single-select
+  - [x] ASCII-safe selected marker for single-select
 - [ ] Render create affordance row (if applicable).
 - [x] Render clear footer hints for picker mode.
 - [x] Ensure focus styling is clear if picker uses multiple focus regions.
@@ -443,8 +443,8 @@ Legend:
 - [x] Add test: `Enter` saves multi-select diff correctly (assign + unassign).
 - [x] Add test: `Esc` cancels multi-select changes.
 - [x] Add test: exclusive picker initializes with current single selection. (Routed to existing direct-edit mode for now.)
-- [ ] Add test: exclusive picker replaces selection correctly.
-- [ ] Add test: exclusive picker cannot stage multiple selections.
+- [x] Add test: exclusive picker replaces selection correctly.
+- [x] Add test: exclusive picker cannot stage multiple selections.
 - [x] Add test: create-child flow from picker creates under correct parent and selects/toggles new child.
 - [x] Add test: reserved-name create rejection in picker mode.
 - [ ] Add test: item-column `Enter` still opens item editor.
