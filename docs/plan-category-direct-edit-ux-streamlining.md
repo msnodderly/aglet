@@ -397,15 +397,15 @@ Legend:
 
 #### 11.11 Inline Create Flow (Picker Mode)
 
-- [ ] Add create affordance when typed filter has no exact match (and input is non-empty).
-- [ ] Reuse reserved-name validation (`Done`, `When`, `Entry`) in picker create path.
-- [ ] Reuse/extract inline create confirm key handling pattern for picker mode.
-- [ ] Create new child category under the current column parent.
-- [ ] Refresh category cache after create.
+- [x] Add create affordance when typed filter has no exact match (and input is non-empty). (Status-driven affordance via `Enter`; list-row affordance still pending.)
+- [x] Reuse reserved-name validation (`Done`, `When`, `Entry`) in picker create path.
+- [x] Reuse/extract inline create confirm key handling pattern for picker mode.
+- [x] Create new child category under the current column parent.
+- [x] Refresh category cache after create.
 - [ ] Apply post-create behavior per approved UX:
   - [ ] exclusive picker: new category becomes selected
-  - [ ] non-exclusive picker: new category toggled on
-- [ ] Confirm create cancel returns user to picker with filter preserved (or explicitly cleared, per chosen design).
+  - [x] non-exclusive picker: new category toggled on
+- [x] Confirm create cancel returns user to picker with filter preserved (or explicitly cleared, per chosen design). (Preserves typed filter in current implementation.)
 
 #### 11.12 Render Layer - Picker UI
 
@@ -445,8 +445,8 @@ Legend:
 - [x] Add test: exclusive picker initializes with current single selection. (Routed to existing direct-edit mode for now.)
 - [ ] Add test: exclusive picker replaces selection correctly.
 - [ ] Add test: exclusive picker cannot stage multiple selections.
-- [ ] Add test: create-child flow from picker creates under correct parent and selects/toggles new child.
-- [ ] Add test: reserved-name create rejection in picker mode.
+- [x] Add test: create-child flow from picker creates under correct parent and selects/toggles new child.
+- [x] Add test: reserved-name create rejection in picker mode.
 - [ ] Add test: item-column `Enter` still opens item editor.
 - [ ] Add test: `When` column path still shows existing “not implemented inline” status.
 - [ ] Run targeted `agenda-tui` test subset and then full `agenda-tui` tests. (Targeted subsets done for new picker, direct-edit, and board-add-column; full suite pending.)
