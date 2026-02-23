@@ -844,37 +844,37 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Phase 5: Details Pane Editing (Flags + Note)
 
-- [ ] Implement details pane content model
-  - [ ] Selected category metadata view (name, parent, child count, reserved status)
-  - [ ] Flag rows/controls (exclusive, match-name, actionable)
-  - [ ] Note editor area
-- [ ] Implement focus transitions for details pane
-  - [ ] `Tab` into details flags and note
-  - [ ] `Shift+Tab` back to tree/filter
-  - [ ] Visual focus styling updates
-- [ ] Implement immediate flag toggles from details pane and quick keys
-  - [ ] Exclusive toggle
-  - [ ] Match-name toggle
-  - [ ] Actionable toggle
-  - [ ] Reserved-category restrictions/messages
-  - [ ] Refresh + preserve selection after flag updates
-- [ ] Implement inline note editing in details pane
-  - [ ] `TextBuffer` for note draft tied to selected category ID
-  - [ ] Save semantics (`S`) and cancel semantics (`Esc` in note focus)
-  - [ ] Empty note clears note (`None`)
-  - [ ] Switching selection with dirty note: decide behavior
+- [x] Implement details pane content model
+  - [x] Selected category metadata view (name, parent, child count, reserved status)
+  - [x] Flag rows/controls (exclusive, match-name, actionable)
+  - [x] Note editor area
+- [x] Implement focus transitions for details pane
+  - [x] `Tab` into details flags and note
+  - [x] `Shift+Tab` back to tree/filter
+  - [x] Visual focus styling updates
+- [x] Implement immediate flag toggles from details pane and quick keys
+  - [x] Exclusive toggle
+  - [x] Match-name toggle
+  - [x] Actionable toggle
+  - [x] Reserved-category restrictions/messages
+  - [x] Refresh + preserve selection after flag updates
+- [x] Implement inline note editing in details pane
+  - [x] `TextBuffer` for note draft tied to selected category ID
+  - [x] Save semantics (`S`) and cancel semantics (`Esc` in note focus)
+  - [x] Empty note clears note (`None`)
+  - [x] Switching selection with dirty note: decide behavior
     - [ ] auto-save
     - [ ] prompt
-    - [ ] discard with warning
-  - [ ] Status messages for note saved/canceled/unchanged
-- [ ] Remove or deprecate `Mode::CategoryConfig` usage from category manager path
-  - [ ] `Enter` no longer opens config popup (or only does so behind temporary fallback)
-  - [ ] Footer hints updated accordingly
-- [ ] Add TUI tests for details-pane editing
-  - [ ] quick flag toggles still work
-  - [ ] note edit + save
-  - [ ] note edit + cancel
-  - [ ] selection change with dirty note follows chosen contract
+    - [x] discard with warning
+  - [x] Status messages for note saved/canceled/unchanged
+- [x] Remove or deprecate `Mode::CategoryConfig` usage from category manager path
+  - [x] `Enter` no longer opens config popup (or only does so behind temporary fallback)
+  - [x] Footer hints updated accordingly
+- [x] Add TUI tests for details-pane editing
+  - [x] quick flag toggles still work
+  - [x] note edit + save
+  - [x] note edit + cancel
+  - [x] selection change with dirty note follows chosen contract
 
 ### Phase 6: Cleanup, Mode Deletion, and Documentation
 
