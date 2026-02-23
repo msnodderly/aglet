@@ -1448,7 +1448,7 @@ impl App {
             Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
             Mode::CategoryDirectEdit => {
-                "Tab/Shift-Tab:focus  n/a:add row  x:remove row  Enter:resolve row/create  S:save draft  Esc:cancel draft"
+                "Tab/Shift-Tab:focus  +:add row  n/a:add row (Entries)  x:remove row (Entries)  Enter:resolve row/create  s/S:save draft  Esc:cancel draft"
             }
             Mode::BoardAddColumnPicker => {
                 "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"

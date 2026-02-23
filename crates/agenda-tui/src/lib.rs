@@ -1043,7 +1043,7 @@ mod tests {
         assert!(!saved_before.assignments.contains_key(&alpha.id));
         assert!(!saved_before.assignments.contains_key(&alpha_beta.id));
 
-        app.handle_category_direct_edit_key(KeyCode::Char('S'), &agenda)
+        app.handle_category_direct_edit_key(KeyCode::Char('s'), &agenda)
             .expect("save draft");
         let saved_after = store.get_item(item.id).expect("load item after save");
         assert!(saved_after.assignments.contains_key(&alpha.id));
@@ -1175,6 +1175,128 @@ mod tests {
         let state = app.category_direct_edit_state().expect("direct edit state");
         assert_eq!(state.rows.len(), rows_before);
         assert_eq!(state.rows[0].input.text(), "nax");
+    }
+
+    #[test]
+    fn category_direct_edit_input_focus_plus_adds_row_without_switching_focus() {
+        let parent = Category::new("Tags".to_string());
+        let mut child = Category::new("Alpha".to_string());
+        child.parent = Some(parent.id);
+
+        let item = Item::new("Demo".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent, child],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+        app.open_category_direct_edit();
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        assert_eq!(
+            app.category_direct_edit_state().expect("state").focus,
+            CategoryDirectEditFocus::Input
+        );
+
+        app.handle_category_direct_edit_key(KeyCode::Char('+'), &agenda)
+            .expect("plus adds row");
+
+        let state = app.category_direct_edit_state().expect("direct edit state");
+        assert_eq!(state.rows.len(), 2);
+        assert_eq!(state.active_row, 1);
+        assert_eq!(state.focus, CategoryDirectEditFocus::Input);
+        assert!(app.status.contains("Added row"));
+    }
+
+    #[test]
+    fn category_direct_edit_tab_cycles_focus_instead_of_autocomplete_from_suggestions() {
+        let parent = Category::new("Tags".to_string());
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let mut alphabet = Category::new("Alphabet".to_string());
+        alphabet.parent = Some(parent.id);
+
+        let item = Item::new("Demo".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent, alpha, alphabet],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+        app.open_category_direct_edit();
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        app.handle_category_direct_edit_key(KeyCode::Char('A'), &agenda)
+            .expect("type A");
+        app.handle_category_direct_edit_key(KeyCode::Char('l'), &agenda)
+            .expect("type l");
+
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to suggestions");
+        assert_eq!(
+            app.category_direct_edit_state().expect("state").focus,
+            CategoryDirectEditFocus::Suggestions
+        );
+
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to entries");
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.focus, CategoryDirectEditFocus::Entries);
+        assert_eq!(state.rows[0].input.text(), "Al");
     }
 
     #[test]

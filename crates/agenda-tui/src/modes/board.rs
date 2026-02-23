@@ -206,7 +206,12 @@ impl App {
         }
         self.sync_category_direct_edit_input_mirror();
         self.update_suggestions();
-        self.status = format!("Resolved row to '{cat_name}' (press S to save)");
+        if self.current_column_parent_is_exclusive() {
+            self.status = format!("Resolved row to '{cat_name}'. Press s/S to save");
+        } else {
+            self.status =
+                format!("Resolved row to '{cat_name}'. Press + to add another row or s/S to save");
+        }
         Ok(true)
     }
 
@@ -1873,7 +1878,7 @@ impl App {
         }
 
         match code {
-            KeyCode::Char('S') => {
+            KeyCode::Char('S') | KeyCode::Char('s') => {
                 self.apply_category_direct_edit_draft(agenda)?;
                 return Ok(false);
             }
@@ -1882,14 +1887,11 @@ impl App {
                 return Ok(false);
             }
             KeyCode::Tab => {
-                if matches!(
-                    self.active_category_direct_edit_focus(),
-                    Some(CategoryDirectEditFocus::Suggestions)
-                ) {
-                    self.autocomplete_from_suggestion();
-                } else {
-                    self.cycle_category_direct_edit_focus(true);
-                }
+                self.cycle_category_direct_edit_focus(true);
+                return Ok(false);
+            }
+            KeyCode::Char('+') => {
+                self.category_direct_edit_add_blank_row_guarded();
                 return Ok(false);
             }
             KeyCode::Char('n') | KeyCode::Char('a')
@@ -1959,7 +1961,7 @@ impl App {
                         .unwrap_or(0);
                     self.remove_active_category_direct_edit_row();
                     self.status = if row_count <= 1 {
-                        "Empty row kept (must keep one row). Press S to save cleared column"
+                        "Empty row kept (must keep one row). Press s/S to save cleared column"
                             .to_string()
                     } else {
                         "Removed empty row".to_string()
