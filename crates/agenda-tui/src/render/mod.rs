@@ -84,6 +84,13 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::BoardAddColumnPicker {
+            let popup_area = centered_rect(58, 56, frame.area());
+            self.render_board_add_column_picker(frame, popup_area);
+            if let Some((x, y)) = self.board_add_column_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
     }
 
     fn render_category_direct_edit_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -415,6 +422,170 @@ impl App {
         Some((x, input_y))
     }
 
+    fn render_board_add_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Add Column")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 4 || area.height < 6 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+
+        let header = self
+            .board_add_column
+            .as_ref()
+            .map(|state| {
+                let dir = match state.anchor.direction {
+                    AddColumnDirection::Left => "left",
+                    AddColumnDirection::Right => "right",
+                };
+                let section = self
+                    .current_view()
+                    .and_then(|v| v.sections.get(state.anchor.section_index))
+                    .map(|s| s.title.as_str())
+                    .unwrap_or("(missing)");
+                format!(
+                    "Section: {}  Insert {} of current column  Index: {}",
+                    section, dir, state.anchor.insert_index
+                )
+            })
+            .unwrap_or_else(|| "Insert a category column".to_string());
+        frame.render_widget(
+            Paragraph::new(header)
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .wrap(Wrap { trim: true }),
+            chunks[0],
+        );
+
+        let input_text = self.board_add_column_input_text().unwrap_or("");
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::raw(input_text),
+            ]))
+            .block(Block::default().borders(Borders::ALL).title("Typeahead")),
+            chunks[1],
+        );
+
+        if let Some(name) = self.board_add_column_create_confirm_name() {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "Create \"{}\" as a new top-level category and insert its column?\nEnter/Y confirm  N/Esc cancel",
+                    name
+                ))
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .block(Block::default().borders(Borders::ALL).title("Create Category")),
+                chunks[2],
+            );
+        } else {
+            let matches = self.get_board_add_column_suggest_matches();
+            let items: Vec<ListItem<'_>> = if matches.is_empty() {
+                let msg = if input_text.trim().is_empty() {
+                    "(type to filter categories)"
+                } else {
+                    "(no matches)"
+                };
+                vec![ListItem::new(msg)]
+            } else {
+                matches
+                    .iter()
+                    .map(|id| {
+                        let label = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == *id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("(missing)");
+                        ListItem::new(label)
+                    })
+                    .collect()
+            };
+            let selected = self
+                .board_add_column
+                .as_ref()
+                .and_then(|s| (!matches.is_empty()).then_some(s.suggest_index.min(matches.len() - 1)));
+            let mut list_state = Self::list_state_for(chunks[2], selected);
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(Block::default().borders(Borders::ALL).title("Categories"))
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style()),
+                chunks[2],
+                &mut list_state,
+            );
+        }
+
+        frame.render_widget(
+            Paragraph::new(
+                "Type filter | Up/Down select | Tab autocomplete | Enter insert/create | Esc cancel",
+            )
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[3],
+        );
+    }
+
+    fn board_add_column_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::BoardAddColumnPicker || area.width < 4 || area.height < 4 {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[1];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Category> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = self
+            .board_add_column
+            .as_ref()
+            .map(|s| s.input.cursor())
+            .unwrap_or(0)
+            .min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        Some((
+            input_x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            input_y,
+        ))
+    }
+
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
         match self.mode {
             Mode::NoteEdit => Some("Note> "),
@@ -648,6 +819,18 @@ impl App {
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| "Item".to_string());
         for (slot_index, slot) in self.slots.iter().enumerate() {
+            let effective_display_mode = match (&slot.context, current_view.as_ref()) {
+                (SlotContext::Section { section_index }, Some(view))
+                | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                    .sections
+                    .get(*section_index)
+                    .and_then(|section| section.board_display_mode_override)
+                    .unwrap_or(view.board_display_mode),
+                _ => current_view
+                    .as_ref()
+                    .map(|v| v.board_display_mode)
+                    .unwrap_or(BoardDisplayMode::SingleLine),
+            };
             let is_selected_slot = slot_index == self.slot_index;
             let inner_width = columns[slot_index].width.saturating_sub(2);
             let selected_row = if is_selected_slot && !slot.items.is_empty() {
@@ -753,10 +936,17 @@ impl App {
                             } else {
                                 " "
                             };
+                            let item_cell_content = if effective_display_mode
+                                == BoardDisplayMode::MultiLine
+                            {
+                                wrap_text_for_board_cell(&board_item_label(item), item_width)
+                                    .join("\n")
+                            } else {
+                                truncate_board_cell(&board_item_label(item), item_width)
+                            };
+                            let mut row_height = item_cell_content.lines().count().max(1);
                             let mut cells = vec![Cell::from(marker_cell), Cell::from(note_cell), {
-                                let content =
-                                    truncate_board_cell(&board_item_label(item), item_width);
-                                let mut cell = Cell::from(content);
+                                let mut cell = Cell::from(item_cell_content);
                                 if is_selected && self.column_index == 0 {
                                     cell = cell.style(focused_cell_style());
                                 }
@@ -775,7 +965,27 @@ impl App {
                                             &category_names,
                                         ),
                                     };
-                                    let content = truncate_board_cell(&value, column.width);
+                                    let content = if effective_display_mode
+                                        == BoardDisplayMode::MultiLine
+                                        && column.kind == ColumnKind::Standard
+                                    {
+                                        let lines = if value == "\u{2013}" {
+                                            vec!["-".to_string()]
+                                        } else {
+                                            let labels: Vec<String> = value
+                                                .split(", ")
+                                                .map(str::to_string)
+                                                .collect();
+                                            format_category_values_multi_line(
+                                                &labels,
+                                                BOARD_MULTI_CATEGORY_LINE_CAP,
+                                            )
+                                        };
+                                        lines.join("\n")
+                                    } else {
+                                        truncate_board_cell(&value, column.width)
+                                    };
+                                    row_height = row_height.max(content.lines().count().max(1));
                                     let mut cell = Cell::from(content);
                                     if is_selected && self.column_index == col_idx + 1 {
                                         cell = cell.style(focused_cell_style());
@@ -788,14 +998,29 @@ impl App {
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
                                 } else {
-                                    categories.join(", ")
+                                    if effective_display_mode == BoardDisplayMode::MultiLine {
+                                        format_category_values_multi_line(
+                                            &categories,
+                                            BOARD_MULTI_CATEGORY_LINE_CAP,
+                                        )
+                                        .join("\n")
+                                    } else {
+                                        categories.join(", ")
+                                    }
                                 };
-                                cells.push(Cell::from(truncate_board_cell(
-                                    &categories_text,
-                                    synthetic_categories_width,
-                                )));
+                                let content = if effective_display_mode == BoardDisplayMode::MultiLine
+                                {
+                                    categories_text
+                                } else {
+                                    truncate_board_cell(&categories_text, synthetic_categories_width)
+                                };
+                                row_height = row_height.max(content.lines().count().max(1));
+                                cells.push(Cell::from(content));
                             }
                             let mut row = Row::new(cells);
+                            if effective_display_mode == BoardDisplayMode::MultiLine {
+                                row = row.height(row_height.min(u16::MAX as usize) as u16);
+                            }
                             if is_selected {
                                 row = row.style(selected_board_row_style());
                             }
@@ -864,18 +1089,47 @@ impl App {
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
                             } else {
-                                categories.join(", ")
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    format_category_values_multi_line(
+                                        &categories,
+                                        BOARD_MULTI_CATEGORY_LINE_CAP,
+                                    )
+                                    .join("\n")
+                                } else {
+                                    categories.join(", ")
+                                }
                             };
+                            let when_text = if effective_display_mode == BoardDisplayMode::MultiLine {
+                                truncate_board_cell(&when, widths.when)
+                            } else {
+                                truncate_board_cell(&when, widths.when)
+                            };
+                            let item_cell_text = if effective_display_mode == BoardDisplayMode::MultiLine {
+                                wrap_text_for_board_cell(&item_text, widths.item).join("\n")
+                            } else {
+                                truncate_board_cell(&item_text, widths.item)
+                            };
+                            let categories_cell_text =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    categories_text
+                                } else {
+                                    truncate_board_cell(&categories_text, widths.categories)
+                                };
+                            let row_height = item_cell_text
+                                .lines()
+                                .count()
+                                .max(categories_cell_text.lines().count())
+                                .max(1);
                             let mut row = Row::new(vec![
                                 Cell::from(marker_cell),
-                                Cell::from(truncate_board_cell(&when, widths.when)),
+                                Cell::from(when_text),
                                 Cell::from(note_cell),
-                                Cell::from(truncate_board_cell(&item_text, widths.item)),
-                                Cell::from(truncate_board_cell(
-                                    &categories_text,
-                                    widths.categories,
-                                )),
+                                Cell::from(item_cell_text),
+                                Cell::from(categories_cell_text),
                             ]);
+                            if effective_display_mode == BoardDisplayMode::MultiLine {
+                                row = row.height(row_height.min(u16::MAX as usize) as u16);
+                            }
                             if is_selected {
                                 row = row.style(selected_board_row_style());
                             }
@@ -1069,6 +1323,9 @@ impl App {
             }
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            Mode::BoardAddColumnPicker => {
+                format!("Add column> {}", self.board_add_column_input_text().unwrap_or(""))
+            }
             Mode::InspectUnassign => "Select assignment".to_string(),
             Mode::InputPanel => {
                 if let Some(panel) = &self.input_panel {
@@ -1120,8 +1377,8 @@ impl App {
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
-                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Sections => "Enter:expand  n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Sections => "Enter:expand  n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
                         ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
                     }
                 } else {
@@ -1131,7 +1388,10 @@ impl App {
             Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
             Mode::CategoryDirectEdit => {
-                "type:filter  Up/Down:select  Tab:fill  Enter:assign/create/clear  Esc:cancel"
+                "Tab/Shift-Tab:focus  n/a:add row  x:remove row  Enter:resolve row/create  S:save draft  Esc:cancel draft"
+            }
+            Mode::BoardAddColumnPicker => {
+                "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert/create  Esc:cancel"
             }
             Mode::ConfirmDelete => "y:confirm delete  n:cancel",
             Mode::FilterInput => "Enter:apply  Esc:cancel",
@@ -1852,8 +2112,15 @@ impl App {
 
         // ── Criteria region ──────────────────────────────────────────────────
         {
+            let display_mode_label = match state.draft.board_display_mode {
+                BoardDisplayMode::SingleLine => "single-line",
+                BoardDisplayMode::MultiLine => "multi-line",
+            };
             let block = Block::default()
-                .title(format!(" VIEW CRITERIA  matches:{} ", state.preview_count))
+                .title(format!(
+                    " VIEW CRITERIA  matches:{}  display:{} ",
+                    state.preview_count, display_mode_label
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_for(ViewEditRegion::Criteria)));
 
@@ -2015,9 +2282,16 @@ impl App {
                             "     columns: {}",
                             section_columns.join(", ")
                         ))));
+                        let mode_label = match section.board_display_mode_override {
+                            None => "inherit".to_string(),
+                            Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
+                            Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
+                        };
                         items.push(ListItem::new(Line::from(format!(
-                            "     children:{}  (e/t:title  f:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
+                            "     children:{}  display:{}  (e/t:title  f:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display)",
                             if section.show_children { "yes" } else { "no" }
+                            ,
+                            mode_label
                         ))));
                     }
                 }

@@ -1,5 +1,25 @@
 use crate::*;
 
+enum InlineCreateConfirmKeyAction {
+    Confirm,
+    Cancel,
+    DismissAndContinue,
+    None,
+}
+
+fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyAction {
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            InlineCreateConfirmKeyAction::Confirm
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => InlineCreateConfirmKeyAction::Cancel,
+        KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right => {
+            InlineCreateConfirmKeyAction::DismissAndContinue
+        }
+        _ => InlineCreateConfirmKeyAction::None,
+    }
+}
+
 impl App {
     pub(crate) fn category_direct_edit_state(&self) -> Option<&CategoryDirectEditState> {
         self.category_direct_edit.as_ref()
@@ -15,6 +35,39 @@ impl App {
         self.category_direct_edit = None;
         self.category_suggest = None;
         self.category_direct_edit_create_confirm = None; // legacy field; direct-edit now uses state.create_confirm_name
+    }
+
+    fn board_add_column_state(&self) -> Option<&BoardAddColumnState> {
+        self.board_add_column.as_ref()
+    }
+
+    fn board_add_column_state_mut(&mut self) -> Option<&mut BoardAddColumnState> {
+        self.board_add_column.as_mut()
+    }
+
+    fn clear_board_add_column_session(&mut self) {
+        self.board_add_column = None;
+        self.category_suggest = None;
+    }
+
+    pub(crate) fn board_add_column_input_text(&self) -> Option<&str> {
+        self.board_add_column_state().map(|s| s.input.text())
+    }
+
+    pub(crate) fn board_add_column_create_confirm_name(&self) -> Option<&str> {
+        self.board_add_column_state()?
+            .create_confirm_name
+            .as_deref()
+    }
+
+    fn board_add_column_create_confirm_open(&self) -> bool {
+        self.board_add_column_create_confirm_name().is_some()
+    }
+
+    fn set_board_add_column_create_confirm_name(&mut self, name: Option<String>) {
+        if let Some(state) = self.board_add_column_state_mut() {
+            state.create_confirm_name = name;
+        }
     }
 
     pub(crate) fn active_category_direct_edit_row(&self) -> Option<&CategoryDirectEditRow> {
@@ -254,6 +307,155 @@ impl App {
         })
     }
 
+    fn current_board_add_column_anchor(
+        &self,
+        direction: AddColumnDirection,
+    ) -> Result<BoardAddColumnAnchor, String> {
+        let slot = self
+            .current_slot()
+            .ok_or("No active board slot".to_string())?;
+        let (section_index, is_generated_section) = match slot.context {
+            SlotContext::Section { section_index } => (section_index, false),
+            SlotContext::GeneratedSection { section_index, .. } => (section_index, true),
+            SlotContext::Unmatched => {
+                return Err("Cannot add columns from unmatched lane".to_string());
+            }
+        };
+        let view = self
+            .current_view()
+            .ok_or("No active view available".to_string())?;
+        let section = view
+            .sections
+            .get(section_index)
+            .ok_or("Current section not found".to_string())?;
+
+        let (current_section_column_index, insert_index) = if self.column_index == 0 {
+            match direction {
+                AddColumnDirection::Left => {
+                    return Err("Cannot insert a category column left of the item column".to_string());
+                }
+                AddColumnDirection::Right => (0, 0),
+            }
+        } else {
+            let current_section_column_index = self.column_index - 1;
+            if current_section_column_index > section.columns.len() {
+                return Err("Current column is out of range".to_string());
+            }
+            let insert_index = match direction {
+                AddColumnDirection::Left => current_section_column_index,
+                AddColumnDirection::Right => current_section_column_index + 1,
+            };
+            (current_section_column_index, insert_index)
+        };
+
+        Ok(BoardAddColumnAnchor {
+            slot_index: self.slot_index,
+            section_index,
+            current_board_column_index: self.column_index,
+            current_section_column_index,
+            insert_index,
+            direction,
+            is_generated_section,
+        })
+    }
+
+    fn is_valid_board_column_heading_category(category: &Category) -> bool {
+        !category.name.eq_ignore_ascii_case("Entry")
+    }
+
+    fn board_add_column_scope_ids(&self) -> Vec<CategoryId> {
+        self.categories
+            .iter()
+            .filter(|c| Self::is_valid_board_column_heading_category(c))
+            .map(|c| c.id)
+            .collect()
+    }
+
+    pub(crate) fn get_board_add_column_suggest_matches(&self) -> Vec<CategoryId> {
+        let scope_ids = self.board_add_column_scope_ids();
+        let query = self.board_add_column_input_text().unwrap_or("");
+        filter_category_ids_by_query(&scope_ids, &self.categories, query, true, false)
+    }
+
+    fn exact_board_add_column_match_id(&self) -> Option<CategoryId> {
+        let scope_ids = self.board_add_column_scope_ids();
+        exact_category_name_match_in_scope(
+            &scope_ids,
+            &self.categories,
+            self.board_add_column_input_text()?,
+        )
+    }
+
+    fn update_board_add_column_suggestions(&mut self) {
+        if self.board_add_column_create_confirm_open() {
+            return;
+        }
+        let matches = self.get_board_add_column_suggest_matches();
+        if matches.is_empty() {
+            let typed = self
+                .board_add_column_state()
+                .map(|s| s.input.trimmed().to_string())
+                .unwrap_or_default();
+            if let Some(state) = self.board_add_column_state_mut() {
+                state.suggest_index = 0;
+            }
+            self.category_suggest = None;
+            self.status = if typed.is_empty() {
+                "Add column: type to filter categories (When is allowed)".to_string()
+            } else {
+                "No matching categories. Enter creates a new top-level category.".to_string()
+            };
+        } else {
+            if let Some(state) = self.board_add_column_state_mut() {
+                state.suggest_index = state.suggest_index.min(matches.len() - 1);
+            }
+            self.category_suggest = Some(CategorySuggestState { suggest_index: 0 });
+            self.status =
+                "Add column: type to filter, ↑↓ select, Tab autocomplete, Enter insert/create"
+                    .to_string();
+        }
+    }
+
+    fn move_board_add_column_suggest_cursor(&mut self, delta: i32) {
+        if self.board_add_column_create_confirm_open() {
+            return;
+        }
+        let matches = self.get_board_add_column_suggest_matches();
+        let len = matches.len();
+        if len == 0 {
+            return;
+        }
+        if let Some(state) = self.board_add_column_state_mut() {
+            let current = state.suggest_index.min(len - 1);
+            state.suggest_index = (current as i64 + delta as i64).rem_euclid(len as i64) as usize;
+        }
+    }
+
+    fn autocomplete_board_add_column_from_suggestion(&mut self) {
+        if self.board_add_column_create_confirm_open() {
+            return;
+        }
+        let matches = self.get_board_add_column_suggest_matches();
+        let Some(state) = self.board_add_column_state() else {
+            return;
+        };
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
+            return;
+        };
+        let Some(name) = self
+            .categories
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.clone())
+        else {
+            return;
+        };
+        if let Some(state) = self.board_add_column_state_mut() {
+            state.input.set(name);
+        }
+        self.update_board_add_column_suggestions();
+    }
+
     fn collect_assigned_child_categories_for_parent(
         &self,
         item: &Item,
@@ -461,6 +663,157 @@ impl App {
         self.status = "Select assignment to unassign (j/k, Enter, Esc)".to_string();
     }
 
+    pub(crate) fn open_board_add_column_picker(
+        &mut self,
+        direction: AddColumnDirection,
+    ) -> Result<(), String> {
+        let anchor = self.current_board_add_column_anchor(direction)?;
+        self.mode = Mode::BoardAddColumnPicker;
+        self.board_add_column = Some(BoardAddColumnState {
+            anchor,
+            input: text_buffer::TextBuffer::empty(),
+            suggest_index: 0,
+            create_confirm_name: None,
+        });
+        self.category_suggest = None;
+        self.status = match direction {
+            AddColumnDirection::Left => "Add column (left): type a category name".to_string(),
+            AddColumnDirection::Right => "Add column (right): type a category name".to_string(),
+        };
+        self.update_board_add_column_suggestions();
+        Ok(())
+    }
+
+    fn open_board_add_column_create_confirm(&mut self) {
+        let typed = self
+            .board_add_column_input_text()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if typed.is_empty() {
+            self.status = "Type a category name first".to_string();
+            return;
+        }
+        if is_reserved_category_name(&typed) {
+            if typed.eq_ignore_ascii_case("When") {
+                self.status = "Press Enter to insert the existing 'When' column".to_string();
+            } else {
+                self.status = format!(
+                    "Cannot create reserved category '{}'. Use a different name.",
+                    typed
+                );
+            }
+            return;
+        }
+        if let Some(existing_cat) = self
+            .categories
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(&typed))
+        {
+            self.status = format!(
+                "Category '{}' already exists. Use Enter to insert it.",
+                existing_cat.name
+            );
+            return;
+        }
+        self.set_board_add_column_create_confirm_name(Some(typed.clone()));
+        self.status = format!("Create top-level category '{}' and insert column? (Y/n)", typed);
+    }
+
+    fn insert_board_column_for_category(
+        &mut self,
+        agenda: &Agenda<'_>,
+        category_id: CategoryId,
+    ) -> Result<(), String> {
+        let Some(add_state) = self.board_add_column_state().cloned() else {
+            return Ok(());
+        };
+        let Some(mut view) = self.current_view().cloned() else {
+            return Err("No active view".to_string());
+        };
+        let Some(section) = view.sections.get_mut(add_state.anchor.section_index) else {
+            return Err("Current section not found".to_string());
+        };
+
+        if section.columns.iter().any(|col| col.heading == category_id) {
+            let existing_idx = section
+                .columns
+                .iter()
+                .position(|col| col.heading == category_id)
+                .unwrap_or(0);
+            self.status = "Column already exists in this section".to_string();
+            self.column_index = existing_idx + 1;
+            return Ok(());
+        }
+
+        let kind = self
+            .categories
+            .iter()
+            .find(|c| c.id == category_id)
+            .map(|c| {
+                if c.name.eq_ignore_ascii_case("When") {
+                    ColumnKind::When
+                } else {
+                    ColumnKind::Standard
+                }
+            })
+            .unwrap_or(ColumnKind::Standard);
+
+        let insert_index = add_state.anchor.insert_index.min(section.columns.len());
+        section.columns.insert(
+            insert_index,
+            Column {
+                kind,
+                heading: category_id,
+                width: 12,
+            },
+        );
+
+        let view_name = view.name.clone();
+        let selected_item_id = self.selected_item_id();
+        agenda
+            .store()
+            .update_view(&view)
+            .map_err(|e| e.to_string())?;
+        self.clear_board_add_column_session();
+        self.mode = Mode::Normal;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+        if let Some(item_id) = selected_item_id {
+            self.set_item_selection_by_id(item_id);
+        }
+        self.slot_index = add_state.anchor.slot_index.min(self.slots.len().saturating_sub(1));
+        self.column_index = (insert_index + 1).min(self.current_slot_column_count());
+        let category_name = self
+            .categories
+            .iter()
+            .find(|c| c.id == category_id)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "(unknown)".to_string());
+        self.status = format!("Inserted column '{}' {}", category_name, match add_state.anchor.direction {
+            AddColumnDirection::Left => "to the left",
+            AddColumnDirection::Right => "to the right",
+        });
+        Ok(())
+    }
+
+    fn confirm_inline_create_board_add_column(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(name) = self.board_add_column_create_confirm_name().map(str::to_string) else {
+            return Ok(());
+        };
+        let mut category = Category::new(name.clone());
+        category.enable_implicit_string = true;
+        let cat_id = category.id;
+        agenda.create_category(&category).map_err(|e| e.to_string())?;
+        self.refresh_category_cache(agenda.store())?;
+        self.set_board_add_column_create_confirm_name(None);
+        self.insert_board_column_for_category(agenda, cat_id)?;
+        if self.mode == Mode::Normal {
+            self.status = format!("Created category '{}' and inserted column", name);
+        }
+        Ok(())
+    }
+
     pub(crate) fn open_category_direct_edit(&mut self) {
         let Some(meta) = self.current_category_direct_edit_column_meta() else {
             return;
@@ -510,20 +863,7 @@ impl App {
     pub(crate) fn get_current_suggest_matches(&self) -> Vec<CategoryId> {
         let child_ids = self.get_current_column_child_ids();
         let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
-        if active_input.trim().is_empty() {
-            child_ids
-                .into_iter()
-                .filter(|id| {
-                    self.categories
-                        .iter()
-                        .find(|c| c.id == *id)
-                        .map(|c| !c.name.eq_ignore_ascii_case("When"))
-                        .unwrap_or(false)
-                })
-                .collect()
-        } else {
-            filter_child_categories(&child_ids, &self.categories, active_input)
-        }
+        filter_category_ids_by_query(&child_ids, &self.categories, active_input, true, true)
     }
 
     fn update_suggestions(&mut self) {
@@ -605,17 +945,12 @@ impl App {
     }
 
     fn exact_current_column_child_match_id(&self) -> Option<CategoryId> {
-        let target_name = self.active_category_direct_edit_input_text()?.trim();
-        if target_name.is_empty() {
-            return None;
-        }
-        self.get_current_column_child_ids().into_iter().find(|id| {
-            self.categories
-                .iter()
-                .find(|c| c.id == *id)
-                .map(|c| c.name.eq_ignore_ascii_case(target_name))
-                .unwrap_or(false)
-        })
+        let child_ids = self.get_current_column_child_ids();
+        exact_category_name_match_in_scope(
+            &child_ids,
+            &self.categories,
+            self.active_category_direct_edit_input_text()?,
+        )
     }
 
     fn confirm_inline_create_category_direct_edit(
@@ -932,6 +1267,33 @@ impl App {
         Ok(false)
     }
 
+    pub(crate) fn handle_normal_key_event(
+        &mut self,
+        key: KeyEvent,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        let ctrl_only = key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER);
+        if ctrl_only {
+            match key.code {
+                KeyCode::Char('l') | KeyCode::Char('L') => {
+                    if let Err(err) = self.open_board_add_column_picker(AddColumnDirection::Left) {
+                        self.status = err;
+                    }
+                    return Ok(false);
+                }
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    if let Err(err) = self.open_board_add_column_picker(AddColumnDirection::Right) {
+                        self.status = err;
+                    }
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+        self.handle_normal_key(key.code, agenda)
+    }
+
     /// Open an InputPanel for adding a new item in the current section.
     pub(crate) fn open_input_panel_add_item(&mut self) {
         let (section_title, on_insert_assign) = self
@@ -964,28 +1326,103 @@ impl App {
             "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
     }
 
+    pub(crate) fn handle_board_add_column_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        if self.board_add_column_create_confirm_open() {
+            match inline_create_confirm_key_action(code) {
+                InlineCreateConfirmKeyAction::Confirm => {
+                    self.confirm_inline_create_board_add_column(agenda)?;
+                    return Ok(false);
+                }
+                InlineCreateConfirmKeyAction::Cancel => {
+                    self.set_board_add_column_create_confirm_name(None);
+                    self.update_board_add_column_suggestions();
+                    self.status = "Create canceled. Continue picking column.".to_string();
+                    return Ok(false);
+                }
+                InlineCreateConfirmKeyAction::DismissAndContinue => {
+                    self.set_board_add_column_create_confirm_name(None);
+                    self.update_board_add_column_suggestions();
+                    self.status = "Create canceled. Continue picking column.".to_string();
+                }
+                InlineCreateConfirmKeyAction::None => {}
+            }
+        }
+
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.clear_board_add_column_session();
+                self.status = "Add column canceled".to_string();
+                return Ok(false);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.move_board_add_column_suggest_cursor(1);
+                return Ok(false);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.move_board_add_column_suggest_cursor(-1);
+                return Ok(false);
+            }
+            KeyCode::Tab => {
+                self.autocomplete_board_add_column_from_suggestion();
+                return Ok(false);
+            }
+            KeyCode::Enter => {
+                if let Some(category_id) = self.exact_board_add_column_match_id() {
+                    self.insert_board_column_for_category(agenda, category_id)?;
+                } else {
+                    let matches = self.get_board_add_column_suggest_matches();
+                    if let Some(state) = self.board_add_column_state() {
+                        if let Some(&category_id) = matches
+                            .get(state.suggest_index.min(matches.len().saturating_sub(1)))
+                        {
+                            self.insert_board_column_for_category(agenda, category_id)?;
+                        } else {
+                            self.open_board_add_column_create_confirm();
+                        }
+                    }
+                }
+                return Ok(false);
+            }
+            _ => {}
+        }
+
+        if let Some(state) = self.board_add_column_state_mut() {
+            if state.input.handle_key(code, false) {
+                state.create_confirm_name = None;
+                self.update_board_add_column_suggestions();
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn handle_category_direct_edit_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         if self.direct_edit_create_confirm_open() {
-            match code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            match inline_create_confirm_key_action(code) {
+                InlineCreateConfirmKeyAction::Confirm => {
                     self.confirm_inline_create_category_direct_edit(agenda)?;
                     return Ok(false);
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                InlineCreateConfirmKeyAction::Cancel => {
                     self.set_direct_edit_create_confirm_name(None);
                     self.update_suggestions();
                     self.status = "Create canceled. Continue editing category.".to_string();
                     return Ok(false);
                 }
-                _ => {
+                InlineCreateConfirmKeyAction::DismissAndContinue => {
                     self.set_direct_edit_create_confirm_name(None);
                     self.status = "Create canceled. Continue editing category.".to_string();
                     self.update_suggestions();
                 }
+                InlineCreateConfirmKeyAction::None => {}
             }
         }
 
@@ -1009,11 +1446,21 @@ impl App {
                 }
                 return Ok(false);
             }
-            KeyCode::Char('n') | KeyCode::Char('a') => {
+            KeyCode::Char('n') | KeyCode::Char('a')
+                if matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Entries)
+                ) =>
+            {
                 self.category_direct_edit_add_blank_row_guarded();
                 return Ok(false);
             }
-            KeyCode::Char('x') => {
+            KeyCode::Char('x')
+                if matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Entries)
+                ) =>
+            {
                 self.remove_active_category_direct_edit_row();
                 return Ok(false);
             }
@@ -2210,6 +2657,7 @@ mod tests {
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
+        board_display_mode_override: None,
         });
 
         let app = App {
@@ -2276,6 +2724,7 @@ mod tests {
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
+        board_display_mode_override: None,
         });
         app.views = vec![view];
         app.slots = vec![Slot {
@@ -2342,6 +2791,7 @@ mod tests {
             on_insert_assign: HashSet::new(),
             on_remove_unassign: HashSet::new(),
             show_children: false,
+        board_display_mode_override: None,
         });
         app.views = vec![view];
         app.slots = vec![Slot {

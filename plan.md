@@ -1121,74 +1121,74 @@ land small refactors first, then behavior changes.
 
 ### Phase 7: Multi-Line Board Rendering Config (Model + Storage)
 
-- [ ] Define display mode model:
-  - [ ] view-level default field (e.g. `BoardDisplayMode`)
-  - [ ] section-level optional override
-- [ ] Choose enum shape (e.g. `SingleLine`, `MultiLine`)
-- [ ] Add fields to `agenda-core` model structs (`View`, `Section`)
-- [ ] Set defaults preserving current single-line behavior
-- [ ] Update store serialization/deserialization
-- [ ] Add migration/backward-compat handling for existing stored views (default if missing)
-- [ ] Add store round-trip tests for new fields
-- [ ] Add unit tests for default behavior when fields absent
-- [ ] Run relevant core tests (`cargo test -p agenda-core`)
+- [x] Define display mode model:
+  - [x] view-level default field (e.g. `BoardDisplayMode`)
+  - [x] section-level optional override
+- [x] Choose enum shape (e.g. `SingleLine`, `MultiLine`)
+- [x] Add fields to `agenda-core` model structs (`View`, `Section`)
+- [x] Set defaults preserving current single-line behavior
+- [x] Update store serialization/deserialization
+- [x] Add migration/backward-compat handling for existing stored views (default if missing)
+- [x] Add store round-trip tests for new fields
+- [x] Add unit tests for default behavior when fields absent
+- [x] Run relevant core tests (`cargo test -p agenda-core`)
 
 ### Phase 8: Multi-Line Board Rendering (TUI Implementation)
 
-- [ ] Add helper(s) for category column formatting:
-  - [ ] single-line comma-joined
-  - [ ] multi-line one-per-line
-  - [ ] overflow summary line (`+N more`)
-- [ ] Add constants for multi-line defaults (category-line cap = `8`, overflow label formatting)
-- [ ] Add helper(s) for wrapped item text in multi-line mode
-- [ ] Add row-height calculation for board rows in multi-line mode
-- [ ] Update board render path to support variable-height rows
-- [ ] Ensure selected row highlighting still reads clearly across multiple lines
-- [ ] Ensure focused-cell indication remains visible in multi-line rows
-- [ ] Revisit scrollbar/offset calculations if row heights vary
-- [ ] Add config-aware rendering branch:
-  - [ ] effective mode = section override or view default
-- [ ] Ensure item text wraps to full available item-column width in multi-line mode
-- [ ] Add tests for formatting helpers
+- [x] Add helper(s) for category column formatting:
+  - [x] single-line comma-joined
+  - [x] multi-line one-per-line
+  - [x] overflow summary line (`+N more`)
+- [x] Add constants for multi-line defaults (category-line cap = `8`, overflow label formatting)
+- [x] Add helper(s) for wrapped item text in multi-line mode
+- [x] Add row-height calculation for board rows in multi-line mode
+- [x] Update board render path to support variable-height rows
+- [x] Ensure selected row highlighting still reads clearly across multiple lines
+- [x] Ensure focused-cell indication remains visible in multi-line rows
+- [x] Revisit scrollbar/offset calculations if row heights vary
+- [x] Add config-aware rendering branch:
+  - [x] effective mode = section override or view default
+- [x] Ensure item text wraps to full available item-column width in multi-line mode
+- [x] Add tests for formatting helpers
 - [ ] Manual test with category-heavy items and long item text
 - [ ] Verify single-line mode remains byte-for-byte/visually unchanged where possible
 
 ### Phase 9: View/Section UI Controls for Display Mode
 
-- [ ] Add view-edit UI affordance for view default display mode
-- [ ] Add section-level override control in ViewEdit (section config area or inline controls)
-- [ ] Define copy/labels for display mode settings
-- [ ] Ensure toggles persist through save/cancel in ViewEdit
-- [ ] Add tests for ViewEdit draft -> persisted display mode fields
+- [x] Add view-edit UI affordance for view default display mode
+- [x] Add section-level override control in ViewEdit (section config area or inline controls)
+- [x] Define copy/labels for display mode settings
+- [x] Ensure toggles persist through save/cancel in ViewEdit
+- [x] Add tests for ViewEdit draft -> persisted display mode fields
 - [ ] Manual test switching between single-line and multi-line in a real view
 
 ### Phase 10: Input Event Plumbing for Modifier Keys (`Ctrl-L` / `Ctrl-R`)
 
-- [ ] Audit input dispatch signatures currently using `KeyCode`
-- [ ] Introduce an input abstraction or pass `KeyEvent` through dispatch
-- [ ] Update top-level app loop dispatch to preserve modifiers
-- [ ] Update mode handlers to accept new event type or compatible wrapper
-- [ ] Preserve existing behavior for all non-modified keys
-- [ ] Add regression tests for key handling if test harness supports modifier events
-- [ ] Run `cargo test -p agenda-tui --lib`
+- [x] Audit input dispatch signatures currently using `KeyCode`
+- [x] Introduce an input abstraction or pass `KeyEvent` through dispatch
+- [x] Update top-level app loop dispatch to preserve modifiers
+- [x] Update mode handlers to accept new event type or compatible wrapper
+- [x] Preserve existing behavior for all non-modified keys
+- [x] Add regression tests for key handling if test harness supports modifier events
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 11: Add Column Left/Right Workflow (Current Section Scope)
 
-- [ ] Define insertion anchor model:
-  - [ ] section index
-  - [ ] current column index
-  - [ ] direction (`Left` / `Right`)
-- [ ] Add `Ctrl-L` / `Ctrl-R` commands in board mode (post-KeyEvent refactor)
-- [ ] Add fallback commands if modifier support is deferred (document temporary mapping)
-- [ ] Enforce/implement initial scope as current-section-only insertion (confirmed)
-- [ ] Open an add-column picker modal using shared typeahead UI patterns
-- [ ] Scope suggestions to all categories valid for column headings (clarify filtering)
-- [ ] Support exact-match select + inline create-confirm in add-column workflow
-- [ ] Insert column into current section at correct target index
-- [ ] Refresh board and keep user focus on/near inserted column
-- [ ] Persist and verify through reload
-- [ ] Add tests for insertion index calculations (`left` / `right`)
-- [ ] Add tests for picker confirm/cancel transitions if practical
+- [x] Define insertion anchor model:
+  - [x] section index
+  - [x] current column index
+  - [x] direction (`Left` / `Right`)
+- [x] Add `Ctrl-L` / `Ctrl-R` commands in board mode (post-KeyEvent refactor)
+- [x] Add fallback commands if modifier support is deferred (document temporary mapping) *(N/A: modifier support implemented)*
+- [x] Enforce/implement initial scope as current-section-only insertion (confirmed)
+- [x] Open an add-column picker modal using shared typeahead UI patterns
+- [x] Scope suggestions to all categories valid for column headings (clarify filtering)
+- [x] Support exact-match select + inline create-confirm in add-column workflow
+- [x] Insert column into current section at correct target index
+- [x] Refresh board and keep user focus on/near inserted column
+- [x] Persist and verify through reload
+- [x] Add tests for insertion index calculations (`left` / `right`)
+- [x] Add tests for picker confirm/cancel transitions if practical
 - [ ] Manual test end-to-end on real views with multiple sections
 
 ### Phase 12: Shared Picker Primitive Cleanup (Optional but Recommended)
