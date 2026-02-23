@@ -311,7 +311,7 @@ Legend:
 - [x] Add lowercase `s` handling as alias for save in `handle_category_direct_edit_key`.
 - [x] Confirm uppercase `S` behavior is unchanged.
 - [x] Add “add row” action from `Input` focus (implemented as `+`) while preserving existing `Entries`-focus behavior.
-- [ ] Ensure add-row action is blocked with clear status message for exclusive parents.
+- [x] Ensure add-row action is blocked with clear status message for exclusive parents.
 - [ ] Decide and implement `Tab` behavior change for suggestions (per approved option):
   - [x] Option A: `Tab` always cycles focus
   - [ ] Option B: keep autocomplete on `Tab` and add alternative focus key
@@ -330,9 +330,9 @@ Legend:
 
 - [x] Add/extend test: lowercase `s` saves draft successfully.
 - [x] Add/extend test: add row from `Input` focus works in non-exclusive parent.
-- [ ] Add/extend test: add row from `Input` focus is rejected in exclusive parent with status message.
+- [x] Add/extend test: add row from `Input` focus is rejected in exclusive parent with status message.
 - [x] Add/extend test: revised `Tab` behavior (cycling vs autocomplete) matches approved design.
-- [ ] Add/extend test: legacy `Entries`-focus row add/remove still works (if retained).
+- [x] Add/extend test: legacy `Entries`-focus row add/remove still works (if retained).
 - [x] Run targeted `agenda-tui` tests for category direct edit flows.
 
 #### 11.5 Phase 1 Manual Verification
