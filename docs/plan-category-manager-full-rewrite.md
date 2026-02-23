@@ -736,59 +736,64 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Phase 3: Filter + Inline Create/Rename/Delete (Single-Screen)
 
-- [ ] Implement filter state behavior in category manager
-  - [ ] Text input handling for filter buffer
-  - [ ] Backspace/delete editing
-  - [ ] Clear filter action
-  - [ ] Recompute visible rows on each edit
-  - [ ] Preserve selection by category ID when possible
-  - [ ] Clamp cursor to visible list length
-- [ ] Implement tree/list selection over filtered rows
-  - [ ] Map visible row cursor -> underlying category ID
-  - [ ] Handle empty filtered result gracefully
-- [ ] Extract/reuse inline create confirm key handling pattern from board column UX
+- [x] Implement filter state behavior in category manager
+  - [x] Text input handling for filter buffer
+  - [x] Backspace/delete editing
+  - [x] Clear filter action
+  - [x] Recompute visible rows on each edit
+  - [x] Preserve selection by category ID when possible
+  - [x] Clamp cursor to visible list length
+  - Note: current UX uses `/` to focus filter (typing does not yet auto-route from Tree focus).
+- [x] Implement tree/list selection over filtered rows
+  - [x] Map visible row cursor -> underlying category ID
+  - [x] Handle empty filtered result gracefully
+- [x] Extract/reuse inline create confirm key handling pattern from board column UX
   - [ ] Move helper to shared module (if worthwhile) or duplicate intentionally with tests
-  - [ ] Ensure confirm/cancel/dismiss semantics match decided contract
-- [ ] Implement inline create action state(s)
-  - [ ] `n` create child (selected row parent)
-  - [ ] `N` create root
+  - [x] Ensure confirm/cancel semantics match decided contract
+  - Note: implemented a category-local helper (`category_inline_confirm_key_action`) mirroring the board picker pattern.
+- [x] Implement inline create action state(s)
+  - [x] `n` create child (selected row parent)
+  - [x] `N` create root
   - [ ] optional `a` create sibling (if enabled)
-  - [ ] Inline text buffer rendering
-  - [ ] Validation: empty name
-  - [ ] Validation: reserved names (`Done`, `When`, `Entry`)
-  - [ ] Validation: duplicate name under target parent (case-insensitive)
-  - [ ] Inline confirm prompt
-  - [ ] Final create via `agenda.create_category(...)`
-  - [ ] Refresh + select created category by ID
-  - [ ] Status messages (create success/error/cancel)
-- [ ] Implement inline rename action state
-  - [ ] `r` enters rename mode with selected category name prefilled
-  - [ ] Reserved category rename blocked with status
-  - [ ] Validation: empty/unchanged name handling
-  - [ ] Validation: duplicate under same parent
-  - [ ] Apply via `agenda.update_category(...)`
-  - [ ] Refresh + preserve selection by ID
-  - [ ] Status messages (rename success/error/cancel)
-- [ ] Implement inline delete confirm in category manager
-  - [ ] `x` enters inline delete confirm
-  - [ ] `y` confirms delete
-  - [ ] `n` / `Esc` cancels delete
-  - [ ] Show core error when deleting non-leaf category
-  - [ ] Post-delete selection fallback logic
-- [ ] Stop using `InputPanel(NameInput)` for category manager create/rename path
-  - [ ] Remove category-manager-specific transitions into `Mode::InputPanel`
-  - [ ] Keep `InputPanel` category flows for other modes untouched
+  - [x] Inline text buffer rendering
+  - [x] Validation: empty name
+  - [x] Validation: reserved names (`Done`, `When`, `Entry`)
+  - [x] Validation: duplicate name under target parent (case-insensitive)
+  - [x] Inline confirm prompt
+  - [x] Final create via `agenda.create_category(...)`
+  - [x] Refresh + select created category by ID
+  - [x] Status messages (create success/error/cancel)
+  - Note: duplicate validation currently reflects the project’s global category-name uniqueness constraint.
+- [x] Implement inline rename action state
+  - [x] `r` enters rename mode with selected category name prefilled
+  - [x] Reserved category rename blocked with status
+  - [x] Validation: empty/unchanged name handling
+  - [x] Validation: duplicate under same parent
+  - [x] Apply via `agenda.update_category(...)`
+  - [x] Refresh + preserve selection by ID
+  - [x] Status messages (rename success/error/cancel)
+  - Note: duplicate validation currently reflects the project’s global category-name uniqueness constraint.
+- [x] Implement inline delete confirm in category manager
+  - [x] `x` enters inline delete confirm
+  - [x] `y` confirms delete
+  - [x] `n` / `Esc` cancels delete
+  - [x] Show core error when deleting non-leaf category
+  - [x] Post-delete selection fallback logic
+- [x] Stop using `InputPanel(NameInput)` for category manager create/rename path
+  - [x] Remove category-manager-specific transitions into `Mode::InputPanel`
+  - [x] Keep `InputPanel` category flows for other modes untouched
 - [ ] Add TUI tests for inline create/rename/delete flows
-  - [ ] create root success
+  - [x] create root success
   - [ ] create child success
   - [ ] create duplicate rejected
   - [ ] reserved-name create rejected
-  - [ ] rename success
+  - [x] rename success
   - [ ] rename unchanged cancels cleanly
   - [ ] reserved rename blocked
   - [ ] delete cancel
-  - [ ] delete leaf success
+  - [x] delete leaf success
   - [ ] delete non-leaf error remains in manager
+  - [x] filter focus typing does not trigger command actions (added)
 
 ### Phase 4: Reparent + Reorder (Primary Structural Editing UX)
 
