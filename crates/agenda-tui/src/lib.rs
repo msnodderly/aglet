@@ -586,7 +586,9 @@ mod tests {
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use crossterm::event::KeyCode;
+    use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
+    use ratatui::Terminal;
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
         rows.iter().map(|row| (row.id, row.depth)).collect()
@@ -1357,11 +1359,12 @@ mod tests {
 
     #[test]
     fn category_direct_edit_tab_cycles_focus_instead_of_autocomplete_from_suggestions() {
-        let parent = Category::new("Tags".to_string());
+        let mut parent = Category::new("Tags".to_string());
         let mut alpha = Category::new("Alpha".to_string());
         alpha.parent = Some(parent.id);
         let mut alphabet = Category::new("Alphabet".to_string());
         alphabet.parent = Some(parent.id);
+        parent.children = vec![alpha.id, alphabet.id];
 
         let item = Item::new("Demo".to_string());
         let section = Section {
@@ -1417,6 +1420,75 @@ mod tests {
         let state = app.category_direct_edit_state().expect("state");
         assert_eq!(state.focus, CategoryDirectEditFocus::Entries);
         assert_eq!(state.rows[0].input.text(), "Al");
+    }
+
+    #[test]
+    fn category_direct_edit_right_autocompletes_from_suggestions_focus() {
+        let mut parent = Category::new("Tags".to_string());
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(parent.id);
+        let mut alphabet = Category::new("Alphabet".to_string());
+        alphabet.parent = Some(parent.id);
+        parent.children = vec![alpha.id, alphabet.id];
+
+        let item = Item::new("Demo".to_string());
+        let section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        let mut view = View::new("Board".to_string());
+        view.sections.push(section);
+
+        let mut app = App {
+            categories: vec![parent, alpha, alphabet],
+            views: vec![view],
+            slots: vec![super::Slot {
+                title: "Main".to_string(),
+                items: vec![item],
+                context: super::SlotContext::Section { section_index: 0 },
+            }],
+            view_index: 0,
+            slot_index: 0,
+            item_index: 0,
+            column_index: 1,
+            ..App::default()
+        };
+        app.open_category_direct_edit();
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        app.handle_category_direct_edit_key(KeyCode::Char('A'), &agenda)
+            .expect("type A");
+        app.handle_category_direct_edit_key(KeyCode::Char('l'), &agenda)
+            .expect("type l");
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("focus suggestions");
+        assert_eq!(
+            app.category_direct_edit_state().expect("state").focus,
+            CategoryDirectEditFocus::Suggestions
+        );
+
+        app.handle_category_direct_edit_key(KeyCode::Right, &agenda)
+            .expect("autocomplete");
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.focus, CategoryDirectEditFocus::Suggestions);
+        assert_ne!(state.rows[0].input.text(), "Al");
+        assert!(
+            state.rows[0].input.text().starts_with("Al"),
+            "unexpected autocomplete result: {}",
+            state.rows[0].input.text()
+        );
     }
 
     #[test]
@@ -2054,6 +2126,64 @@ mod tests {
             "unexpected status: {}",
             app.status
         );
+    }
+
+    #[test]
+    fn board_add_column_picker_render_survives_empty_matches_after_typing() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut base = Category::new("Base".to_string());
+        let mut base_child = Category::new("BaseChild".to_string());
+        base_child.parent = Some(base.id);
+        base.children = vec![base_child.id];
+        let mut status = Category::new("Status".to_string());
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        status.children = vec![pending.id];
+        for cat in [&base, &base_child, &status, &pending] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: base.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+        store
+            .create_item(&Item::new("Demo item".to_string()))
+            .expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open picker");
+        app.handle_key(KeyCode::Char('z'), &agenda)
+            .expect("type no-match filter");
+        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
+        assert!(app.get_board_add_column_suggest_matches().is_empty());
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render with empty matches should not panic");
     }
 
     #[test]

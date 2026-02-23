@@ -534,7 +534,7 @@ impl App {
                     .collect()
             };
             let selected = self.board_add_column.as_ref().and_then(|s| {
-                (!matches.is_empty()).then_some(s.suggest_index.min(matches.len() - 1))
+                (!matches.is_empty()).then(|| s.suggest_index.min(matches.len() - 1))
             });
             let mut list_state = Self::list_state_for(chunks[2], selected);
             frame.render_stateful_widget(
@@ -1448,7 +1448,7 @@ impl App {
             Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
             Mode::CategoryDirectEdit => {
-                "Tab/Shift-Tab:focus  +:add row  n/a:add row (Entries)  x:remove row (Entries)  Enter:resolve row/create  s/S:save draft  Esc:cancel draft"
+                "Tab/Shift-Tab:focus  Right:autocomplete (Suggestions)  +:add row  n/a:add row (Entries)  x:remove row (Entries)  Enter:resolve row/create  s/S:save draft  Esc:cancel draft"
             }
             Mode::BoardAddColumnPicker => {
                 "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"

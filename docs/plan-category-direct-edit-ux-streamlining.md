@@ -315,7 +315,7 @@ Legend:
 - [ ] Decide and implement `Tab` behavior change for suggestions (per approved option):
   - [x] Option A: `Tab` always cycles focus
   - [ ] Option B: keep autocomplete on `Tab` and add alternative focus key
-- [ ] If autocomplete key changes, add new key handler (for example `Ctrl-Space` or `Right`) and ensure it only applies in `Suggestions`.
+- [x] If autocomplete key changes, add new key handler (implemented `Right`) and ensure it only applies in `Suggestions`.
 - [x] Preserve `Shift-Tab` focus-back behavior.
 
 #### 11.3 Messaging and Footer Hint Improvements
@@ -324,7 +324,7 @@ Legend:
 - [x] Make save hint show `s/S` if both are supported.
 - [x] Clarify row resolve status message to explicitly instruct next action (“add another row or save”).
 - [x] Review empty-row `Enter` messages for clarity and consistency with updated workflow.
-- [ ] Review cancel/save success messages so they distinguish “draft resolved” vs “saved to item”.
+- [x] Review cancel/save success messages so they distinguish “draft resolved” vs “saved to item”. (No code change needed; already distinct.)
 
 #### 11.4 Phase 1 Tests
 
