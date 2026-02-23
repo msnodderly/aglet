@@ -1890,6 +1890,15 @@ impl App {
                 self.cycle_category_direct_edit_focus(true);
                 return Ok(false);
             }
+            KeyCode::Right
+                if matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Suggestions)
+                ) =>
+            {
+                self.autocomplete_from_suggestion();
+                return Ok(false);
+            }
             KeyCode::Char('+') => {
                 self.category_direct_edit_add_blank_row_guarded();
                 return Ok(false);
