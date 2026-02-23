@@ -2109,6 +2109,29 @@ impl App {
             .as_ref()
             .map(|state| state.filter.text().to_string())
             .unwrap_or_default();
+        let action_prompt = self
+            .category_manager_inline_action()
+            .map(|action| match action {
+                CategoryInlineAction::Create {
+                    parent_id,
+                    buf,
+                    confirm_name,
+                } => {
+                    if let Some(name) = confirm_name {
+                        format!(
+                            "Create '{}' under {}? (Y/n)",
+                            name,
+                            self.category_manager_parent_label(*parent_id)
+                        )
+                    } else {
+                        format!("Create> {}", buf.text())
+                    }
+                }
+                CategoryInlineAction::Rename { buf, .. } => format!("Rename> {}", buf.text()),
+                CategoryInlineAction::DeleteConfirm { category_name, .. } => {
+                    format!("Delete '{}' ? (y/n)", category_name)
+                }
+            });
         frame.render_widget(
             Paragraph::new(
                 "Categories are global. Tree editor scaffold: filter/details panes added; Enter still opens config popup.",
@@ -2131,14 +2154,20 @@ impl App {
             Color::Blue
         };
         frame.render_widget(
-            Paragraph::new(if filter_text.trim().is_empty() {
-                "Filter: (phase 2 scaffold; filtering not wired yet)".to_string()
+            Paragraph::new(if let Some(prompt) = action_prompt {
+                prompt
+            } else if filter_text.trim().is_empty() {
+                "Filter: (type / then text to narrow list)".to_string()
             } else {
                 format!("Filter: {}", filter_text)
             })
             .block(
                 Block::default()
-                    .title("Filter")
+                    .title(if self.category_manager_inline_action().is_some() {
+                        "Action"
+                    } else {
+                        "Filter"
+                    })
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(filter_border)),
             ),
@@ -2157,7 +2186,11 @@ impl App {
 
         let title_suffix = String::new();
 
-        let rows: Vec<Row<'_>> = if self.category_rows.is_empty() {
+        let visible_row_indices: Vec<usize> = self
+            .category_manager_visible_row_indices()
+            .map(|rows| rows.to_vec())
+            .unwrap_or_else(|| (0..self.category_rows.len()).collect());
+        let rows: Vec<Row<'_>> = if visible_row_indices.is_empty() {
             vec![Row::new(vec![
                 Cell::from("(no categories)"),
                 Cell::from(String::new()),
@@ -2165,8 +2198,9 @@ impl App {
                 Cell::from(String::new()),
             ])]
         } else {
-            self.category_rows
+            visible_row_indices
                 .iter()
+                .filter_map(|idx| self.category_rows.get(*idx))
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
                     label = with_note_marker(label, row.has_note);
@@ -2186,12 +2220,17 @@ impl App {
                 })
                 .collect()
         };
+        let row_count = rows.len();
         let mut state = Self::table_state_for(
             table_area,
-            if self.category_rows.is_empty() {
+            if visible_row_indices.is_empty() {
                 None
             } else {
-                Some(self.category_index)
+                Some(
+                    self.category_manager_visible_tree_index()
+                        .unwrap_or(0)
+                        .min(visible_row_indices.len().saturating_sub(1)),
+                )
             },
         );
         frame.render_stateful_widget(
@@ -2224,12 +2263,7 @@ impl App {
             table_area,
             &mut state,
         );
-        Self::render_vertical_scrollbar(
-            frame,
-            table_area,
-            self.category_rows.len(),
-            state.offset(),
-        );
+        Self::render_vertical_scrollbar(frame, table_area, row_count, state.offset());
 
         let details_border = if manager_focus == CategoryManagerFocus::Details {
             Color::Cyan
@@ -2325,7 +2359,12 @@ impl App {
                 left_body[1],
                 &mut reparent_state,
             );
-            Self::render_vertical_scrollbar(frame, left_body[1], item_count, reparent_state.offset());
+            Self::render_vertical_scrollbar(
+                frame,
+                left_body[1],
+                item_count,
+                reparent_state.offset(),
+            );
         }
     }
 

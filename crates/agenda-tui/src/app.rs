@@ -50,7 +50,11 @@ impl App {
             .as_ref()
             .and_then(|state| state.selected_category_id)
         {
-            if let Some(index) = self.category_rows.iter().position(|row| row.id == category_id) {
+            if let Some(index) = self
+                .category_rows
+                .iter()
+                .position(|row| row.id == category_id)
+            {
                 self.category_index = index;
             }
         }
@@ -194,12 +198,22 @@ impl App {
     }
 
     pub(crate) fn move_category_cursor(&mut self, delta: i32) {
+        if let Some(state) = &self.category_manager {
+            if !state.visible_row_indices.is_empty() {
+                let next_visible =
+                    next_index_clamped(state.tree_index, state.visible_row_indices.len(), delta);
+                self.set_category_manager_visible_selection(next_visible);
+                return;
+            }
+        }
         if self.category_rows.is_empty() {
             self.category_index = 0;
+            self.sync_category_manager_state_from_selection();
             return;
         }
         self.category_index =
             next_index_clamped(self.category_index, self.category_rows.len(), delta);
+        self.sync_category_manager_state_from_selection();
     }
 
     pub(crate) fn move_selected_item_between_slots(
@@ -493,8 +507,11 @@ impl App {
             focus: CategoryManagerFocus::Tree,
             filter: text_buffer::TextBuffer::empty(),
             tree_index: self.category_index,
+            visible_row_indices: Vec::new(),
             selected_category_id,
+            inline_action: None,
         });
+        self.rebuild_category_manager_visible_rows();
     }
 
     pub(crate) fn close_category_manager_session(&mut self) {
@@ -511,11 +528,148 @@ impl App {
 
     pub(crate) fn sync_category_manager_state_from_selection(&mut self) {
         let selected_category_id = self.selected_category_id();
-        let tree_index = self.category_index.min(self.category_rows.len().saturating_sub(1));
         if let Some(state) = &mut self.category_manager {
-            state.tree_index = tree_index;
             state.selected_category_id = selected_category_id;
+            if let Some(pos) = state.visible_row_indices.iter().position(|row_index| {
+                self.category_rows.get(*row_index).map(|r| r.id) == selected_category_id
+            }) {
+                state.tree_index = pos;
+            } else if state.visible_row_indices.is_empty() {
+                state.tree_index = 0;
+            } else {
+                state.tree_index = state.tree_index.min(state.visible_row_indices.len() - 1);
+            }
+            if state.visible_row_indices.is_empty() {
+                state.tree_index = 0;
+            }
         }
+    }
+
+    pub(crate) fn category_manager_visible_row_indices(&self) -> Option<&[usize]> {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.visible_row_indices.as_slice())
+    }
+
+    pub(crate) fn category_manager_visible_tree_index(&self) -> Option<usize> {
+        self.category_manager.as_ref().map(|state| state.tree_index)
+    }
+
+    pub(crate) fn category_manager_inline_action(&self) -> Option<&CategoryInlineAction> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.inline_action.as_ref())
+    }
+
+    pub(crate) fn set_category_manager_inline_action(
+        &mut self,
+        action: Option<CategoryInlineAction>,
+    ) {
+        if let Some(state) = &mut self.category_manager {
+            state.inline_action = action;
+        }
+    }
+
+    pub(crate) fn category_manager_filter_text(&self) -> Option<&str> {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.filter.text())
+    }
+
+    pub(crate) fn category_manager_filter_mut(&mut self) -> Option<&mut text_buffer::TextBuffer> {
+        self.category_manager
+            .as_mut()
+            .map(|state| &mut state.filter)
+    }
+
+    pub(crate) fn category_manager_focus(&self) -> Option<CategoryManagerFocus> {
+        self.category_manager.as_ref().map(|state| state.focus)
+    }
+
+    pub(crate) fn set_category_manager_focus(&mut self, focus: CategoryManagerFocus) {
+        if let Some(state) = &mut self.category_manager {
+            state.focus = focus;
+        }
+    }
+
+    pub(crate) fn cycle_category_manager_focus(&mut self, delta: i32) {
+        let Some(current) = self.category_manager_focus() else {
+            return;
+        };
+        let next = match (current, delta.signum()) {
+            (CategoryManagerFocus::Tree, 1) => CategoryManagerFocus::Filter,
+            (CategoryManagerFocus::Filter, 1) => CategoryManagerFocus::Details,
+            (CategoryManagerFocus::Details, 1) => CategoryManagerFocus::Tree,
+            (CategoryManagerFocus::Tree, -1) => CategoryManagerFocus::Details,
+            (CategoryManagerFocus::Filter, -1) => CategoryManagerFocus::Tree,
+            (CategoryManagerFocus::Details, -1) => CategoryManagerFocus::Filter,
+            _ => current,
+        };
+        self.set_category_manager_focus(next);
+    }
+
+    pub(crate) fn rebuild_category_manager_visible_rows(&mut self) {
+        let Some(state) = &mut self.category_manager else {
+            return;
+        };
+        let query = state.filter.trimmed().to_ascii_lowercase();
+        let mut visible: Vec<usize> = if query.is_empty() {
+            (0..self.category_rows.len()).collect()
+        } else {
+            self.category_rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.name.to_ascii_lowercase().contains(&query))
+                .map(|(idx, _)| idx)
+                .collect()
+        };
+        // Keep deterministic fallback and avoid stale indices after refresh.
+        visible.retain(|idx| *idx < self.category_rows.len());
+        state.visible_row_indices = visible;
+
+        if state.visible_row_indices.is_empty() {
+            state.tree_index = 0;
+            return;
+        }
+
+        if let Some(selected_id) = state.selected_category_id {
+            if let Some(pos) = state.visible_row_indices.iter().position(|row_index| {
+                self.category_rows
+                    .get(*row_index)
+                    .map(|row| row.id == selected_id)
+                    .unwrap_or(false)
+            }) {
+                state.tree_index = pos;
+                self.category_index = state.visible_row_indices[pos];
+                return;
+            }
+        }
+
+        state.tree_index = state.tree_index.min(state.visible_row_indices.len() - 1);
+        self.category_index = state.visible_row_indices[state.tree_index];
+        let selected = self
+            .category_rows
+            .get(self.category_index)
+            .map(|row| row.id);
+        state.selected_category_id = selected;
+    }
+
+    pub(crate) fn set_category_manager_visible_selection(&mut self, visible_index: usize) {
+        let Some(state) = &mut self.category_manager else {
+            return;
+        };
+        if state.visible_row_indices.is_empty() {
+            state.tree_index = 0;
+            return;
+        }
+        let next_visible = visible_index.min(state.visible_row_indices.len() - 1);
+        state.tree_index = next_visible;
+        self.category_index = state.visible_row_indices[next_visible];
+        let selected = self
+            .category_rows
+            .get(self.category_index)
+            .map(|row| row.id);
+        state.selected_category_id = selected;
     }
 
     pub(crate) fn set_item_selection_by_id(&mut self, item_id: ItemId) {
