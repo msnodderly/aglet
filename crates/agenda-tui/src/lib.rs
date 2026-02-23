@@ -301,6 +301,7 @@ enum CategoryInlineAction {
         target_category_id: CategoryId,
         target_category_name: String,
         filter: text_buffer::TextBuffer,
+        filter_editing: bool,
         options: Vec<ReparentOptionRow>,
         visible_option_indices: Vec<usize>,
         list_index: usize,
@@ -312,6 +313,7 @@ enum CategoryInlineAction {
 struct CategoryManagerState {
     focus: CategoryManagerFocus,
     filter: text_buffer::TextBuffer,
+    filter_editing: bool,
     tree_index: usize,
     visible_row_indices: Vec<usize>,
     selected_category_id: Option<CategoryId>,
@@ -4860,6 +4862,87 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_slash_arms_filter_without_inserting_slash() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-filter-slash-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        store
+            .create_category(&Category::new("Work".to_string()))
+            .expect("create work");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
+            .expect("arm filter");
+        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
+            .expect("slash again should not insert");
+
+        let state = app.category_manager.as_ref().expect("manager state");
+        assert_eq!(state.filter.text(), "");
+        assert_eq!(state.focus, CategoryManagerFocus::Filter);
+        assert!(state.filter_editing);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_filter_focus_by_tab_does_not_capture_p_command() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-filter-tab-p-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Parent".to_string());
+        let mut child = Category::new("Child".to_string());
+        child.parent = Some(parent.id);
+        store.create_category(&parent).expect("create parent");
+        store.create_category(&child).expect("create child");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(child.id);
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("focus filter pane");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Filter)
+        );
+        assert!(!app.category_manager.as_ref().expect("state").filter_editing);
+
+        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
+            .expect("p should open parent picker, not type filter");
+
+        let state = app.category_manager.as_ref().expect("manager state");
+        assert_eq!(state.filter.text(), "");
+        assert!(matches!(
+            state.inline_action.as_ref(),
+            Some(CategoryInlineAction::ParentPicker { .. })
+        ));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn category_manager_upper_k_reorders_selected_category_up_among_siblings() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -5302,6 +5385,81 @@ mod tests {
             .and_then(|s| s.inline_action.as_ref())
             .is_none());
         assert!(app.status.contains("Reparented Child to Beta"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_parent_picker_filter_requires_slash_and_slash_is_not_inserted() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-parent-picker-filter-slash-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+        let mut child = Category::new("Child".to_string());
+        child.parent = Some(alpha.id);
+        store.create_category(&child).expect("create child");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(child.id);
+        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
+            .expect("open parent picker");
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("focus parent filter pane");
+        app.handle_category_manager_key(KeyCode::Char('B'), &agenda)
+            .expect("typing before slash should not edit picker filter");
+
+        let (filter_before, editing_before) = match app
+            .category_manager
+            .as_ref()
+            .and_then(|s| s.inline_action.as_ref())
+        {
+            Some(CategoryInlineAction::ParentPicker {
+                filter,
+                filter_editing,
+                ..
+            }) => (filter.text().to_string(), *filter_editing),
+            _ => panic!("expected inline parent picker"),
+        };
+        assert_eq!(filter_before, "");
+        assert!(!editing_before);
+
+        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
+            .expect("arm parent filter");
+        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
+            .expect("slash should not insert into picker filter");
+        app.handle_category_manager_key(KeyCode::Char('B'), &agenda)
+            .expect("type parent filter");
+
+        let (filter_after, editing_after) = match app
+            .category_manager
+            .as_ref()
+            .and_then(|s| s.inline_action.as_ref())
+        {
+            Some(CategoryInlineAction::ParentPicker {
+                filter,
+                filter_editing,
+                ..
+            }) => (filter.text().to_string(), *filter_editing),
+            _ => panic!("expected inline parent picker"),
+        };
+        assert_eq!(filter_after, "B");
+        assert!(editing_after);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

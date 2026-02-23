@@ -506,6 +506,7 @@ impl App {
         self.category_manager = Some(CategoryManagerState {
             focus: CategoryManagerFocus::Tree,
             filter: text_buffer::TextBuffer::empty(),
+            filter_editing: false,
             tree_index: self.category_index,
             visible_row_indices: Vec::new(),
             selected_category_id,
@@ -582,6 +583,19 @@ impl App {
             .map(|state| &mut state.filter)
     }
 
+    pub(crate) fn category_manager_filter_editing(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.filter_editing)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_category_manager_filter_editing(&mut self, editing: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.filter_editing = editing;
+        }
+    }
+
     pub(crate) fn category_manager_focus(&self) -> Option<CategoryManagerFocus> {
         self.category_manager.as_ref().map(|state| state.focus)
     }
@@ -589,6 +603,9 @@ impl App {
     pub(crate) fn set_category_manager_focus(&mut self, focus: CategoryManagerFocus) {
         if let Some(state) = &mut self.category_manager {
             state.focus = focus;
+            if focus != CategoryManagerFocus::Filter {
+                state.filter_editing = false;
+            }
         }
     }
 
