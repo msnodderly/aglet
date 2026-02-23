@@ -1036,6 +1036,7 @@ impl App {
         section.item_column_index = new_item_column_index.min(section.columns.len());
 
         let view_name = view.name.clone();
+        let selected_slot_index = self.slot_index;
         let selected_item_id = self.selected_item_id();
         agenda
             .store()
@@ -1043,8 +1044,17 @@ impl App {
             .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
+        self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
         if let Some(item_id) = selected_item_id {
-            self.set_item_selection_by_id(item_id);
+            let restored_in_slot = self
+                .slots
+                .get(self.slot_index)
+                .and_then(|slot| slot.items.iter().position(|item| item.id == item_id));
+            if let Some(item_index) = restored_in_slot {
+                self.item_index = item_index;
+            } else {
+                self.set_item_selection_by_id(item_id);
+            }
         }
         self.column_index = target_board_index.min(self.current_slot_column_count());
         self.status = format!(
