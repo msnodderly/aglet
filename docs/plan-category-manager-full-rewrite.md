@@ -797,12 +797,12 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Phase 4: Reparent + Reorder (Primary Structural Editing UX)
 
-- [ ] Implement direct sibling reorder actions (`J/K`)
-  - [ ] Resolve selected category ID and parent
-  - [ ] Detect boundary conditions (first/last sibling)
-  - [ ] Call core reorder API
-  - [ ] Refresh + preserve selection
-  - [ ] Emit clear status messages
+- [x] Implement direct sibling reorder actions (`J/K`)
+  - [x] Resolve selected category ID and parent
+  - [x] Detect boundary conditions (first/last sibling)
+  - [x] Call core reorder API
+  - [x] Refresh + preserve selection
+  - [x] Emit clear status messages
 - [ ] Implement direct reparent outdent (`H`)
   - [ ] Compute current parent and grandparent
   - [ ] No-op at root with status
@@ -828,12 +828,13 @@ This checklist is intentionally detailed and task-oriented so work can be execut
   - [ ] Preserve selection after apply/cancel
 - [ ] Decide and implement behavior while filter is active
   - [ ] movement commands operate on actual tree order, not filtered visual adjacency (recommended) OR
-  - [ ] movement commands disabled with filter-active status
+  - [x] movement commands disabled with filter-active status
   - [ ] Add explicit status messaging for chosen behavior
+  - Note: temporary behavior implemented for `J/K` reorder only; final policy still pending for `H/L/p`.
 - [ ] Add TUI tests for structural movement
-  - [ ] `K` reorder up
+  - [x] `K` reorder up
   - [ ] `J` reorder down
-  - [ ] reorder boundary no-op
+  - [x] reorder boundary no-op
   - [ ] `H` outdent child -> root
   - [ ] `L` indent under previous sibling
   - [ ] invalid indent target handled safely
