@@ -1628,7 +1628,7 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  H/L:reparent  J/K:reorder  Enter:config  e:exclusive  i:match-name  a:actionable  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  Esc:clear/close"
+                "j/k:row  Tab:focus  H/L:reparent  J/K:reorder  e/i/a:toggle  Enter/Space:details action  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  S:save note  Esc:cancel/clear/close"
             }
             Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
             Mode::CategoryDelete => "y:confirm delete  n:cancel",
@@ -2303,42 +2303,99 @@ impl App {
             Color::Blue
         };
         let selected_summary = if let Some(row) = self.selected_category_row() {
+            let details_focus = self
+                .category_manager_details_focus()
+                .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
+            let note_editing = self.category_manager_details_note_editing();
+            let note_dirty = self.category_manager_details_note_dirty();
+            let note_text = self
+                .category_manager_details_note_text()
+                .unwrap_or_default();
             let mut parent_name = "(root)".to_string();
+            let mut child_count = 0usize;
             if let Some(parent_id) = self
                 .categories
                 .iter()
                 .find(|c| c.id == row.id)
-                .and_then(|c| c.parent)
+                .map(|c| {
+                    child_count = c.children.len();
+                    c.parent
+                })
+                .flatten()
             {
                 if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
                     parent_name = parent.name.clone();
                 }
             }
-            vec![
-                Line::from(format!("Selected: {}", row.name)),
-                Line::from(format!("Depth: {}", row.depth)),
-                Line::from(format!("Parent: {}", parent_name)),
+            let focus_prefix = |active: bool| if active { ">" } else { " " };
+            let flag_line = |active: bool, label: &str, on: bool| {
                 Line::from(format!(
-                    "Flags: excl={} match={} todo={}",
-                    row.is_exclusive, row.enable_implicit_string, row.is_actionable
-                )),
+                    "{} {} {}",
+                    focus_prefix(active),
+                    if on { "[x]" } else { "[ ]" },
+                    label
+                ))
+            };
+            let mut lines = vec![
+                Line::from(format!("Selected: {}", row.name)),
+                Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
+                Line::from(format!("Parent: {}", parent_name)),
                 Line::from(if row.is_reserved {
-                    "Reserved: yes".to_string()
+                    "Reserved: yes (read-only config)".to_string()
                 } else {
                     "Reserved: no".to_string()
                 }),
                 Line::from(""),
-                Line::from("Phase 2 scaffold"),
-                Line::from("- Tree + filter + details layout is now in place"),
-                Line::from("- Existing category commands remain unchanged"),
-                Line::from("- Inline create/reparent rewrite lands in later phases"),
-            ]
+                Line::from("Flags (Details Pane)"),
+                flag_line(
+                    details_focus == CategoryManagerDetailsFocus::Exclusive,
+                    "Exclusive Children",
+                    row.is_exclusive,
+                ),
+                flag_line(
+                    details_focus == CategoryManagerDetailsFocus::MatchName,
+                    "Match category name",
+                    row.enable_implicit_string,
+                ),
+                flag_line(
+                    details_focus == CategoryManagerDetailsFocus::Actionable,
+                    "Actionable",
+                    row.is_actionable,
+                ),
+                Line::from(""),
+            ];
+            let note_label = if note_editing {
+                "Note (editing)"
+            } else if note_dirty {
+                "Note (unsaved)"
+            } else {
+                "Note"
+            };
+            lines.push(Line::from(format!(
+                "{} {}",
+                focus_prefix(details_focus == CategoryManagerDetailsFocus::Note),
+                note_label
+            )));
+            if note_text.is_empty() {
+                lines.push(Line::from("  (empty)"));
+            } else {
+                for line in note_text.lines() {
+                    lines.push(Line::from(format!("  {}", line)));
+                }
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(if note_editing {
+                "S save, Esc cancel, arrows move cursor in note".to_string()
+            } else {
+                "h/l or arrows: focus field  Enter/Space: toggle/edit note".to_string()
+            }));
+            lines
         } else {
             vec![
                 Line::from("No category selected"),
                 Line::from(""),
-                Line::from("Phase 2 scaffold"),
-                Line::from("- Tree + filter + details layout is now in place"),
+                Line::from("Details pane"),
+                Line::from("- Select a category to edit flags and note"),
             ]
         };
         frame.render_widget(
@@ -2346,7 +2403,7 @@ impl App {
                 .wrap(Wrap { trim: false })
                 .block(
                     Block::default()
-                        .title("Details (Scaffold)")
+                        .title("Details")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(details_border)),
                 ),

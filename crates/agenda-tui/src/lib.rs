@@ -281,6 +281,34 @@ enum CategoryParentPickerFocus {
     List,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CategoryManagerDetailsFocus {
+    Exclusive,
+    MatchName,
+    Actionable,
+    Note,
+}
+
+impl CategoryManagerDetailsFocus {
+    fn next(self) -> Self {
+        match self {
+            Self::Exclusive => Self::MatchName,
+            Self::MatchName => Self::Actionable,
+            Self::Actionable => Self::Note,
+            Self::Note => Self::Exclusive,
+        }
+    }
+
+    fn prev(self) -> Self {
+        match self {
+            Self::Exclusive => Self::Note,
+            Self::MatchName => Self::Exclusive,
+            Self::Actionable => Self::MatchName,
+            Self::Note => Self::Actionable,
+        }
+    }
+}
+
 #[derive(Clone)]
 enum CategoryInlineAction {
     Create {
@@ -314,6 +342,11 @@ struct CategoryManagerState {
     focus: CategoryManagerFocus,
     filter: text_buffer::TextBuffer,
     filter_editing: bool,
+    details_focus: CategoryManagerDetailsFocus,
+    details_note_category_id: Option<CategoryId>,
+    details_note: text_buffer::TextBuffer,
+    details_note_dirty: bool,
+    details_note_editing: bool,
     tree_index: usize,
     visible_row_indices: Vec<usize>,
     selected_category_id: Option<CategoryId>,
@@ -653,8 +686,8 @@ mod tests {
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
         AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
         CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
-        CategoryInlineAction, CategoryListRow, CategoryManagerFocus, Mode, NameInputContext,
-        ViewEditRegion,
+        CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus,
+        Mode, NameInputContext, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4095,7 +4128,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_enter_opens_config_editor_for_non_reserved_category() {
+    fn category_manager_enter_focuses_details_instead_of_opening_config_editor() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4119,22 +4152,21 @@ mod tests {
             .expect("work category row should exist");
 
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("open config editor");
+            .expect("focus details");
 
-        assert_eq!(app.mode, Mode::CategoryConfig);
+        assert_eq!(app.mode, Mode::CategoryManager);
         assert_eq!(
-            app.category_config_editor
-                .as_ref()
-                .map(|editor| editor.category_name.as_str()),
-            Some("Work")
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
         );
+        assert!(app.category_config_editor.is_none());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_enter_refuses_reserved_category_config_edit() {
+    fn category_manager_enter_on_reserved_category_stays_inline_in_manager() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4155,10 +4187,14 @@ mod tests {
             .expect("reserved row should exist");
 
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("attempt open reserved editor");
+            .expect("focus details on reserved");
 
         assert_eq!(app.mode, Mode::CategoryManager);
-        assert!(app.status.contains("reserved"));
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert!(app.category_config_editor.is_none());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -4187,8 +4223,8 @@ mod tests {
             .iter()
             .position(|row| row.id == category.id)
             .expect("work category row should exist");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("open category config");
+        app.open_category_config_editor(&agenda)
+            .expect("open category config directly");
         assert_eq!(app.mode, Mode::CategoryConfig);
 
         app.handle_category_config_editor_key(KeyCode::Char('e'), &agenda)
@@ -5511,6 +5547,190 @@ mod tests {
         assert!(!option_parent_ids.contains(&Some(child.id)));
         assert!(option_parent_ids.contains(&None));
         assert!(option_parent_ids.contains(&Some(root.id)));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_details_note_edit_save_updates_category_inline() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-details-note-save-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        for c in "hello".chars() {
+            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+                .expect("type note");
+        }
+        app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
+            .expect("save note");
+
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("hello"));
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert!(!app.category_manager_details_note_editing());
+        assert!(!app.category_manager_details_note_dirty());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_details_note_edit_cancel_discards_inline_draft() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-note-cancel-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Work".to_string());
+        category.note = Some("seed".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
+            .expect("type note");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("cancel note edit");
+
+        let loaded = store.get_category(category.id).expect("load category");
+        assert_eq!(loaded.note.as_deref(), Some("seed"));
+        assert_eq!(app.category_manager_details_note_text(), Some("seed"));
+        assert!(!app.category_manager_details_note_editing());
+        assert!(!app.category_manager_details_note_dirty());
+        assert!(app.status.contains("Canceled category note edits"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_details_dirty_note_is_discarded_on_selection_change() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-note-selection-change-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(alpha.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("type note");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.set_category_manager_focus(CategoryManagerFocus::Tree);
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("move selection");
+
+        assert_eq!(app.selected_category_id(), Some(beta.id));
+        assert!(app
+            .status
+            .contains("Discarded unsaved category note draft after selection changed"));
+        assert_eq!(store.get_category(alpha.id).expect("alpha").note, None);
+        assert_eq!(app.category_manager_details_note_text(), Some(""));
+        assert!(!app.category_manager_details_note_dirty());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_details_and_quick_flag_toggles_work_inline() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-flag-toggles-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        let initial = category.clone();
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle exclusive from details");
+        app.handle_category_manager_key(KeyCode::Char('i'), &agenda)
+            .expect("quick toggle match-name");
+        app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
+            .expect("quick toggle actionable");
+
+        let loaded = store.get_category(category.id).expect("load category");
+        assert_eq!(loaded.is_exclusive, !initial.is_exclusive);
+        assert_eq!(
+            loaded.enable_implicit_string,
+            !initial.enable_implicit_string
+        );
+        assert_eq!(loaded.is_actionable, !initial.is_actionable);
+        assert_eq!(app.mode, Mode::CategoryManager);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

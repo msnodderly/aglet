@@ -196,6 +196,176 @@ impl App {
         }
     }
 
+    fn recompute_category_manager_details_note_dirty(&mut self) {
+        let selected_id = self.selected_category_id();
+        let saved_note = selected_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .and_then(|c| c.note.clone())
+            .unwrap_or_default();
+        let current_note = self
+            .category_manager_details_note_text()
+            .unwrap_or_default()
+            .to_string();
+        self.mark_category_manager_details_note_dirty(current_note != saved_note);
+    }
+
+    fn start_category_manager_details_note_edit(&mut self) {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return;
+        }
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+        self.set_category_manager_details_note_editing(true);
+        self.status = "Edit category note: type text, S save, Esc cancel".to_string();
+    }
+
+    fn cancel_category_manager_details_note_edit(&mut self) {
+        let had_changes = self.category_manager_details_note_dirty();
+        self.reload_category_manager_details_note_from_selected();
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+        self.set_category_manager_details_note_editing(false);
+        self.status = if had_changes {
+            "Canceled category note edits".to_string()
+        } else {
+            "Exited category note editing".to_string()
+        };
+    }
+
+    fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            self.set_category_manager_details_note_editing(false);
+            self.reload_category_manager_details_note_from_selected();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        let next_note = self
+            .category_manager_details_note_text()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        let next_note = if next_note.trim().is_empty() {
+            None
+        } else {
+            Some(next_note)
+        };
+        if category.note == next_note {
+            self.mark_category_manager_details_note_dirty(false);
+            self.set_category_manager_details_note_editing(false);
+            self.status = "Category note unchanged".to_string();
+            return Ok(());
+        }
+
+        category.note = next_note;
+        let saved_name = category.name.clone();
+        let result = agenda
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.reload_category_manager_details_note_from_selected();
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+        self.status = format!(
+            "Saved note for {} (processed_items={}, affected_items={})",
+            saved_name, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
+    fn handle_category_manager_details_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        if self.category_manager_focus() != Some(CategoryManagerFocus::Details) {
+            return Ok(false);
+        }
+        let Some(details_focus) = self.category_manager_details_focus() else {
+            return Ok(false);
+        };
+
+        if details_focus == CategoryManagerDetailsFocus::Note
+            && self.category_manager_details_note_editing()
+        {
+            match code {
+                KeyCode::Esc => {
+                    self.cancel_category_manager_details_note_edit();
+                    return Ok(true);
+                }
+                KeyCode::Char('S') => {
+                    self.save_category_manager_details_note(agenda)?;
+                    return Ok(true);
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.set_category_manager_details_note_editing(false);
+                    return Ok(false);
+                }
+                _ => {
+                    if let Some(buf) = self.category_manager_details_note_edit_mut() {
+                        if buf.handle_key(code, true) {
+                            self.recompute_category_manager_details_note_dirty();
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            return Ok(false);
+        }
+
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.cycle_category_manager_details_focus(-1);
+                return Ok(true);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.cycle_category_manager_details_focus(1);
+                return Ok(true);
+            }
+            KeyCode::Down => {
+                self.cycle_category_manager_details_focus(1);
+                return Ok(true);
+            }
+            KeyCode::Up => {
+                self.cycle_category_manager_details_focus(-1);
+                return Ok(true);
+            }
+            KeyCode::Char('S') if details_focus == CategoryManagerDetailsFocus::Note => {
+                self.save_category_manager_details_note(agenda)?;
+                return Ok(true);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match details_focus {
+                CategoryManagerDetailsFocus::Exclusive => {
+                    self.toggle_selected_category_exclusive(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::MatchName => {
+                    self.toggle_selected_category_implicit(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Actionable => {
+                    self.toggle_selected_category_actionable(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Note => {
+                    self.start_category_manager_details_note_edit();
+                    return Ok(true);
+                }
+            },
+            _ => {}
+        }
+
+        Ok(false)
+    }
+
     fn category_parent_picker_visible_indices(
         options: &[ReparentOptionRow],
         query: &str,
@@ -738,6 +908,9 @@ impl App {
         if self.handle_category_manager_inline_action_key(code, agenda)? {
             return Ok(false);
         }
+        if self.handle_category_manager_details_key(code, agenda)? {
+            return Ok(false);
+        }
         if self.category_manager_filter_editing() {
             match code {
                 KeyCode::Char('/') => {
@@ -852,7 +1025,10 @@ impl App {
                 self.toggle_selected_category_actionable(agenda)?;
             }
             KeyCode::Enter => {
-                self.open_category_config_editor(agenda)?;
+                self.set_category_manager_focus(CategoryManagerFocus::Details);
+                self.status =
+                    "Details pane focused: use h/l (or arrows) to select field, Enter/Space to edit/toggle"
+                        .to_string();
             }
             KeyCode::Char('x') => {
                 self.start_category_inline_delete_confirm();
