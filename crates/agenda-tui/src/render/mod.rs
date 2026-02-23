@@ -545,7 +545,7 @@ impl App {
 
         frame.render_widget(
             Paragraph::new(
-                "Type filter | Up/Down select | Tab autocomplete | Enter insert/create | Esc cancel",
+                "Type filter | Up/Down select | Tab autocomplete | Enter insert | Esc cancel",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
@@ -1399,7 +1399,7 @@ impl App {
                 "Tab/Shift-Tab:focus  n/a:add row  x:remove row  Enter:resolve row/create  S:save draft  Esc:cancel draft"
             }
             Mode::BoardAddColumnPicker => {
-                "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert/create  Esc:cancel"
+                "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"
             }
             Mode::ConfirmDelete => "y:confirm delete  n:cancel",
             Mode::FilterInput => "Enter:apply  Esc:cancel",
