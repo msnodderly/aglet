@@ -703,34 +703,36 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Phase 2: CategoryManagerState Scaffold + New Renderer Shell (`agenda-tui`)
 
-- [ ] Introduce `CategoryManagerState` and related enums/structs in `crates/agenda-tui/src/lib.rs`
-  - [ ] `CategoryManagerFocus`
+- [x] Introduce `CategoryManagerState` and related enums/structs in `crates/agenda-tui/src/lib.rs`
+  - [x] `CategoryManagerFocus`
   - [ ] `CategoryInlineAction`
   - [ ] `CategoryParentPickerState`
   - [ ] `CategoryDetailsDraft` (or placeholder type)
-- [ ] Add `category_manager: Option<CategoryManagerState>` (or equivalent) to `App`
-- [ ] Initialize/reset new category manager state in `App::default()`
-- [ ] Add helper methods in `crates/agenda-tui/src/app.rs` / relevant impl blocks
-  - [ ] open category manager session
-  - [ ] close category manager session
-  - [ ] sync selection to current category ID
+  - Note: added a minimal scaffold state (`focus`, `filter`, `tree_index`, `selected_category_id`) and deferred richer sub-state enums to later phases.
+- [x] Add `category_manager: Option<CategoryManagerState>` (or equivalent) to `App`
+- [x] Initialize/reset new category manager state in `App::default()`
+- [x] Add helper methods in `crates/agenda-tui/src/app.rs` / relevant impl blocks
+  - [x] open category manager session
+  - [x] close category manager session
+  - [x] sync selection to current category ID
   - [ ] rebuild filtered visible rows from `category_rows`
   - [ ] clamp tree cursor after refresh/filter changes
-- [ ] Keep old category manager fields in place temporarily
-  - [ ] Mark cleanup targets in comments or plan references (avoid risky big-bang removal)
-- [ ] Build new renderer shell in `crates/agenda-tui/src/render/mod.rs`
-  - [ ] Two-pane layout (tree + details placeholder)
-  - [ ] Filter line/box
-  - [ ] Tree table/list with current columns
-  - [ ] Details placeholder panel (read-only)
+- [x] Keep old category manager fields in place temporarily
+  - [x] Mark cleanup targets in comments or plan references (avoid risky big-bang removal)
+- [x] Build new renderer shell in `crates/agenda-tui/src/render/mod.rs`
+  - [x] Two-pane layout (tree + details placeholder)
+  - [x] Filter line/box
+  - [x] Tree table/list with current columns
+  - [x] Details placeholder panel (read-only)
   - [ ] Inline action/status region placeholder
-- [ ] Update footer help for `Mode::CategoryManager` to new baseline hints
-- [ ] Route `c` / `F9` open path to initialize new state
-- [ ] Keep navigation behavior working (`j/k`) with new state while preserving existing selection IDs
+- [x] Update footer help for `Mode::CategoryManager` to new baseline hints
+- [x] Route `c` / `F9` open path to initialize new state
+- [x] Keep navigation behavior working (`j/k`) with new state while preserving existing selection IDs
 - [ ] Add/adjust TUI tests for new render-mode state initialization
-  - [ ] `c` opens manager and creates state
-  - [ ] closing manager clears state
+  - [x] `c` opens manager and creates state
+  - [x] closing manager clears state
   - [ ] selection is valid when categories list is empty/non-empty
+  - Note: covered non-empty and refresh-preserve-by-ID; empty-state coverage still pending.
 
 ### Phase 3: Filter + Inline Create/Rename/Delete (Single-Screen)
 
