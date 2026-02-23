@@ -14,11 +14,15 @@ impl App {
     fn clear_category_direct_edit_session(&mut self) {
         self.category_direct_edit = None;
         self.category_suggest = None;
-        self.category_direct_edit_create_confirm = None;
+        self.category_direct_edit_create_confirm = None; // legacy field; direct-edit now uses state.create_confirm_name
     }
 
     pub(crate) fn active_category_direct_edit_row(&self) -> Option<&CategoryDirectEditRow> {
         self.category_direct_edit_state()?.active_row()
+    }
+
+    fn active_category_direct_edit_focus(&self) -> Option<CategoryDirectEditFocus> {
+        self.category_direct_edit_state().map(|state| state.focus)
     }
 
     fn active_category_direct_edit_row_mut(&mut self) -> Option<&mut CategoryDirectEditRow> {
@@ -27,6 +31,192 @@ impl App {
 
     pub(crate) fn active_category_direct_edit_input_text(&self) -> Option<&str> {
         self.active_category_direct_edit_row().map(|row| row.input.text())
+    }
+
+    fn direct_edit_create_confirm_name(&self) -> Option<&str> {
+        self.category_direct_edit_state()?
+            .create_confirm_name
+            .as_deref()
+    }
+
+    fn direct_edit_create_confirm_open(&self) -> bool {
+        self.direct_edit_create_confirm_name().is_some()
+    }
+
+    fn set_direct_edit_create_confirm_name(&mut self, name: Option<String>) {
+        if let Some(state) = self.category_direct_edit_state_mut() {
+            state.create_confirm_name = name;
+        }
+    }
+
+    fn sync_category_direct_edit_input_mirror(&mut self) {
+        if let Some(text) = self.active_category_direct_edit_input_text() {
+            self.set_input(text.to_string());
+        }
+    }
+
+    fn refresh_category_cache(&mut self, store: &Store) -> Result<(), String> {
+        self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+        self.category_rows = build_category_rows(&self.categories);
+        self.category_index = self
+            .category_index
+            .min(self.category_rows.len().saturating_sub(1));
+        Ok(())
+    }
+
+    fn category_direct_edit_focus_label(focus: CategoryDirectEditFocus) -> &'static str {
+        match focus {
+            CategoryDirectEditFocus::Entries => "Entries",
+            CategoryDirectEditFocus::Input => "Input",
+            CategoryDirectEditFocus::Suggestions => "Suggestions",
+        }
+    }
+
+    fn cycle_category_direct_edit_focus(&mut self, forward: bool) {
+        let mut new_focus = None;
+        if let Some(state) = self.category_direct_edit_state_mut() {
+            state.focus = if forward { state.focus.next() } else { state.focus.prev() };
+            new_focus = Some(state.focus);
+        }
+        self.sync_category_direct_edit_input_mirror();
+        self.update_suggestions();
+        if let Some(focus) = new_focus {
+            let label = Self::category_direct_edit_focus_label(focus);
+            self.status = format!("Direct edit focus: {label}");
+        }
+    }
+
+    fn move_category_direct_edit_active_row(&mut self, delta: i32) {
+        let Some(state) = self.category_direct_edit_state_mut() else {
+            return;
+        };
+        if state.rows.is_empty() {
+            state.ensure_one_row();
+        } else {
+            state.active_row = next_index_clamped(state.active_row, state.rows.len(), delta);
+        }
+        state.clamp_active_row();
+        self.sync_category_direct_edit_input_mirror();
+        self.update_suggestions();
+    }
+
+    fn remove_active_category_direct_edit_row(&mut self) {
+        let Some(state) = self.category_direct_edit_state_mut() else {
+            return;
+        };
+        let before_len = state.rows.len();
+        let active = state.active_row;
+        let _ = state.remove_row(active);
+        let after_len = state.rows.len();
+        let kept_single_blank = before_len == 1 && after_len == 1;
+        self.sync_category_direct_edit_input_mirror();
+        self.update_suggestions();
+        self.status = if kept_single_blank {
+            "Kept one blank row (cannot remove the last row)".to_string()
+        } else {
+            "Removed row".to_string()
+        };
+    }
+
+    fn resolve_active_category_direct_edit_row(
+        &mut self,
+        category_id: CategoryId,
+    ) -> Result<bool, String> {
+        let Some(cat_name) = self
+            .categories
+            .iter()
+            .find(|c| c.id == category_id)
+            .map(|c| c.name.clone())
+        else {
+            return Ok(false);
+        };
+        let duplicate = match self.category_direct_edit_state() {
+            Some(state) => state.row_would_duplicate_category_id(state.active_row, category_id),
+            None => return Ok(false),
+        };
+        if duplicate {
+            self.status = "Category already selected in another row".to_string();
+            return Ok(false);
+        }
+        if let Some(row) = self.active_category_direct_edit_row_mut() {
+            row.category_id = Some(category_id);
+            row.input.set(cat_name.clone());
+        }
+        self.sync_category_direct_edit_input_mirror();
+        self.update_suggestions();
+        self.status = format!("Resolved row to '{cat_name}' (press S to save)");
+        Ok(true)
+    }
+
+    fn resolve_active_row_from_highlighted_suggestion(&mut self) -> Result<bool, String> {
+        let matches = self.get_current_suggest_matches();
+        let Some(state) = self.category_direct_edit_state() else {
+            return Ok(false);
+        };
+        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
+            return Ok(false);
+        };
+        self.resolve_active_category_direct_edit_row(id)
+    }
+
+    fn open_direct_edit_create_confirm_for_active_row(&mut self) {
+        let typed = self
+            .active_category_direct_edit_input_text()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if typed.is_empty() {
+            self.status = "Empty row: nothing to create".to_string();
+            return;
+        }
+        if is_reserved_category_name(&typed) {
+            self.status = format!(
+                "Cannot create reserved category '{}'. Use a different name.",
+                typed
+            );
+            return;
+        }
+        if let Some(existing_cat) = self
+            .categories
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(&typed))
+        {
+            let parent_name = existing_cat
+                .parent
+                .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(root)");
+            self.status = format!(
+                "Category '{}' exists under '{}'. Cannot create duplicate.",
+                typed, parent_name
+            );
+            return;
+        }
+        self.set_direct_edit_create_confirm_name(Some(typed.clone()));
+        self.status = format!("Create new category '{}' in this column? (Y/n)", typed);
+    }
+
+    fn desired_child_ids_from_category_direct_edit_draft(&self) -> Vec<CategoryId> {
+        let Some(state) = self.category_direct_edit_state() else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        state.rows
+            .iter()
+            .filter_map(|row| row.category_id)
+            .filter(|id| seen.insert(*id))
+            .collect()
+    }
+
+    fn category_direct_edit_has_unresolved_nonempty_rows(&self) -> bool {
+        self.category_direct_edit_state()
+            .map(|state| {
+                state
+                    .rows
+                    .iter()
+                    .any(|row| row.category_id.is_none() && !row.input.trimmed().is_empty())
+            })
+            .unwrap_or(false)
     }
 
     fn current_category_direct_edit_column_meta(&self) -> Option<CategoryDirectEditColumnMeta> {
@@ -167,6 +357,13 @@ impl App {
             return false;
         }
         state.add_blank_row();
+        state.focus = CategoryDirectEditFocus::Input;
+        state.suggest_index = 0;
+        // End mutable borrow before calling other `self` methods.
+        let _ = state;
+        self.sync_category_direct_edit_input_mirror();
+        self.update_suggestions();
+        self.status = "Added row".to_string();
         true
     }
 
@@ -330,7 +527,7 @@ impl App {
     }
 
     fn update_suggestions(&mut self) {
-        if self.category_direct_edit_create_confirm.is_some() {
+        if self.direct_edit_create_confirm_open() {
             return;
         }
         let text = self
@@ -359,7 +556,7 @@ impl App {
     }
 
     fn move_suggest_cursor(&mut self, delta: i32) {
-        if self.category_direct_edit_create_confirm.is_some() {
+        if self.direct_edit_create_confirm_open() {
             return;
         }
         let matches = self.get_current_suggest_matches();
@@ -378,7 +575,7 @@ impl App {
     }
 
     fn autocomplete_from_suggestion(&mut self) {
-        if self.category_direct_edit_create_confirm.is_some() {
+        if self.direct_edit_create_confirm_open() {
             return;
         }
         let matches = self.get_current_suggest_matches();
@@ -402,28 +599,8 @@ impl App {
         self.update_suggestions();
     }
 
-    fn assign_selected_suggestion(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        let matches = self.get_current_suggest_matches();
-        let Some(state) = self.category_direct_edit_state() else {
-            return Ok(());
-        };
-        let Some(&id) = matches.get(state.suggest_index.min(matches.len().saturating_sub(1))) else {
-            return Ok(());
-        };
-        let Some(item_id) = self.selected_item_id() else {
-            return Ok(());
-        };
-        self.replace_column_child_assignment(item_id, id, agenda)?;
-        self.mode = Mode::Normal;
-        self.clear_category_direct_edit_session();
-        self.refresh(agenda.store())?;
-        let cat_name = self
-            .categories
-            .iter()
-            .find(|c| c.id == id)
-            .map(|c| c.name.as_str())
-            .unwrap_or("?");
-        self.status = format!("Assigned '{}'", cat_name);
+    fn assign_selected_suggestion(&mut self, _agenda: &Agenda<'_>) -> Result<(), String> {
+        self.resolve_active_row_from_highlighted_suggestion()?;
         Ok(())
     }
 
@@ -445,7 +622,7 @@ impl App {
         &mut self,
         agenda: &Agenda<'_>,
     ) -> Result<(), String> {
-        let Some(name) = self.category_direct_edit_create_confirm.clone() else {
+        let Some(name) = self.direct_edit_create_confirm_name().map(str::to_string) else {
             return Ok(());
         };
         let child_parent_id = self.current_view().and_then(|view| {
@@ -464,10 +641,7 @@ impl App {
             })
         });
         let Some(parent_id) = child_parent_id else {
-            self.category_direct_edit_create_confirm = None;
-            if let Some(state) = self.category_direct_edit_state_mut() {
-                state.create_confirm_name = None;
-            }
+            self.set_direct_edit_create_confirm_name(None);
             return Ok(());
         };
 
@@ -478,50 +652,81 @@ impl App {
         agenda
             .create_category(&category)
             .map_err(|e| e.to_string())?;
-        if let Some(item_id) = self.selected_item_id() {
-            self.replace_column_child_assignment(item_id, cat_id, agenda)?;
-        }
-
-        self.category_direct_edit_create_confirm = None;
-        if let Some(state) = self.category_direct_edit_state_mut() {
-            state.create_confirm_name = None;
-        }
-        self.mode = Mode::Normal;
-        self.clear_category_direct_edit_session();
-        self.refresh(agenda.store())?;
-        self.status = format!("Created and assigned '{}'", name);
+        self.refresh_category_cache(agenda.store())?;
+        self.set_direct_edit_create_confirm_name(None);
+        let _ = self.resolve_active_category_direct_edit_row(cat_id)?;
+        self.status = format!("Created category '{}' and resolved current row", name);
         Ok(())
     }
 
-    fn replace_column_child_assignment(
-        &mut self,
-        item_id: ItemId,
-        target_id: CategoryId,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
-        let child_id_set: HashSet<CategoryId> =
-            self.get_current_column_child_ids().into_iter().collect();
-        if child_id_set.is_empty() {
+    fn apply_category_direct_edit_draft(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        if self.direct_edit_create_confirm_open() {
+            self.status = "Confirm or cancel category creation before saving".to_string();
+            return Ok(());
+        }
+        if self.category_direct_edit_has_unresolved_nonempty_rows() {
+            self.status = "Resolve or clear all non-empty rows before saving".to_string();
+            return Ok(());
+        }
+        if self
+            .category_direct_edit_state()
+            .map(|s| s.has_duplicate_resolved_category_ids())
+            .unwrap_or(false)
+        {
+            self.status = "Duplicate categories in draft; remove duplicates before saving".to_string();
             return Ok(());
         }
 
-        if let Some(item) = self.selected_item() {
-            let to_remove: Vec<CategoryId> = item
-                .assignments
-                .keys()
-                .filter(|id| child_id_set.contains(id) && **id != target_id)
-                .cloned()
-                .collect();
-            for id in to_remove {
-                agenda
-                    .unassign_item_manual(item_id, id)
-                    .map_err(|e| e.to_string())?;
-            }
+        let desired_ids = self.desired_child_ids_from_category_direct_edit_draft();
+        if self.current_column_parent_is_exclusive() && desired_ids.len() > 1 {
+            self.status = "Cannot save: parent category is exclusive (only one row may be resolved)"
+                .to_string();
+            return Ok(());
         }
 
-        agenda
-            .assign_item_manual(item_id, target_id, Some("manual:tui.direct_edit".into()))
-            .map_err(|e| e.to_string())?;
+        let current_ids = self.current_column_assigned_child_ids();
+        let current_set: HashSet<CategoryId> = current_ids.iter().copied().collect();
+        let desired_set: HashSet<CategoryId> = desired_ids.iter().copied().collect();
+        let to_remove: Vec<CategoryId> = current_ids
+            .iter()
+            .copied()
+            .filter(|id| !desired_set.contains(id))
+            .collect();
+        let to_add: Vec<CategoryId> = desired_ids
+            .iter()
+            .copied()
+            .filter(|id| !current_set.contains(id))
+            .collect();
+
+        let Some(state) = self.category_direct_edit_state() else {
+            return Ok(());
+        };
+        let item_id = state.item_id;
+        let item_label = state.item_label.clone();
+        let view_name = self.current_view().map(|v| v.name.clone());
+        let column_index = self.column_index;
+
+        for id in to_remove {
+            agenda
+                .unassign_item_manual(item_id, id)
+                .map_err(|e| e.to_string())?;
+        }
+        for id in to_add {
+            agenda
+                .assign_item_manual(item_id, id, Some("manual:tui.direct_edit.multi".to_string()))
+                .map_err(|e| e.to_string())?;
+        }
+
+        self.mode = Mode::Normal;
+        self.clear_input();
+        self.clear_category_direct_edit_session();
+        self.refresh(agenda.store())?;
+        if let Some(name) = view_name {
+            self.set_view_selection_by_name(&name);
+        }
+        self.set_item_selection_by_id(item_id);
+        self.column_index = column_index.min(self.current_slot_column_count());
+        self.status = format!("Saved column edits for '{}'", truncate_board_cell(&item_label, 40));
         Ok(())
     }
 
@@ -764,41 +969,81 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        if self.category_direct_edit_create_confirm.is_some() {
+        if self.direct_edit_create_confirm_open() {
             match code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                     self.confirm_inline_create_category_direct_edit(agenda)?;
                     return Ok(false);
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.category_direct_edit_create_confirm = None;
-                    if let Some(state) = self.category_direct_edit_state_mut() {
-                        state.create_confirm_name = None;
-                    }
+                    self.set_direct_edit_create_confirm_name(None);
                     self.update_suggestions();
                     self.status = "Create canceled. Continue editing category.".to_string();
                     return Ok(false);
                 }
                 _ => {
-                    self.category_direct_edit_create_confirm = None;
-                    if let Some(state) = self.category_direct_edit_state_mut() {
-                        state.create_confirm_name = None;
-                    }
+                    self.set_direct_edit_create_confirm_name(None);
+                    self.status = "Create canceled. Continue editing category.".to_string();
+                    self.update_suggestions();
                 }
             }
         }
 
         match code {
-            KeyCode::Up => {
-                self.move_suggest_cursor(-1);
+            KeyCode::Char('S') => {
+                self.apply_category_direct_edit_draft(agenda)?;
                 return Ok(false);
             }
-            KeyCode::Down => {
-                self.move_suggest_cursor(1);
+            KeyCode::BackTab => {
+                self.cycle_category_direct_edit_focus(false);
                 return Ok(false);
             }
             KeyCode::Tab => {
-                self.autocomplete_from_suggestion();
+                if matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Suggestions)
+                ) {
+                    self.autocomplete_from_suggestion();
+                } else {
+                    self.cycle_category_direct_edit_focus(true);
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('n') | KeyCode::Char('a') => {
+                self.category_direct_edit_add_blank_row_guarded();
+                return Ok(false);
+            }
+            KeyCode::Char('x') => {
+                self.remove_active_category_direct_edit_row();
+                return Ok(false);
+            }
+            KeyCode::Up | KeyCode::Down => {
+                let delta = if matches!(code, KeyCode::Up) { -1 } else { 1 };
+                match self
+                    .active_category_direct_edit_focus()
+                    .unwrap_or(CategoryDirectEditFocus::Input)
+                {
+                    CategoryDirectEditFocus::Entries => self.move_category_direct_edit_active_row(delta),
+                    CategoryDirectEditFocus::Suggestions => self.move_suggest_cursor(delta),
+                    CategoryDirectEditFocus::Input => {}
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('j') | KeyCode::Char('k')
+                if !matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Input)
+                ) =>
+            {
+                let delta = if matches!(code, KeyCode::Char('k')) { -1 } else { 1 };
+                match self
+                    .active_category_direct_edit_focus()
+                    .unwrap_or(CategoryDirectEditFocus::Input)
+                {
+                    CategoryDirectEditFocus::Entries => self.move_category_direct_edit_active_row(delta),
+                    CategoryDirectEditFocus::Suggestions => self.move_suggest_cursor(delta),
+                    CategoryDirectEditFocus::Input => {}
+                }
                 return Ok(false);
             }
             KeyCode::Enter => {
@@ -807,30 +1052,22 @@ impl App {
                     .unwrap_or("")
                     .to_string();
                 if active_text.trim().is_empty() {
-                    let text = active_text;
-                    self.commit_category_direct_edit(&text, agenda)?;
-                    self.category_suggest = None;
-                } else if let Some(category_id) = self.exact_current_column_child_match_id() {
-                    let Some(item_id) = self.selected_item_id() else {
-                        return Ok(false);
+                    let row_count = self
+                        .category_direct_edit_state()
+                        .map(|s| s.rows.len())
+                        .unwrap_or(0);
+                    self.remove_active_category_direct_edit_row();
+                    self.status = if row_count <= 1 {
+                        "Empty row kept (must keep one row). Press S to save cleared column".to_string()
+                    } else {
+                        "Removed empty row".to_string()
                     };
-                    self.replace_column_child_assignment(item_id, category_id, agenda)?;
-                    self.mode = Mode::Normal;
-                    self.clear_category_direct_edit_session();
-                    self.refresh(agenda.store())?;
-                    let cat_name = self
-                        .categories
-                        .iter()
-                        .find(|c| c.id == category_id)
-                        .map(|c| c.name.as_str())
-                        .unwrap_or("?");
-                    self.status = format!("Assigned '{}'", cat_name);
+                } else if let Some(category_id) = self.exact_current_column_child_match_id() {
+                    let _ = self.resolve_active_category_direct_edit_row(category_id)?;
                 } else if !self.get_current_suggest_matches().is_empty() {
                     self.assign_selected_suggestion(agenda)?;
                 } else {
-                    let text = active_text;
-                    self.commit_category_direct_edit(&text, agenda)?;
-                    self.category_suggest = None;
+                    self.open_direct_edit_create_confirm_for_active_row();
                 }
                 return Ok(false);
             }
@@ -840,128 +1077,22 @@ impl App {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.status = "Cancelled".to_string();
+                self.status = "Cancelled column edits".to_string();
                 self.clear_input();
                 self.clear_category_direct_edit_session();
             }
             _ => {
-                if let Some(row) = self.active_category_direct_edit_row_mut() {
-                    row.input.handle_key(code, false);
-                    row.category_id = None;
+                if matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Input)
+                ) {
+                    if let Some(row) = self.active_category_direct_edit_row_mut() {
+                        row.input.handle_key(code, false);
+                        row.category_id = None;
+                    }
+                    self.sync_category_direct_edit_input_mirror();
+                    self.update_suggestions();
                 }
-                self.update_suggestions();
-            }
-        }
-        Ok(false)
-    }
-
-    fn commit_category_direct_edit(
-        &mut self,
-        text: &str,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        let Some(slot) = self.current_slot() else {
-            return Ok(false);
-        };
-        let Some(item) = self.selected_item() else {
-            return Ok(false);
-        };
-        let Some(view) = self.current_view() else {
-            return Ok(false);
-        };
-        let columns = match slot.context {
-            SlotContext::Section { section_index }
-            | SlotContext::GeneratedSection { section_index, .. } => {
-                view.sections.get(section_index).map(|s| &s.columns)
-            }
-            _ => None,
-        };
-        let Some(columns) = columns else {
-            return Ok(false);
-        };
-        if self.column_index == 0 || self.column_index > columns.len() {
-            return Ok(false);
-        }
-        let column = &columns[self.column_index - 1];
-        let child_ids: Vec<CategoryId> = self
-            .categories
-            .iter()
-            .find(|c| c.id == column.heading)
-            .map(|c| c.children.clone())
-            .unwrap_or_default();
-
-        if text.trim().is_empty() {
-            let child_id_set: HashSet<CategoryId> = child_ids.iter().cloned().collect();
-            let to_remove: Vec<CategoryId> = item
-                .assignments
-                .keys()
-                .filter(|id| child_id_set.contains(id))
-                .cloned()
-                .collect();
-
-            let item_id = item.id;
-            for id in to_remove {
-                agenda
-                    .unassign_item_manual(item_id, id)
-                    .map_err(|e| e.to_string())?;
-            }
-            self.mode = Mode::Normal;
-            self.category_direct_edit = None;
-            self.status = "Cleared category".to_string();
-            self.refresh(agenda.store())?;
-            return Ok(false);
-        }
-
-        let item_id = item.id;
-        let target_name = text.trim();
-        let existing = child_ids.iter().find(|&id| {
-            self.categories
-                .iter()
-                .find(|c| c.id == *id)
-                .map(|c| c.name.eq_ignore_ascii_case(target_name))
-                .unwrap_or(false)
-        });
-
-        if let Some(category_id) = existing {
-            self.replace_column_child_assignment(item_id, *category_id, agenda)?;
-            self.mode = Mode::Normal;
-            self.category_direct_edit = None;
-            self.status = format!("Assigned '{}'", target_name);
-            self.refresh(agenda.store())?;
-        } else if is_reserved_category_name(target_name) {
-            self.mode = Mode::Normal;
-            self.category_direct_edit = None;
-            self.status = format!(
-                "Cannot create reserved category '{}'. Use a different name.",
-                target_name
-            );
-        } else {
-            // Check if category already exists elsewhere in the system
-            let existing_elsewhere = self
-                .categories
-                .iter()
-                .find(|c| c.name.eq_ignore_ascii_case(target_name));
-            if let Some(existing_cat) = existing_elsewhere {
-                let parent_name = existing_cat
-                    .parent
-                    .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("(root)");
-                self.mode = Mode::Normal;
-                self.category_direct_edit = None;
-                self.status = format!(
-                    "Category '{}' exists under '{}'. Cannot create duplicate.",
-                    target_name, parent_name
-                );
-            } else {
-                self.category_direct_edit_create_confirm = Some(target_name.to_string());
-                if let Some(state) = self.category_direct_edit_state_mut() {
-                    state.create_confirm_name = Some(target_name.to_string());
-                }
-                self.status = format!(
-                    "Create new category '{}' in this column? (Y/n)",
-                    target_name
-                );
             }
         }
         Ok(false)
@@ -1887,6 +2018,32 @@ mod tests {
         }
     }
 
+    fn direct_edit_state_with_rows(count: usize) -> CategoryDirectEditState {
+        CategoryDirectEditState {
+            anchor: CategoryDirectEditAnchor {
+                slot_index: 0,
+                section_index: 0,
+                section_column_index: 0,
+                board_column_index: 1,
+                is_generated_section: false,
+            },
+            parent_id: CategoryId::new_v4(),
+            parent_name: "Parent".to_string(),
+            item_id: ItemId::new_v4(),
+            item_label: "Demo".to_string(),
+            rows: (0..count)
+                .map(|idx| CategoryDirectEditRow {
+                    input: text_buffer::TextBuffer::new(format!("row{idx}")),
+                    category_id: None,
+                })
+                .collect(),
+            active_row: 0,
+            focus: CategoryDirectEditFocus::Input,
+            suggest_index: 0,
+            create_confirm_name: None,
+        }
+    }
+
     #[test]
     fn exclusive_siblings_cleared_when_parent_is_exclusive() {
         // Priority (depth=0, exclusive=true)
@@ -1953,6 +2110,83 @@ mod tests {
         let to_clear = exclusive_siblings_to_clear(&rows, 1);
         assert_eq!(to_clear, vec![low]);
         assert!(!to_clear.contains(&open));
+    }
+
+    #[test]
+    fn direct_edit_focus_cycles_forward_and_back() {
+        let mut app = App {
+            category_direct_edit: Some(direct_edit_state_with_rows(1)),
+            ..App::default()
+        };
+
+        assert_eq!(
+            app.active_category_direct_edit_focus(),
+            Some(CategoryDirectEditFocus::Input)
+        );
+
+        app.cycle_category_direct_edit_focus(true);
+        assert_eq!(
+            app.active_category_direct_edit_focus(),
+            Some(CategoryDirectEditFocus::Suggestions)
+        );
+
+        app.cycle_category_direct_edit_focus(true);
+        assert_eq!(
+            app.active_category_direct_edit_focus(),
+            Some(CategoryDirectEditFocus::Entries)
+        );
+
+        app.cycle_category_direct_edit_focus(false);
+        assert_eq!(
+            app.active_category_direct_edit_focus(),
+            Some(CategoryDirectEditFocus::Suggestions)
+        );
+    }
+
+    #[test]
+    fn direct_edit_row_navigation_clamps_and_syncs_active_input() {
+        let mut state = direct_edit_state_with_rows(3);
+        state.active_row = 1;
+        let mut app = App {
+            category_direct_edit: Some(state),
+            ..App::default()
+        };
+
+        app.move_category_direct_edit_active_row(1);
+        assert_eq!(
+            app.category_direct_edit_state().map(|s| s.active_row),
+            Some(2)
+        );
+        assert_eq!(app.active_category_direct_edit_input_text(), Some("row2"));
+
+        app.move_category_direct_edit_active_row(1);
+        assert_eq!(
+            app.category_direct_edit_state().map(|s| s.active_row),
+            Some(2)
+        );
+
+        app.move_category_direct_edit_active_row(-99);
+        assert_eq!(
+            app.category_direct_edit_state().map(|s| s.active_row),
+            Some(0)
+        );
+        assert_eq!(app.active_category_direct_edit_input_text(), Some("row0"));
+    }
+
+    #[test]
+    fn direct_edit_remove_row_keeps_single_blank_row() {
+        let mut app = App {
+            category_direct_edit: Some(direct_edit_state_with_rows(1)),
+            ..App::default()
+        };
+
+        app.remove_active_category_direct_edit_row();
+
+        let state = app.category_direct_edit_state().expect("state");
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.active_row, 0);
+        assert!(state.rows[0].input.text().is_empty());
+        assert!(app.status.contains("last row"));
     }
 
     #[test]

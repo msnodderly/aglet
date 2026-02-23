@@ -288,6 +288,24 @@ enum CategoryDirectEditFocus {
     Suggestions,
 }
 
+impl CategoryDirectEditFocus {
+    fn next(self) -> Self {
+        match self {
+            Self::Entries => Self::Input,
+            Self::Input => Self::Suggestions,
+            Self::Suggestions => Self::Entries,
+        }
+    }
+
+    fn prev(self) -> Self {
+        match self {
+            Self::Entries => Self::Suggestions,
+            Self::Input => Self::Entries,
+            Self::Suggestions => Self::Input,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct CategoryDirectEditAnchor {
     slot_index: usize,
@@ -950,9 +968,236 @@ mod tests {
         app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
             .expect("enter handled");
 
+        // Enter resolves the draft row only (exact match still wins over highlighted suggestion).
+        let state = app.category_direct_edit_state().expect("direct edit state still open");
+        assert_eq!(state.rows[0].category_id, Some(alpha.id));
+        assert_eq!(state.rows[0].input.text(), "Alpha");
+
+        // Backend remains unchanged until explicit save.
+        let saved_before = store.get_item(item.id).expect("load item before save");
+        assert!(!saved_before.assignments.contains_key(&alpha.id));
+        assert!(!saved_before.assignments.contains_key(&alpha_beta.id));
+
+        app.handle_category_direct_edit_key(KeyCode::Char('S'), &agenda)
+            .expect("save draft");
+        let saved_after = store.get_item(item.id).expect("load item after save");
+        assert!(saved_after.assignments.contains_key(&alpha.id));
+        assert!(!saved_after.assignments.contains_key(&alpha_beta.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_direct_edit_enter_on_empty_row_removes_row_or_keeps_single_blank() {
+        let mut state = CategoryDirectEditState {
+            anchor: CategoryDirectEditAnchor {
+                slot_index: 0,
+                section_index: 0,
+                section_column_index: 0,
+                board_column_index: 1,
+                is_generated_section: false,
+            },
+            parent_id: CategoryId::new_v4(),
+            parent_name: "Tags".to_string(),
+            item_id: ItemId::new_v4(),
+            item_label: "Demo".to_string(),
+            rows: vec![
+                CategoryDirectEditRow::blank(),
+                CategoryDirectEditRow {
+                    input: text_buffer::TextBuffer::new("keep".to_string()),
+                    category_id: None,
+                },
+            ],
+            active_row: 0,
+            focus: CategoryDirectEditFocus::Input,
+            suggest_index: 0,
+            create_confirm_name: None,
+        };
+        let mut app = App {
+            category_direct_edit: Some(state.clone()),
+            ..App::default()
+        };
+        let store = Store::open(&std::env::temp_dir().join(format!(
+            "agenda-tui-direct-edit-empty-enter-{}.ag",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )))
+        .expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter removes empty row");
+        let state_after = app.category_direct_edit_state().expect("state");
+        assert_eq!(state_after.rows.len(), 1);
+
+        state.rows = vec![CategoryDirectEditRow::blank()];
+        state.active_row = 0;
+        let mut app = App {
+            category_direct_edit: Some(state),
+            ..App::default()
+        };
+        app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter keeps single blank row");
+        let state_after = app.category_direct_edit_state().expect("state");
+        assert_eq!(state_after.rows.len(), 1);
+        assert!(state_after.rows[0].input.text().is_empty());
+    }
+
+    #[test]
+    fn category_direct_edit_inline_create_confirm_resolves_row_and_stays_open() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-direct-edit-inline-create-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Tags".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        store.create_view(&view).expect("create view");
+        let item = Item::new("Demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+        app.open_category_direct_edit();
+        {
+            let state = app
+                .category_direct_edit_state_mut()
+                .expect("direct edit state present");
+            state.rows[0].input.set("NewTag".to_string());
+            state.rows[0].category_id = None;
+        }
+
+        app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
+            .expect("open create confirm");
+        assert_eq!(
+            app.category_direct_edit_state()
+                .and_then(|s| s.create_confirm_name.as_deref()),
+            Some("NewTag")
+        );
+        assert_eq!(app.mode, Mode::CategoryDirectEdit);
+
+        app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm create");
+        let state = app.category_direct_edit_state().expect("still in editor");
+        assert_eq!(state.create_confirm_name, None);
+        let resolved_id = state.rows[0].category_id.expect("row resolved");
+        let created = store.get_category(resolved_id).expect("created category");
+        assert_eq!(created.name, "NewTag");
+        assert_eq!(created.parent, Some(parent.id));
+        // Not assigned yet until save.
+        let saved_item = store.get_item(item.id).expect("load item");
+        assert!(!saved_item.assignments.contains_key(&resolved_id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_direct_edit_save_applies_mixed_diff_and_preserves_non_column_assignments() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-direct-edit-save-diff-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut parent = Category::new("Tags".to_string());
+        let mut a = Category::new("A".to_string());
+        a.parent = Some(parent.id);
+        let mut b = Category::new("B".to_string());
+        b.parent = Some(parent.id);
+        let mut c = Category::new("C".to_string());
+        c.parent = Some(parent.id);
+        parent.children = vec![a.id, b.id, c.id];
+        let outside = Category::new("Outside".to_string());
+        for cat in [&parent, &a, &b, &c, &outside] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: parent.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+        });
+        store.create_view(&view).expect("create view");
+
+        let item = Item::new("Demo item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, a.id, None)
+            .expect("assign a");
+        agenda
+            .assign_item_manual(item.id, b.id, None)
+            .expect("assign b");
+        agenda
+            .assign_item_manual(item.id, outside.id, None)
+            .expect("assign outside");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+        app.open_category_direct_edit();
+        {
+            let state = app
+                .category_direct_edit_state_mut()
+                .expect("direct edit state present");
+            state.rows = vec![
+                CategoryDirectEditRow::resolved(b.id, "B".to_string()),
+                CategoryDirectEditRow::resolved(c.id, "C".to_string()),
+            ];
+            state.active_row = 0;
+        }
+
+        app.handle_category_direct_edit_key(KeyCode::Char('S'), &agenda)
+            .expect("save draft");
+        assert_eq!(app.mode, Mode::Normal);
+
         let saved = store.get_item(item.id).expect("load item");
-        assert!(saved.assignments.contains_key(&alpha.id));
-        assert!(!saved.assignments.contains_key(&alpha_beta.id));
+        assert!(!saved.assignments.contains_key(&a.id), "A removed");
+        assert!(saved.assignments.contains_key(&b.id), "B kept");
+        assert!(saved.assignments.contains_key(&c.id), "C added");
+        assert!(
+            saved.assignments.contains_key(&outside.id),
+            "non-column assignment preserved"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
