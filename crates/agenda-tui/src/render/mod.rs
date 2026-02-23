@@ -84,6 +84,13 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::CategoryColumnPicker {
+            let popup_area = centered_rect(62, 58, frame.area());
+            self.render_category_column_picker(frame, popup_area);
+            if let Some((x, y)) = self.category_column_picker_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
         if self.mode == Mode::BoardAddColumnPicker {
             let popup_area = centered_rect(58, 56, frame.area());
             self.render_board_add_column_picker(frame, popup_area);
@@ -436,6 +443,187 @@ impl App {
             ),
             area,
         );
+    }
+
+    fn render_category_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Set Category")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 4 || area.height < 6 {
+            return;
+        }
+        let Some(state) = self.category_column_picker_state() else {
+            return;
+        };
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+
+        let selected_names: Vec<String> = self
+            .categories
+            .iter()
+            .filter(|c| state.selected_ids.contains(&c.id))
+            .map(|c| c.name.clone())
+            .collect();
+        let selected_display = if selected_names.is_empty() {
+            "(none)".to_string()
+        } else {
+            selected_names.join(", ")
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Column: {}  Item: {}\nSelected: {}",
+                state.parent_name,
+                truncate_board_cell(&state.item_label, 28),
+                truncate_board_cell(&selected_display, 40)
+            ))
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[0],
+        );
+
+        let input_border = if state.focus == CategoryColumnPickerFocus::FilterInput {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Filter> ", Style::default().fg(Color::Yellow)),
+                Span::raw(state.filter.text()),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Filter")
+                    .border_style(input_border),
+            ),
+            chunks[1],
+        );
+
+        let matches = self.category_column_picker_matches();
+        let items: Vec<ListItem<'_>> = if matches.is_empty() {
+            let msg = if state.filter.text().trim().is_empty() {
+                "(type to filter child categories)"
+            } else {
+                "(no matches)"
+            };
+            vec![ListItem::new(msg)]
+        } else {
+            matches
+                .iter()
+                .map(|id| {
+                    let label = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == *id)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("(missing)");
+                    let mark = if state.selected_ids.contains(id) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    ListItem::new(format!("{mark} {label}"))
+                })
+                .collect()
+        };
+        let selected = if matches.is_empty() {
+            None
+        } else {
+            Some(state.list_index.min(matches.len() - 1))
+        };
+        let mut list_state = Self::list_state_for(chunks[2], selected);
+        frame.render_stateful_widget(
+            List::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Categories")
+                        .border_style(if state.focus == CategoryColumnPickerFocus::List {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
+                )
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style()),
+            chunks[2],
+            &mut list_state,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            chunks[2],
+            matches.len().max(1),
+            list_state.offset(),
+        );
+
+        frame.render_widget(
+            Paragraph::new(
+                "Type filter | j/k or Up/Down move | Space toggle | Enter save | Esc cancel",
+            )
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[3],
+        );
+    }
+
+    fn category_column_picker_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryColumnPicker || area.width < 4 || area.height < 4 {
+            return None;
+        }
+        let state = self.category_column_picker_state()?;
+        if state.focus != CategoryColumnPickerFocus::FilterInput {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[1];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = state.filter.cursor().min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        Some((
+            input_x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            input_y,
+        ))
     }
 
     fn render_board_add_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -1449,6 +1637,9 @@ impl App {
             Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
             Mode::CategoryDirectEdit => {
                 "Tab/Shift-Tab:focus  Right:autocomplete (Suggestions)  +:add row  n/a:add row (Entries)  x:remove row (Entries)  Enter:resolve row/create  s/S:save draft  Esc:cancel draft"
+            }
+            Mode::CategoryColumnPicker => {
+                "Type filter  j/k or Up/Down:move  Space:toggle  Enter:save  Tab:focus  Esc:cancel"
             }
             Mode::BoardAddColumnPicker => {
                 "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"
