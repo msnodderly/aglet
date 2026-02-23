@@ -1581,6 +1581,96 @@ mod tests {
     }
 
     #[test]
+    fn board_add_column_picker_excludes_existing_section_columns() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut base = Category::new("Base".to_string());
+        let mut base_child = Category::new("BaseChild".to_string());
+        base_child.parent = Some(base.id);
+        base.children = vec![base_child.id];
+
+        let mut status = Category::new("Status".to_string());
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        status.children = vec![pending.id];
+
+        let mut priority = Category::new("Priority".to_string());
+        let mut high = Category::new("High".to_string());
+        high.parent = Some(priority.id);
+        priority.children = vec![high.id];
+
+        for cat in [&base, &base_child, &status, &pending, &priority, &high] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: base.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: status.id,
+                    width: 12,
+                },
+            ],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("open picker");
+
+        let suggestions = app.get_board_add_column_suggest_matches();
+        let names: Vec<String> = suggestions
+            .iter()
+            .map(|id| {
+                app.categories
+                    .iter()
+                    .find(|c| c.id == *id)
+                    .expect("category exists")
+                    .name
+                    .clone()
+            })
+            .collect();
+        assert!(names.contains(&"Priority".to_string()));
+        assert!(!names.contains(&"Base".to_string()));
+        assert!(!names.contains(&"Status".to_string()));
+
+        for ch in "Status".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt duplicate section column");
+        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
+        assert_eq!(app.board_add_column_create_confirm_name(), None);
+        assert!(
+            app.status.contains("already exists in this section"),
+            "unexpected status: {}",
+            app.status
+        );
+    }
+
+    #[test]
     fn move_slot_cursor_resets_column_index() {
         let mut app = App::default();
         // Setup 2 slots
