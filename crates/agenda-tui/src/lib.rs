@@ -1511,6 +1511,66 @@ mod tests {
     }
 
     #[test]
+    fn board_add_column_picker_does_not_reuse_child_category_name_as_column_heading() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let status = Category::new("Status".to_string());
+        let mut test_child = Category::new("Test".to_string());
+        test_child.parent = Some(status.id);
+        let base = Category::new("Base".to_string());
+        for cat in [&status, &test_child, &base] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: base.id,
+                width: 12,
+            }],
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("open add-column picker");
+        for ch in "Test".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt insert/create");
+
+        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
+        assert_eq!(app.board_add_column_create_confirm_name(), None);
+        assert!(
+            app.status.contains("already exists under 'Status'"),
+            "unexpected status: {}",
+            app.status
+        );
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        assert_eq!(saved.sections[0].columns.len(), 1, "no new column inserted");
+    }
+
+    #[test]
     fn move_slot_cursor_resets_column_index() {
         let mut app = App::default();
         // Setup 2 slots

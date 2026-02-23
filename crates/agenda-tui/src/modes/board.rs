@@ -360,7 +360,7 @@ impl App {
     }
 
     fn is_valid_board_column_heading_category(category: &Category) -> bool {
-        !category.name.eq_ignore_ascii_case("Entry")
+        category.parent.is_none() && !category.name.eq_ignore_ascii_case("Entry")
     }
 
     fn board_add_column_scope_ids(&self) -> Vec<CategoryId> {
@@ -401,9 +401,10 @@ impl App {
             }
             self.category_suggest = None;
             self.status = if typed.is_empty() {
-                "Add column: type to filter categories (When is allowed)".to_string()
+                "Add column: type to filter top-level categories".to_string()
             } else {
-                "No matching categories. Enter creates a new top-level category.".to_string()
+                "No matching top-level categories. Enter creates a new top-level category."
+                    .to_string()
             };
         } else {
             if let Some(state) = self.board_add_column_state_mut() {
@@ -710,9 +711,14 @@ impl App {
             .iter()
             .find(|c| c.name.eq_ignore_ascii_case(&typed))
         {
+            let parent_label = existing_cat
+                .parent
+                .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(top level)");
             self.status = format!(
-                "Category '{}' already exists. Use Enter to insert it.",
-                existing_cat.name
+                "Category '{}' already exists under '{}'; cannot create duplicate top-level category.",
+                existing_cat.name, parent_label
             );
             return;
         }
