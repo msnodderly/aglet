@@ -1,3 +1,9 @@
+There should always be a default section. There should never be a view with no section in it. The section can be a default with no columns, just items.
+
+Ctrl+w, j and ctrl-w + k should go up and down between section. Same thing as Tab and Shift-Tab.
+
+Remove the GH and GL commands
+
 board should showing two horizontal sections ("Open" and "Closed"), each with columns for Priority, Type, and Status, filtered to the respective status values.
 
 Keystroke-by-Keystroke: Creating a View with Columns and Two Filtered Sections
