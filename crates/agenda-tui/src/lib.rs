@@ -2975,6 +2975,82 @@ mod tests {
     }
 
     #[test]
+    fn board_column_reorder_preserves_slot_focus_when_item_exists_in_multiple_sections() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Category::new("A".to_string());
+        let b = Category::new("B".to_string());
+        for cat in [&a, &b] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        for title in ["First", "Second"] {
+            view.sections.push(Section {
+                title: title.to_string(),
+                criteria: Query::default(),
+                columns: vec![
+                    Column {
+                        kind: ColumnKind::Standard,
+                        heading: a.id,
+                        width: 12,
+                    },
+                    Column {
+                        kind: ColumnKind::Standard,
+                        heading: b.id,
+                        width: 12,
+                    },
+                ],
+                item_column_index: 0,
+                on_insert_assign: std::collections::HashSet::new(),
+                on_remove_unassign: std::collections::HashSet::new(),
+                show_children: false,
+                board_display_mode_override: None,
+            });
+        }
+        store.create_view(&view).expect("create view");
+
+        let item = Item::new("Shared item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        assert_eq!(app.slots.len(), 2, "expected 2 sections");
+        assert_eq!(app.slots[0].items.len(), 1, "slot 0 item count");
+        assert_eq!(app.slots[1].items.len(), 1, "slot 1 item count");
+
+        app.slot_index = 1;
+        app.item_index = 0;
+        app.column_index = 2; // B in [Item, A, B]
+
+        app.handle_key(KeyCode::Char('H'), &agenda)
+            .expect("Shift+H reorders within second section");
+
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        let first_headings: Vec<CategoryId> = saved.sections[0]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
+        let second_headings: Vec<CategoryId> = saved.sections[1]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
+        assert_eq!(first_headings, vec![a.id, b.id], "first section unchanged");
+        assert_eq!(second_headings, vec![b.id, a.id], "second section reordered");
+        assert_eq!(app.slot_index, 1, "focus should remain on second section");
+        assert_eq!(app.item_index, 0, "shared item selected in second section");
+        assert_eq!(app.column_index, 1, "moved column remains selected");
+    }
+
+    #[test]
     fn move_slot_cursor_resets_column_index() {
         let mut app = App::default();
         // Setup 2 slots
