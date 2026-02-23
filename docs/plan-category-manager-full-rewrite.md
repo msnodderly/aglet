@@ -803,44 +803,44 @@ This checklist is intentionally detailed and task-oriented so work can be execut
   - [x] Call core reorder API
   - [x] Refresh + preserve selection
   - [x] Emit clear status messages
-- [ ] Implement direct reparent outdent (`H`)
-  - [ ] Compute current parent and grandparent
-  - [ ] No-op at root with status
-  - [ ] Determine insertion position (after parent preferred)
-  - [ ] Call core reparent/move API
-  - [ ] Refresh + preserve selection
-  - [ ] Status messages and invalid-case handling
-- [ ] Implement direct reparent indent (`L`)
-  - [ ] Compute valid indent target (per Phase 0 contract)
-  - [ ] Reject invalid targets (none, descendant, reserved constraints)
-  - [ ] Determine insertion position under new parent
-  - [ ] Call core reparent/move API
-  - [ ] Refresh + preserve selection
-  - [ ] Status messages and invalid-case handling
-- [ ] Implement filterable inline parent picker (`p`) as fallback
-  - [ ] Build valid parent option source (including `(root)`)
-  - [ ] Exclude self and descendants
-  - [ ] Add filter buffer + list cursor state
-  - [ ] Add render overlay/pane for parent picker
-  - [ ] `j/k` navigate parent options
-  - [ ] `Enter` apply reparent
-  - [ ] `Esc` cancel picker
-  - [ ] Preserve selection after apply/cancel
-- [ ] Decide and implement behavior while filter is active
+- [x] Implement direct reparent outdent (`H`)
+  - [x] Compute current parent and grandparent
+  - [x] No-op at root with status
+  - [x] Determine insertion position (after parent preferred)
+  - [x] Call core reparent/move API
+  - [x] Refresh + preserve selection
+  - [x] Status messages and invalid-case handling
+- [x] Implement direct reparent indent (`L`)
+  - [x] Compute valid indent target (per Phase 0 contract)
+  - [x] Reject invalid targets (none, descendant, reserved constraints)
+  - [x] Determine insertion position under new parent
+  - [x] Call core reparent/move API
+  - [x] Refresh + preserve selection
+  - [x] Status messages and invalid-case handling
+- [x] Implement filterable inline parent picker (`p`) as fallback
+  - [x] Build valid parent option source (including `(root)`)
+  - [x] Exclude self and descendants
+  - [x] Add filter buffer + list cursor state
+  - [x] Add render overlay/pane for parent picker
+  - [x] `j/k` navigate parent options
+  - [x] `Enter` apply reparent
+  - [x] `Esc` cancel picker
+  - [x] Preserve selection after apply/cancel
+- [x] Decide and implement behavior while filter is active
   - [ ] movement commands operate on actual tree order, not filtered visual adjacency (recommended) OR
   - [x] movement commands disabled with filter-active status
-  - [ ] Add explicit status messaging for chosen behavior
-  - Note: temporary behavior implemented for `J/K` reorder only; final policy still pending for `H/L/p`.
-- [ ] Add TUI tests for structural movement
+  - [x] Add explicit status messaging for chosen behavior
+  - Note: final Phase 4 policy implemented: direct `H/L/J/K` moves are blocked while the category filter is active; inline `p` parent picker remains available.
+- [x] Add TUI tests for structural movement
   - [x] `K` reorder up
-  - [ ] `J` reorder down
+  - [x] `J` reorder down
   - [x] reorder boundary no-op
-  - [ ] `H` outdent child -> root
-  - [ ] `L` indent under previous sibling
-  - [ ] invalid indent target handled safely
-  - [ ] `p` reparent with filter
-  - [ ] reparent cycle prevented
-  - [ ] selection preserved after each move
+  - [x] `H` outdent child -> root
+  - [x] `L` indent under previous sibling
+  - [x] invalid indent target handled safely
+  - [x] `p` reparent with filter
+  - [x] reparent cycle prevented
+  - [x] selection preserved after each move
 
 ### Phase 5: Details Pane Editing (Flags + Note)
 
