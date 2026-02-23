@@ -503,10 +503,19 @@ impl App {
 
     pub(crate) fn open_category_manager_session(&mut self) {
         let selected_category_id = self.selected_category_id();
+        let initial_note = selected_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .and_then(|c| c.note.clone())
+            .unwrap_or_default();
         self.category_manager = Some(CategoryManagerState {
             focus: CategoryManagerFocus::Tree,
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
+            details_focus: CategoryManagerDetailsFocus::Exclusive,
+            details_note_category_id: selected_category_id,
+            details_note: text_buffer::TextBuffer::new(initial_note),
+            details_note_dirty: false,
+            details_note_editing: false,
             tree_index: self.category_index,
             visible_row_indices: Vec::new(),
             selected_category_id,
@@ -529,6 +538,8 @@ impl App {
 
     pub(crate) fn sync_category_manager_state_from_selection(&mut self) {
         let selected_category_id = self.selected_category_id();
+        let mut reload_details_for: Option<Option<CategoryId>> = None;
+        let mut dropped_dirty_note = false;
         if let Some(state) = &mut self.category_manager {
             state.selected_category_id = selected_category_id;
             if let Some(pos) = state.visible_row_indices.iter().position(|row_index| {
@@ -542,6 +553,28 @@ impl App {
             }
             if state.visible_row_indices.is_empty() {
                 state.tree_index = 0;
+            }
+
+            if state.details_note_category_id != state.selected_category_id {
+                dropped_dirty_note = state.details_note_dirty;
+                reload_details_for = Some(state.selected_category_id);
+            }
+        }
+
+        if let Some(next_category_id) = reload_details_for {
+            let next_note = next_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .and_then(|c| c.note.clone())
+                .unwrap_or_default();
+            if let Some(state) = &mut self.category_manager {
+                state.details_note_category_id = next_category_id;
+                state.details_note = text_buffer::TextBuffer::new(next_note);
+                state.details_note_dirty = false;
+                state.details_note_editing = false;
+            }
+            if dropped_dirty_note {
+                self.status =
+                    "Discarded unsaved category note draft after selection changed".to_string();
             }
         }
     }
@@ -606,6 +639,95 @@ impl App {
             if focus != CategoryManagerFocus::Filter {
                 state.filter_editing = false;
             }
+            if focus != CategoryManagerFocus::Details {
+                state.details_note_editing = false;
+            }
+        }
+    }
+
+    pub(crate) fn category_manager_details_focus(&self) -> Option<CategoryManagerDetailsFocus> {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_focus)
+    }
+
+    pub(crate) fn cycle_category_manager_details_focus(&mut self, delta: i32) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_focus = match delta.signum() {
+                d if d > 0 => state.details_focus.next(),
+                d if d < 0 => state.details_focus.prev(),
+                _ => state.details_focus,
+            };
+            state.details_note_editing = false;
+        }
+    }
+
+    pub(crate) fn set_category_manager_details_focus(
+        &mut self,
+        focus: CategoryManagerDetailsFocus,
+    ) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_focus = focus;
+            if focus != CategoryManagerDetailsFocus::Note {
+                state.details_note_editing = false;
+            }
+        }
+    }
+
+    pub(crate) fn category_manager_details_note_editing(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_note_editing)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_category_manager_details_note_editing(&mut self, editing: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_note_editing = editing;
+            if editing {
+                state.details_focus = CategoryManagerDetailsFocus::Note;
+            }
+        }
+    }
+
+    pub(crate) fn category_manager_details_note_text(&self) -> Option<&str> {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_note.text())
+    }
+
+    pub(crate) fn category_manager_details_note_dirty(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_note_dirty)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn category_manager_details_note_edit_mut(
+        &mut self,
+    ) -> Option<&mut text_buffer::TextBuffer> {
+        self.category_manager
+            .as_mut()
+            .map(|state| &mut state.details_note)
+    }
+
+    pub(crate) fn mark_category_manager_details_note_dirty(&mut self, dirty: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_note_dirty = dirty;
+        }
+    }
+
+    pub(crate) fn reload_category_manager_details_note_from_selected(&mut self) {
+        let selected_id = self.selected_category_id();
+        let note = selected_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .and_then(|c| c.note.clone())
+            .unwrap_or_default();
+        if let Some(state) = &mut self.category_manager {
+            state.details_note_category_id = selected_id;
+            state.details_note = text_buffer::TextBuffer::new(note);
+            state.details_note_dirty = false;
+            state.details_note_editing = false;
         }
     }
 
@@ -672,21 +794,24 @@ impl App {
     }
 
     pub(crate) fn set_category_manager_visible_selection(&mut self, visible_index: usize) {
-        let Some(state) = &mut self.category_manager else {
-            return;
-        };
-        if state.visible_row_indices.is_empty() {
-            state.tree_index = 0;
-            return;
+        {
+            let Some(state) = &mut self.category_manager else {
+                return;
+            };
+            if state.visible_row_indices.is_empty() {
+                state.tree_index = 0;
+                return;
+            }
+            let next_visible = visible_index.min(state.visible_row_indices.len() - 1);
+            state.tree_index = next_visible;
+            self.category_index = state.visible_row_indices[next_visible];
+            let selected = self
+                .category_rows
+                .get(self.category_index)
+                .map(|row| row.id);
+            state.selected_category_id = selected;
         }
-        let next_visible = visible_index.min(state.visible_row_indices.len() - 1);
-        state.tree_index = next_visible;
-        self.category_index = state.visible_row_indices[next_visible];
-        let selected = self
-            .category_rows
-            .get(self.category_index)
-            .map(|row| row.id);
-        state.selected_category_id = selected;
+        self.sync_category_manager_state_from_selection();
     }
 
     pub(crate) fn set_item_selection_by_id(&mut self, item_id: ItemId) {
