@@ -110,19 +110,29 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1), // context
-                Constraint::Length(1), // filter
-                Constraint::Length(1), // help
-                Constraint::Min(1),    // list
+                Constraint::Length(1), // scope/context details
+                Constraint::Length(6), // row list
+                Constraint::Length(3), // active input
+                Constraint::Min(6),    // suggestions / create confirm
+                Constraint::Length(2), // help/actions
             ])
             .split(inner);
 
-        let context_text = self
-            .category_direct_edit_state()
+        let direct_state = self.category_direct_edit_state();
+        let context_text = direct_state
             .map(|state| {
+                let focus_label = match state.focus {
+                    CategoryDirectEditFocus::Entries => "Entries",
+                    CategoryDirectEditFocus::Input => "Input",
+                    CategoryDirectEditFocus::Suggestions => "Suggestions",
+                };
                 format!(
-                    "Column: {}  Item: {}",
+                    "Column: {}  Item: {}  Row: {}/{}  Focus: {}",
                     state.parent_name,
-                    truncate_board_cell(&state.item_label, 40)
+                    truncate_board_cell(&state.item_label, 28),
+                    state.active_row.saturating_add(1),
+                    state.rows.len(),
+                    focus_label,
                 )
             })
             .or_else(|| {
@@ -159,54 +169,138 @@ impl App {
             chunks[0],
         );
 
+        let scope_text = self
+            .category_direct_edit_state()
+            .map(|state| {
+                let exclusive = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == state.parent_id)
+                    .map(|c| if c.is_exclusive { "yes" } else { "no" })
+                    .unwrap_or("?");
+                format!(
+                    "Scope: This column only  Parent: {} (exclusive: {exclusive})",
+                    state.parent_name
+                )
+            })
+            .unwrap_or_else(|| "Scope: This column only".to_string());
+        frame.render_widget(
+            Paragraph::new(scope_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
+
+        let focus = direct_state
+            .map(|state| state.focus)
+            .unwrap_or(CategoryDirectEditFocus::Input);
+        let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
+        let active_row_index = direct_state.map(|s| s.active_row).unwrap_or(0);
+        let rows: Vec<ListItem<'_>> = direct_state
+            .map(|state| {
+                state.rows
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, row)| {
+                        let label = if row.input.trimmed().is_empty() {
+                            "(new row)".to_string()
+                        } else {
+                            row.input.text().to_string()
+                        };
+                        let resolved_marker = if row.category_id.is_some() { "" } else { " *" };
+                        let prefix = format!("{:>2}. ", idx + 1);
+                        let style = if idx == state.active_row && focus != CategoryDirectEditFocus::Entries
+                        {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(format!("{prefix}{label}{resolved_marker}")).style(style)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let entries_border = if focus == CategoryDirectEditFocus::Entries {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let mut entries_state = Self::list_state_for(chunks[2], Some(active_row_index));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Assigned In This Column")
+                        .border_style(entries_border),
+                ),
+            chunks[2],
+            &mut entries_state,
+        );
+
+        let input_border = if focus == CategoryDirectEditFocus::Input {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("Filter> ", Style::default().fg(Color::Yellow)),
-                Span::raw(self.active_category_direct_edit_input_text().unwrap_or("")),
-            ])),
-            chunks[1],
+                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::raw(active_input),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Edit Active Row")
+                    .border_style(input_border),
+            ),
+            chunks[3],
         );
 
         let inline_create_name = self
             .category_direct_edit_state()
-            .and_then(|state| state.create_confirm_name.as_deref())
-            .or(self.category_direct_edit_create_confirm.as_deref());
+            .and_then(|state| state.create_confirm_name.as_deref());
         if let Some(name) = inline_create_name {
             frame.render_widget(
                 Paragraph::new(format!(
-                    "Create \"{}\" as a new child category in this column?",
+                    "Create \"{}\" as a new child category in this column?\nEnter/Y confirm  N/Esc cancel",
                     name
                 ))
-                .style(Style::default().fg(MUTED_TEXT_COLOR)),
-                chunks[2],
-            );
-            frame.render_widget(
-                Paragraph::new("Enter/Y confirm  N/Esc cancel")
                     .style(Style::default().fg(MUTED_TEXT_COLOR))
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
                             .title("Create Category"),
                     ),
-                chunks[3],
+                chunks[4],
+            );
+            frame.render_widget(
+                Paragraph::new("S save draft  Esc cancel draft")
+                    .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                chunks[5],
             );
             return;
         }
 
-        let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
         let matches = self.get_current_suggest_matches();
         let has_matches = !matches.is_empty();
         let help_text = if active_input.trim().is_empty() {
-            "Start typing to narrow. Enter clears the current value. Esc cancels."
+            "Empty row: Enter removes row (or keeps one blank). S saves draft. Esc cancels draft."
         } else if has_matches {
-            "Up/Down move  Tab copy name  Enter apply category  Esc cancel"
+            match focus {
+                CategoryDirectEditFocus::Entries => {
+                    "Entries: Up/Down move rows | Tab/Shift-Tab focus | n/a add | x remove | S save"
+                }
+                CategoryDirectEditFocus::Input => {
+                    "Input: type edits active row | Enter resolve/create | Tab focus-next | S save"
+                }
+                CategoryDirectEditFocus::Suggestions => {
+                    "Suggestions: Up/Down move | Tab copies name | Enter resolves row | S save"
+                }
+            }
         } else {
-            "No category found. Enter creates a new child category. Esc cancel"
+            "No match: Enter opens create confirm. S saves only resolved rows. Esc cancels draft."
         };
-        frame.render_widget(
-            Paragraph::new(help_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
-            chunks[2],
-        );
 
         if matches.is_empty() {
             let empty_msg = if active_input.trim().is_empty() {
@@ -218,9 +312,20 @@ impl App {
                 Paragraph::new(empty_msg).block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Suggested Categories"),
+                        .title("Suggested Categories")
+                        .border_style(if focus == CategoryDirectEditFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
                 ),
-                chunks[3],
+                chunks[4],
+            );
+            frame.render_widget(
+                Paragraph::new(help_text)
+                    .style(Style::default().fg(MUTED_TEXT_COLOR))
+                    .wrap(Wrap { trim: true }),
+                chunks[5],
             );
             return;
         }
@@ -243,7 +348,7 @@ impl App {
             })
             .collect();
         let item_count = items.len();
-        let mut state = Self::list_state_for(chunks[3], Some(selected_idx));
+        let mut state = Self::list_state_for(chunks[4], Some(selected_idx));
         frame.render_stateful_widget(
             List::new(items)
                 .highlight_symbol("> ")
@@ -251,33 +356,63 @@ impl App {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Suggested Categories"),
+                        .title("Suggested Categories")
+                        .border_style(if focus == CategoryDirectEditFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
                 ),
-            chunks[3],
+            chunks[4],
             &mut state,
         );
-        Self::render_vertical_scrollbar(frame, chunks[3], item_count, state.offset());
+        Self::render_vertical_scrollbar(frame, chunks[4], item_count, state.offset());
+        frame.render_widget(
+            Paragraph::new(help_text)
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .wrap(Wrap { trim: true }),
+            chunks[5],
+        );
     }
 
     fn category_direct_edit_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
         if self.mode != Mode::CategoryDirectEdit || area.width < 4 || area.height < 4 {
             return None;
         }
-        let inner_x = area.x.saturating_add(1);
-        let inner_y = area.y.saturating_add(1);
-        let filter_row_y = inner_y.saturating_add(1);
-        let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(6),
+                Constraint::Length(3),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[3];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Category> ".chars().count().min(u16::MAX as usize) as u16;
         let cursor_chars = self
             .active_category_direct_edit_row()
             .map(|row| row.input.cursor())
             .unwrap_or_else(|| self.input.cursor())
             .min(u16::MAX as usize) as u16;
-        let max_x = area.x.saturating_add(area.width.saturating_sub(2));
-        let x = inner_x
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        let x = input_x
             .saturating_add(prefix_len)
             .saturating_add(cursor_chars)
             .min(max_x);
-        Some((x, filter_row_y))
+        Some((x, input_y))
     }
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {

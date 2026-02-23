@@ -1046,77 +1046,77 @@ land small refactors first, then behavior changes.
 
 ### Phase 3: Multi-Entry Keyboard Model (Draft Editing, Not Apply Yet)
 
-- [ ] Add focus routing for `Entries` / `Input` / `Suggestions`
-- [ ] Implement `Tab` / `Shift-Tab` focus cycling in `CategoryDirectEdit`
-- [ ] Implement `Up` / `Down` and `j` / `k` navigation by focused region
-- [ ] Implement `n` / `a` to add a new row and focus it
-- [ ] Implement `x` to remove active row (with safe behavior for last row)
-- [ ] Implement active-row text editing using row-local `TextBuffer`
-- [ ] Implement `Tab` to copy highlighted suggestion into active row input
+- [x] Add focus routing for `Entries` / `Input` / `Suggestions`
+- [x] Implement `Tab` / `Shift-Tab` focus cycling in `CategoryDirectEdit`
+- [x] Implement `Up` / `Down` and `j` / `k` navigation by focused region
+- [x] Implement `n` / `a` to add a new row and focus it
+- [x] Implement `x` to remove active row (with safe behavior for last row)
+- [x] Implement active-row text editing using row-local `TextBuffer`
+- [x] Implement `Tab` to copy highlighted suggestion into active row input
 - [ ] Implement `Enter` on active row:
-  - [ ] empty row => remove row if multiple rows exist; keep one blank row if it is the only row
-  - [ ] exact typed match => resolve active row
-  - [ ] highlighted suggestion => resolve active row
-  - [ ] no match => open inline create confirmation
-- [ ] Ensure empty `Enter` never auto-applies the first suggestion
-- [ ] Add status/help copy for each substate (normal edit / create confirm / exclusive restriction)
-- [ ] Add status/help copy for empty-row `Enter` behavior (remove-row vs keep-single-blank-row)
-- [ ] Add tests for row add/remove/navigation and `Enter` semantics where feasible
-- [ ] Run `cargo test -p agenda-tui --lib`
+  - [x] empty row => remove row if multiple rows exist; keep one blank row if it is the only row
+  - [x] exact typed match => resolve active row
+  - [x] highlighted suggestion => resolve active row
+  - [x] no match => open inline create confirmation
+- [x] Ensure empty `Enter` never auto-applies the first suggestion
+- [x] Add status/help copy for each substate (normal edit / create confirm / exclusive restriction)
+- [x] Add status/help copy for empty-row `Enter` behavior (remove-row vs keep-single-blank-row)
+- [x] Add tests for row add/remove/navigation and `Enter` semantics where feasible
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 4: Inline Create-Category Confirm in Multi-Entry Editor
 
-- [ ] Move inline create-confirm state into `CategoryDirectEditState`
-- [ ] Preserve current create-confirm-in-same-modal behavior
-- [ ] Implement create-confirm key handling precedence:
-  - [ ] `Enter` / `y` confirm create
-  - [ ] `n` / `Esc` cancel create
-  - [ ] other input exits confirm and returns to editing (or explicitly block; decide and document)
-- [ ] Create new category under current column heading
-- [ ] Resolve the active row to the newly created category
-- [ ] Prevent reserved-name creation (`When`, `Done`, `Entry`)
-- [ ] Preserve duplicate-name checks across hierarchy / parent constraints
-- [ ] Add tests for create-confirm state transitions and new-category resolution
-- [ ] Run `cargo test -p agenda-tui --lib`
+- [x] Move inline create-confirm state into `CategoryDirectEditState`
+- [x] Preserve current create-confirm-in-same-modal behavior
+- [x] Implement create-confirm key handling precedence:
+  - [x] `Enter` / `y` confirm create
+  - [x] `n` / `Esc` cancel create
+  - [x] other input exits confirm and returns to editing (or explicitly block; decide and document)
+- [x] Create new category under current column heading
+- [x] Resolve the active row to the newly created category
+- [x] Prevent reserved-name creation (`When`, `Done`, `Entry`)
+- [x] Preserve duplicate-name checks across hierarchy / parent constraints
+- [x] Add tests for create-confirm state transitions and new-category resolution
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 5: Draft Apply / Cancel Semantics (Commit Multi-Entry Edits)
 
-- [ ] Define exact commit contract:
-  - [ ] `S` applies full draft and closes editor
-  - [ ] `Esc` cancels full draft and closes editor
-- [ ] Add helper to compute `desired_child_ids` from resolved draft rows
-- [ ] Add helper to compute current assigned child ids for active column
-- [ ] Diff current vs desired:
-  - [ ] `to_remove`
-  - [ ] `to_add`
-- [ ] Unassign removed child assignments first
-- [ ] Assign added child assignments second
-- [ ] Preserve non-column assignments
-- [ ] Handle duplicates gracefully (ignore duplicates in draft or collapse on apply)
-- [ ] Handle exclusive-parent columns:
-  - [ ] revalidate exclusivity at apply even though UI blocks second-row add earlier
-  - [ ] show clear status error
-- [ ] Ensure selection and board focus restore correctly after apply
-- [ ] Ensure draft state clears on apply and on cancel
-- [ ] Remove/retire old single-value "replace sibling assignment" path where no longer appropriate
-- [ ] Add tests for add/remove/mixed diff application
-- [ ] Run `cargo test -p agenda-tui --lib`
+- [x] Define exact commit contract:
+  - [x] `S` applies full draft and closes editor
+  - [x] `Esc` cancels full draft and closes editor
+- [x] Add helper to compute `desired_child_ids` from resolved draft rows
+- [x] Add helper to compute current assigned child ids for active column
+- [x] Diff current vs desired:
+  - [x] `to_remove`
+  - [x] `to_add`
+- [x] Unassign removed child assignments first
+- [x] Assign added child assignments second
+- [x] Preserve non-column assignments
+- [x] Handle duplicates gracefully (ignore duplicates in draft or collapse on apply)
+- [x] Handle exclusive-parent columns:
+  - [x] revalidate exclusivity at apply even though UI blocks second-row add earlier
+  - [x] show clear status error
+- [x] Ensure selection and board focus restore correctly after apply
+- [x] Ensure draft state clears on apply and on cancel
+- [x] Remove/retire old single-value "replace sibling assignment" path where no longer appropriate
+- [x] Add tests for add/remove/mixed diff application
+- [x] Run `cargo test -p agenda-tui --lib`
 
 ### Phase 6: Multi-Entry Modal Rendering (TUI Polish)
 
-- [ ] Render `Assigned In This Column` row list (one line per draft row)
-- [ ] Render active-row input section (`Category> ...`)
-- [ ] Render suggestions section for active row
-- [ ] Render inline create-confirm panel in same modal
-- [ ] Render focus styling for:
-  - [ ] active row
-  - [ ] focused region
-  - [ ] selected suggestion
-- [ ] Render row count / current value summary in header
-- [ ] Render explicit action hints and/or button row (`Add Row`, `Remove Row`, `Save`, `Cancel`)
-- [ ] Keep shared muted text color token usage consistent
-- [ ] Add cursor-position helper for active row input
-- [ ] Confirm small terminal fallback/compact rendering behavior
+- [x] Render `Assigned In This Column` row list (one line per draft row)
+- [x] Render active-row input section (`Category> ...`)
+- [x] Render suggestions section for active row
+- [x] Render inline create-confirm panel in same modal
+- [x] Render focus styling for:
+  - [x] active row
+  - [x] focused region
+  - [x] selected suggestion
+- [x] Render row count / current value summary in header
+- [x] Render explicit action hints and/or button row (`Add Row`, `Remove Row`, `Save`, `Cancel`)
+- [x] Keep shared muted text color token usage consistent
+- [x] Add cursor-position helper for active row input
+- [x] Confirm small terminal fallback/compact rendering behavior
 - [ ] Manually verify no regressions to existing InputPanel and other popups
 
 ### Phase 7: Multi-Line Board Rendering Config (Model + Storage)
