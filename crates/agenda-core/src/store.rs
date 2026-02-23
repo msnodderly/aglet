@@ -8,11 +8,11 @@ use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, DeletionLogEntry, Item,
-    ItemId, Query, Section, View,
+    Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, Condition,
+    DeletionLogEntry, Item, ItemId, Query, Section, View,
 };
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS views (
     show_unmatched              INTEGER NOT NULL DEFAULT 1,
     unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
     remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
-    item_column_label           TEXT
+    item_column_label           TEXT,
+    board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
 );
 
 CREATE TABLE IF NOT EXISTS deletion_log (
@@ -527,8 +528,8 @@ impl Store {
                 "INSERT INTO views (
                     id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    item_column_label
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    item_column_label, board_display_mode
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     view.id.to_string(),
                     view.name,
@@ -539,6 +540,8 @@ impl Store {
                     view.unmatched_label,
                     remove_from_view_unassign_json,
                     view.item_column_label,
+                    serde_json::to_string(&view.board_display_mode)
+                        .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
                 ],
             )
             .map_err(|err| Self::map_view_write_error(err, &view.name))?;
@@ -550,7 +553,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    item_column_label
+                    item_column_label, board_display_mode
              FROM views WHERE id = ?1",
         )?;
         stmt.query_row(params![id.to_string()], Self::row_to_view)
@@ -587,8 +590,9 @@ impl Store {
                      show_unmatched = ?5,
                      unmatched_label = ?6,
                      remove_from_view_unassign_json = ?7,
-                     item_column_label = ?8
-                 WHERE id = ?9",
+                     item_column_label = ?8,
+                     board_display_mode = ?9
+                 WHERE id = ?10",
                 params![
                     view.name,
                     criteria_json,
@@ -598,6 +602,8 @@ impl Store {
                     view.unmatched_label,
                     remove_from_view_unassign_json,
                     view.item_column_label,
+                    serde_json::to_string(&view.board_display_mode)
+                        .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
                     view.id.to_string(),
                 ],
             )
@@ -615,7 +621,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    item_column_label
+                    item_column_label, board_display_mode
              FROM views
              ORDER BY name COLLATE NOCASE ASC",
         )?;
@@ -742,11 +748,15 @@ impl Store {
         let show_unmatched: i32 = row.get(5)?;
         let remove_from_view_unassign_json: String = row.get(7)?;
         let item_column_label: Option<String> = row.get(8)?;
+        let board_display_mode_json: Option<String> = row.get(9)?;
 
         let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
         let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
         let remove_from_view_unassign: HashSet<CategoryId> =
             serde_json::from_str(&remove_from_view_unassign_json).unwrap_or_default();
+        let board_display_mode = board_display_mode_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or(BoardDisplayMode::SingleLine);
 
         Ok(View {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
@@ -757,6 +767,7 @@ impl Store {
             unmatched_label: row.get(6)?,
             remove_from_view_unassign,
             item_column_label,
+            board_display_mode,
         })
     }
 
@@ -1089,6 +1100,11 @@ impl Store {
             self.conn
                 .execute_batch("ALTER TABLE views ADD COLUMN item_column_label TEXT;")?;
         }
+        if !self.column_exists("views", "board_display_mode")? {
+            self.conn.execute_batch(
+                "ALTER TABLE views ADD COLUMN board_display_mode TEXT NOT NULL DEFAULT 'SingleLine';",
+            )?;
+        }
 
         if from_version < 3 {
             // Inject kind field into existing columns_json.
@@ -1151,8 +1167,8 @@ impl Store {
 mod tests {
     use super::*;
     use crate::model::{
-        Assignment, AssignmentSource, Category, Column, ColumnKind, CriterionMode, Item, Query,
-        Section, View,
+        Assignment, AssignmentSource, BoardDisplayMode, Category, Column, ColumnKind,
+        CriterionMode, Item, Query, Section, View,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
@@ -1308,7 +1324,7 @@ mod tests {
             );
         }
 
-        let when_id = category_id_by_name(&store, "When");
+        let _when_id = category_id_by_name(&store, "When");
         let all_items_view: String = store
             .conn
             .query_row("SELECT id FROM views WHERE name = 'All Items'", [], |row| {
@@ -1848,6 +1864,7 @@ mod tests {
             on_insert_assign: HashSet::from([when_category]),
             on_remove_unassign: HashSet::new(),
             show_children: true,
+        board_display_mode_override: None,
         });
         view.show_unmatched = false;
         view.unmatched_label = "Other".to_string();
@@ -1914,6 +1931,7 @@ mod tests {
             on_insert_assign: HashSet::from([category_id]),
             on_remove_unassign: HashSet::new(),
             show_children: false,
+        board_display_mode_override: None,
         });
         view.show_unmatched = false;
         view.unmatched_label = "Unsectioned".to_string();
@@ -1945,6 +1963,38 @@ mod tests {
                 id
             }) if id == missing.id
         ));
+    }
+
+    #[test]
+    fn test_view_board_display_mode_roundtrip_and_section_override() {
+        let store = Store::open_memory().unwrap();
+        let mut view = new_view("Display");
+        view.board_display_mode = BoardDisplayMode::MultiLine;
+        view.sections.push(Section {
+            title: "One".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: Some(BoardDisplayMode::SingleLine),
+        });
+        store.create_view(&view).unwrap();
+
+        let loaded = store.get_view(view.id).unwrap();
+        assert_eq!(loaded.board_display_mode, BoardDisplayMode::MultiLine);
+        assert_eq!(
+            loaded.sections[0].board_display_mode_override,
+            Some(BoardDisplayMode::SingleLine)
+        );
+    }
+
+    #[test]
+    fn test_sections_json_without_display_override_defaults_to_none() {
+        let legacy_json = r#"[{"title":"Legacy","criteria":{},"columns":[],"on_insert_assign":[],"on_remove_unassign":[],"show_children":false}]"#;
+        let sections: Vec<Section> = serde_json::from_str(legacy_json).expect("legacy json parses");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].board_display_mode_override, None);
     }
 
     #[test]

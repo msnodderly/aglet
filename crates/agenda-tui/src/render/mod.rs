@@ -84,6 +84,13 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::BoardAddColumnPicker {
+            let popup_area = centered_rect(58, 56, frame.area());
+            self.render_board_add_column_picker(frame, popup_area);
+            if let Some((x, y)) = self.board_add_column_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
     }
 
     fn render_category_direct_edit_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -110,38 +117,57 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1), // context
-                Constraint::Length(1), // filter
-                Constraint::Length(1), // help
-                Constraint::Min(1),    // list
+                Constraint::Length(1), // scope/context details
+                Constraint::Length(6), // row list
+                Constraint::Length(3), // active input
+                Constraint::Min(6),    // suggestions / create confirm
+                Constraint::Length(2), // help/actions
             ])
             .split(inner);
 
-        let context_text = self
-            .current_view()
-            .and_then(|view| {
-                self.current_slot().and_then(|slot| {
-                    let columns = match slot.context {
-                        SlotContext::Section { section_index }
-                        | SlotContext::GeneratedSection { section_index, .. } => {
-                            view.sections.get(section_index).map(|s| &s.columns)
+        let direct_state = self.category_direct_edit_state();
+        let context_text = direct_state
+            .map(|state| {
+                let focus_label = match state.focus {
+                    CategoryDirectEditFocus::Entries => "Entries",
+                    CategoryDirectEditFocus::Input => "Input",
+                    CategoryDirectEditFocus::Suggestions => "Suggestions",
+                };
+                format!(
+                    "Column: {}  Item: {}  Row: {}/{}  Focus: {}",
+                    state.parent_name,
+                    truncate_board_cell(&state.item_label, 28),
+                    state.active_row.saturating_add(1),
+                    state.rows.len(),
+                    focus_label,
+                )
+            })
+            .or_else(|| {
+                self.current_view().and_then(|view| {
+                    self.current_slot().and_then(|slot| {
+                        let columns = match slot.context {
+                            SlotContext::Section { section_index }
+                            | SlotContext::GeneratedSection { section_index, .. } => {
+                                view.sections.get(section_index).map(|s| &s.columns)
+                            }
+                            _ => None,
+                        }?;
+                        if self.column_index == 0 || self.column_index > columns.len() {
+                            return None;
                         }
-                        _ => None,
-                    }?;
-                    if self.column_index == 0 || self.column_index > columns.len() {
-                        return None;
-                    }
-                    let column = &columns[self.column_index - 1];
-                    let heading = self
-                        .categories
-                        .iter()
-                        .find(|c| c.id == column.heading)
-                        .map(|c| c.name.as_str())
-                        .unwrap_or("?");
-                    let item_label = self
-                        .selected_item()
-                        .map(|item| truncate_board_cell(&board_item_label(item), 40))
-                        .unwrap_or_else(|| "(no item)".to_string());
-                    Some(format!("Column: {heading}  Item: {item_label}"))
+                        let column = &columns[self.column_index - 1];
+                        let heading = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == column.heading)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("?");
+                        let item_label = self
+                            .selected_item()
+                            .map(|item| truncate_board_cell(&board_item_label(item), 40))
+                            .unwrap_or_else(|| "(no item)".to_string());
+                        Some(format!("Column: {heading}  Item: {item_label}"))
+                    })
                 })
             })
             .unwrap_or_else(|| "Set category".to_string());
@@ -150,51 +176,134 @@ impl App {
             chunks[0],
         );
 
+        let scope_text = self
+            .category_direct_edit_state()
+            .map(|state| {
+                let exclusive = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == state.parent_id)
+                    .map(|c| if c.is_exclusive { "yes" } else { "no" })
+                    .unwrap_or("?");
+                format!(
+                    "Scope: This column only  Parent: {} (exclusive: {exclusive})",
+                    state.parent_name
+                )
+            })
+            .unwrap_or_else(|| "Scope: This column only".to_string());
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("Filter> ", Style::default().fg(Color::Yellow)),
-                Span::raw(self.input.text()),
-            ])),
+            Paragraph::new(scope_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
             chunks[1],
         );
 
-        if let Some(name) = &self.category_direct_edit_create_confirm {
-            frame.render_widget(
-                Paragraph::new(format!(
-                    "Create \"{}\" as a new child category in this column?",
-                    name
-                ))
-                .style(Style::default().fg(MUTED_TEXT_COLOR)),
-                chunks[2],
+        let focus = direct_state
+            .map(|state| state.focus)
+            .unwrap_or(CategoryDirectEditFocus::Input);
+        let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
+        let active_row_index = direct_state.map(|s| s.active_row).unwrap_or(0);
+        let rows: Vec<ListItem<'_>> = direct_state
+            .map(|state| {
+                state.rows
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, row)| {
+                        let label = if row.input.trimmed().is_empty() {
+                            "(new row)".to_string()
+                        } else {
+                            row.input.text().to_string()
+                        };
+                        let resolved_marker = if row.category_id.is_some() { "" } else { " *" };
+                        let prefix = format!("{:>2}. ", idx + 1);
+                        let style = if idx == state.active_row && focus != CategoryDirectEditFocus::Entries
+                        {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(format!("{prefix}{label}{resolved_marker}")).style(style)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let entries_border = if focus == CategoryDirectEditFocus::Entries {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let mut entries_state = Self::list_state_for(chunks[2], Some(active_row_index));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Assigned In This Column")
+                        .border_style(entries_border),
+                ),
+            chunks[2],
+            &mut entries_state,
+        );
+
+        let input_border = if focus == CategoryDirectEditFocus::Input {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::raw(active_input),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Edit Active Row")
+                    .border_style(input_border),
+            ),
+            chunks[3],
+        );
+
+        let inline_create_name = self
+            .category_direct_edit_state()
+            .and_then(|state| state.create_confirm_name.as_deref());
+        if let Some(name) = inline_create_name {
+            self.render_category_create_confirm_panel(
+                frame,
+                chunks[4],
+                name,
+                "as a new child category in this column?",
             );
             frame.render_widget(
-                Paragraph::new("Enter/Y confirm  N/Esc cancel")
-                    .style(Style::default().fg(MUTED_TEXT_COLOR))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Create Category"),
-                    ),
-                chunks[3],
+                Paragraph::new("S save draft  Esc cancel draft")
+                    .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                chunks[5],
             );
             return;
         }
 
-        let help_text = if self.input.text().trim().is_empty() {
-            "Start typing to narrow. Enter clears the current value. Esc cancels."
-        } else if self.category_suggest.is_some() {
-            "Up/Down move  Tab copy name  Enter apply category  Esc cancel"
-        } else {
-            "No category found. Enter creates a new child category. Esc cancel"
-        };
-        frame.render_widget(
-            Paragraph::new(help_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
-            chunks[2],
-        );
-
         let matches = self.get_current_suggest_matches();
+        let has_matches = !matches.is_empty();
+        let help_text = if active_input.trim().is_empty() {
+            "Empty row: Enter removes row (or keeps one blank). S saves draft. Esc cancels draft."
+        } else if has_matches {
+            match focus {
+                CategoryDirectEditFocus::Entries => {
+                    "Entries: Up/Down move rows | Tab/Shift-Tab focus | n/a add | x remove | S save"
+                }
+                CategoryDirectEditFocus::Input => {
+                    "Input: type edits active row | Enter resolve/create | Tab focus-next | S save"
+                }
+                CategoryDirectEditFocus::Suggestions => {
+                    "Suggestions: Up/Down move | Tab copies name | Enter resolves row | S save"
+                }
+            }
+        } else {
+            "No match: Enter opens create confirm. S saves only resolved rows. Esc cancels draft."
+        };
+
         if matches.is_empty() {
-            let empty_msg = if self.input.text().trim().is_empty() {
+            let empty_msg = if active_input.trim().is_empty() {
                 "(no suggestions yet)"
             } else {
                 "(no matches)"
@@ -203,16 +312,26 @@ impl App {
                 Paragraph::new(empty_msg).block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Suggested Categories"),
+                        .title("Suggested Categories")
+                        .border_style(if focus == CategoryDirectEditFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
                 ),
-                chunks[3],
+                chunks[4],
+            );
+            frame.render_widget(
+                Paragraph::new(help_text)
+                    .style(Style::default().fg(MUTED_TEXT_COLOR))
+                    .wrap(Wrap { trim: true }),
+                chunks[5],
             );
             return;
         }
 
         let selected_idx = self
-            .category_suggest
-            .as_ref()
+            .category_direct_edit_state()
             .map(|s| s.suggest_index.min(matches.len() - 1))
             .unwrap_or(0);
 
@@ -229,7 +348,7 @@ impl App {
             })
             .collect();
         let item_count = items.len();
-        let mut state = Self::list_state_for(chunks[3], Some(selected_idx));
+        let mut state = Self::list_state_for(chunks[4], Some(selected_idx));
         frame.render_stateful_widget(
             List::new(items)
                 .highlight_symbol("> ")
@@ -237,29 +356,242 @@ impl App {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Suggested Categories"),
+                        .title("Suggested Categories")
+                        .border_style(if focus == CategoryDirectEditFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
                 ),
-            chunks[3],
+            chunks[4],
             &mut state,
         );
-        Self::render_vertical_scrollbar(frame, chunks[3], item_count, state.offset());
+        Self::render_vertical_scrollbar(frame, chunks[4], item_count, state.offset());
+        frame.render_widget(
+            Paragraph::new(help_text)
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .wrap(Wrap { trim: true }),
+            chunks[5],
+        );
     }
 
     fn category_direct_edit_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
         if self.mode != Mode::CategoryDirectEdit || area.width < 4 || area.height < 4 {
             return None;
         }
-        let inner_x = area.x.saturating_add(1);
-        let inner_y = area.y.saturating_add(1);
-        let filter_row_y = inner_y.saturating_add(1);
-        let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
-        let cursor_chars = self.input.cursor().min(u16::MAX as usize) as u16;
-        let max_x = area.x.saturating_add(area.width.saturating_sub(2));
-        let x = inner_x
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(6),
+                Constraint::Length(3),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[3];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Category> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = self
+            .active_category_direct_edit_row()
+            .map(|row| row.input.cursor())
+            .unwrap_or_else(|| self.input.cursor())
+            .min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        let x = input_x
             .saturating_add(prefix_len)
             .saturating_add(cursor_chars)
             .min(max_x);
-        Some((x, filter_row_y))
+        Some((x, input_y))
+    }
+
+    fn render_category_create_confirm_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        name: &str,
+        description_suffix: &str,
+    ) {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Create \"{}\" {}\nEnter/Y confirm  N/Esc cancel",
+                name, description_suffix
+            ))
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .block(Block::default().borders(Borders::ALL).title("Create Category")),
+            area,
+        );
+    }
+
+    fn render_board_add_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Add Column")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 4 || area.height < 6 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+
+        let header = self
+            .board_add_column
+            .as_ref()
+            .map(|state| {
+                let dir = match state.anchor.direction {
+                    AddColumnDirection::Left => "left",
+                    AddColumnDirection::Right => "right",
+                };
+                let section = self
+                    .current_view()
+                    .and_then(|v| v.sections.get(state.anchor.section_index))
+                    .map(|s| s.title.as_str())
+                    .unwrap_or("(missing)");
+                format!(
+                    "Section: {}  Insert {} of current column  Index: {}",
+                    section, dir, state.anchor.insert_index
+                )
+            })
+            .unwrap_or_else(|| "Insert a category column".to_string());
+        frame.render_widget(
+            Paragraph::new(header)
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .wrap(Wrap { trim: true }),
+            chunks[0],
+        );
+
+        let input_text = self.board_add_column_input_text().unwrap_or("");
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::raw(input_text),
+            ]))
+            .block(Block::default().borders(Borders::ALL).title("Typeahead")),
+            chunks[1],
+        );
+
+        if let Some(name) = self.board_add_column_create_confirm_name() {
+            self.render_category_create_confirm_panel(
+                frame,
+                chunks[2],
+                name,
+                "as a new top-level category and insert its column?",
+            );
+        } else {
+            let matches = self.get_board_add_column_suggest_matches();
+            let items: Vec<ListItem<'_>> = if matches.is_empty() {
+                let msg = if input_text.trim().is_empty() {
+                    "(type to filter categories)"
+                } else {
+                    "(no matches)"
+                };
+                vec![ListItem::new(msg)]
+            } else {
+                matches
+                    .iter()
+                    .map(|id| {
+                        let label = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == *id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("(missing)");
+                        ListItem::new(label)
+                    })
+                    .collect()
+            };
+            let selected = self
+                .board_add_column
+                .as_ref()
+                .and_then(|s| (!matches.is_empty()).then_some(s.suggest_index.min(matches.len() - 1)));
+            let mut list_state = Self::list_state_for(chunks[2], selected);
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(Block::default().borders(Borders::ALL).title("Categories"))
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style()),
+                chunks[2],
+                &mut list_state,
+            );
+        }
+
+        frame.render_widget(
+            Paragraph::new(
+                "Type filter | Up/Down select | Tab autocomplete | Enter insert | Esc cancel",
+            )
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[3],
+        );
+    }
+
+    fn board_add_column_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::BoardAddColumnPicker || area.width < 4 || area.height < 4 {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[1];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Category> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = self
+            .board_add_column
+            .as_ref()
+            .map(|s| s.input.cursor())
+            .unwrap_or(0)
+            .min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        Some((
+            input_x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            input_y,
+        ))
     }
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
@@ -495,6 +827,18 @@ impl App {
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| "Item".to_string());
         for (slot_index, slot) in self.slots.iter().enumerate() {
+            let effective_display_mode = match (&slot.context, current_view.as_ref()) {
+                (SlotContext::Section { section_index }, Some(view))
+                | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                    .sections
+                    .get(*section_index)
+                    .and_then(|section| section.board_display_mode_override)
+                    .unwrap_or(view.board_display_mode),
+                _ => current_view
+                    .as_ref()
+                    .map(|v| v.board_display_mode)
+                    .unwrap_or(BoardDisplayMode::SingleLine),
+            };
             let is_selected_slot = slot_index == self.slot_index;
             let inner_width = columns[slot_index].width.saturating_sub(2);
             let selected_row = if is_selected_slot && !slot.items.is_empty() {
@@ -600,10 +944,17 @@ impl App {
                             } else {
                                 " "
                             };
+                            let item_cell_content = if effective_display_mode
+                                == BoardDisplayMode::MultiLine
+                            {
+                                wrap_text_for_board_cell(&board_item_label(item), item_width)
+                                    .join("\n")
+                            } else {
+                                truncate_board_cell(&board_item_label(item), item_width)
+                            };
+                            let mut row_height = item_cell_content.lines().count().max(1);
                             let mut cells = vec![Cell::from(marker_cell), Cell::from(note_cell), {
-                                let content =
-                                    truncate_board_cell(&board_item_label(item), item_width);
-                                let mut cell = Cell::from(content);
+                                let mut cell = Cell::from(item_cell_content);
                                 if is_selected && self.column_index == 0 {
                                     cell = cell.style(focused_cell_style());
                                 }
@@ -622,7 +973,27 @@ impl App {
                                             &category_names,
                                         ),
                                     };
-                                    let content = truncate_board_cell(&value, column.width);
+                                    let content = if effective_display_mode
+                                        == BoardDisplayMode::MultiLine
+                                        && column.kind == ColumnKind::Standard
+                                    {
+                                        let lines = if value == "\u{2013}" {
+                                            vec!["-".to_string()]
+                                        } else {
+                                            let labels: Vec<String> = value
+                                                .split(", ")
+                                                .map(str::to_string)
+                                                .collect();
+                                            format_category_values_multi_line(
+                                                &labels,
+                                                BOARD_MULTI_CATEGORY_LINE_CAP,
+                                            )
+                                        };
+                                        lines.join("\n")
+                                    } else {
+                                        truncate_board_cell(&value, column.width)
+                                    };
+                                    row_height = row_height.max(content.lines().count().max(1));
                                     let mut cell = Cell::from(content);
                                     if is_selected && self.column_index == col_idx + 1 {
                                         cell = cell.style(focused_cell_style());
@@ -635,14 +1006,33 @@ impl App {
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
                                 } else {
-                                    categories.join(", ")
+                                    if effective_display_mode == BoardDisplayMode::MultiLine {
+                                        format_category_values_multi_line(
+                                            &categories,
+                                            BOARD_MULTI_CATEGORY_LINE_CAP,
+                                        )
+                                        .join("\n")
+                                    } else {
+                                        categories.join(", ")
+                                    }
                                 };
-                                cells.push(Cell::from(truncate_board_cell(
-                                    &categories_text,
-                                    synthetic_categories_width,
-                                )));
+                                let content = if effective_display_mode == BoardDisplayMode::MultiLine
+                                {
+                                    categories_text
+                                } else {
+                                    truncate_board_cell(&categories_text, synthetic_categories_width)
+                                };
+                                row_height = row_height.max(content.lines().count().max(1));
+                                cells.push(Cell::from(content));
                             }
-                            Row::new(cells)
+                            let mut row = Row::new(cells);
+                            if effective_display_mode == BoardDisplayMode::MultiLine {
+                                row = row.height(row_height.min(u16::MAX as usize) as u16);
+                            }
+                            if is_selected {
+                                row = row.style(selected_board_row_style());
+                            }
+                            row
                         })
                         .collect()
                 };
@@ -707,18 +1097,51 @@ impl App {
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
                             } else {
-                                categories.join(", ")
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    format_category_values_multi_line(
+                                        &categories,
+                                        BOARD_MULTI_CATEGORY_LINE_CAP,
+                                    )
+                                    .join("\n")
+                                } else {
+                                    categories.join(", ")
+                                }
                             };
-                            Row::new(vec![
+                            let when_text = if effective_display_mode == BoardDisplayMode::MultiLine {
+                                truncate_board_cell(&when, widths.when)
+                            } else {
+                                truncate_board_cell(&when, widths.when)
+                            };
+                            let item_cell_text = if effective_display_mode == BoardDisplayMode::MultiLine {
+                                wrap_text_for_board_cell(&item_text, widths.item).join("\n")
+                            } else {
+                                truncate_board_cell(&item_text, widths.item)
+                            };
+                            let categories_cell_text =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    categories_text
+                                } else {
+                                    truncate_board_cell(&categories_text, widths.categories)
+                                };
+                            let row_height = item_cell_text
+                                .lines()
+                                .count()
+                                .max(categories_cell_text.lines().count())
+                                .max(1);
+                            let mut row = Row::new(vec![
                                 Cell::from(marker_cell),
-                                Cell::from(truncate_board_cell(&when, widths.when)),
+                                Cell::from(when_text),
                                 Cell::from(note_cell),
-                                Cell::from(truncate_board_cell(&item_text, widths.item)),
-                                Cell::from(truncate_board_cell(
-                                    &categories_text,
-                                    widths.categories,
-                                )),
-                            ])
+                                Cell::from(item_cell_text),
+                                Cell::from(categories_cell_text),
+                            ]);
+                            if effective_display_mode == BoardDisplayMode::MultiLine {
+                                row = row.height(row_height.min(u16::MAX as usize) as u16);
+                            }
+                            if is_selected {
+                                row = row.style(selected_board_row_style());
+                            }
+                            row
                         })
                         .collect()
                 };
@@ -735,7 +1158,6 @@ impl App {
                             ])
                             .style(Style::default().add_modifier(Modifier::BOLD)),
                         )
-                        .row_highlight_style(selected_row_style())
                         .block(
                             Block::default()
                                 .title(title)
@@ -909,6 +1331,9 @@ impl App {
             }
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            Mode::BoardAddColumnPicker => {
+                format!("Add column> {}", self.board_add_column_input_text().unwrap_or(""))
+            }
             Mode::InspectUnassign => "Select assignment".to_string(),
             Mode::InputPanel => {
                 if let Some(panel) = &self.input_panel {
@@ -960,8 +1385,8 @@ impl App {
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
-                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Sections => "Enter:expand  n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Sections => "Enter:expand  n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
                         ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
                     }
                 } else {
@@ -971,7 +1396,10 @@ impl App {
             Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
             Mode::CategoryDirectEdit => {
-                "type:filter  Up/Down:select  Tab:fill  Enter:assign/create/clear  Esc:cancel"
+                "Tab/Shift-Tab:focus  n/a:add row  x:remove row  Enter:resolve row/create  S:save draft  Esc:cancel draft"
+            }
+            Mode::BoardAddColumnPicker => {
+                "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"
             }
             Mode::ConfirmDelete => "y:confirm delete  n:cancel",
             Mode::FilterInput => "Enter:apply  Esc:cancel",
@@ -1692,8 +2120,15 @@ impl App {
 
         // ── Criteria region ──────────────────────────────────────────────────
         {
+            let display_mode_label = match state.draft.board_display_mode {
+                BoardDisplayMode::SingleLine => "single-line",
+                BoardDisplayMode::MultiLine => "multi-line",
+            };
             let block = Block::default()
-                .title(format!(" VIEW CRITERIA  matches:{} ", state.preview_count))
+                .title(format!(
+                    " VIEW CRITERIA  matches:{}  display:{} ",
+                    state.preview_count, display_mode_label
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_for(ViewEditRegion::Criteria)));
 
@@ -1855,9 +2290,16 @@ impl App {
                             "     columns: {}",
                             section_columns.join(", ")
                         ))));
+                        let mode_label = match section.board_display_mode_override {
+                            None => "inherit".to_string(),
+                            Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
+                            Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
+                        };
                         items.push(ListItem::new(Line::from(format!(
-                            "     children:{}  (e/t:title  f:criteria  c:columns  a:on-insert  r:on-remove  h:children)",
+                            "     children:{}  display:{}  (e/t:title  f:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display)",
                             if section.show_children { "yes" } else { "no" }
+                            ,
+                            mode_label
                         ))));
                     }
                 }

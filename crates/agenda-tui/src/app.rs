@@ -24,7 +24,7 @@ impl App {
                 continue;
             }
 
-            let should_quit = match self.handle_key(key.code, agenda) {
+            let should_quit = match self.handle_key_event(key, agenda) {
                 Ok(value) => value,
                 Err(err) => {
                     self.mode = Mode::Normal;
