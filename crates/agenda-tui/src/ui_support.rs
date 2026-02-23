@@ -11,6 +11,7 @@ pub(super) fn generated_section(
         on_insert_assign,
         on_remove_unassign,
         show_children: false,
+        board_display_mode_override: None,
     }
 }
 
@@ -127,6 +128,99 @@ pub(super) fn item_assignment_labels(
         .collect();
     labels.sort_by_key(|name| name.to_ascii_lowercase());
     labels
+}
+
+pub(super) const BOARD_MULTI_CATEGORY_LINE_CAP: usize = 8;
+
+pub(super) fn format_category_values_single_line(labels: &[String]) -> String {
+    if labels.is_empty() {
+        "-".to_string()
+    } else {
+        labels.join(", ")
+    }
+}
+
+pub(super) fn format_category_values_multi_line(
+    labels: &[String],
+    max_lines: usize,
+) -> Vec<String> {
+    if labels.is_empty() {
+        return vec!["-".to_string()];
+    }
+    if max_lines == 0 {
+        return vec![];
+    }
+    if labels.len() <= max_lines {
+        return labels.to_vec();
+    }
+    if max_lines == 1 {
+        return vec![format!("+{} more", labels.len())];
+    }
+    let mut lines: Vec<String> = labels.iter().take(max_lines - 1).cloned().collect();
+    lines.push(format!("+{} more", labels.len() - (max_lines - 1)));
+    lines
+}
+
+pub(super) fn wrap_text_for_board_cell(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let current_len = current.chars().count();
+        let word_len = word.chars().count();
+        if current.is_empty() {
+            if word_len <= width {
+                current.push_str(word);
+            } else {
+                let mut chunk = String::new();
+                for ch in word.chars() {
+                    chunk.push(ch);
+                    if chunk.chars().count() >= width {
+                        lines.push(chunk.clone());
+                        chunk.clear();
+                    }
+                }
+                if !chunk.is_empty() {
+                    current.push_str(&chunk);
+                }
+            }
+            continue;
+        }
+        if current_len + 1 + word_len <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current);
+            current = String::new();
+            if word_len <= width {
+                current.push_str(word);
+            } else {
+                let mut chunk = String::new();
+                for ch in word.chars() {
+                    chunk.push(ch);
+                    if chunk.chars().count() >= width {
+                        lines.push(chunk.clone());
+                        chunk.clear();
+                    }
+                }
+                if !chunk.is_empty() {
+                    current.push_str(&chunk);
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,6 +457,10 @@ pub(super) fn selected_row_style() -> Style {
     Style::default().fg(Color::Black).bg(Color::Cyan)
 }
 
+pub(super) fn selected_board_row_style() -> Style {
+    Style::default().bg(Color::DarkGray)
+}
+
 pub(super) fn focused_cell_style() -> Style {
     Style::default()
         .fg(Color::Black)
@@ -471,29 +569,60 @@ pub(super) fn is_reserved_category_name(name: &str) -> bool {
         || name.eq_ignore_ascii_case("Done")
 }
 
-pub(super) fn filter_child_categories(
-    child_ids: &[CategoryId],
+pub(super) fn filter_category_ids_by_query(
+    scope_ids: &[CategoryId],
     categories: &[Category],
     query: &str,
+    empty_query_returns_all: bool,
+    exclude_when: bool,
 ) -> Vec<CategoryId> {
-    if query.is_empty() {
+    let trimmed = query.trim();
+    if trimmed.is_empty() && !empty_query_returns_all {
         return Vec::new();
     }
-    let query_lower = query.to_ascii_lowercase();
-    child_ids
+    let query_lower = trimmed.to_ascii_lowercase();
+    scope_ids
         .iter()
         .filter(|id| {
             categories
                 .iter()
                 .find(|c| c.id == **id)
                 .map(|c| {
-                    !c.name.eq_ignore_ascii_case("When")
-                        && c.name.to_ascii_lowercase().contains(&query_lower)
+                    if exclude_when && c.name.eq_ignore_ascii_case("When") {
+                        return false;
+                    }
+                    trimmed.is_empty() || c.name.to_ascii_lowercase().contains(&query_lower)
                 })
                 .unwrap_or(false)
         })
         .cloned()
         .collect()
+}
+
+pub(super) fn exact_category_name_match_in_scope(
+    scope_ids: &[CategoryId],
+    categories: &[Category],
+    name: &str,
+) -> Option<CategoryId> {
+    let target_name = name.trim();
+    if target_name.is_empty() {
+        return None;
+    }
+    scope_ids.iter().copied().find(|id| {
+        categories
+            .iter()
+            .find(|c| c.id == *id)
+            .map(|c| c.name.eq_ignore_ascii_case(target_name))
+            .unwrap_or(false)
+    })
+}
+
+pub(super) fn filter_child_categories(
+    child_ids: &[CategoryId],
+    categories: &[Category],
+    query: &str,
+) -> Vec<CategoryId> {
+    filter_category_ids_by_query(child_ids, categories, query, false, true)
 }
 
 pub(super) fn first_non_reserved_category_index(category_rows: &[CategoryListRow]) -> usize {
@@ -784,5 +913,23 @@ mod tests {
         let result = filter_child_categories(&child_ids, &categories, "m");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], medium.id);
+    }
+
+    #[test]
+    fn format_category_values_multi_line_caps_with_overflow_summary() {
+        let labels = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "D".to_string(),
+        ];
+        let lines = format_category_values_multi_line(&labels, 3);
+        assert_eq!(lines, vec!["A", "B", "+2 more"]);
+    }
+
+    #[test]
+    fn wrap_text_for_board_cell_wraps_on_word_boundaries() {
+        let lines = wrap_text_for_board_cell("alpha beta gamma", 6);
+        assert_eq!(lines, vec!["alpha", "beta", "gamma"]);
     }
 }

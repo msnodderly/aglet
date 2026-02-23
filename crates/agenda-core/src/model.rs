@@ -75,6 +75,15 @@ pub struct View {
     pub remove_from_view_unassign: HashSet<CategoryId>,
     #[serde(default)]
     pub item_column_label: Option<String>,
+    #[serde(default)]
+    pub board_display_mode: BoardDisplayMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum BoardDisplayMode {
+    #[default]
+    SingleLine,
+    MultiLine,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +95,8 @@ pub struct Section {
     pub on_insert_assign: HashSet<CategoryId>,
     pub on_remove_unassign: HashSet<CategoryId>,
     pub show_children: bool,
+    #[serde(default)]
+    pub board_display_mode_override: Option<BoardDisplayMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -327,6 +338,7 @@ impl View {
             unmatched_label: "Unassigned".to_string(),
             remove_from_view_unassign: HashSet::new(),
             item_column_label: None,
+            board_display_mode: BoardDisplayMode::SingleLine,
         }
     }
 }

@@ -1,6 +1,23 @@
 use crate::*;
 
 impl App {
+    fn cycle_view_board_display_mode(mode: BoardDisplayMode) -> BoardDisplayMode {
+        match mode {
+            BoardDisplayMode::SingleLine => BoardDisplayMode::MultiLine,
+            BoardDisplayMode::MultiLine => BoardDisplayMode::SingleLine,
+        }
+    }
+
+    fn cycle_section_board_display_mode_override(
+        current: Option<BoardDisplayMode>,
+    ) -> Option<BoardDisplayMode> {
+        match current {
+            None => Some(BoardDisplayMode::SingleLine),
+            Some(BoardDisplayMode::SingleLine) => Some(BoardDisplayMode::MultiLine),
+            Some(BoardDisplayMode::MultiLine) => None,
+        }
+    }
+
     /// Open the unified ViewEdit screen for `view`.
     pub(crate) fn open_view_edit(&mut self, view: View) {
         let preview_count = self.preview_count_for_query(&view.criteria);
@@ -402,6 +419,12 @@ impl App {
                     state.picker_index = 0;
                 }
             }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.draft.board_display_mode =
+                        Self::cycle_view_board_display_mode(state.draft.board_display_mode);
+                }
+            }
             _ => {}
         }
         Ok(true)
@@ -438,6 +461,7 @@ impl App {
                         on_insert_assign: HashSet::new(),
                         on_remove_unassign: HashSet::new(),
                         show_children: false,
+        board_display_mode_override: None,
                     };
                     state.draft.sections.push(new_section);
                     state.section_index = state.draft.sections.len() - 1;
@@ -550,6 +574,19 @@ impl App {
                     if let Some(state) = &mut self.view_edit_state {
                         if let Some(section) = state.draft.sections.get_mut(idx) {
                             section.show_children = !section.show_children;
+                            state.section_expanded = Some(idx);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                if idx < len {
+                    if let Some(state) = &mut self.view_edit_state {
+                        if let Some(section) = state.draft.sections.get_mut(idx) {
+                            section.board_display_mode_override =
+                                Self::cycle_section_board_display_mode_override(
+                                    section.board_display_mode_override,
+                                );
                             state.section_expanded = Some(idx);
                         }
                     }
