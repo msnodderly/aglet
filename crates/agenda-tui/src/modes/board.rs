@@ -896,6 +896,297 @@ impl App {
         Ok(())
     }
 
+    fn move_current_board_column_to_index(
+        &mut self,
+        target_board_index: usize,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(slot) = self.current_slot() else {
+            self.status = "No active board slot".to_string();
+            return Ok(());
+        };
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => {
+                self.status = "Cannot reorder columns in unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        let Some(mut view) = self.current_view().cloned() else {
+            return Err("No active view".to_string());
+        };
+        let Some(section) = view.sections.get_mut(section_index) else {
+            return Err("Current section not found".to_string());
+        };
+        if self.column_index > section.columns.len() {
+            self.status = "Current column is out of range".to_string();
+            return Ok(());
+        }
+
+        let max_board_index = section.columns.len();
+        let current_board_index = self.column_index.min(max_board_index);
+        let target_board_index = target_board_index.min(max_board_index);
+        if current_board_index == target_board_index {
+            self.status = "Column is already in that position".to_string();
+            return Ok(());
+        }
+
+        let item_board_index = Self::section_item_column_index(section);
+        let item_label = view
+            .item_column_label
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Item".to_string());
+        let moved_label = if current_board_index == item_board_index {
+            item_label
+        } else {
+            let section_col_index =
+                Self::board_column_to_section_column_index(section, current_board_index)
+                    .ok_or("Current column is out of range".to_string())?;
+            let heading_id = section
+                .columns
+                .get(section_col_index)
+                .map(|c| c.heading)
+                .ok_or("Current column is out of range".to_string())?;
+            self.categories
+                .iter()
+                .find(|c| c.id == heading_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "(deleted)".to_string())
+        };
+
+        let mut board_tokens: Vec<Option<Column>> = (0..=section.columns.len())
+            .map(|board_index| {
+                if board_index == item_board_index {
+                    None
+                } else {
+                    let section_col_index =
+                        Self::board_column_to_section_column_index(section, board_index)
+                            .expect("valid board index");
+                    Some(section.columns[section_col_index].clone())
+                }
+            })
+            .collect();
+        let moved = board_tokens.remove(current_board_index);
+        board_tokens.insert(target_board_index, moved);
+
+        section.columns.clear();
+        let mut new_item_column_index = 0usize;
+        for (idx, token) in board_tokens.into_iter().enumerate() {
+            match token {
+                None => new_item_column_index = idx,
+                Some(col) => section.columns.push(col),
+            }
+        }
+        section.item_column_index = new_item_column_index.min(section.columns.len());
+
+        let view_name = view.name.clone();
+        let selected_item_id = self.selected_item_id();
+        agenda
+            .store()
+            .update_view(&view)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+        if let Some(item_id) = selected_item_id {
+            self.set_item_selection_by_id(item_id);
+        }
+        self.column_index = target_board_index.min(self.current_slot_column_count());
+        self.status = format!(
+            "Moved column '{}' {}",
+            moved_label,
+            if target_board_index < current_board_index {
+                "left"
+            } else {
+                "right"
+            }
+        );
+        Ok(())
+    }
+
+    fn move_current_board_column_relative(
+        &mut self,
+        delta: i32,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(slot) = self.current_slot() else {
+            self.status = "No active board slot".to_string();
+            return Ok(());
+        };
+        let max_board_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => self
+                .current_view()
+                .and_then(|v| v.sections.get(section_index))
+                .map(|s| s.columns.len())
+                .unwrap_or(0),
+            SlotContext::Unmatched => {
+                self.status = "Cannot reorder columns in unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        let target =
+            next_index_clamped(self.column_index, max_board_index.saturating_add(1), delta);
+        self.move_current_board_column_to_index(target, agenda)
+    }
+
+    fn move_current_board_column_to_edge(
+        &mut self,
+        rightmost: bool,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(slot) = self.current_slot() else {
+            self.status = "No active board slot".to_string();
+            return Ok(());
+        };
+        let max_board_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => self
+                .current_view()
+                .and_then(|v| v.sections.get(section_index))
+                .map(|s| s.columns.len())
+                .unwrap_or(0),
+            SlotContext::Unmatched => {
+                self.status = "Cannot reorder columns in unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        self.move_current_board_column_to_index(if rightmost { max_board_index } else { 0 }, agenda)
+    }
+
+    fn open_remove_current_board_column_confirm(&mut self) {
+        let Some(slot) = self.current_slot() else {
+            self.status = "No active board slot".to_string();
+            return;
+        };
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => {
+                self.status = "Cannot remove columns from unmatched lane".to_string();
+                return;
+            }
+        };
+        let Some(view) = self.current_view() else {
+            self.status = "No active view".to_string();
+            return;
+        };
+        let Some(section) = view.sections.get(section_index) else {
+            self.status = "Current section not found".to_string();
+            return;
+        };
+        let item_board_index = Self::section_item_column_index(section);
+        if self.column_index == item_board_index {
+            self.status = "Cannot delete Item column (move it with H/L or gH/gL)".to_string();
+            return;
+        }
+        let Some(section_column_index) =
+            Self::board_column_to_section_column_index(section, self.column_index)
+        else {
+            self.status = "Current column is out of range".to_string();
+            return;
+        };
+        let Some(column) = section.columns.get(section_column_index) else {
+            self.status = "Current column is out of range".to_string();
+            return;
+        };
+        let label = self
+            .categories
+            .iter()
+            .find(|c| c.id == column.heading)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "(deleted)".to_string());
+        self.board_pending_delete_column_label = Some(label.clone());
+        self.mode = Mode::BoardColumnDeleteConfirm;
+        self.status = format!("WARNING: Delete column '{label}' from this section? [Y/n]");
+    }
+
+    fn remove_current_board_column(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(slot) = self.current_slot() else {
+            self.status = "No active board slot".to_string();
+            return Ok(());
+        };
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => {
+                self.status = "Cannot remove columns from unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        let Some(mut view) = self.current_view().cloned() else {
+            return Err("No active view".to_string());
+        };
+        let Some(section) = view.sections.get_mut(section_index) else {
+            return Err("Current section not found".to_string());
+        };
+        let item_board_index = Self::section_item_column_index(section);
+        if self.column_index == item_board_index {
+            self.status = "Cannot delete Item column (move it with H/L or gH/gL)".to_string();
+            return Ok(());
+        }
+        let Some(section_column_index) =
+            Self::board_column_to_section_column_index(section, self.column_index)
+        else {
+            self.status = "Current column is out of range".to_string();
+            return Ok(());
+        };
+
+        let removed_column = section.columns.remove(section_column_index);
+        if section_column_index < item_board_index {
+            section.item_column_index = item_board_index.saturating_sub(1);
+        } else {
+            section.item_column_index = item_board_index.min(section.columns.len());
+        }
+        let removed_label = self
+            .categories
+            .iter()
+            .find(|c| c.id == removed_column.heading)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "(deleted)".to_string());
+
+        let view_name = view.name.clone();
+        let selected_item_id = self.selected_item_id();
+        let old_column_index = self.column_index;
+        agenda
+            .store()
+            .update_view(&view)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+        if let Some(item_id) = selected_item_id {
+            self.set_item_selection_by_id(item_id);
+        }
+        self.column_index = old_column_index.min(self.current_slot_column_count());
+        self.status = format!("Removed column '{}'", removed_label);
+        Ok(())
+    }
+
+    pub(crate) fn handle_board_column_delete_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.board_pending_delete_column_label = None;
+                self.mode = Mode::Normal;
+                self.remove_current_board_column(agenda)?;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                let label = self.board_pending_delete_column_label.take();
+                self.mode = Mode::Normal;
+                self.status = match label {
+                    Some(name) => format!("Delete column '{}' canceled", name),
+                    None => "Delete column canceled".to_string(),
+                };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     fn confirm_inline_create_board_add_column(
         &mut self,
         agenda: &Agenda<'_>,
@@ -1186,6 +1477,31 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        if let Some(prefix) = self.normal_mode_prefix.take() {
+            match (prefix, code) {
+                (NormalModePrefix::G, KeyCode::Char('a')) => {
+                    self.jump_to_all_items_view(agenda)?;
+                    self.status = "Jumped to All Items view".to_string();
+                    return Ok(false);
+                }
+                (NormalModePrefix::G, KeyCode::Char('H')) => {
+                    self.move_current_board_column_to_edge(false, agenda)?;
+                    return Ok(false);
+                }
+                (NormalModePrefix::G, KeyCode::Char('L')) => {
+                    self.move_current_board_column_to_edge(true, agenda)?;
+                    return Ok(false);
+                }
+                (NormalModePrefix::G, KeyCode::Esc) => {
+                    self.status = "Cancelled g-prefix command".to_string();
+                    return Ok(false);
+                }
+                (NormalModePrefix::G, _) => {
+                    self.status = "Unknown g command (use ga, gH, or gL)".to_string();
+                    return Ok(false);
+                }
+            }
+        }
         match code {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Down | KeyCode::Char('j') => {
@@ -1216,6 +1532,20 @@ impl App {
                 } else {
                     self.move_slot_cursor(-1);
                 }
+            }
+            KeyCode::Char('H') => {
+                self.move_current_board_column_relative(-1, agenda)?;
+            }
+            KeyCode::Char('L') => {
+                self.move_current_board_column_relative(1, agenda)?;
+            }
+            KeyCode::Char('+') => {
+                if let Err(err) = self.open_board_add_column_picker(AddColumnDirection::Right) {
+                    self.status = err;
+                }
+            }
+            KeyCode::Char('-') => {
+                self.open_remove_current_board_column_confirm();
             }
             KeyCode::Char('n') => {
                 self.open_input_panel_add_item();
@@ -1286,7 +1616,9 @@ impl App {
             KeyCode::BackTab => self.move_slot_cursor(-1),
             KeyCode::Char('f') => self.toggle_normal_focus(),
             KeyCode::Char('g') => {
-                self.jump_to_all_items_view(agenda)?;
+                self.normal_mode_prefix = Some(NormalModePrefix::G);
+                self.status =
+                    "g-prefix: ga=All Items  gH=move column first  gL=move column last".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -1395,15 +1727,11 @@ impl App {
         if ctrl_only {
             match key.code {
                 KeyCode::Char('l') | KeyCode::Char('L') => {
-                    if let Err(err) = self.open_board_add_column_picker(AddColumnDirection::Left) {
-                        self.status = err;
-                    }
+                    self.status = "Use + to add a column and H/L/gH/gL to move it".to_string();
                     return Ok(false);
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
-                    if let Err(err) = self.open_board_add_column_picker(AddColumnDirection::Right) {
-                        self.status = err;
-                    }
+                    self.status = "Use + to add a column and H/L/gH/gL to move it".to_string();
                     return Ok(false);
                 }
                 _ => {}

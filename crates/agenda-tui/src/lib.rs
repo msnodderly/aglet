@@ -186,6 +186,7 @@ enum Mode {
     ViewCreateCategory,
     ViewDeleteConfirm,
     ConfirmDelete,
+    BoardColumnDeleteConfirm,
     CategoryManager,
     CategoryReparent,
     CategoryDelete,
@@ -286,6 +287,11 @@ struct CategorySuggestState {
 enum AddColumnDirection {
     Left,
     Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NormalModePrefix {
+    G,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -502,6 +508,8 @@ struct App {
     slot_index: usize,
     item_index: usize,
     column_index: usize,
+    normal_mode_prefix: Option<NormalModePrefix>,
+    board_pending_delete_column_label: Option<String>,
 }
 
 impl Default for App {
@@ -548,6 +556,8 @@ impl Default for App {
             slot_index: 0,
             item_index: 0,
             column_index: 0,
+            normal_mode_prefix: None,
+            board_pending_delete_column_label: None,
         }
     }
 }
@@ -575,7 +585,7 @@ mod tests {
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
@@ -1328,7 +1338,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_ctrl_lr_open_add_column_picker_with_expected_insert_indexes() {
+    fn normal_mode_plus_opens_add_column_picker_to_right_of_current_column() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -1369,33 +1379,16 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 2; // Board column 2 => section column index 1 (B)
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-l handled");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("+ handled");
         assert_eq!(app.mode, Mode::BoardAddColumnPicker);
-        let left_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
-        assert_eq!(left_anchor.direction, AddColumnDirection::Left);
-        assert_eq!(left_anchor.insert_index, 1);
-
-        app.handle_key(KeyCode::Esc, &agenda)
-            .expect("cancel picker");
-        assert_eq!(app.mode, Mode::Normal);
-
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r handled");
-        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
-        let right_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
-        assert_eq!(right_anchor.direction, AddColumnDirection::Right);
-        assert_eq!(right_anchor.insert_index, 2);
+        let anchor = app.board_add_column.as_ref().expect("picker state").anchor;
+        assert_eq!(anchor.direction, AddColumnDirection::Right);
+        assert_eq!(anchor.insert_index, 2);
     }
 
     #[test]
-    fn normal_mode_ctrl_lr_open_add_column_picker_from_item_column_any_position() {
+    fn normal_mode_plus_opens_add_column_picker_from_item_column_any_position() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -1436,28 +1429,12 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 2; // item column is rightmost
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-l handled on item");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("+ handled on item");
         assert_eq!(app.mode, Mode::BoardAddColumnPicker);
-        let left_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
-        assert_eq!(left_anchor.direction, AddColumnDirection::Left);
-        assert_eq!(left_anchor.insert_index, 2);
-
-        app.handle_key(KeyCode::Esc, &agenda)
-            .expect("cancel picker");
-
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r handled on item");
-        assert_eq!(app.mode, Mode::BoardAddColumnPicker);
-        let right_anchor = app.board_add_column.as_ref().expect("picker state").anchor;
-        assert_eq!(right_anchor.direction, AddColumnDirection::Right);
-        assert_eq!(right_anchor.insert_index, 2);
+        let anchor = app.board_add_column.as_ref().expect("picker state").anchor;
+        assert_eq!(anchor.direction, AddColumnDirection::Right);
+        assert_eq!(anchor.insert_index, 2);
     }
 
     #[test]
@@ -1521,11 +1498,8 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 2; // item column (rightmost)
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("open picker from item column");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open picker from item column");
         for ch in "Owner".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda)
                 .expect("type in picker");
@@ -1596,11 +1570,8 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 1;
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("open add-column picker");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open add-column picker");
         for ch in "Status".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda)
                 .expect("type in picker");
@@ -1660,11 +1631,8 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 1;
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("open picker");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open picker");
         for ch in "BrandNew".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
@@ -1737,11 +1705,8 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 1;
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("open add-column picker");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open add-column picker");
         for ch in "Test".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
@@ -1816,11 +1781,8 @@ mod tests {
         app.refresh(&store).expect("refresh board");
         app.column_index = 1;
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("open picker");
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open picker");
 
         let suggestions = app.get_board_add_column_suggest_matches();
         let names: Vec<String> = suggestions
@@ -1849,6 +1811,160 @@ mod tests {
             app.status.contains("already exists in this section"),
             "unexpected status: {}",
             app.status
+        );
+    }
+
+    #[test]
+    fn board_column_reorder_visidata_keys_move_item_column() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Category::new("A".to_string());
+        let b = Category::new("B".to_string());
+        for cat in [&a, &b] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: a.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: b.id,
+                    width: 12,
+                },
+            ],
+            item_column_index: 1,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1; // item column
+
+        app.handle_key(KeyCode::Char('H'), &agenda)
+            .expect("Shift+H moves item column left");
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        assert_eq!(saved.sections[0].item_column_index, 0);
+        assert_eq!(app.column_index, 0);
+
+        app.handle_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_key(KeyCode::Char('L'), &agenda)
+            .expect("gL moves item column to end");
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        assert_eq!(saved.sections[0].item_column_index, 2);
+        assert_eq!(app.column_index, 2);
+    }
+
+    #[test]
+    fn board_column_reorder_and_remove_visidata_keys_update_columns() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Category::new("A".to_string());
+        let b = Category::new("B".to_string());
+        let c = Category::new("C".to_string());
+        for cat in [&a, &b, &c] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: a.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: b.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: c.id,
+                    width: 12,
+                },
+            ],
+            item_column_index: 1,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 3; // C in [A, Item, B, C]
+        app.handle_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_key(KeyCode::Char('H'), &agenda)
+            .expect("gH moves category to first");
+
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        let headings: Vec<CategoryId> = saved.sections[0]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
+        assert_eq!(headings, vec![c.id, a.id, b.id]);
+        assert_eq!(saved.sections[0].item_column_index, 2);
+        assert_eq!(app.column_index, 0);
+
+        app.handle_key(KeyCode::Char('-'), &agenda)
+            .expect("- opens delete confirmation");
+        assert_eq!(app.mode, Mode::BoardColumnDeleteConfirm);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("Enter confirms delete (default yes)");
+        assert_eq!(app.mode, Mode::Normal);
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        let headings: Vec<CategoryId> = saved.sections[0]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
+        assert_eq!(headings, vec![a.id, b.id]);
+        assert_eq!(saved.sections[0].item_column_index, 1);
+        assert_eq!(app.column_index, 0);
+
+        app.column_index = 1; // item column in [A, Item, B]
+        app.handle_key(KeyCode::Char('-'), &agenda)
+            .expect("- on item column should be blocked");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.status,
+            "Cannot delete Item column (move it with H/L or gH/gL)"
         );
     }
 
@@ -3005,7 +3121,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_g_jumps_to_all_items_view() {
+    fn normal_mode_ga_jumps_to_all_items_view() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -3025,7 +3141,13 @@ mod tests {
         app.mode = Mode::Normal;
 
         app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g should jump to all items view");
+            .expect("g prefix should start");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("Work Board")
+        );
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("ga should jump to all items view");
         assert_eq!(
             app.current_view().map(|view| view.name.as_str()),
             Some("All Items")

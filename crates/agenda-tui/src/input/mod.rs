@@ -8,7 +8,10 @@ impl App {
     ) -> Result<bool, String> {
         match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
-            _ => self.handle_key(key.code, agenda),
+            _ => {
+                self.normal_mode_prefix = None;
+                self.handle_key(key.code, agenda)
+            }
         }
     }
 
@@ -30,6 +33,9 @@ impl App {
             Mode::ViewCreateCategory => self.handle_view_create_category_key(code, agenda),
             Mode::ViewDeleteConfirm => self.handle_view_delete_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
+            Mode::BoardColumnDeleteConfirm => {
+                self.handle_board_column_delete_confirm_key(code, agenda)
+            }
             Mode::CategoryManager => self.handle_category_manager_key(code, agenda),
             Mode::CategoryReparent => self.handle_category_reparent_key(code, agenda),
             Mode::CategoryDelete => self.handle_category_delete_key(code, agenda),
