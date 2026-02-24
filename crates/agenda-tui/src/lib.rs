@@ -6473,7 +6473,16 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().draft.sections.len(),
             1
         );
-        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().section_expanded,
+            Some(0)
+        );
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+        ));
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm default section title");
 
         app.handle_view_edit_key(KeyCode::Char('f'), &agenda)
             .expect("open section criteria picker");
@@ -6511,6 +6520,8 @@ mod tests {
             .expect("tab");
         app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
             .expect("add section");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm default section title");
         app.handle_view_edit_key(KeyCode::Char('e'), &agenda)
             .expect("start section title edit");
 
@@ -6556,6 +6567,124 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_lowercase_n_inserts_below_current_and_starts_title_edit() {
+        let (store, db_path) = make_test_store_with_view("section-lowercase-n-insert-below");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        view.sections.push(Section {
+            title: "Bravo".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        if let Some(state) = &mut app.view_edit_state {
+            state.section_index = 0;
+        }
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("insert below");
+
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.section_index, 1);
+        assert_eq!(state.draft.sections.len(), 3);
+        assert_eq!(state.draft.sections[0].title, "Alpha");
+        assert_eq!(state.draft.sections[1].title, "New section");
+        assert_eq!(state.draft.sections[2].title, "Bravo");
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_section_uppercase_n_inserts_above_current_and_starts_title_edit() {
+        let (store, db_path) = make_test_store_with_view("section-uppercase-n-insert-above");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        view.sections.push(Section {
+            title: "Bravo".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        if let Some(state) = &mut app.view_edit_state {
+            state.section_index = 1;
+        }
+
+        app.handle_view_edit_key(KeyCode::Char('N'), &agenda)
+            .expect("insert above");
+
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.section_index, 1);
+        assert_eq!(state.draft.sections.len(), 3);
+        assert_eq!(state.draft.sections[0].title, "Alpha");
+        assert_eq!(state.draft.sections[1].title, "New section");
+        assert_eq!(state.draft.sections[2].title, "Bravo");
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
         let (store, db_path) = make_test_store_with_view("section-c-columns");
         let classifier = SubstringClassifier;
@@ -6578,6 +6707,8 @@ mod tests {
             .expect("tab");
         app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
             .expect("add section");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm default section title");
 
         app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
             .expect("open section columns picker");

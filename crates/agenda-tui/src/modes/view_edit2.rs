@@ -58,13 +58,19 @@ impl App {
         }
     }
 
-    fn add_view_edit_section(&mut self) -> Option<usize> {
+    fn insert_view_edit_section(&mut self, insert_index: usize) -> Option<usize> {
         let mut new_index = None;
         if let Some(state) = &mut self.view_edit_state {
-            state.draft.sections.push(Self::view_edit_default_section(
-                Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
-            ));
-            let idx = state.draft.sections.len().saturating_sub(1);
+            let idx = insert_index.min(state.draft.sections.len());
+            state.draft.sections.insert(
+                idx,
+                Self::view_edit_default_section(Self::DEFAULT_VIEW_EDIT_SECTION_TITLE),
+            );
+            if let Some(expanded_index) = state.section_expanded {
+                if expanded_index >= idx {
+                    state.section_expanded = Some(expanded_index + 1);
+                }
+            }
             state.section_index = idx;
             new_index = Some(idx);
         }
@@ -578,10 +584,14 @@ impl App {
                 }
             }
             KeyCode::Char('n') => {
-                self.add_view_edit_section();
+                let insert_index = if len == 0 { 0 } else { (idx + 1).min(len) };
+                if let Some(new_index) = self.insert_view_edit_section(insert_index) {
+                    self.begin_view_edit_section_title_input(new_index);
+                }
             }
             KeyCode::Char('N') => {
-                if let Some(new_index) = self.add_view_edit_section() {
+                let insert_index = if len == 0 { 0 } else { idx.min(len) };
+                if let Some(new_index) = self.insert_view_edit_section(insert_index) {
                     self.begin_view_edit_section_title_input(new_index);
                 }
             }
