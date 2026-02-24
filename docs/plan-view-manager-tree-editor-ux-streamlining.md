@@ -704,6 +704,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [x] Render a field-based details pane for selected row (render-first prototype; existing keybindings still drive edits)
 - [x] Prototype calmer 2-pane `ViewEdit` layout by moving `Sections` left and nesting current criteria/unmatched content on the right
 - [ ] Implement details focus movement (`j/k`)
+- [x] Prototype `j/k` details-row traversal for view-level details (criteria rows + unmatched rows) while preserving legacy region model
 - [ ] Implement section field editing:
   - [ ] Title (inline text)
   - [ ] Criteria (overlay/picker)
