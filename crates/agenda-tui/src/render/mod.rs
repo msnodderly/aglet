@@ -2092,7 +2092,7 @@ impl App {
             });
         frame.render_widget(
             Paragraph::new(
-                "Categories are global. Tree editor scaffold: filter/details panes added; Enter still opens config popup.",
+                "Categories are global. Tree editor: inline create/move plus details-pane note editing.",
             ),
             layout[0],
         );
@@ -2106,10 +2106,21 @@ impl App {
             .constraints([Constraint::Length(3), Constraint::Min(1)])
             .split(body[0]);
 
-        let filter_border = if manager_focus == CategoryManagerFocus::Filter {
-            Color::Cyan
+        let pane_idle = Color::DarkGray;
+        let tree_border = if manager_focus == CategoryManagerFocus::Tree {
+            Color::Yellow
         } else {
-            Color::Blue
+            pane_idle
+        };
+        let filter_border = if manager_focus == CategoryManagerFocus::Filter {
+            Color::LightMagenta
+        } else {
+            pane_idle
+        };
+        let details_border = if manager_focus == CategoryManagerFocus::Details {
+            Color::White
+        } else {
+            pane_idle
         };
         frame.render_widget(
             Paragraph::new(if let Some(prompt) = action_prompt {
@@ -2122,12 +2133,22 @@ impl App {
             .block(
                 Block::default()
                     .title(if self.category_manager_inline_action().is_some() {
-                        "Action"
+                        "> Action"
                     } else {
-                        "Filter"
+                        if manager_focus == CategoryManagerFocus::Filter {
+                            "> Filter"
+                        } else {
+                            "Filter"
+                        }
                     })
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(filter_border)),
+                    .border_style(Style::default().fg(filter_border).add_modifier(
+                        if manager_focus == CategoryManagerFocus::Filter {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        },
+                    )),
             ),
             left[0],
         );
@@ -2218,127 +2239,251 @@ impl App {
             .row_highlight_style(selected_row_style())
             .block(
                 Block::default()
-                    .title(format!("Category Manager{title_suffix}"))
+                    .title(if manager_focus == CategoryManagerFocus::Tree {
+                        format!("> Category Manager{title_suffix}")
+                    } else {
+                        format!("Category Manager{title_suffix}")
+                    })
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green)),
+                    .border_style(Style::default().fg(tree_border).add_modifier(
+                        if manager_focus == CategoryManagerFocus::Tree {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        },
+                    )),
             ),
             table_area,
             &mut state,
         );
         Self::render_vertical_scrollbar(frame, table_area, row_count, state.offset());
-
-        let details_border = if manager_focus == CategoryManagerFocus::Details {
-            Color::Cyan
-        } else {
-            Color::Blue
-        };
-        let selected_summary = if let Some(row) = self.selected_category_row() {
-            let details_focus = self
-                .category_manager_details_focus()
-                .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
-            let note_editing = self.category_manager_details_note_editing();
-            let note_dirty = self.category_manager_details_note_dirty();
-            let note_text = self
-                .category_manager_details_note_text()
-                .unwrap_or_default();
-            let mut parent_name = "(root)".to_string();
-            let mut child_count = 0usize;
-            if let Some(parent_id) = self
-                .categories
-                .iter()
-                .find(|c| c.id == row.id)
-                .map(|c| {
-                    child_count = c.children.len();
-                    c.parent
-                })
-                .flatten()
-            {
-                if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
-                    parent_name = parent.name.clone();
-                }
-            }
-            let focus_prefix = |active: bool| if active { ">" } else { " " };
-            let flag_line = |active: bool, label: &str, on: bool| {
-                Line::from(format!(
-                    "{} {} {}",
-                    focus_prefix(active),
-                    if on { "[x]" } else { "[ ]" },
-                    label
-                ))
-            };
-            let mut lines = vec![
-                Line::from(format!("Selected: {}", row.name)),
-                Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
-                Line::from(format!("Parent: {}", parent_name)),
-                Line::from(if row.is_reserved {
-                    "Reserved: yes (read-only config)".to_string()
-                } else {
-                    "Reserved: no".to_string()
-                }),
-                Line::from(""),
-                Line::from("Flags (Details Pane)"),
-                flag_line(
-                    details_focus == CategoryManagerDetailsFocus::Exclusive,
-                    "Exclusive Children",
-                    row.is_exclusive,
-                ),
-                flag_line(
-                    details_focus == CategoryManagerDetailsFocus::MatchName,
-                    "Match category name",
-                    row.enable_implicit_string,
-                ),
-                flag_line(
-                    details_focus == CategoryManagerDetailsFocus::Actionable,
-                    "Actionable",
-                    row.is_actionable,
-                ),
-                Line::from(""),
-            ];
-            let note_label = if note_editing {
-                "Note (editing)"
-            } else if note_dirty {
-                "Note (unsaved)"
-            } else {
-                "Note"
-            };
-            lines.push(Line::from(format!(
-                "{} {}",
-                focus_prefix(details_focus == CategoryManagerDetailsFocus::Note),
-                note_label
-            )));
-            if note_text.is_empty() {
-                lines.push(Line::from("  (empty)"));
-            } else {
-                for line in note_text.lines() {
-                    lines.push(Line::from(format!("  {}", line)));
-                }
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from(if note_editing {
-                "Tab autosaves, Esc cancels, arrows move cursor in note".to_string()
-            } else {
-                "h/l or arrows: focus field  Enter/Space: toggle/edit note".to_string()
-            }));
-            lines
-        } else {
-            vec![
-                Line::from("No category selected"),
-                Line::from(""),
-                Line::from("Details pane"),
-                Line::from("- Select a category to edit flags and note"),
-            ]
-        };
         frame.render_widget(
-            Paragraph::new(selected_summary)
-                .wrap(Wrap { trim: false })
-                .block(
-                    Block::default()
-                        .title("Details")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(details_border)),
-                ),
+            Block::default()
+                .title(if manager_focus == CategoryManagerFocus::Details {
+                    "> Details"
+                } else {
+                    "Details"
+                })
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(details_border).add_modifier(
+                    if manager_focus == CategoryManagerFocus::Details {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    },
+                )),
             body[1],
         );
+        let details_inner = Rect {
+            x: body[1].x.saturating_add(1),
+            y: body[1].y.saturating_add(1),
+            width: body[1].width.saturating_sub(2),
+            height: body[1].height.saturating_sub(2),
+        };
+        if details_inner.width > 0 && details_inner.height > 0 {
+            if let Some(row) = self.selected_category_row() {
+                let details_focus = self
+                    .category_manager_details_focus()
+                    .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
+                let note_editing = self.category_manager_details_note_editing();
+                let note_dirty = self.category_manager_details_note_dirty();
+                let note_text = self
+                    .category_manager_details_note_text()
+                    .unwrap_or_default();
+
+                let mut parent_name = "(root)".to_string();
+                let mut child_count = 0usize;
+                if let Some(parent_id) = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == row.id)
+                    .map(|c| {
+                        child_count = c.children.len();
+                        c.parent
+                    })
+                    .flatten()
+                {
+                    if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
+                        parent_name = parent.name.clone();
+                    }
+                }
+
+                let details_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(5),
+                        Constraint::Length(6),
+                        Constraint::Min(5),
+                        Constraint::Length(2),
+                    ])
+                    .split(details_inner);
+
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::from(format!("Selected: {}", row.name)),
+                        Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
+                        Line::from(format!("Parent: {}", parent_name)),
+                        Line::from(if row.is_reserved {
+                            "Reserved: yes (read-only config)".to_string()
+                        } else {
+                            "Reserved: no".to_string()
+                        }),
+                    ])
+                    .wrap(Wrap { trim: false }),
+                    details_chunks[0],
+                );
+
+                let focus_prefix = |active: bool| if active { "> " } else { "  " };
+                let flag_line = |active: bool, label: &str, on: bool| {
+                    let style = if active {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(Span::styled(
+                        format!(
+                            "{}{} {}",
+                            focus_prefix(active),
+                            if on { "[x]" } else { "[ ]" },
+                            label
+                        ),
+                        style,
+                    ))
+                };
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::Exclusive,
+                            "Exclusive Children",
+                            row.is_exclusive,
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::MatchName,
+                            "Match category name",
+                            row.enable_implicit_string,
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::Actionable,
+                            "Actionable",
+                            row.is_actionable,
+                        ),
+                    ])
+                    .block(
+                        Block::default()
+                            .title("Flags")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(
+                                if details_focus == CategoryManagerDetailsFocus::Note {
+                                    pane_idle
+                                } else {
+                                    Color::LightCyan
+                                },
+                            )),
+                    ),
+                    details_chunks[1],
+                );
+
+                let note_block_focus = details_focus == CategoryManagerDetailsFocus::Note;
+                let note_title = if note_editing {
+                    "Note (editing)"
+                } else if note_dirty {
+                    "Note (unsaved)"
+                } else {
+                    "Note"
+                };
+                let note_rect = details_chunks[2];
+                let note_inner = Rect {
+                    x: note_rect.x.saturating_add(1),
+                    y: note_rect.y.saturating_add(1),
+                    width: note_rect.width.saturating_sub(2),
+                    height: note_rect.height.saturating_sub(2),
+                };
+                let note_lines: Vec<Line<'_>> = if note_text.is_empty() {
+                    vec![Line::from("")]
+                } else {
+                    note_text.lines().map(Line::from).collect()
+                };
+                let note_cursor_line = self
+                    .category_manager
+                    .as_ref()
+                    .map(|state| state.details_note.line_col().0)
+                    .unwrap_or(0);
+                let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
+                frame.render_widget(
+                    Paragraph::new(note_lines)
+                        .scroll((note_scroll, 0))
+                        .wrap(Wrap { trim: false })
+                        .block(
+                            Block::default()
+                                .title(if note_block_focus {
+                                    format!("> {note_title}")
+                                } else {
+                                    note_title.to_string()
+                                })
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(if note_editing {
+                                    Color::Yellow
+                                } else if note_block_focus {
+                                    Color::LightCyan
+                                } else {
+                                    pane_idle
+                                })),
+                        ),
+                    note_rect,
+                );
+                Self::render_vertical_scrollbar(
+                    frame,
+                    note_rect,
+                    note_text.lines().count().max(1),
+                    note_scroll as usize,
+                );
+
+                frame.render_widget(
+                    Paragraph::new(if note_editing {
+                        "Type to edit  Tab:autosave blur  Esc:cancel"
+                    } else if note_block_focus {
+                        "Type to edit note immediately  Enter/Space also edits"
+                    } else {
+                        "h/l or arrows: focus field  Enter/Space: toggle/edit"
+                    }),
+                    details_chunks[3],
+                );
+
+                if note_editing && note_inner.width > 0 && note_inner.height > 0 {
+                    let (line, col) = self
+                        .category_manager
+                        .as_ref()
+                        .map(|state| state.details_note.line_col())
+                        .unwrap_or((0, 0));
+                    let visible_line = line.saturating_sub(note_scroll as usize);
+                    let max_x = note_inner
+                        .x
+                        .saturating_add(note_inner.width.saturating_sub(1));
+                    let max_y = note_inner
+                        .y
+                        .saturating_add(note_inner.height.saturating_sub(1));
+                    let cursor_x = note_inner
+                        .x
+                        .saturating_add(col.min(u16::MAX as usize) as u16)
+                        .min(max_x);
+                    let cursor_y = note_inner
+                        .y
+                        .saturating_add(visible_line.min(u16::MAX as usize) as u16)
+                        .min(max_y);
+                    frame.set_cursor_position((cursor_x, cursor_y));
+                }
+            } else {
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::from("No category selected"),
+                        Line::from(""),
+                        Line::from("Select a category to edit flags and note."),
+                    ])
+                    .wrap(Wrap { trim: false }),
+                    details_inner,
+                );
+            }
+        }
 
         if show_inline_parent_picker {
             let left_body = Layout::default()
