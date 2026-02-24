@@ -710,10 +710,10 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [x] Prototype view-details row actions (`Enter`/`Space`) for `When include/exclude`, view display mode, and unmatched rows
 - [ ] Implement section field editing:
   - [x] Title (inline text) (available via details row action and section shortcut)
-  - [ ] Criteria (overlay/picker)
-  - [ ] Columns (overlay/picker)
-  - [ ] On insert assign (overlay/picker)
-  - [ ] On remove unassign (overlay/picker)
+  - [x] Criteria (overlay/picker) (details row `Enter`/`Space` + shortcut)
+  - [x] Columns (overlay/picker) (details row `Enter`/`Space` + shortcut)
+  - [x] On insert assign (overlay/picker) (details row `Enter`/`Space` + shortcut)
+  - [x] On remove unassign (overlay/picker) (details row `Enter`/`Space` + shortcut)
   - [x] Show children toggle (details row action + shortcut)
   - [x] Display mode override cycle (details row action + shortcut)
 - [ ] Implement view field editing on `View Properties` row:
