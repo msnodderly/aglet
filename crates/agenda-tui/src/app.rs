@@ -471,25 +471,6 @@ impl App {
         self.selected_category_row().map(|row| row.id)
     }
 
-    pub(crate) fn create_parent_name(&self) -> Option<String> {
-        let parent_id = self.category_create_parent?;
-        self.category_rows
-            .iter()
-            .find(|row| row.id == parent_id)
-            .map(|row| row.name.clone())
-    }
-
-    pub(crate) fn selected_category_parent_index(&self, category_id: CategoryId) -> Option<usize> {
-        let parent_id = self
-            .categories
-            .iter()
-            .find(|category| category.id == category_id)
-            .and_then(|category| category.parent);
-        self.category_reparent_options
-            .iter()
-            .position(|option| option.parent_id == parent_id)
-    }
-
     pub(crate) fn set_category_selection_by_id(&mut self, category_id: CategoryId) {
         if let Some(index) = self
             .category_rows

@@ -60,14 +60,6 @@ impl App {
                 }
             }
         }
-        if self.mode == Mode::CategoryConfig {
-            let popup_area = category_config_popup_area(frame.area());
-            self.render_category_config_editor(frame, popup_area);
-            if let Some((x, y)) = self.category_config_cursor_position(popup_area) {
-                frame.set_cursor_position((x, y));
-            }
-        }
-
         if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
@@ -899,48 +891,6 @@ impl App {
         }
     }
 
-    pub(crate) fn category_config_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
-        if self.mode != Mode::CategoryConfig {
-            return None;
-        }
-        let Some(editor) = &self.category_config_editor else {
-            return None;
-        };
-        if popup_area.width < 3 || popup_area.height < 3 {
-            return None;
-        }
-        let regions = category_config_popup_regions(popup_area)?;
-        if editor.focus != CategoryConfigFocus::Note {
-            return None;
-        }
-        if regions.note_inner.width == 0 || regions.note_inner.height == 0 {
-            return None;
-        }
-
-        let (line, col) = editor.note.line_col();
-        let scroll = list_scroll_for_selected_line(regions.note, Some(line)) as usize;
-        let visible_line = line.saturating_sub(scroll);
-        let max_x = regions
-            .note_inner
-            .x
-            .saturating_add(regions.note_inner.width.saturating_sub(1));
-        let max_y = regions
-            .note_inner
-            .y
-            .saturating_add(regions.note_inner.height.saturating_sub(1));
-        let cursor_x = regions
-            .note_inner
-            .x
-            .saturating_add(col.min(u16::MAX as usize) as u16)
-            .min(max_x);
-        let cursor_y = regions
-            .note_inner
-            .y
-            .saturating_add(visible_line.min(u16::MAX as usize) as u16)
-            .min(max_y);
-        Some((cursor_x, cursor_y))
-    }
-
     pub(crate) fn render_header(&self) -> Paragraph<'_> {
         let view_name = self
             .current_view()
@@ -968,13 +918,7 @@ impl App {
             self.render_view_edit_screen(frame, area);
             return;
         }
-        if matches!(
-            self.mode,
-            Mode::CategoryManager
-                | Mode::CategoryReparent
-                | Mode::CategoryDelete
-                | Mode::CategoryConfig
-        ) {
+        if matches!(self.mode, Mode::CategoryManager) {
             self.render_category_manager(frame, area);
             return;
         }
@@ -1577,15 +1521,6 @@ impl App {
             }
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ViewCreateCategory => "Set include/exclude categories for new view".to_string(),
-            Mode::CategoryReparent => "Select category parent".to_string(),
-            Mode::CategoryDelete => "Delete selected category? y/n".to_string(),
-            Mode::CategoryConfig => {
-                if let Some(editor) = &self.category_config_editor {
-                    format!("Edit category config (focus: {:?})", editor.focus)
-                } else {
-                    "Edit category config".to_string()
-                }
-            }
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::BoardAddColumnPicker => {
@@ -1629,11 +1564,6 @@ impl App {
         match self.mode {
             Mode::CategoryManager => {
                 "j/k:row  Tab:focus  H/L:reparent  J/K:reorder  e/i/a:toggle  Enter/Space:details action  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  S:save note  Esc:cancel/clear/close"
-            }
-            Mode::CategoryReparent => "j/k:select parent  Enter:reparent  Esc:cancel",
-            Mode::CategoryDelete => "y:confirm delete  n:cancel",
-            Mode::CategoryConfig => {
-                "Tab/Shift+Tab:focus  Space:toggle  S:save  e/i/a:quick toggle  Esc:cancel"
             }
             Mode::ViewPicker => {
                 "j/k:select  Enter:switch  N:new  r:rename  x:delete  e:edit  Esc:back"
@@ -2206,7 +2136,7 @@ impl App {
             self.category_manager_inline_action(),
             Some(CategoryInlineAction::ParentPicker { .. })
         );
-        let table_area = if self.mode == Mode::CategoryReparent || show_inline_parent_picker {
+        let table_area = if show_inline_parent_picker {
             let left_body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(60), Constraint::Min(4)])
@@ -2466,169 +2396,7 @@ impl App {
                     parent_state.offset(),
                 );
             }
-        } else if self.mode == Mode::CategoryReparent {
-            let left_body = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(60), Constraint::Min(4)])
-                .split(left[1]);
-            let reparent_items: Vec<ListItem<'_>> = if self.category_reparent_options.is_empty() {
-                vec![ListItem::new(Line::from("(no valid parent options)"))]
-            } else {
-                self.category_reparent_options
-                    .iter()
-                    .map(|option| ListItem::new(Line::from(option.label.clone())))
-                    .collect()
-            };
-            let mut reparent_state = Self::list_state_for(
-                left_body[1],
-                if self.category_reparent_options.is_empty() {
-                    None
-                } else {
-                    Some(
-                        self.category_reparent_index
-                            .min(self.category_reparent_options.len().saturating_sub(1)),
-                    )
-                },
-            );
-            let item_count = reparent_items.len();
-            frame.render_stateful_widget(
-                List::new(reparent_items)
-                    .highlight_symbol("> ")
-                    .highlight_style(selected_row_style())
-                    .block(
-                        Block::default()
-                            .title("Select new parent")
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(Color::Green)),
-                    ),
-                left_body[1],
-                &mut reparent_state,
-            );
-            Self::render_vertical_scrollbar(
-                frame,
-                left_body[1],
-                item_count,
-                reparent_state.offset(),
-            );
         }
-    }
-
-    pub(crate) fn render_category_config_editor(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-        let block = Block::default()
-            .title("Category Config")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green));
-        frame.render_widget(block, area);
-
-        let Some(editor) = &self.category_config_editor else {
-            return;
-        };
-        let Some(regions) = category_config_popup_regions(area) else {
-            return;
-        };
-        frame.render_widget(
-            Paragraph::new(format!("Editing: {}", editor.category_name)),
-            regions.heading,
-        );
-
-        let excl_text = if editor.is_exclusive {
-            "[x] Exclusive Children"
-        } else {
-            "[ ] Exclusive Children"
-        };
-        let noimp_text = if editor.enable_implicit_string {
-            "[x] Match category name"
-        } else {
-            "[ ] Match category name"
-        };
-        let actionable_text = if editor.is_actionable {
-            "[x] Actionable"
-        } else {
-            "[ ] Actionable"
-        };
-        let excl_style = if editor.focus == CategoryConfigFocus::Exclusive {
-            focused_cell_style()
-        } else {
-            Style::default()
-        };
-        let noimp_style = if editor.focus == CategoryConfigFocus::NoImplicit {
-            focused_cell_style()
-        } else {
-            Style::default()
-        };
-        let actionable_style = if editor.focus == CategoryConfigFocus::Actionable {
-            focused_cell_style()
-        } else {
-            Style::default()
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {} ", excl_text), excl_style),
-                Span::raw("  "),
-                Span::styled(format!(" {} ", noimp_text), noimp_style),
-                Span::raw("  "),
-                Span::styled(format!(" {} ", actionable_text), actionable_style),
-            ])),
-            regions.toggles,
-        );
-
-        let note_lines: Vec<Line<'_>> = if editor.note.is_empty() {
-            vec![Line::from("")]
-        } else {
-            editor.note.text().lines().map(Line::from).collect()
-        };
-        let note_border_color = if editor.focus == CategoryConfigFocus::Note {
-            Color::Cyan
-        } else {
-            Color::Blue
-        };
-        let note_title = if editor.focus == CategoryConfigFocus::Note {
-            "Note (> editable)"
-        } else {
-            "Note (editable)"
-        };
-        let note_cursor_line = editor.note.line_col().0;
-        let note_scroll = list_scroll_for_selected_line(regions.note, Some(note_cursor_line));
-        frame.render_widget(
-            Paragraph::new(note_lines)
-                .scroll((note_scroll, 0))
-                .block(
-                    Block::default()
-                        .title(note_title)
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(note_border_color)),
-                )
-                .wrap(Wrap { trim: false }),
-            regions.note,
-        );
-        Self::render_vertical_scrollbar(
-            frame,
-            regions.note,
-            editor.note.text().lines().count().max(1),
-            note_scroll as usize,
-        );
-
-        let save_button = if editor.focus == CategoryConfigFocus::SaveButton {
-            "[> Save <]"
-        } else {
-            "[Save]"
-        };
-        let cancel_button = if editor.focus == CategoryConfigFocus::CancelButton {
-            "[> Cancel <]"
-        } else {
-            "[Cancel]"
-        };
-        frame.render_widget(
-            Paragraph::new(format!("  {}  {}", save_button, cancel_button)),
-            regions.buttons,
-        );
-        frame.render_widget(
-            Paragraph::new(
-                "Tab focus  h/l checkbox focus  Space toggle  Enter saves (except note)  e/i/a quick toggle  Esc cancel",
-            ),
-            regions.help,
-        );
     }
 
     // -------------------------------------------------------------------------

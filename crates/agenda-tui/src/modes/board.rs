@@ -1984,9 +1984,8 @@ impl App {
             KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
                 self.open_category_manager_session();
-                self.category_config_editor = None;
                 self.status =
-                    "Category manager: Enter config popup, e/i/a quick toggles (exclusive/match-name/actionable), n/N create, r rename, p reparent, x delete".to_string();
+                    "Category manager: Enter focuses details pane, e/i/a quick toggles, n/N create, r rename, p reparent, x delete".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, agenda)?;
@@ -2771,9 +2770,6 @@ impl App {
             Some(NameInputContext::ViewCreate) | Some(NameInputContext::ViewRename) => {
                 Mode::ViewPicker
             }
-            Some(NameInputContext::CategoryCreate) | Some(NameInputContext::CategoryRename) => {
-                Mode::CategoryManager
-            }
             None => Mode::Normal,
         }
     }
@@ -2850,68 +2846,6 @@ impl App {
                         self.status = format!("View rename failed: {err}");
                     }
                 }
-            }
-            Some(NameInputContext::CategoryCreate) => {
-                let mut category = Category::new(name.clone());
-                category.enable_implicit_string = true;
-                category.parent = self.category_create_parent;
-                let parent_label = self
-                    .create_parent_name()
-                    .unwrap_or_else(|| "top level".to_string());
-                match agenda.create_category(&category).map_err(|e| e.to_string()) {
-                    Ok(result) => {
-                        self.refresh(agenda.store())?;
-                        self.set_category_selection_by_id(category.id);
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.category_create_parent = None;
-                        self.mode = Mode::CategoryManager;
-                        self.status = format!(
-                            "Created category {name} under {parent_label} (processed_items={}, affected_items={})",
-                            result.processed_items, result.affected_items
-                        );
-                    }
-                    Err(err) => {
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.category_create_parent = None;
-                        self.mode = Mode::CategoryManager;
-                        self.status = format!("Create failed: {err}");
-                    }
-                }
-            }
-            Some(NameInputContext::CategoryRename) => {
-                let Some(category_id) = self.selected_category_id() else {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.mode = Mode::CategoryManager;
-                    self.status = "Category rename failed: no selection".to_string();
-                    return Ok(());
-                };
-                let mut category = agenda
-                    .store()
-                    .get_category(category_id)
-                    .map_err(|e| e.to_string())?;
-                if category.name == name {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.mode = Mode::CategoryManager;
-                    self.status = "Category rename canceled (unchanged)".to_string();
-                    return Ok(());
-                }
-                category.name = name.clone();
-                let result = agenda
-                    .update_category(&category)
-                    .map_err(|e| e.to_string())?;
-                self.refresh(agenda.store())?;
-                self.set_category_selection_by_id(category_id);
-                self.input_panel = None;
-                self.name_input_context = None;
-                self.mode = Mode::CategoryManager;
-                self.status = format!(
-                    "Renamed category to {name} (processed_items={}, affected_items={})",
-                    result.processed_items, result.affected_items
-                );
             }
             None => {
                 self.input_panel = None;

@@ -37,9 +37,6 @@ impl App {
                 self.handle_board_column_delete_confirm_key(code, agenda)
             }
             Mode::CategoryManager => self.handle_category_manager_key(code, agenda),
-            Mode::CategoryReparent => self.handle_category_reparent_key(code, agenda),
-            Mode::CategoryDelete => self.handle_category_delete_key(code, agenda),
-            Mode::CategoryConfig => self.handle_category_config_editor_key(code, agenda),
             Mode::CategoryDirectEdit => self.handle_category_direct_edit_key(code, agenda),
             Mode::CategoryColumnPicker => self.handle_category_column_picker_key(code, agenda),
             Mode::BoardAddColumnPicker => self.handle_board_add_column_key(code, agenda),
@@ -69,65 +66,5 @@ impl App {
         self.selected_category_row()
             .map(|row| row.is_reserved)
             .unwrap_or(false)
-    }
-
-    pub(crate) fn handle_category_config_note_input_key(&mut self, code: KeyCode) -> bool {
-        let Some(editor) = &mut self.category_config_editor else {
-            return false;
-        };
-        editor.note.handle_key(code, true)
-    }
-
-    pub(crate) fn cycle_category_config_focus(&mut self, delta: i32) {
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        editor.focus = match (editor.focus, delta.signum()) {
-            (CategoryConfigFocus::Exclusive, d) if d >= 0 => CategoryConfigFocus::NoImplicit,
-            (CategoryConfigFocus::NoImplicit, d) if d >= 0 => CategoryConfigFocus::Actionable,
-            (CategoryConfigFocus::Actionable, d) if d >= 0 => CategoryConfigFocus::Note,
-            (CategoryConfigFocus::Note, d) if d >= 0 => CategoryConfigFocus::SaveButton,
-            (CategoryConfigFocus::SaveButton, d) if d >= 0 => CategoryConfigFocus::CancelButton,
-            (CategoryConfigFocus::CancelButton, d) if d >= 0 => CategoryConfigFocus::Exclusive,
-            (CategoryConfigFocus::Exclusive, _) => CategoryConfigFocus::CancelButton,
-            (CategoryConfigFocus::NoImplicit, _) => CategoryConfigFocus::Exclusive,
-            (CategoryConfigFocus::Actionable, _) => CategoryConfigFocus::NoImplicit,
-            (CategoryConfigFocus::Note, _) => CategoryConfigFocus::Actionable,
-            (CategoryConfigFocus::SaveButton, _) => CategoryConfigFocus::Note,
-            (CategoryConfigFocus::CancelButton, _) => CategoryConfigFocus::SaveButton,
-        };
-    }
-
-    pub(crate) fn move_category_config_checkbox_focus(&mut self, delta: i32) {
-        let Some(editor) = &mut self.category_config_editor else {
-            return;
-        };
-        editor.focus = match (editor.focus, delta.signum()) {
-            (CategoryConfigFocus::Exclusive, d) if d >= 0 => CategoryConfigFocus::NoImplicit,
-            (CategoryConfigFocus::NoImplicit, d) if d >= 0 => CategoryConfigFocus::Actionable,
-            (CategoryConfigFocus::Actionable, d) if d >= 0 => CategoryConfigFocus::Actionable,
-            (CategoryConfigFocus::Actionable, _) => CategoryConfigFocus::NoImplicit,
-            (CategoryConfigFocus::NoImplicit, _) => CategoryConfigFocus::Exclusive,
-            (CategoryConfigFocus::Exclusive, _) => CategoryConfigFocus::Exclusive,
-            (focus, _) => focus,
-        };
-    }
-
-    pub(crate) fn toggle_category_config_exclusive(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.is_exclusive = !editor.is_exclusive;
-        }
-    }
-
-    pub(crate) fn toggle_category_config_no_implicit(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.enable_implicit_string = !editor.enable_implicit_string;
-        }
-    }
-
-    pub(crate) fn toggle_category_config_actionable(&mut self) {
-        if let Some(editor) = &mut self.category_config_editor {
-            editor.is_actionable = !editor.is_actionable;
-        }
     }
 }

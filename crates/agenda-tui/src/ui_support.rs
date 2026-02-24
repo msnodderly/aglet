@@ -659,10 +659,6 @@ pub(super) fn input_panel_popup_area(area: Rect) -> Rect {
     centered_rect(84, 70, area)
 }
 
-pub(super) fn category_config_popup_area(area: Rect) -> Rect {
-    centered_rect(84, 76, area)
-}
-
 pub(super) struct InputPanelPopupRegions {
     pub(super) heading: Rect,
     pub(super) text: Rect,
@@ -757,55 +753,6 @@ pub(super) fn input_panel_popup_regions(
             })
         }
     }
-}
-
-pub(super) struct CategoryConfigPopupRegions {
-    pub(super) heading: Rect,
-    pub(super) toggles: Rect,
-    pub(super) note: Rect,
-    pub(super) note_inner: Rect,
-    pub(super) buttons: Rect,
-    pub(super) help: Rect,
-}
-
-pub(super) fn category_config_popup_regions(area: Rect) -> Option<CategoryConfigPopupRegions> {
-    if area.width < 3 || area.height < 3 {
-        return None;
-    }
-    let inner = Rect {
-        x: area.x.saturating_add(1),
-        y: area.y.saturating_add(1),
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-    if inner.width == 0 || inner.height < 5 {
-        return None;
-    }
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(4),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-    let note = chunks[2];
-    let note_inner = Rect {
-        x: note.x.saturating_add(1),
-        y: note.y.saturating_add(1),
-        width: note.width.saturating_sub(2),
-        height: note.height.saturating_sub(2),
-    };
-    Some(CategoryConfigPopupRegions {
-        heading: chunks[0],
-        toggles: chunks[1],
-        note,
-        note_inner,
-        buttons: chunks[3],
-        help: chunks[4],
-    })
 }
 
 pub(super) fn add_capture_status_message(
