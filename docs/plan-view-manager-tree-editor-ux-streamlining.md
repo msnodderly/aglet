@@ -540,90 +540,90 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 ### Phase 0: Prep / Decision Lock (No Behavior Changes)
 
-- [ ] Lock product decisions for Phase 1/2 in this doc:
-  - [ ] split architecture (`v` quick picker + separate full-screen editor)
-  - [ ] auto-create first section in TUI create flow
-  - [ ] keep zero-section views valid in core
+- [x] Lock product decisions for Phase 1/2 in this doc:
+  - [x] split architecture (`v` quick picker + separate full-screen editor)
+  - [x] auto-create first section in TUI create flow
+  - [x] keep zero-section views valid in core
 - [ ] Lock key semantics to avoid churn during implementation:
   - [ ] confirm `n`/`N` meaning in current `ViewEdit` Phase 1 (`N` remains add section, `n` alias or no-op decision)
   - [ ] confirm target default first section title (`Main` vs `New section`)
   - [ ] confirm whether delete-last-section remains allowed in TUI
 - [ ] Align docs/spec references:
-  - [ ] ensure this plan remains source-of-truth for the split UX direction
-  - [ ] ensure mockup doc matches plan wording and key semantics
+  - [x] ensure this plan remains source-of-truth for the split UX direction
+  - [x] ensure mockup doc matches plan wording and key semantics
   - [ ] add brief reference note in any active TUI workflow spec if needed
-- [ ] Create implementation branch from `main` (done outside the checklist if already created)
+- [x] Create implementation branch from `main` (done outside the checklist if already created)
 
 ### Phase 1: Immediate UX Wins In Current `ViewEdit`
 
 #### 1.1 Shared Section Creation Helper
 
-- [ ] Add a TUI helper for constructing a default section (name TBD)
-- [ ] Use the helper in current `ViewEdit.Sections` add-section path
+- [x] Add a TUI helper for constructing a default section (name TBD)
+- [x] Use the helper in current `ViewEdit.Sections` add-section path
 - [ ] Cover helper defaults in unit tests (or test through call sites)
 
 #### 1.2 Auto-Create First Section On TUI View Create
 
-- [ ] Update `handle_view_create_category_key(... Enter)` create path to insert a default section before `store.create_view(&view)` when the view has no sections
-- [ ] Ensure behavior is scoped to TUI create flow only (core `View::new()` unchanged)
-- [ ] Verify create path still preserves any criteria selected in `ViewCreateCategory`
+- [x] Update `handle_view_create_category_key(... Enter)` create path to insert a default section before `store.create_view(&view)` when the view has no sections
+- [x] Ensure behavior is scoped to TUI create flow only (core `View::new()` unchanged)
+- [x] Verify create path still preserves any criteria selected in `ViewCreateCategory`
 
 #### 1.3 Open `ViewEdit` Focused On First Section Title Edit After Create
 
-- [ ] Refactor `open_view_edit(view)` initialization so create flow can request a focused-start variant (e.g. `ViewEditOpenIntent`)
+- [x] Refactor `open_view_edit(view)` initialization so create flow can request a focused-start variant (e.g. `ViewEditOpenIntent`)
 - [ ] Add “focus first/new section title edit” intent/state initialization:
-  - [ ] `region = Sections`
-  - [ ] select created section index
-  - [ ] initialize inline title input buffer
-  - [ ] optionally expand the section row
-- [ ] Route successful TUI view create to the focused-start open path
-- [ ] Preserve existing `e`/`V` edit-from-picker behavior (normal open path still lands where expected)
+  - [x] `region = Sections`
+  - [x] select created section index
+  - [x] initialize inline title input buffer
+  - [x] optionally expand the section row
+- [x] Route successful TUI view create to the focused-start open path
+- [x] Preserve existing `e`/`V` edit-from-picker behavior (normal open path still lands where expected)
 
 #### 1.4 Make Section Add Start Inline Title Edit Immediately
 
-- [ ] Update `handle_view_edit_sections_key` so section add enters inline title edit immediately
-- [ ] Reuse shared helper/state setup from create flow (avoid duplicate init logic)
-- [ ] Confirm repeated section adds behave correctly (selection/index/expansion remains stable)
+- [x] Update `handle_view_edit_sections_key` so section add enters inline title edit immediately
+- [x] Reuse shared helper/state setup from create flow (avoid duplicate init logic)
+- [x] Confirm repeated section adds behave correctly (selection/index/expansion remains stable)
 
 #### 1.5 Dirty Tracking + Discard Confirmation In Current `ViewEdit`
 
-- [ ] Add dirty state to `ViewEditState`
+- [x] Add dirty state to `ViewEditState`
 - [ ] Decide dirty implementation approach:
-  - [ ] explicit dirty flag set on mutation
+  - [x] explicit dirty flag set on mutation
   - [ ] or snapshot comparison on exit (document tradeoff if chosen)
 - [ ] Mark dirty on all draft mutations:
-  - [ ] view criteria edits
-  - [ ] bucket edits
-  - [ ] section add/remove/reorder
-  - [ ] section property toggles
-  - [ ] overlay category toggles (criteria/columns/on-insert/on-remove)
-  - [ ] unmatched visibility/label edits
-  - [ ] inline text commits (section title, unmatched label)
-- [ ] Add discard confirmation state/flow for top-level `Esc` when dirty
-- [ ] Ensure `Esc` precedence remains layered:
-  - [ ] inline input cancel first
-  - [ ] overlay close second
-  - [ ] discard confirm third
-  - [ ] editor close last
-- [ ] Ensure save clears dirty state and closes cleanly
+  - [x] view criteria edits
+  - [x] bucket edits
+  - [x] section add/remove/reorder
+  - [x] section property toggles
+  - [x] overlay category toggles (criteria/columns/on-insert/on-remove)
+  - [x] unmatched visibility/label edits
+  - [x] inline text commits (section title, unmatched label)
+- [x] Add discard confirmation state/flow for top-level `Esc` when dirty
+- [x] Ensure `Esc` precedence remains layered:
+  - [x] inline input cancel first
+  - [x] overlay close second
+  - [x] discard confirm third
+  - [x] editor close last
+- [x] Ensure save clears dirty state and closes cleanly
 
 #### 1.6 UX Copy / Footer Hint Updates
 
-- [ ] Update footer hints for `ViewEdit.Sections` to reflect immediate title edit after add
+- [x] Update footer hints for `ViewEdit.Sections` to reflect immediate title edit after add
 - [ ] Update status messages for:
-  - [ ] view create -> first section title edit
-  - [ ] add section -> type title
-  - [ ] discard prompt
-- [ ] Verify hint text matches actual key behavior
+  - [x] view create -> first section title edit
+  - [x] add section -> type title
+  - [x] discard prompt
+- [x] Verify hint text matches actual key behavior
 
 #### 1.7 Phase 1 Testing
 
 - [ ] Add/extend TUI tests for:
-  - [ ] TUI create path auto-adds first section
-  - [ ] create path opens `ViewEdit` focused on first section title inline edit
-  - [ ] `N` in sections starts inline title edit
-  - [ ] `Esc` with dirty draft prompts instead of silent cancel
-  - [ ] save after auto-created section persists expected defaults
+  - [x] TUI create path auto-adds first section
+  - [x] create path opens `ViewEdit` focused on first section title inline edit
+  - [x] `N` in sections starts inline title edit
+  - [x] `Esc` with dirty draft prompts instead of silent cancel
+  - [x] save after auto-created section persists expected defaults
 - [ ] Manual smoke pass:
   - [ ] `v -> N` create view
   - [ ] confirm first section title starts editing
@@ -634,29 +634,29 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 #### 2.1 Create Flow Refactor (Picker -> Editor Direct)
 
-- [ ] Refactor `ViewPicker` create flow to skip `Mode::ViewCreateCategory`
-- [ ] Create view with default draft semantics (including auto first section)
-- [ ] Open editor immediately after name confirmation
-- [ ] Ensure editor receives correct selection/focus state (first section title edit)
+- [x] Refactor `ViewPicker` create flow to skip `Mode::ViewCreateCategory`
+- [x] Create view with default draft semantics (including auto first section)
+- [x] Open editor immediately after name confirmation
+- [x] Ensure editor receives correct selection/focus state (first section title edit)
 
 #### 2.2 Criteria Editing Consolidation
 
-- [ ] Move create-time criteria setup responsibility to editor view-properties/details surface
-- [ ] Remove hidden default criterion behavior from TUI create path
-- [ ] Confirm users can still create an unfiltered view and configure criteria later without surprises
+- [x] Move create-time criteria setup responsibility to editor view-properties/details surface
+- [x] Remove hidden default criterion behavior from TUI create path
+- [x] Confirm users can still create an unfiltered view and configure criteria later without surprises
 
 #### 2.3 Legacy Flow Cleanup
 
-- [ ] Audit whether `Mode::ViewCreateCategory` is still needed anywhere in TUI
+- [x] Audit whether `Mode::ViewCreateCategory` is still needed anywhere in TUI
 - [ ] If still needed temporarily, narrow usage and add comments
-- [ ] If no longer used, remove dead routing/rendering code in a follow-up cleanup commit
+- [x] If no longer used, remove dead routing/rendering code in a follow-up cleanup commit
 
 #### 2.4 Phase 2 Testing
 
 - [ ] Add/extend tests for:
-  - [ ] `N` in view picker no longer routes to `ViewCreateCategory`
-  - [ ] create flow opens editor directly
-  - [ ] no implicit criterion is added unless user edits criteria in editor
+  - [x] `N` in view picker no longer routes to `ViewCreateCategory`
+  - [x] create flow opens editor directly
+  - [x] no implicit criterion is added unless user edits criteria in editor
 - [ ] Manual smoke pass:
   - [ ] create unfiltered view
   - [ ] create filtered view by editing criteria in editor

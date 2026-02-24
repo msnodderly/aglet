@@ -183,7 +183,6 @@ enum Mode {
     FilterInput,
     ViewPicker,
     ViewEdit,
-    ViewCreateCategory,
     ViewDeleteConfirm,
     ConfirmDelete,
     BoardColumnDeleteConfirm,
@@ -563,11 +562,7 @@ struct App {
     views: Vec<View>,
     view_index: usize,
     picker_index: usize,
-    view_pending_name: Option<String>,
     view_pending_edit_name: Option<String>,
-    view_category_index: usize,
-    view_create_include_selection: HashSet<CategoryId>,
-    view_create_exclude_selection: HashSet<CategoryId>,
     view_edit_state: Option<ViewEditState>,
 
     categories: Vec<Category>,
@@ -610,11 +605,7 @@ impl Default for App {
             views: Vec::new(),
             view_index: 0,
             picker_index: 0,
-            view_pending_name: None,
             view_pending_edit_name: None,
-            view_category_index: 0,
-            view_create_include_selection: HashSet::new(),
-            view_create_exclude_selection: HashSet::new(),
             view_edit_state: None,
             categories: Vec::new(),
             category_rows: Vec::new(),
@@ -5935,78 +5926,6 @@ mod tests {
             app.status,
             "Done unavailable: item has no actionable category assignments"
         );
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn view_create_category_picker_supports_include_and_exclude() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-create-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let include_cat = Category::new("ProjectY".to_string());
-        let exclude_cat = Category::new("Someday".to_string());
-        store
-            .create_category(&include_cat)
-            .expect("create include category");
-        store
-            .create_category(&exclude_cat)
-            .expect("create exclude category");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::ViewCreateCategory;
-        app.view_pending_name = Some("Mixed".to_string());
-        app.view_category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.id == include_cat.id)
-            .expect("include row should exist");
-        app.handle_view_create_category_key(KeyCode::Char('+'), &agenda)
-            .expect("include toggle should work");
-
-        app.view_category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.id == exclude_cat.id)
-            .expect("exclude row should exist");
-        app.handle_view_create_category_key(KeyCode::Char('-'), &agenda)
-            .expect("exclude toggle should work");
-
-        app.handle_view_create_category_key(KeyCode::Enter, &agenda)
-            .expect("view create should succeed");
-
-        assert_eq!(app.mode, Mode::ViewEdit, "create should open view edit");
-        let edit_state = app.view_edit_state.as_ref().expect("view edit state");
-        assert_eq!(edit_state.region, ViewEditRegion::Sections);
-        assert_eq!(edit_state.draft.sections.len(), 1);
-        assert!(matches!(
-            edit_state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
-        ));
-
-        let created = store
-            .list_views()
-            .expect("list views")
-            .into_iter()
-            .find(|view| view.name == "Mixed")
-            .expect("created view exists");
-        assert!(created
-            .criteria
-            .and_category_ids()
-            .any(|id| id == include_cat.id));
-        assert!(created
-            .criteria
-            .not_category_ids()
-            .any(|id| id == exclude_cat.id));
-        assert_eq!(created.sections.len(), 1);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
