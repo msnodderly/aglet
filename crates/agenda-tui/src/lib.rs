@@ -5501,6 +5501,43 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_note_focus_lowercase_j_starts_note_edit() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-details-note-j-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("type lowercase j in note");
+        assert!(app.category_manager_details_note_editing());
+        assert_eq!(app.category_manager_details_note_text(), Some("j"));
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("autosave note");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("j"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn category_manager_details_note_edit_esc_autosaves_inline_draft() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

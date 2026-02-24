@@ -331,7 +331,7 @@ impl App {
         }
 
         if (details_focus == CategoryManagerDetailsFocus::Note
-            && matches!(code, KeyCode::Char(c) if c != ' ' && c != 'j' && c != 'k'))
+            && matches!(code, KeyCode::Char(c) if c != ' '))
             || (details_focus == CategoryManagerDetailsFocus::Note
                 && matches!(code, KeyCode::Backspace | KeyCode::Delete))
         {
