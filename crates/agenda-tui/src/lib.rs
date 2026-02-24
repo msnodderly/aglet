@@ -243,6 +243,7 @@ struct ViewEditState {
     draft: View,
     region: ViewEditRegion,
     criteria_index: usize,
+    unmatched_field_index: usize,
     section_index: usize,
     sections_view_row_selected: bool,
     section_expanded: Option<usize>,
@@ -6364,6 +6365,114 @@ mod tests {
             .expect("esc overlay");
         assert_eq!(app.mode, Mode::ViewEdit);
         assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_details_jk_moves_between_criteria_and_unmatched_rows() {
+        let (store, db_path) = make_test_store_with_view("details-jk-view-rows");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Criteria
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("criteria -> unmatched visible");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Unmatched
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            0
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("unmatched visible -> unmatched label");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Unmatched
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            1
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("unmatched label -> unmatched visible");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Unmatched
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            0
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("unmatched visible -> criteria");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Criteria
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_unmatched_enter_uses_selected_details_row() {
+        let (store, db_path) = make_test_store_with_view("unmatched-enter-detail-row");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to sections");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to unmatched");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Unmatched
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            0
+        );
+
+        let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle unmatched visible via enter");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.show_unmatched,
+            !before_visible
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("move to unmatched label row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            1
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("begin unmatched label edit");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().inline_input,
+            Some(super::ViewEditInlineInput::UnmatchedLabel)
+        ));
 
         let _ = std::fs::remove_file(&db_path);
     }

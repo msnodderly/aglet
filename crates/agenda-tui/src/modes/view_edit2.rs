@@ -89,6 +89,7 @@ impl App {
             draft: view,
             region: ViewEditRegion::Criteria,
             criteria_index: 0,
+            unmatched_field_index: 0,
             section_index: 0,
             sections_view_row_selected: false,
             section_expanded: None,
@@ -107,6 +108,36 @@ impl App {
     pub(crate) fn open_view_edit_new_view_focus_first_section(&mut self, view: View) {
         self.open_view_edit(view);
         self.begin_view_edit_section_title_input(0);
+    }
+
+    fn view_details_criteria_row_count(state: &ViewEditState) -> usize {
+        state.draft.criteria.criteria.len().max(1)
+    }
+
+    fn view_details_focus_index(state: &ViewEditState) -> usize {
+        let criteria_rows = Self::view_details_criteria_row_count(state);
+        match state.region {
+            ViewEditRegion::Criteria => state.criteria_index.min(criteria_rows.saturating_sub(1)),
+            ViewEditRegion::Unmatched => criteria_rows + state.unmatched_field_index.min(1),
+            ViewEditRegion::Sections => 0,
+        }
+    }
+
+    fn set_view_details_focus_index(&mut self, new_index: usize) {
+        if let Some(state) = &mut self.view_edit_state {
+            let criteria_rows = Self::view_details_criteria_row_count(state);
+            if new_index < criteria_rows {
+                state.region = ViewEditRegion::Criteria;
+                state.criteria_index = if state.draft.criteria.criteria.is_empty() {
+                    0
+                } else {
+                    new_index.min(state.draft.criteria.criteria.len().saturating_sub(1))
+                };
+            } else {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = (new_index - criteria_rows).min(1);
+            }
+        }
     }
 
     /// Recompute `preview_count` in `view_edit_state` from the current draft criteria.
@@ -476,19 +507,26 @@ impl App {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
-        let len = state.draft.criteria.criteria.len();
         let idx = state.criteria_index;
+        let criteria_rows = Self::view_details_criteria_row_count(state);
 
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.criteria_index = next_index_clamped(idx, len, 1);
-                }
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_details_focus_index)
+                    .unwrap_or(0);
+                let max_index = criteria_rows + 2 - 1;
+                self.set_view_details_focus_index((current + 1).min(max_index));
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.criteria_index = next_index_clamped(idx, len, -1);
-                }
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_details_focus_index)
+                    .unwrap_or(0);
+                self.set_view_details_focus_index(current.saturating_sub(1));
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 let first = first_non_reserved_category_index(&self.category_rows);
@@ -519,6 +557,24 @@ impl App {
             }
             KeyCode::Char(' ') => {
                 // Cycle mode: And → Not → Or → And
+                let mut changed = false;
+                if let Some(state) = &mut self.view_edit_state {
+                    if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx) {
+                        criterion.mode = match criterion.mode {
+                            CriterionMode::And => CriterionMode::Not,
+                            CriterionMode::Not => CriterionMode::Or,
+                            CriterionMode::Or => CriterionMode::And,
+                        };
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.set_view_edit_dirty();
+                    self.refresh_view_edit_preview();
+                }
+            }
+            KeyCode::Enter => {
+                // Match details-pane interaction semantics: Enter acts like Space on criteria rows.
                 let mut changed = false;
                 if let Some(state) = &mut self.view_edit_state {
                     if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx) {
@@ -796,6 +852,26 @@ impl App {
 
     fn handle_view_edit_unmatched_key(&mut self, code: KeyCode) -> Result<bool, String> {
         match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_details_focus_index)
+                    .unwrap_or(0);
+                if let Some(state) = &self.view_edit_state {
+                    let criteria_rows = Self::view_details_criteria_row_count(state);
+                    let max_index = criteria_rows + 2 - 1;
+                    self.set_view_details_focus_index((current + 1).min(max_index));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_details_focus_index)
+                    .unwrap_or(0);
+                self.set_view_details_focus_index(current.saturating_sub(1));
+            }
             KeyCode::Char('t') => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.draft.show_unmatched = !state.draft.show_unmatched;
@@ -806,10 +882,34 @@ impl App {
             KeyCode::Char('l') => {
                 if let Some(state) = &mut self.view_edit_state {
                     let current = state.draft.unmatched_label.clone();
+                    state.unmatched_field_index = 1;
                     state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                     state.inline_buf = text_buffer::TextBuffer::new(current);
                 }
                 self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+            }
+            KeyCode::Enter => {
+                let target = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(|s| s.unmatched_field_index)
+                    .unwrap_or(0);
+                if target == 0 {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.draft.show_unmatched = !state.draft.show_unmatched;
+                        state.dirty = true;
+                        state.discard_confirm = false;
+                    }
+                } else {
+                    if let Some(state) = &mut self.view_edit_state {
+                        let current = state.draft.unmatched_label.clone();
+                        state.unmatched_field_index = 1;
+                        state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
+                        state.inline_buf = text_buffer::TextBuffer::new(current);
+                    }
+                    self.status =
+                        "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+                }
             }
             _ => {}
         }

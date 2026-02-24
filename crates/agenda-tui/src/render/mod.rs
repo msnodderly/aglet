@@ -2622,10 +2622,8 @@ impl App {
 
                 let unmatched_visible_row = items.len();
                 let unmatched_visible_style = if state.region == ViewEditRegion::Unmatched
-                    && !matches!(
-                        state.inline_input,
-                        Some(ViewEditInlineInput::UnmatchedLabel)
-                    ) {
+                    && state.unmatched_field_index == 0
+                {
                     selected_line = Some(unmatched_visible_row);
                     Style::default().add_modifier(Modifier::REVERSED)
                 } else {
@@ -2653,10 +2651,8 @@ impl App {
                     format!("\"{}\"", state.draft.unmatched_label)
                 };
                 let unmatched_label_style = if state.region == ViewEditRegion::Unmatched
-                    && matches!(
-                        state.inline_input,
-                        Some(ViewEditInlineInput::UnmatchedLabel)
-                    ) {
+                    && state.unmatched_field_index == 1
+                {
                     selected_line = Some(unmatched_label_row);
                     Style::default().add_modifier(Modifier::REVERSED)
                 } else {
