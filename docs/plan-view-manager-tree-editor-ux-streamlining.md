@@ -706,6 +706,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [x] Prototype calmer 2-pane `ViewEdit` layout by moving `Sections` left and nesting current criteria/unmatched content on the right
 - [x] Implement details focus movement (`j/k`) (prototype row navigation in right pane for view details + section details)
 - [x] Prototype `j/k` details-row traversal for view-level details (criteria rows + unmatched rows) while preserving legacy region model
+- [x] Prototype view-details row actions (`Enter`/`Space`) for `When include/exclude`, view display mode, and unmatched rows
 - [ ] Implement section field editing:
   - [ ] Title (inline text)
   - [ ] Criteria (overlay/picker)

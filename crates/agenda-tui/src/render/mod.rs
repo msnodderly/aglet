@@ -1573,7 +1573,7 @@ impl App {
                         match state.region {
                             ViewEditRegion::Criteria => "j/k:details row  n:add  x:remove  Space/Enter:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:pane  S:save  Esc:cancel",
                             ViewEditRegion::Sections => "j/k:details field  Enter/Space:field action  e/t/f/c/a/r/h/m shortcuts  Tab:pane  S:save  Esc:cancel",
-                            ViewEditRegion::Unmatched => "j/k:details row  t/Enter:toggle-visible  l/Enter(label):label  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Unmatched => "j/k:details row  Enter/Space:row action  [/]:when-buckets  m:display  t/l:unmatched shortcuts  Tab:pane  S:save  Esc:cancel",
                         }
                     }
                 } else {
@@ -2607,20 +2607,55 @@ impl App {
                         .join(", ")
                 };
 
-                items.push(ListItem::new(Line::from(format!(
-                    "  When include: {when_include}"
-                ))));
-                items.push(ListItem::new(Line::from(format!(
-                    "  When exclude: {when_exclude}"
-                ))));
-                items.push(ListItem::new(Line::from(format!(
-                    "  Display mode: {display_mode_label}"
-                ))));
+                let when_include_row = items.len();
+                let when_include_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 0
+                {
+                    selected_line = Some(when_include_row);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!("  When include: {when_include}")))
+                        .style(when_include_style),
+                );
+
+                let when_exclude_row = items.len();
+                let when_exclude_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 1
+                {
+                    selected_line = Some(when_exclude_row);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!("  When exclude: {when_exclude}")))
+                        .style(when_exclude_style),
+                );
+
+                let display_mode_row = items.len();
+                let display_mode_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 2
+                {
+                    selected_line = Some(display_mode_row);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!("  Display mode: {display_mode_label}")))
+                        .style(display_mode_style),
+                );
 
                 let unmatched_visible_row = items.len();
                 let unmatched_visible_style = if details_focused
                     && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 0
+                    && state.unmatched_field_index == 3
                 {
                     selected_line = Some(unmatched_visible_row);
                     Style::default().add_modifier(Modifier::REVERSED)
@@ -2650,7 +2685,7 @@ impl App {
                 };
                 let unmatched_label_style = if details_focused
                     && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 1
+                    && state.unmatched_field_index == 4
                 {
                     selected_line = Some(unmatched_label_row);
                     Style::default().add_modifier(Modifier::REVERSED)
