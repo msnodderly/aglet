@@ -1569,7 +1569,7 @@ impl App {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
                         ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Sections => "Enter:expand  n:add  N:add+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Sections => "Enter:expand  n:below+name  N:above+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
                         ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
                     }
                 } else {

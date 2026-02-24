@@ -666,9 +666,9 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 #### 3.1 Mode / State Architecture
 
-- [ ] Decide whether to:
+- [x] Decide whether to:
   - [ ] introduce new `Mode::ViewEditor` and new state type
-  - [ ] or refactor `Mode::ViewEdit` into the new shape while preserving entry semantics
+  - [x] or refactor `Mode::ViewEdit` into the new shape while preserving entry semantics
 - [ ] Add `ViewEditorState` (single-view draft state) to `App`
 - [ ] Define supporting enums/types:
   - [ ] `ViewEditorFocus`
@@ -686,6 +686,8 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [ ] Render a dedicated sections list pane with synthetic `View Properties` row
 - [ ] Add selection navigation (`j/k`, arrows)
 - [ ] Implement row mapping and stable selection identity across mutations
+- [x] Add internal section insertion helper with explicit insert index (prep for above/below shortcuts)
+- [x] Prototype Lotus-style `n`/`N` section insertion semantics in current `ViewEdit` (`n` below, `N` above, both start title edit)
 - [ ] Implement section quick actions:
   - [ ] `n` add below current row
   - [ ] `N` add above current row
