@@ -188,9 +188,6 @@ enum Mode {
     ConfirmDelete,
     BoardColumnDeleteConfirm,
     CategoryManager,
-    CategoryReparent,
-    CategoryDelete,
-    CategoryConfig,
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
@@ -203,8 +200,6 @@ enum Mode {
 enum NameInputContext {
     ViewCreate,
     ViewRename,
-    CategoryCreate,
-    CategoryRename,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -256,16 +251,6 @@ struct ViewEditState {
     inline_buf: text_buffer::TextBuffer,
     picker_index: usize,
     preview_count: usize,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CategoryConfigFocus {
-    Exclusive,
-    NoImplicit,
-    Actionable,
-    Note,
-    SaveButton,
-    CancelButton,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -351,17 +336,6 @@ struct CategoryManagerState {
     visible_row_indices: Vec<usize>,
     selected_category_id: Option<CategoryId>,
     inline_action: Option<CategoryInlineAction>,
-}
-
-#[derive(Clone)]
-struct CategoryConfigState {
-    category_id: CategoryId,
-    category_name: String,
-    is_exclusive: bool,
-    is_actionable: bool,
-    enable_implicit_string: bool,
-    note: text_buffer::TextBuffer,
-    focus: CategoryConfigFocus,
 }
 
 #[derive(Clone, Debug)]
@@ -598,10 +572,6 @@ struct App {
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
     category_manager: Option<CategoryManagerState>,
-    category_create_parent: Option<CategoryId>,
-    category_reparent_options: Vec<ReparentOptionRow>,
-    category_reparent_index: usize,
-    category_config_editor: Option<CategoryConfigState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
     category_direct_edit_create_confirm: Option<String>,
@@ -648,10 +618,6 @@ impl Default for App {
             category_rows: Vec::new(),
             category_index: 0,
             category_manager: None,
-            category_create_parent: None,
-            category_reparent_options: Vec::new(),
-            category_reparent_index: 0,
-            category_config_editor: None,
             category_suggest: None,
             category_direct_edit: None,
             category_direct_edit_create_confirm: None,
@@ -4159,8 +4125,6 @@ mod tests {
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Details)
         );
-        assert!(app.category_config_editor.is_none());
-
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
@@ -4194,67 +4158,6 @@ mod tests {
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Details)
         );
-        assert!(app.category_config_editor.is_none());
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn category_config_editor_save_updates_category_flags_and_note() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-category-config-save-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let category = Category::new("Work".to_string());
-        store.create_category(&category).expect("create category");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::CategoryManager;
-        app.category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.id == category.id)
-            .expect("work category row should exist");
-        app.open_category_config_editor(&agenda)
-            .expect("open category config directly");
-        assert_eq!(app.mode, Mode::CategoryConfig);
-
-        app.handle_category_config_editor_key(KeyCode::Char('e'), &agenda)
-            .expect("toggle exclusive");
-        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
-            .expect("focus no implicit");
-        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
-            .expect("focus actionable");
-        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
-            .expect("focus note");
-        for c in "line1".chars() {
-            app.handle_category_config_editor_key(KeyCode::Char(c), &agenda)
-                .expect("type note line1");
-        }
-        app.handle_category_config_editor_key(KeyCode::Enter, &agenda)
-            .expect("insert newline");
-        for c in "line2".chars() {
-            app.handle_category_config_editor_key(KeyCode::Char(c), &agenda)
-                .expect("type note line2");
-        }
-        app.handle_category_config_editor_key(KeyCode::Tab, &agenda)
-            .expect("focus save");
-        app.handle_category_config_editor_key(KeyCode::Enter, &agenda)
-            .expect("save config");
-
-        assert_eq!(app.mode, Mode::CategoryManager);
-        let saved = store.get_category(category.id).expect("load category");
-        assert!(saved.is_exclusive);
-        assert_eq!(saved.note.as_deref(), Some("line1\nline2"));
-
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
