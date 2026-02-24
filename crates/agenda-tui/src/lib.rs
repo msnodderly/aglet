@@ -4836,7 +4836,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_filter_focus_by_tab_does_not_capture_p_command() {
+    fn category_manager_tab_focuses_details_not_filter_and_p_still_opens_parent_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4860,10 +4860,10 @@ mod tests {
         app.set_category_selection_by_id(child.id);
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("focus filter pane");
+            .expect("focus details pane");
         assert_eq!(
             app.category_manager_focus(),
-            Some(CategoryManagerFocus::Filter)
+            Some(CategoryManagerFocus::Details)
         );
         assert!(!app.category_manager.as_ref().expect("state").filter_editing);
 
@@ -5501,14 +5501,13 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_note_edit_cancel_discards_inline_draft() {
+    fn category_manager_details_note_edit_esc_autosaves_inline_draft() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-details-note-cancel-{nanos}.ag"
-        ));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-details-note-esc-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -5532,14 +5531,17 @@ mod tests {
         assert!(app.category_manager_details_note_dirty());
 
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("cancel note edit");
+            .expect("autosave note edit on esc");
 
         let loaded = store.get_category(category.id).expect("load category");
-        assert_eq!(loaded.note.as_deref(), Some("seed"));
-        assert_eq!(app.category_manager_details_note_text(), Some("seed"));
+        assert_eq!(loaded.note.as_deref(), Some("seed!"));
+        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
         assert!(!app.category_manager_details_note_editing());
         assert!(!app.category_manager_details_note_dirty());
-        assert!(app.status.contains("Canceled category note edits"));
+        assert!(
+            !app.status.contains("Saved note for Work"),
+            "autosave should be quiet in status line"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -5582,7 +5584,10 @@ mod tests {
             .expect("move selection");
 
         assert_eq!(app.selected_category_id(), Some(beta.id));
-        assert!(app.status.contains("Saved note for Alpha"));
+        assert!(
+            !app.status.contains("Saved note for Alpha"),
+            "autosave on selection change should be quiet"
+        );
         assert_eq!(
             store.get_category(alpha.id).expect("alpha").note.as_deref(),
             Some("x")

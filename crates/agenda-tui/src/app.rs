@@ -717,12 +717,12 @@ impl App {
             return;
         };
         let next = match (current, delta.signum()) {
-            (CategoryManagerFocus::Tree, 1) => CategoryManagerFocus::Filter,
+            (CategoryManagerFocus::Tree, 1) => CategoryManagerFocus::Details,
             (CategoryManagerFocus::Filter, 1) => CategoryManagerFocus::Details,
             (CategoryManagerFocus::Details, 1) => CategoryManagerFocus::Tree,
             (CategoryManagerFocus::Tree, -1) => CategoryManagerFocus::Details,
             (CategoryManagerFocus::Filter, -1) => CategoryManagerFocus::Tree,
-            (CategoryManagerFocus::Details, -1) => CategoryManagerFocus::Filter,
+            (CategoryManagerFocus::Details, -1) => CategoryManagerFocus::Tree,
             _ => current,
         };
         self.set_category_manager_focus(next);
