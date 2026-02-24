@@ -2789,14 +2789,38 @@ impl App {
 
         match self.name_input_context {
             Some(NameInputContext::ViewCreate) => {
-                self.view_pending_name = Some(name.clone());
-                self.view_category_index = first_non_reserved_category_index(&self.category_rows);
-                self.view_create_include_selection.clear();
-                self.view_create_exclude_selection.clear();
-                self.input_panel = None;
-                self.name_input_context = None;
-                self.mode = Mode::ViewCreateCategory;
-                self.status = format!("Create view {name}: + include, - exclude, Enter creates");
+                let mut view = View::new(name.clone());
+                if view.sections.is_empty() {
+                    view.sections.push(Self::view_edit_default_section(
+                        Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
+                    ));
+                }
+
+                match agenda.store().create_view(&view) {
+                    Ok(()) => {
+                        let view_name = view.name.clone();
+                        self.refresh(agenda.store())?;
+                        self.view_pending_name = None;
+                        self.view_create_include_selection.clear();
+                        self.view_create_exclude_selection.clear();
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        if let Some(new_view) =
+                            self.views.iter().find(|v| v.name == view_name).cloned()
+                        {
+                            self.open_view_edit_new_view_focus_first_section(new_view);
+                        } else {
+                            self.mode = Mode::ViewPicker;
+                            self.status = format!("Created view {view_name}");
+                        }
+                    }
+                    Err(err) => {
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("View create failed: {err}");
+                    }
+                }
             }
             Some(NameInputContext::ViewRename) => {
                 let Some(old_name) = self.view_pending_edit_name.clone() else {

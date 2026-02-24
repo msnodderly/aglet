@@ -3663,6 +3663,51 @@ mod tests {
     }
 
     #[test]
+    fn view_create_name_save_opens_view_edit_directly_with_first_section_editing() {
+        let (store, db_path) = make_test_store_with_view("picker-create-direct-editor");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("open create name input");
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
+
+        for ch in "Mixed".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save name input");
+
+        assert_eq!(app.mode, Mode::ViewEdit);
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.region, ViewEditRegion::Sections);
+        assert_eq!(state.draft.name, "Mixed");
+        assert_eq!(state.draft.criteria.criteria.len(), 0);
+        assert_eq!(state.draft.sections.len(), 1);
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+        ));
+
+        let created = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Mixed")
+            .expect("created view");
+        assert_eq!(created.criteria.criteria.len(), 0);
+        assert_eq!(created.sections.len(), 1);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_navigation_keys_do_not_request_app_quit() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
