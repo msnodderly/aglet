@@ -1576,7 +1576,7 @@ impl App {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
                         ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Sections => "Enter:expand  n:add  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
+                        ViewEditRegion::Sections => "Enter:expand  n:add  N:add+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
                         ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
                     }
                 } else {
@@ -2904,6 +2904,31 @@ impl App {
                     );
                 }
             }
+        }
+
+        // ── Discard confirmation overlay ──────────────────────────────────────
+        if state.discard_confirm {
+            let w = area.width.min(48);
+            let h = 5;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Discard view edits?"),
+                    Line::from(""),
+                    Line::from("y: discard   n/Esc: continue editing"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Confirm ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
         }
     }
 }

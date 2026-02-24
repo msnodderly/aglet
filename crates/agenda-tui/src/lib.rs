@@ -251,6 +251,8 @@ struct ViewEditState {
     inline_buf: text_buffer::TextBuffer,
     picker_index: usize,
     preview_count: usize,
+    dirty: bool,
+    discard_confirm: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -5936,6 +5938,15 @@ mod tests {
         app.handle_view_create_category_key(KeyCode::Enter, &agenda)
             .expect("view create should succeed");
 
+        assert_eq!(app.mode, Mode::ViewEdit, "create should open view edit");
+        let edit_state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(edit_state.region, ViewEditRegion::Sections);
+        assert_eq!(edit_state.draft.sections.len(), 1);
+        assert!(matches!(
+            edit_state.inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+        ));
+
         let created = store
             .list_views()
             .expect("list views")
@@ -5950,6 +5961,7 @@ mod tests {
             .criteria
             .not_category_ids()
             .any(|id| id == exclude_cat.id));
+        assert_eq!(created.sections.len(), 1);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -6264,6 +6276,47 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_esc_on_dirty_prompts_before_cancel() {
+        let (store, db_path) = make_test_store_with_view("esc-dirty-confirm");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
+            .expect("toggle view display mode");
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc prompts");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .map(|s| s.discard_confirm)
+            .unwrap_or(false));
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("decline discard");
+        assert!(app.view_edit_state.is_some());
+        assert!(!app
+            .view_edit_state
+            .as_ref()
+            .map(|s| s.discard_confirm)
+            .unwrap_or(true));
+
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc prompts again");
+        app.handle_view_edit_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm discard");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_inline_input_intercepts_keys_before_region() {
         let (store, db_path) = make_test_store_with_view("inline-precedence");
         let classifier = SubstringClassifier;
@@ -6506,6 +6559,39 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_uppercase_n_adds_and_starts_section_title_edit() {
+        let (store, db_path) = make_test_store_with_view("section-uppercase-n-adds-edit");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        app.handle_view_edit_key(KeyCode::Char('N'), &agenda)
+            .expect("add section and start title edit");
+
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.draft.sections.len(), 1);
+        assert_eq!(state.region, ViewEditRegion::Sections);
+        assert_eq!(state.section_index, 0);
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+        ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
         let (store, db_path) = make_test_store_with_view("section-c-columns");
         let classifier = SubstringClassifier;
@@ -6584,6 +6670,8 @@ mod tests {
         );
         app.handle_view_edit_key(KeyCode::Char('N'), &agenda)
             .expect("N adds section");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm default section title");
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle section display override");
         assert_eq!(

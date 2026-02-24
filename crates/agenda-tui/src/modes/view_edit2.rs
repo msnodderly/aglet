@@ -1,6 +1,8 @@
 use crate::*;
 
 impl App {
+    pub(crate) const DEFAULT_VIEW_EDIT_SECTION_TITLE: &'static str = "New section";
+
     fn cycle_view_board_display_mode(mode: BoardDisplayMode) -> BoardDisplayMode {
         match mode {
             BoardDisplayMode::SingleLine => BoardDisplayMode::MultiLine,
@@ -18,6 +20,60 @@ impl App {
         }
     }
 
+    pub(crate) fn view_edit_default_section(title: &str) -> Section {
+        Section {
+            title: title.to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        }
+    }
+
+    fn view_edit_default_status() -> String {
+        "Edit view: Tab=region  S=save  Esc=cancel".to_string()
+    }
+
+    fn set_view_edit_dirty(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.dirty = true;
+            state.discard_confirm = false;
+        }
+    }
+
+    fn begin_view_edit_section_title_input(&mut self, section_index: usize) {
+        if let Some(state) = &mut self.view_edit_state {
+            if let Some(section) = state.draft.sections.get(section_index) {
+                state.region = ViewEditRegion::Sections;
+                state.section_index = section_index;
+                state.section_expanded = Some(section_index);
+                state.inline_input = Some(ViewEditInlineInput::SectionTitle { section_index });
+                state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
+                state.discard_confirm = false;
+                self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
+            }
+        }
+    }
+
+    fn add_view_edit_section(&mut self) -> Option<usize> {
+        let mut new_index = None;
+        if let Some(state) = &mut self.view_edit_state {
+            state.draft.sections.push(Self::view_edit_default_section(
+                Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
+            ));
+            let idx = state.draft.sections.len().saturating_sub(1);
+            state.section_index = idx;
+            new_index = Some(idx);
+        }
+        if new_index.is_some() {
+            self.set_view_edit_dirty();
+        }
+        new_index
+    }
+
     /// Open the unified ViewEdit screen for `view`.
     pub(crate) fn open_view_edit(&mut self, view: View) {
         let preview_count = self.preview_count_for_query(&view.criteria);
@@ -32,9 +88,16 @@ impl App {
             inline_buf: text_buffer::TextBuffer::empty(),
             picker_index: 0,
             preview_count,
+            dirty: false,
+            discard_confirm: false,
         });
         self.mode = Mode::ViewEdit;
-        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+        self.status = Self::view_edit_default_status();
+    }
+
+    pub(crate) fn open_view_edit_new_view_focus_first_section(&mut self, view: View) {
+        self.open_view_edit(view);
+        self.begin_view_edit_section_title_input(0);
     }
 
     /// Recompute `preview_count` in `view_edit_state` from the current draft criteria.
@@ -52,7 +115,7 @@ impl App {
             state.overlay = None;
             state.picker_index = 0;
         }
-        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+        self.status = Self::view_edit_default_status();
     }
 
     fn toggle_category_picker_selection(
@@ -113,6 +176,7 @@ impl App {
                 }
             }
         }
+        self.set_view_edit_dirty();
         self.refresh_view_edit_preview();
     }
 
@@ -143,9 +207,38 @@ impl App {
             return Ok(false);
         }
 
-        // Layer 3: global and region keys.
+        // Layer 3: discard confirmation intercepts before region/global keys.
+        if self
+            .view_edit_state
+            .as_ref()
+            .map(|s| s.discard_confirm)
+            .unwrap_or(false)
+        {
+            self.handle_view_edit_discard_confirm_key(code)?;
+            return Ok(false);
+        }
+
+        // Layer 4: global and region keys.
         self.handle_view_edit_region_key(code, agenda)?;
         Ok(false)
+    }
+
+    fn handle_view_edit_discard_confirm_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.view_edit_state = None;
+                self.mode = Mode::ViewPicker;
+                self.status = "View edit canceled".to_string();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.discard_confirm = false;
+                }
+                self.status = Self::view_edit_default_status();
+            }
+            _ => {}
+        }
+        Ok(true)
     }
 
     // -------------------------------------------------------------------------
@@ -163,27 +256,34 @@ impl App {
                     state.inline_input = None;
                     state.inline_buf.clear();
                 }
-                self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                self.status = Self::view_edit_default_status();
             }
             KeyCode::Enter => {
                 let Some(state) = &mut self.view_edit_state else {
                     return Ok(false);
                 };
                 let text = state.inline_buf.trimmed().to_string();
+                let mut changed = false;
                 match &inline {
                     Some(ViewEditInlineInput::SectionTitle { section_index }) => {
                         if let Some(section) = state.draft.sections.get_mut(*section_index) {
+                            changed = section.title != text;
                             section.title = text;
                         }
                     }
                     Some(ViewEditInlineInput::UnmatchedLabel) => {
+                        changed = state.draft.unmatched_label != text;
                         state.draft.unmatched_label = text;
                     }
                     None => {}
                 }
                 state.inline_input = None;
                 state.inline_buf.clear();
-                self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                if changed {
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+                self.status = Self::view_edit_default_status();
             }
             _ => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -258,6 +358,7 @@ impl App {
                                         }
                                     }
                                 }
+                                self.set_view_edit_dirty();
                                 self.refresh_view_edit_preview();
                             }
                         }
@@ -265,7 +366,7 @@ impl App {
                             state.overlay = None;
                             state.picker_index = 0;
                         }
-                        self.status = "Edit view: Tab=region  S=save  Esc=cancel".to_string();
+                        self.status = Self::view_edit_default_status();
                     }
                     _ => {}
                 }
@@ -287,9 +388,21 @@ impl App {
         // Global keys first
         match code {
             KeyCode::Esc => {
-                self.view_edit_state = None;
-                self.mode = Mode::ViewPicker;
-                self.status = "View edit canceled".to_string();
+                let is_dirty = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(|s| s.dirty)
+                    .unwrap_or(false);
+                if is_dirty {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.discard_confirm = true;
+                    }
+                    self.status = "Discard view edits? y/n".to_string();
+                } else {
+                    self.view_edit_state = None;
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View edit canceled".to_string();
+                }
                 return Ok(true);
             }
             KeyCode::Tab => {
@@ -379,6 +492,7 @@ impl App {
                 self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done".to_string();
             }
             KeyCode::Char('x') => {
+                let mut changed = false;
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < state.draft.criteria.criteria.len() {
                         state.draft.criteria.criteria.remove(idx);
@@ -386,12 +500,17 @@ impl App {
                         if state.criteria_index >= new_len && new_len > 0 {
                             state.criteria_index = new_len - 1;
                         }
-                        self.refresh_view_edit_preview();
+                        changed = true;
                     }
+                }
+                if changed {
+                    self.set_view_edit_dirty();
+                    self.refresh_view_edit_preview();
                 }
             }
             KeyCode::Char(' ') => {
                 // Cycle mode: And → Not → Or → And
+                let mut changed = false;
                 if let Some(state) = &mut self.view_edit_state {
                     if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx) {
                         criterion.mode = match criterion.mode {
@@ -399,7 +518,11 @@ impl App {
                             CriterionMode::Not => CriterionMode::Or,
                             CriterionMode::Or => CriterionMode::And,
                         };
+                        changed = true;
                     }
+                }
+                if changed {
+                    self.set_view_edit_dirty();
                     self.refresh_view_edit_preview();
                 }
             }
@@ -423,6 +546,8 @@ impl App {
                 if let Some(state) = &mut self.view_edit_state {
                     state.draft.board_display_mode =
                         Self::cycle_view_board_display_mode(state.draft.board_display_mode);
+                    state.dirty = true;
+                    state.discard_confirm = false;
                 }
             }
             _ => {}
@@ -452,20 +577,12 @@ impl App {
                     state.section_index = next_index_clamped(idx, len, -1);
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    let new_section = Section {
-                        title: "New section".to_string(),
-                        criteria: Query::default(),
-                        columns: Vec::new(),
-                        item_column_index: 0,
-                        on_insert_assign: HashSet::new(),
-                        on_remove_unassign: HashSet::new(),
-                        show_children: false,
-                        board_display_mode_override: None,
-                    };
-                    state.draft.sections.push(new_section);
-                    state.section_index = state.draft.sections.len() - 1;
+            KeyCode::Char('n') => {
+                self.add_view_edit_section();
+            }
+            KeyCode::Char('N') => {
+                if let Some(new_index) = self.add_view_edit_section() {
+                    self.begin_view_edit_section_title_input(new_index);
                 }
             }
             KeyCode::Char('x') => {
@@ -479,6 +596,8 @@ impl App {
                         if state.section_expanded == Some(idx) {
                             state.section_expanded = None;
                         }
+                        state.dirty = true;
+                        state.discard_confirm = false;
                     }
                 }
             }
@@ -487,6 +606,8 @@ impl App {
                     if idx > 0 && idx < state.draft.sections.len() {
                         state.draft.sections.swap(idx, idx - 1);
                         state.section_index = idx - 1;
+                        state.dirty = true;
+                        state.discard_confirm = false;
                     }
                 }
             }
@@ -495,6 +616,8 @@ impl App {
                     if idx + 1 < state.draft.sections.len() {
                         state.draft.sections.swap(idx, idx + 1);
                         state.section_index = idx + 1;
+                        state.dirty = true;
+                        state.discard_confirm = false;
                     }
                 }
             }
@@ -510,16 +633,7 @@ impl App {
                 }
             }
             KeyCode::Char('t') | KeyCode::Char('e') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    if idx < state.draft.sections.len() {
-                        let current = state.draft.sections[idx].title.clone();
-                        state.inline_input =
-                            Some(ViewEditInlineInput::SectionTitle { section_index: idx });
-                        state.inline_buf = text_buffer::TextBuffer::new(current);
-                        state.section_expanded = Some(idx);
-                    }
-                }
-                self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
+                self.begin_view_edit_section_title_input(idx);
             }
             // Expanded section detail keys
             KeyCode::Char('f') => {
@@ -576,6 +690,8 @@ impl App {
                         if let Some(section) = state.draft.sections.get_mut(idx) {
                             section.show_children = !section.show_children;
                             state.section_expanded = Some(idx);
+                            state.dirty = true;
+                            state.discard_confirm = false;
                         }
                     }
                 }
@@ -589,6 +705,8 @@ impl App {
                                     section.board_display_mode_override,
                                 );
                             state.section_expanded = Some(idx);
+                            state.dirty = true;
+                            state.discard_confirm = false;
                         }
                     }
                 }
@@ -607,6 +725,8 @@ impl App {
             KeyCode::Char('t') => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.draft.show_unmatched = !state.draft.show_unmatched;
+                    state.dirty = true;
+                    state.discard_confirm = false;
                 }
             }
             KeyCode::Char('l') => {

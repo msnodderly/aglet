@@ -209,6 +209,11 @@ impl App {
                         view.criteria.set_criterion(CriterionMode::Not, id);
                     }
                 }
+                if view.sections.is_empty() {
+                    view.sections.push(Self::view_edit_default_section(
+                        Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
+                    ));
+                }
 
                 match agenda.store().create_view(&view) {
                     Ok(()) => {
@@ -222,14 +227,14 @@ impl App {
                         if let Some(new_view) =
                             self.views.iter().find(|v| v.name == view_name).cloned()
                         {
-                            self.open_view_edit(new_view);
+                            self.open_view_edit_new_view_focus_first_section(new_view);
                         } else {
                             self.mode = Mode::ViewPicker;
+                            self.status = format!(
+                                "Created view {} (include={}, exclude={})",
+                                view_name, include_count, exclude_count
+                            );
                         }
-                        self.status = format!(
-                            "Created view {} (include={}, exclude={})",
-                            view_name, include_count, exclude_count
-                        );
                     }
                     Err(err) => {
                         self.mode = Mode::ViewPicker;
