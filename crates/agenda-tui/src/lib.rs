@@ -5645,6 +5645,52 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_details_jk_navigates_fields_without_moving_category_selection() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-jk-navigation-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(alpha.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
+
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("details next field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::MatchName)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('k'), &agenda)
+            .expect("details previous field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Exclusive)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn normal_mode_ga_jumps_to_all_items_view() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
