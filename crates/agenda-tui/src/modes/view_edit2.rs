@@ -119,6 +119,11 @@ impl App {
         state.draft.criteria.criteria.len().max(1)
     }
 
+    fn view_details_aux_field_count() -> usize {
+        // when include, when exclude, display mode, unmatched visible, unmatched label
+        5
+    }
+
     fn view_edit_showing_view_details(state: &ViewEditState) -> bool {
         state.region != ViewEditRegion::Sections
             || state.sections_view_row_selected
@@ -129,7 +134,12 @@ impl App {
         let criteria_rows = Self::view_details_criteria_row_count(state);
         match state.region {
             ViewEditRegion::Criteria => state.criteria_index.min(criteria_rows.saturating_sub(1)),
-            ViewEditRegion::Unmatched => criteria_rows + state.unmatched_field_index.min(1),
+            ViewEditRegion::Unmatched => {
+                criteria_rows
+                    + state
+                        .unmatched_field_index
+                        .min(Self::view_details_aux_field_count() - 1)
+            }
             ViewEditRegion::Sections => 0,
         }
     }
@@ -146,7 +156,8 @@ impl App {
                 };
             } else {
                 state.region = ViewEditRegion::Unmatched;
-                state.unmatched_field_index = (new_index - criteria_rows).min(1);
+                state.unmatched_field_index =
+                    (new_index - criteria_rows).min(Self::view_details_aux_field_count() - 1);
             }
         }
     }
@@ -947,7 +958,7 @@ impl App {
                     .unwrap_or(0);
                 if let Some(state) = &self.view_edit_state {
                     let criteria_rows = Self::view_details_criteria_row_count(state);
-                    let max_index = criteria_rows + 2 - 1;
+                    let max_index = criteria_rows + Self::view_details_aux_field_count() - 1;
                     self.set_view_details_focus_index((current + 1).min(max_index));
                 }
             }
@@ -961,6 +972,7 @@ impl App {
             }
             KeyCode::Char('t') => {
                 if let Some(state) = &mut self.view_edit_state {
+                    state.unmatched_field_index = 3;
                     state.draft.show_unmatched = !state.draft.show_unmatched;
                     state.dirty = true;
                     state.discard_confirm = false;
@@ -969,33 +981,87 @@ impl App {
             KeyCode::Char('l') => {
                 if let Some(state) = &mut self.view_edit_state {
                     let current = state.draft.unmatched_label.clone();
-                    state.unmatched_field_index = 1;
+                    state.unmatched_field_index = 4;
                     state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                     state.inline_buf = text_buffer::TextBuffer::new(current);
                 }
                 self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
             }
-            KeyCode::Enter => {
+            KeyCode::Char(']') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.unmatched_field_index = 0;
+                    state.overlay = Some(ViewEditOverlay::BucketPicker {
+                        target: BucketEditTarget::ViewVirtualInclude,
+                    });
+                    state.picker_index = 0;
+                }
+            }
+            KeyCode::Char('[') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.unmatched_field_index = 1;
+                    state.overlay = Some(ViewEditOverlay::BucketPicker {
+                        target: BucketEditTarget::ViewVirtualExclude,
+                    });
+                    state.picker_index = 0;
+                }
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.unmatched_field_index = 2;
+                    state.draft.board_display_mode =
+                        Self::cycle_view_board_display_mode(state.draft.board_display_mode);
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
                 let target = self
                     .view_edit_state
                     .as_ref()
                     .map(|s| s.unmatched_field_index)
                     .unwrap_or(0);
-                if target == 0 {
-                    if let Some(state) = &mut self.view_edit_state {
-                        state.draft.show_unmatched = !state.draft.show_unmatched;
-                        state.dirty = true;
-                        state.discard_confirm = false;
+                match target {
+                    0 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.overlay = Some(ViewEditOverlay::BucketPicker {
+                                target: BucketEditTarget::ViewVirtualInclude,
+                            });
+                            state.picker_index = 0;
+                        }
                     }
-                } else {
-                    if let Some(state) = &mut self.view_edit_state {
-                        let current = state.draft.unmatched_label.clone();
-                        state.unmatched_field_index = 1;
-                        state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
-                        state.inline_buf = text_buffer::TextBuffer::new(current);
+                    1 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.overlay = Some(ViewEditOverlay::BucketPicker {
+                                target: BucketEditTarget::ViewVirtualExclude,
+                            });
+                            state.picker_index = 0;
+                        }
                     }
-                    self.status =
-                        "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+                    2 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.board_display_mode =
+                                Self::cycle_view_board_display_mode(state.draft.board_display_mode);
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                    3 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.show_unmatched = !state.draft.show_unmatched;
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                    _ => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            let current = state.draft.unmatched_label.clone();
+                            state.unmatched_field_index = 4;
+                            state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
+                            state.inline_buf = text_buffer::TextBuffer::new(current);
+                        }
+                        self.status =
+                            "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+                    }
                 }
             }
             _ => {}

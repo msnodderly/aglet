@@ -208,24 +208,6 @@ enum ViewEditRegion {
     Unmatched,
 }
 
-impl ViewEditRegion {
-    fn next(self) -> Self {
-        match self {
-            Self::Criteria => Self::Sections,
-            Self::Sections => Self::Unmatched,
-            Self::Unmatched => Self::Criteria,
-        }
-    }
-
-    fn prev(self) -> Self {
-        match self {
-            Self::Criteria => Self::Unmatched,
-            Self::Sections => Self::Criteria,
-            Self::Unmatched => Self::Sections,
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ViewEditPaneFocus {
     Sections,
@@ -6396,7 +6378,7 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_details_jk_moves_between_criteria_and_unmatched_rows() {
+    fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
         let (store, db_path) = make_test_store_with_view("details-jk-view-rows");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6412,7 +6394,7 @@ mod tests {
         );
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("criteria -> unmatched visible");
+            .expect("criteria -> when include");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Unmatched
@@ -6423,7 +6405,7 @@ mod tests {
         );
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("unmatched visible -> unmatched label");
+            .expect("when include -> when exclude");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Unmatched
@@ -6433,19 +6415,61 @@ mod tests {
             1
         );
 
-        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-            .expect("unmatched label -> unmatched visible");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("when exclude -> display mode");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Unmatched
         );
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            2
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("display mode -> unmatched visible");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            3
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("unmatched visible -> unmatched label");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            4
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("unmatched label -> unmatched visible");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            3
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("unmatched visible -> display mode");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            2
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("display mode -> when exclude");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            1
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("when exclude -> when include");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
             0
         );
 
         app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-            .expect("unmatched visible -> criteria");
+            .expect("when include -> criteria");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Criteria
@@ -6466,7 +6490,7 @@ mod tests {
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("to unmatched visible row");
+            .expect("to when include row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Unmatched
@@ -6474,6 +6498,17 @@ mod tests {
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
             0
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when exclude row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to display mode row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to unmatched visible row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            3
         );
 
         let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
@@ -6488,7 +6523,7 @@ mod tests {
             .expect("move to unmatched label row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            1
+            4
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -6497,6 +6532,62 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().inline_input,
             Some(super::ViewEditInlineInput::UnmatchedLabel)
         ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
+        let (store, db_path) = make_test_store_with_view("view-details-enter-actions");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when include row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            0
+        );
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open when include picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::BucketPicker {
+                target: super::BucketEditTarget::ViewVirtualInclude
+            })
+        ));
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close bucket picker");
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when exclude row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to display mode row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            2
+        );
+        let before = app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .board_display_mode;
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle display mode via details row");
+        assert_ne!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .draft
+                .board_display_mode,
+            before
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
