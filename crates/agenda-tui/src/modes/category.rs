@@ -339,20 +339,56 @@ impl App {
             return Ok(false);
         }
 
+        if details_focus == CategoryManagerDetailsFocus::Note
+            && matches!(code, KeyCode::Char(c) if c != ' ')
+            || (details_focus == CategoryManagerDetailsFocus::Note
+                && matches!(code, KeyCode::Backspace | KeyCode::Delete))
+        {
+            self.start_category_manager_details_note_edit();
+            if self.category_manager_details_note_editing() {
+                if let Some(buf) = self.category_manager_details_note_edit_mut() {
+                    if buf.handle_key(code, true) {
+                        self.recompute_category_manager_details_note_dirty();
+                    }
+                }
+                return Ok(true);
+            }
+        }
+
         match code {
             KeyCode::Left | KeyCode::Char('h') => {
+                if details_focus == CategoryManagerDetailsFocus::Note
+                    && self.category_manager_details_note_dirty()
+                {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.cycle_category_manager_details_focus(-1);
                 return Ok(true);
             }
             KeyCode::Right | KeyCode::Char('l') => {
+                if details_focus == CategoryManagerDetailsFocus::Note
+                    && self.category_manager_details_note_dirty()
+                {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.cycle_category_manager_details_focus(1);
                 return Ok(true);
             }
             KeyCode::Down => {
+                if details_focus == CategoryManagerDetailsFocus::Note
+                    && self.category_manager_details_note_dirty()
+                {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.cycle_category_manager_details_focus(1);
                 return Ok(true);
             }
             KeyCode::Up => {
+                if details_focus == CategoryManagerDetailsFocus::Note
+                    && self.category_manager_details_note_dirty()
+                {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.cycle_category_manager_details_focus(-1);
                 return Ok(true);
             }

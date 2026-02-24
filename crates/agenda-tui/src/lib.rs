@@ -5478,12 +5478,11 @@ mod tests {
         app.set_category_manager_focus(CategoryManagerFocus::Details);
         app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("begin note edit");
         for c in "Ship".chars() {
             app.handle_category_manager_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
+        assert!(app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
             .expect("autosave note on tab");
 
