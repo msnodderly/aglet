@@ -878,21 +878,21 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Phase 6: Cleanup, Mode Deletion, and Documentation
 
-- [ ] Remove obsolete category manager state fields from `App` (after full cutover)
-  - [ ] `category_create_parent`
-  - [ ] `category_reparent_options`
-  - [ ] `category_reparent_index`
-  - [ ] `category_config_editor`
-  - [ ] any category-manager-only compatibility leftovers
-- [ ] Retire superseded modes (if fully replaced)
-  - [ ] `Mode::CategoryReparent`
-  - [ ] `Mode::CategoryDelete`
-  - [ ] `Mode::CategoryConfig`
-  - [ ] remove dead input routing branches
-  - [ ] remove dead renderer branches
-- [ ] Clean up `NameInputContext::{CategoryCreate, CategoryRename}` usage for category manager path
-  - [ ] Keep view-related NameInput contexts intact
-  - [ ] Remove stale status strings referring to popup category create/rename
+- [x] Remove obsolete category manager state fields from `App` (after full cutover)
+  - [x] `category_create_parent`
+  - [x] `category_reparent_options`
+  - [x] `category_reparent_index`
+  - [x] `category_config_editor`
+  - [x] any category-manager-only compatibility leftovers
+- [x] Retire superseded modes (if fully replaced)
+  - [x] `Mode::CategoryReparent`
+  - [x] `Mode::CategoryDelete`
+  - [x] `Mode::CategoryConfig`
+  - [x] remove dead input routing branches
+  - [x] remove dead renderer branches
+- [x] Clean up `NameInputContext::{CategoryCreate, CategoryRename}` usage for category manager path
+  - [x] Keep view-related NameInput contexts intact
+  - [x] Remove stale status strings referring to popup category create/rename
 - [ ] Refactor/cleanup shared helpers
   - [ ] Consolidate inline create confirm helper if duplicated
   - [ ] Consolidate list/filter cursor clamp helpers if duplicated
@@ -907,10 +907,10 @@ This checklist is intentionally detailed and task-oriented so work can be execut
   - [ ] `/Users/mds/src/aglet/docs/test-script-tui-smoke-e2e.md` category manager smoke flows
   - [ ] Any plan/spec docs that mention old keybindings if they are intended to track implementation
 - [ ] Add/refresh final manual smoke script for category tree editor
-- [ ] Run full relevant test suites and fix regressions
-  - [ ] `agenda-core` tests for category move/reorder
-  - [ ] `agenda-tui` tests for category manager
-  - [ ] targeted board/column UX regressions
+- [x] Run full relevant test suites and fix regressions
+  - [x] `agenda-core` tests for category move/reorder
+  - [x] `agenda-tui` tests for category manager
+  - [x] targeted board/column UX regressions
 
 ### Cross-Phase Validation / Tracking Tasks
 
