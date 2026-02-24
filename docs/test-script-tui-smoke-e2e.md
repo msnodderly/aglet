@@ -64,12 +64,16 @@ Inside TUI, run the following checklist.
 
 1. Category manager and structural edits (`c` / `F9`):
 - Press `c`.
-- Press `N`, create `Work`.
-- Select `Work`, press `n`, create `Project X`.
-- Select `Project X`, press `r`, rename to `Project X2`.
-- With `Project X2` selected, press `Enter` to open category config popup.
-- In popup, toggle `exclusive` (`e`) and `match category name` (`i`), add a short note, then save.
-- Press `p`, choose `(root)`, Enter (reparent).
+- Press `N`, type `Work`, `Enter`, `y`.
+- Select `Work`, press `n`, type `Project X`, `Enter`, `y`.
+- Select `Project X`, press `r`, rename to `Project X2`, `Enter`.
+- Press `Tab` to switch to Details pane.
+  - Use `j/k` to move between fields.
+  - Toggle `exclusive` (`e`) and `match category name` (`i`) and verify flags update.
+  - Move focus to `Note`, type a short note directly (no Enter required), then press `Esc` (or `Tab`) to save and leave the note field.
+- Press `Tab` to return to the category tree.
+- Press `p`, choose `(root)`, `Enter` (reparent).
+- Verify `Shift+H/J/K/L` do nothing while Details pane is focused (switch to Details first), then switch back to Tree and verify `H/L/J/K` work there.
 - Press `Esc` (or `F9`) to close manager.
 
 2. View create/edit flow (`v` / `F8` + full editor + manager):
