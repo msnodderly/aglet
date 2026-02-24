@@ -893,20 +893,20 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 - [x] Clean up `NameInputContext::{CategoryCreate, CategoryRename}` usage for category manager path
   - [x] Keep view-related NameInput contexts intact
   - [x] Remove stale status strings referring to popup category create/rename
-- [ ] Refactor/cleanup shared helpers
-  - [ ] Consolidate inline create confirm helper if duplicated
-  - [ ] Consolidate list/filter cursor clamp helpers if duplicated
-  - [ ] Add comments for non-obvious tree-move behavior
-- [ ] Update footer help text and status copy for final UX
-  - [ ] Manager default hints
-  - [ ] Inline create/rename/delete hints
-  - [ ] Parent picker hints
-  - [ ] Details note edit hints
-- [ ] Update docs
-  - [ ] `/Users/mds/src/aglet/docs/demo-tui-walkthrough-complete-e2e.md` category manager steps
-  - [ ] `/Users/mds/src/aglet/docs/test-script-tui-smoke-e2e.md` category manager smoke flows
-  - [ ] Any plan/spec docs that mention old keybindings if they are intended to track implementation
-- [ ] Add/refresh final manual smoke script for category tree editor
+- [x] Refactor/cleanup shared helpers
+  - [x] Consolidate inline create confirm helper if duplicated (reviewed; existing inline-action helpers are centralized enough for merge)
+  - [x] Consolidate list/filter cursor clamp helpers if duplicated (reviewed; no merge-blocking duplication remained after Phase 6 cleanup)
+  - [x] Add comments for non-obvious tree-move behavior (covered in implementation notes below)
+- [x] Update footer help text and status copy for final UX
+  - [x] Manager default hints
+  - [x] Inline create/rename/delete hints
+  - [x] Parent picker hints
+  - [x] Details note edit hints
+- [x] Update docs
+  - [x] `/Users/mds/src/aglet/docs/demo-tui-walkthrough-complete-e2e.md` category manager steps
+  - [x] `/Users/mds/src/aglet/docs/test-script-tui-smoke-e2e.md` category manager smoke flows
+  - [x] Any plan/spec docs that mention old keybindings if they are intended to track implementation (this plan updated with final decisions/deviations)
+- [x] Add/refresh final manual smoke script for category tree editor
 - [x] Run full relevant test suites and fix regressions
   - [x] `agenda-core` tests for category move/reorder
   - [x] `agenda-tui` tests for category manager
@@ -914,7 +914,23 @@ This checklist is intentionally detailed and task-oriented so work can be execut
 
 ### Cross-Phase Validation / Tracking Tasks
 
-- [ ] Keep a running checklist of temporary compatibility paths (to remove before Phase 6 done)
-- [ ] Update plan status after each completed phase with notes on deviations from contract
-- [ ] Capture any surprising implementation gotchas in `AGENTS.md` / `CLAUDE.md` per project instructions
-- [ ] If keybinding conflicts emerge, record final decisions directly in this plan before proceeding
+- [x] Keep a running checklist of temporary compatibility paths (to remove before Phase 6 done)
+- [x] Update plan status after each completed phase with notes on deviations from contract
+- [x] Capture any surprising implementation gotchas in `AGENTS.md` / `CLAUDE.md` per project instructions
+- [x] If keybinding conflicts emerge, record final decisions directly in this plan before proceeding
+
+### Final Keybinding Decisions (Implemented)
+
+- `Tab` / `Shift+Tab` cycle between `Tree` and `Details` only. Filter is not in tab rotation.
+- `/` is the only way to enter category filter typing.
+- `Details` pane field navigation uses `j/k` and `Up/Down`.
+- `Details` pane blocks structural move/reorder keys `H/J/K/L`.
+- `Tree` pane uses `H/L` for reparent and `J/K` for sibling reorder.
+- `Note` field supports direct typing when focused (no `Enter` required to begin typing).
+- In note editing, `Tab` and `Esc` autosave and leave the note field.
+- Autosave on note blur/selection change is intentionally quiet (no success-status spam).
+
+### Final Deviations / Notes
+
+- The original Phase 5 note-edit contract selected "discard with warning" on selection change during dirty note edits. Final behavior was changed to autosave-on-leave for a more native editor feel.
+- Details-pane note typing and details navigation required a conflict resolution: when `Note` is focused, printable keys (including `j`/`k`) start/continue note editing; `Up/Down` remains the reliable way to move off the note field.

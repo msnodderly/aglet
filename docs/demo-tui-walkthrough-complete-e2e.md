@@ -41,13 +41,20 @@ Items:
 ### B. Create category hierarchy in TUI manager
 
 - Press `F9` to open category manager.
-- Press `N`, create `Work`.
-- Press `N`, create `Personal`.
-- Press `N`, create `Sarah`.
-- Select `Work`, press `n`, create `Project Y`.
-- Select `Project Y`, press `n`, create `Frabulator`.
-- Select `Project Y`, press `n`, create `Green field`.
-- Select `Personal`, press `n`, create `Groceries`.
+- Press `N`, type `Work`, press `Enter`, then `y` to confirm.
+- Press `N`, type `Personal`, press `Enter`, then `y` to confirm.
+- Press `N`, type `Sarah`, press `Enter`, then `y` to confirm.
+- Select `Work`, press `n`, type `Project Y`, press `Enter`, then `y`.
+- Select `Project Y`, press `n`, type `Frabulator`, press `Enter`, then `y`.
+- Select `Project Y`, press `n`, type `Green field`, press `Enter`, then `y`.
+- Select `Personal`, press `n`, type `Groceries`, press `Enter`, then `y`.
+- Optional structure check:
+  - With a child selected, use `H/L` to outdent/indent.
+  - Press `p` for parent picker; use `/` to filter parent list if needed.
+- Optional details check:
+  - Press `Tab` to switch to Details pane.
+  - Use `j/k` to move between flags/note.
+  - Type directly in Note (no need to press Enter first); `Tab` or `Esc` saves and leaves note.
 - Press `F9` to close category manager.
 
 ### C. Perform recovery-relevant mutations

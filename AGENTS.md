@@ -143,3 +143,16 @@ bottom of each phase section** before assuming the spec describes current code:
 When writing TUI code, check `lib.rs` for the actual struct definitions rather
 than trusting the spec shapes verbatim. File a feature request if you find a
 gap that matters.
+
+## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
+
+In the rewritten category manager (`c` / `F9`), the Details pane uses `j/k` for
+field navigation. The Note field also supports direct typing without pressing
+`Enter` first, which creates a keybinding conflict for lowercase `j`/`k`.
+
+Current implementation behavior (intentional):
+- When the Note field is focused, printable keys (including `j` and `k`) start
+  note editing and type into the note.
+- Use `Up/Down` to move away from the Note field without typing.
+- `H/J/K/L` structural move/reorder keys are disabled while the Details pane is
+  focused, and only work when the Tree pane is focused.
