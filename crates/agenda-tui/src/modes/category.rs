@@ -217,7 +217,7 @@ impl App {
         self.set_category_manager_focus(CategoryManagerFocus::Details);
         self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
         self.set_category_manager_details_note_editing(true);
-        self.status = "Edit category note: type text, S save, Esc cancel".to_string();
+        self.status = "Edit category note: type text, Tab autosaves, Esc cancels".to_string();
     }
 
     fn cancel_category_manager_details_note_edit(&mut self) {
@@ -281,6 +281,28 @@ impl App {
         Ok(())
     }
 
+    fn autosave_category_manager_details_note_if_dirty(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let prior_focus = self.category_manager_focus();
+        let prior_details_focus = self.category_manager_details_focus();
+        if !self.category_manager_details_note_dirty() {
+            if self.category_manager_details_note_editing() {
+                self.set_category_manager_details_note_editing(false);
+            }
+            return Ok(());
+        }
+        self.save_category_manager_details_note(agenda)?;
+        if let Some(focus) = prior_focus {
+            self.set_category_manager_focus(focus);
+        }
+        if let Some(details_focus) = prior_details_focus {
+            self.set_category_manager_details_focus(details_focus);
+        }
+        Ok(())
+    }
+
     fn handle_category_manager_details_key(
         &mut self,
         code: KeyCode,
@@ -301,12 +323,8 @@ impl App {
                     self.cancel_category_manager_details_note_edit();
                     return Ok(true);
                 }
-                KeyCode::Char('S') => {
-                    self.save_category_manager_details_note(agenda)?;
-                    return Ok(true);
-                }
                 KeyCode::Tab | KeyCode::BackTab => {
-                    self.set_category_manager_details_note_editing(false);
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
                     return Ok(false);
                 }
                 _ => {
@@ -336,10 +354,6 @@ impl App {
             }
             KeyCode::Up => {
                 self.cycle_category_manager_details_focus(-1);
-                return Ok(true);
-            }
-            KeyCode::Char('S') if details_focus == CategoryManagerDetailsFocus::Note => {
-                self.save_category_manager_details_note(agenda)?;
                 return Ok(true);
             }
             KeyCode::Enter | KeyCode::Char(' ') => match details_focus {
@@ -948,10 +962,16 @@ impl App {
         }
         match code {
             KeyCode::Tab => {
+                if self.category_manager_details_note_dirty() {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.set_category_manager_filter_editing(false);
                 self.cycle_category_manager_focus(1);
             }
             KeyCode::BackTab => {
+                if self.category_manager_details_note_dirty() {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.set_category_manager_filter_editing(false);
                 self.cycle_category_manager_focus(-1);
             }
@@ -981,10 +1001,16 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.set_category_manager_filter_editing(false);
+                if self.category_manager_details_note_dirty() {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.move_category_cursor(1)
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.set_category_manager_filter_editing(false);
+                if self.category_manager_details_note_dirty() {
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                }
                 self.move_category_cursor(-1)
             }
             KeyCode::Char('K') => {
