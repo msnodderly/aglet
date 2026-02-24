@@ -217,20 +217,7 @@ impl App {
         self.set_category_manager_focus(CategoryManagerFocus::Details);
         self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
         self.set_category_manager_details_note_editing(true);
-        self.status = "Edit category note: type text, Tab autosaves, Esc cancels".to_string();
-    }
-
-    fn cancel_category_manager_details_note_edit(&mut self) {
-        let had_changes = self.category_manager_details_note_dirty();
-        self.reload_category_manager_details_note_from_selected();
-        self.set_category_manager_focus(CategoryManagerFocus::Details);
-        self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
-        self.set_category_manager_details_note_editing(false);
-        self.status = if had_changes {
-            "Canceled category note edits".to_string()
-        } else {
-            "Exited category note editing".to_string()
-        };
+        self.status = "Edit category note: type text, Tab or Esc saves and leaves note".to_string();
     }
 
     fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
@@ -287,6 +274,7 @@ impl App {
     ) -> Result<(), String> {
         let prior_focus = self.category_manager_focus();
         let prior_details_focus = self.category_manager_details_focus();
+        let prior_status = self.status.clone();
         if !self.category_manager_details_note_dirty() {
             if self.category_manager_details_note_editing() {
                 self.set_category_manager_details_note_editing(false);
@@ -294,6 +282,9 @@ impl App {
             return Ok(());
         }
         self.save_category_manager_details_note(agenda)?;
+        if self.status.starts_with("Saved note for ") || self.status == "Category note unchanged" {
+            self.status = prior_status;
+        }
         if let Some(focus) = prior_focus {
             self.set_category_manager_focus(focus);
         }
@@ -320,7 +311,7 @@ impl App {
         {
             match code {
                 KeyCode::Esc => {
-                    self.cancel_category_manager_details_note_edit();
+                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
                     return Ok(true);
                 }
                 KeyCode::Tab | KeyCode::BackTab => {

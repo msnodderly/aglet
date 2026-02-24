@@ -1563,7 +1563,7 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  Tab:focus  H/L:reparent  J/K:reorder  e/i/a:toggle  Enter/Space:details action  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  Esc:cancel/clear/close"
+                "j/k:row  Tab:switch pane  H/L:reparent  J/K:reorder  e/i/a:toggle  Enter/Space:details action  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  Esc:cancel/clear/close"
             }
             Mode::ViewPicker => {
                 "j/k:select  Enter:switch  N:new  r:rename  x:delete  e:edit  Esc:back"
@@ -2440,9 +2440,7 @@ impl App {
 
                 frame.render_widget(
                     Paragraph::new(if note_editing {
-                        "Type to edit  Tab:autosave blur  Esc:cancel"
-                    } else if note_block_focus {
-                        "Type to edit note immediately  Enter/Space also edits"
+                        "Type to edit  Tab/Esc: save and leave note"
                     } else {
                         "h/l or arrows: focus field  Enter/Space: toggle/edit"
                     }),
