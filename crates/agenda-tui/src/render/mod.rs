@@ -2442,7 +2442,7 @@ impl App {
                     Paragraph::new(if note_editing {
                         "Type to edit  Tab/Esc: save and leave note"
                     } else {
-                        "h/l or arrows: focus field  Enter/Space: toggle/edit"
+                        "j/k or arrows: focus field  Enter/Space: toggle/edit"
                     }),
                     details_chunks[3],
                 );

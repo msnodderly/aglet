@@ -330,8 +330,8 @@ impl App {
             return Ok(false);
         }
 
-        if details_focus == CategoryManagerDetailsFocus::Note
-            && matches!(code, KeyCode::Char(c) if c != ' ')
+        if (details_focus == CategoryManagerDetailsFocus::Note
+            && matches!(code, KeyCode::Char(c) if c != ' ' && c != 'j' && c != 'k'))
             || (details_focus == CategoryManagerDetailsFocus::Note
                 && matches!(code, KeyCode::Backspace | KeyCode::Delete))
         {
@@ -347,7 +347,7 @@ impl App {
         }
 
         match code {
-            KeyCode::Left | KeyCode::Char('h') => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 if details_focus == CategoryManagerDetailsFocus::Note
                     && self.category_manager_details_note_dirty()
                 {
@@ -356,31 +356,13 @@ impl App {
                 self.cycle_category_manager_details_focus(-1);
                 return Ok(true);
             }
-            KeyCode::Right | KeyCode::Char('l') => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 if details_focus == CategoryManagerDetailsFocus::Note
                     && self.category_manager_details_note_dirty()
                 {
                     self.autosave_category_manager_details_note_if_dirty(agenda)?;
                 }
                 self.cycle_category_manager_details_focus(1);
-                return Ok(true);
-            }
-            KeyCode::Down => {
-                if details_focus == CategoryManagerDetailsFocus::Note
-                    && self.category_manager_details_note_dirty()
-                {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
-                self.cycle_category_manager_details_focus(1);
-                return Ok(true);
-            }
-            KeyCode::Up => {
-                if details_focus == CategoryManagerDetailsFocus::Note
-                    && self.category_manager_details_note_dirty()
-                {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
-                self.cycle_category_manager_details_focus(-1);
                 return Ok(true);
             }
             KeyCode::Enter | KeyCode::Char(' ') => match details_focus {
@@ -1076,7 +1058,7 @@ impl App {
             KeyCode::Enter => {
                 self.set_category_manager_focus(CategoryManagerFocus::Details);
                 self.status =
-                    "Details pane focused: use h/l (or arrows) to select field, Enter/Space to edit/toggle"
+                    "Details pane focused: use j/k (or arrows) to select field, Enter/Space to edit/toggle"
                         .to_string();
             }
             KeyCode::Char('x') => {
