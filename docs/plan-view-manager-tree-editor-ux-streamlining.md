@@ -680,6 +680,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
   - [ ] open editor from selected view in picker
   - [ ] open editor in “new view / first section title edit” intent
   - [ ] close editor and return to picker
+- [x] Prototype pane-focused `Tab`/`Shift-Tab` behavior in current `ViewEdit` (`Sections` <-> `Details`) while preserving legacy region state under the hood
 
 #### 3.2 Sections Pane (Left Pane) Implementation
 
@@ -703,7 +704,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 - [x] Render a field-based details pane for selected row (render-first prototype; existing keybindings still drive edits)
 - [x] Prototype calmer 2-pane `ViewEdit` layout by moving `Sections` left and nesting current criteria/unmatched content on the right
-- [ ] Implement details focus movement (`j/k`)
+- [x] Implement details focus movement (`j/k`) (prototype row navigation in right pane for view details + section details)
 - [x] Prototype `j/k` details-row traversal for view-level details (criteria rows + unmatched rows) while preserving legacy region model
 - [ ] Implement section field editing:
   - [ ] Title (inline text)

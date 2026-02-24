@@ -226,6 +226,12 @@ impl ViewEditRegion {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ViewEditPaneFocus {
+    Sections,
+    Details,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum ViewEditOverlay {
     CategoryPicker { target: CategoryEditTarget },
@@ -242,10 +248,12 @@ enum ViewEditInlineInput {
 struct ViewEditState {
     draft: View,
     region: ViewEditRegion,
+    pane_focus: ViewEditPaneFocus,
     criteria_index: usize,
     unmatched_field_index: usize,
     section_index: usize,
     sections_view_row_selected: bool,
+    section_details_field_index: usize,
     section_expanded: Option<usize>,
     overlay: Option<ViewEditOverlay>,
     inline_input: Option<ViewEditInlineInput>,
@@ -648,7 +656,7 @@ mod tests {
         AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
         CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
         CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus,
-        Mode, NameInputContext, ViewEditRegion,
+        Mode, NameInputContext, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -6157,7 +6165,7 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_tab_cycles_regions() {
+    fn view_edit_tab_cycles_panes() {
         let (store, db_path) = make_test_store_with_view("tab-cycle");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6171,33 +6179,45 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Criteria
         );
-
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("tab");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
         );
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
         assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
+        );
+        assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Unmatched
+            ViewEditRegion::Criteria
+        );
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Criteria
         );
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab wraps");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Criteria
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
         );
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn view_edit_shift_tab_cycles_regions_backwards() {
+    fn view_edit_shift_tab_cycles_panes_backwards() {
         let (store, db_path) = make_test_store_with_view("shift-tab-cycle");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6214,8 +6234,8 @@ mod tests {
         app.handle_view_edit_key(KeyCode::BackTab, &agenda)
             .expect("shift-tab");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Unmatched
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
         );
 
         let _ = std::fs::remove_file(&db_path);
@@ -6303,9 +6323,15 @@ mod tests {
         });
         app.open_view_edit(view);
 
-        // Move to Sections region
+        // Move to Sections pane, then select first section row
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
+        );
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("move to first section");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Sections
@@ -6439,10 +6465,8 @@ mod tests {
         let view = app.views[0].clone();
         app.open_view_edit(view);
 
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("to sections");
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("to unmatched");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to unmatched visible row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Unmatched
@@ -6573,8 +6597,8 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
         );
 
         app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
@@ -6714,6 +6738,8 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select first section");
         if let Some(state) = &mut app.view_edit_state {
             state.section_index = 0;
         }
@@ -6773,9 +6799,10 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
-        if let Some(state) = &mut app.view_edit_state {
-            state.section_index = 1;
-        }
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select first section");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select second section");
 
         app.handle_view_edit_key(KeyCode::Char('N'), &agenda)
             .expect("insert above");
@@ -6823,12 +6850,9 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab to sections");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
         );
-
-        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-            .expect("select synthetic view row");
         let state = app.view_edit_state.as_ref().unwrap();
         assert!(state.sections_view_row_selected);
         assert_eq!(state.section_index, 0, "section cursor is preserved");
@@ -6919,8 +6943,8 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab");
         assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
         );
         app.handle_view_edit_key(KeyCode::Char('N'), &agenda)
             .expect("N adds section");
@@ -6937,13 +6961,33 @@ mod tests {
             Some(BoardDisplayMode::SingleLine)
         );
 
-        // Toggle view default display mode in Criteria region
+        // Move from section details back to view criteria details
         app.handle_view_edit_key(KeyCode::BackTab, &agenda)
-            .expect("backtab to criteria");
+            .expect("backtab to details pane");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Sections
+        );
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to sections pane");
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("select view properties row");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open view criteria details");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Criteria
         );
+
+        // Toggle view default display mode in Criteria details
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle view display mode");
         assert_eq!(

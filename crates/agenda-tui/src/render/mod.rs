@@ -1567,13 +1567,17 @@ impl App {
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
-                    match state.region {
-                        ViewEditRegion::Criteria => "n:add  x:remove  Space:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Sections => "Enter:expand  n:below+name  N:above+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:region  S:save  Esc:cancel",
-                        ViewEditRegion::Unmatched => "t:toggle-visible  l:label  Tab:region  S:save  Esc:cancel",
+                    if state.pane_focus == ViewEditPaneFocus::Sections {
+                        "Enter:expand/open-details  n:below+name  N:above+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:pane  S:save  Esc:cancel"
+                    } else {
+                        match state.region {
+                            ViewEditRegion::Criteria => "j/k:details row  n:add  x:remove  Space/Enter:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Sections => "j/k:details field  Enter/Space:field action  e/t/f/c/a/r/h/m shortcuts  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Unmatched => "j/k:details row  t/Enter:toggle-visible  l/Enter(label):label  Tab:pane  S:save  Esc:cancel",
+                        }
                     }
                 } else {
-                    "Tab:region  S:save  Esc:cancel"
+                    "Tab:pane  S:save  Esc:cancel"
                 }
             }
             Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
@@ -2477,14 +2481,6 @@ impl App {
         let focused_border = Color::Cyan;
         let inactive_border = Color::Blue;
 
-        let border_for = |region: ViewEditRegion| -> Color {
-            if state.region == region {
-                focused_border
-            } else {
-                inactive_border
-            }
-        };
-
         let category_names = category_name_map(&self.categories);
 
         // ── Details pane (row-based, view or selected section) ──────────────
@@ -2530,7 +2526,7 @@ impl App {
             let show_view_details = state.region != ViewEditRegion::Sections
                 || state.sections_view_row_selected
                 || state.draft.sections.get(state.section_index).is_none();
-            let details_focused = state.region != ViewEditRegion::Sections;
+            let details_focused = state.pane_focus == ViewEditPaneFocus::Details;
             let details_border = if details_focused {
                 focused_border
             } else {
@@ -2563,7 +2559,7 @@ impl App {
                 let criteria_row_start = items.len();
                 let criteria_lines = summarize_query(&state.draft.criteria);
                 if criteria_lines.is_empty() {
-                    let style = if state.region == ViewEditRegion::Criteria {
+                    let style = if details_focused && state.region == ViewEditRegion::Criteria {
                         selected_line = Some(criteria_row_start);
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
@@ -2575,7 +2571,8 @@ impl App {
                     );
                 } else {
                     for (i, criterion) in criteria_lines.iter().enumerate() {
-                        let style = if state.region == ViewEditRegion::Criteria
+                        let style = if details_focused
+                            && state.region == ViewEditRegion::Criteria
                             && i == state.criteria_index
                         {
                             selected_line = Some(criteria_row_start + i);
@@ -2621,7 +2618,8 @@ impl App {
                 ))));
 
                 let unmatched_visible_row = items.len();
-                let unmatched_visible_style = if state.region == ViewEditRegion::Unmatched
+                let unmatched_visible_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
                     && state.unmatched_field_index == 0
                 {
                     selected_line = Some(unmatched_visible_row);
@@ -2650,7 +2648,8 @@ impl App {
                 } else {
                     format!("\"{}\"", state.draft.unmatched_label)
                 };
-                let unmatched_label_style = if state.region == ViewEditRegion::Unmatched
+                let unmatched_label_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
                     && state.unmatched_field_index == 1
                 {
                     selected_line = Some(unmatched_label_row);
@@ -2679,8 +2678,8 @@ impl App {
                 } else {
                     section.title.clone()
                 };
-                let title_style = if state.region == ViewEditRegion::Sections {
-                    selected_line = Some(0);
+                let title_style = if details_focused && state.region == ViewEditRegion::Sections {
+                    selected_line = Some(state.section_details_field_index.min(7));
                     Style::default().add_modifier(Modifier::REVERSED)
                 } else {
                     Style::default()
@@ -2690,14 +2689,26 @@ impl App {
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
-                items.push(ListItem::new(Line::from(format!(
-                    "  Criteria: {}",
-                    if criteria_lines.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        criteria_lines.join(" ")
-                    }
-                ))));
+                let criteria_style = if details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 1
+                {
+                    selected_line = Some(1);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  Criteria: {}",
+                        if criteria_lines.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            criteria_lines.join(" ")
+                        }
+                    )))
+                    .style(criteria_style),
+                );
 
                 let columns_summary = if section.columns.is_empty() {
                     "(none)".to_string()
@@ -2715,37 +2726,63 @@ impl App {
                         .collect::<Vec<String>>()
                         .join(", ")
                 };
-                items.push(ListItem::new(Line::from(format!(
-                    "  Columns: {columns_summary}"
-                ))));
-                items.push(ListItem::new(Line::from(format!(
-                    "  On insert assign: {}",
-                    summarize_category_set(&section.on_insert_assign)
-                ))));
-                items.push(ListItem::new(Line::from(format!(
-                    "  On remove unassign: {}",
-                    summarize_category_set(&section.on_remove_unassign)
-                ))));
-                items.push(ListItem::new(Line::from(format!(
-                    "  Show children: {}",
-                    if section.show_children { "yes" } else { "no" }
-                ))));
+                let style_for_section_field =
+                    |field_index: usize, selected_line_ref: &mut Option<usize>| {
+                        if details_focused
+                            && state.region == ViewEditRegion::Sections
+                            && state.section_details_field_index == field_index
+                        {
+                            *selected_line_ref = Some(field_index);
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        }
+                    };
+                items.push(
+                    ListItem::new(Line::from(format!("  Columns: {columns_summary}")))
+                        .style(style_for_section_field(2, &mut selected_line)),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  On insert assign: {}",
+                        summarize_category_set(&section.on_insert_assign)
+                    )))
+                    .style(style_for_section_field(3, &mut selected_line)),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  On remove unassign: {}",
+                        summarize_category_set(&section.on_remove_unassign)
+                    )))
+                    .style(style_for_section_field(4, &mut selected_line)),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  Show children: {}",
+                        if section.show_children { "yes" } else { "no" }
+                    )))
+                    .style(style_for_section_field(5, &mut selected_line)),
+                );
                 let mode_label = match section.board_display_mode_override {
                     None => "inherit".to_string(),
                     Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
                     Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
                 };
-                items.push(ListItem::new(Line::from(format!(
-                    "  Display override: {mode_label}"
-                ))));
-                items.push(ListItem::new(Line::from(format!(
-                    "  Expanded in list: {}",
-                    if state.section_expanded == Some(state.section_index) {
-                        "yes"
-                    } else {
-                        "no"
-                    }
-                ))));
+                items.push(
+                    ListItem::new(Line::from(format!("  Display override: {mode_label}")))
+                        .style(style_for_section_field(6, &mut selected_line)),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  Expanded in list: {}",
+                        if state.section_expanded == Some(state.section_index) {
+                            "yes"
+                        } else {
+                            "no"
+                        }
+                    )))
+                    .style(style_for_section_field(7, &mut selected_line)),
+                );
                 items.push(ListItem::new(Line::from(
                     "  Section keys: e/t f c a r h m  [/]:reorder  x:remove",
                 )));
@@ -2780,16 +2817,23 @@ impl App {
             let block = Block::default()
                 .title(" SECTIONS ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_for(ViewEditRegion::Sections)));
+                .border_style(Style::default().fg(
+                    if state.pane_focus == ViewEditPaneFocus::Sections {
+                        focused_border
+                    } else {
+                        inactive_border
+                    },
+                ));
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
             let view_row_focused = state.region != ViewEditRegion::Sections
                 || (state.region == ViewEditRegion::Sections && state.sections_view_row_selected);
+            let sections_pane_focused = state.pane_focus == ViewEditPaneFocus::Sections;
             if view_row_focused {
                 selected_line = Some(0);
             }
-            let view_row_style = if view_row_focused {
+            let view_row_style = if view_row_focused && sections_pane_focused {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
                 Style::default()
@@ -2812,11 +2856,15 @@ impl App {
                 items.push(ListItem::new(Line::from("  (no sections — n:add)")));
             } else {
                 for (i, section) in state.draft.sections.iter().enumerate() {
-                    if i == state.section_index && !state.sections_view_row_selected {
+                    if i == state.section_index
+                        && !state.sections_view_row_selected
+                        && sections_pane_focused
+                    {
                         selected_line = Some(items.len());
                     }
                     let cursor = if i == state.section_index
                         && state.region == ViewEditRegion::Sections
+                        && sections_pane_focused
                         && !state.sections_view_row_selected
                     {
                         ">"
@@ -2839,6 +2887,7 @@ impl App {
 
                     let style = if i == state.section_index
                         && state.region == ViewEditRegion::Sections
+                        && sections_pane_focused
                         && !state.sections_view_row_selected
                     {
                         Style::default().add_modifier(Modifier::REVERSED)
