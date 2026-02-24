@@ -41,6 +41,7 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             state.dirty = true;
             state.discard_confirm = false;
+            state.section_delete_confirm = None;
         }
     }
 
@@ -105,6 +106,7 @@ impl App {
             preview_count,
             dirty: false,
             discard_confirm: false,
+            section_delete_confirm: None,
         });
         self.mode = Mode::ViewEdit;
         self.status = Self::view_edit_default_status();
@@ -196,6 +198,55 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             state.overlay = None;
             state.picker_index = 0;
+        }
+        self.status = Self::view_edit_default_status();
+    }
+
+    fn request_view_edit_section_delete(&mut self, section_index: usize) {
+        if let Some(state) = &mut self.view_edit_state {
+            if section_index < state.draft.sections.len() {
+                state.section_delete_confirm = Some(section_index);
+                state.discard_confirm = false;
+                let title = state.draft.sections[section_index].title.clone();
+                self.status = format!("Delete section \"{title}\"? y/n");
+            }
+        }
+    }
+
+    fn confirm_view_edit_section_delete(&mut self) {
+        let Some(idx) = self
+            .view_edit_state
+            .as_ref()
+            .and_then(|s| s.section_delete_confirm)
+        else {
+            return;
+        };
+
+        if let Some(state) = &mut self.view_edit_state {
+            state.section_delete_confirm = None;
+            if idx >= state.draft.sections.len() {
+                self.status = Self::view_edit_default_status();
+                return;
+            }
+
+            state.draft.sections.remove(idx);
+            let new_len = state.draft.sections.len();
+            if state.section_index >= new_len && new_len > 0 {
+                state.section_index = new_len - 1;
+            }
+            if new_len == 0 {
+                state.sections_view_row_selected = true;
+                state.section_details_field_index = 0;
+            }
+            if state.section_expanded == Some(idx) {
+                state.section_expanded = None;
+            } else if let Some(expanded) = state.section_expanded {
+                if expanded > idx {
+                    state.section_expanded = Some(expanded - 1);
+                }
+            }
+            state.dirty = true;
+            state.discard_confirm = false;
         }
         self.status = Self::view_edit_default_status();
     }
@@ -300,7 +351,18 @@ impl App {
             return Ok(false);
         }
 
-        // Layer 4: global and region keys.
+        // Layer 4: section delete confirmation intercepts before pane/global keys.
+        if self
+            .view_edit_state
+            .as_ref()
+            .and_then(|s| s.section_delete_confirm)
+            .is_some()
+        {
+            self.handle_view_edit_section_delete_confirm_key(code)?;
+            return Ok(false);
+        }
+
+        // Layer 5: global and region keys.
         self.handle_view_edit_region_key(code, agenda)?;
         Ok(false)
     }
@@ -315,6 +377,25 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.discard_confirm = false;
+                }
+                self.status = Self::view_edit_default_status();
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn handle_view_edit_section_delete_confirm_key(
+        &mut self,
+        code: KeyCode,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.confirm_view_edit_section_delete();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.section_delete_confirm = None;
                 }
                 self.status = Self::view_edit_default_status();
             }
@@ -777,23 +858,7 @@ impl App {
                 if selecting_view_row {
                     return Ok(true);
                 }
-                if let Some(state) = &mut self.view_edit_state {
-                    if idx < state.draft.sections.len() {
-                        state.draft.sections.remove(idx);
-                        let new_len = state.draft.sections.len();
-                        if state.section_index >= new_len && new_len > 0 {
-                            state.section_index = new_len - 1;
-                        }
-                        if new_len == 0 {
-                            state.sections_view_row_selected = true;
-                        }
-                        if state.section_expanded == Some(idx) {
-                            state.section_expanded = None;
-                        }
-                        state.dirty = true;
-                        state.discard_confirm = false;
-                    }
-                }
+                self.request_view_edit_section_delete(idx);
             }
             KeyCode::Char('[') => {
                 if selecting_view_row {
