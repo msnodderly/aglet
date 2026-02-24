@@ -34,7 +34,7 @@ impl App {
     }
 
     fn view_edit_default_status() -> String {
-        "Edit view: Tab=region  S=save  Esc=cancel".to_string()
+        "Edit view: Tab=pane  S=save  Esc=cancel".to_string()
     }
 
     fn set_view_edit_dirty(&mut self) {
@@ -48,8 +48,10 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             if let Some(section) = state.draft.sections.get(section_index) {
                 state.region = ViewEditRegion::Sections;
+                state.pane_focus = ViewEditPaneFocus::Sections;
                 state.section_index = section_index;
                 state.sections_view_row_selected = false;
+                state.section_details_field_index = 0;
                 state.section_expanded = Some(section_index);
                 state.inline_input = Some(ViewEditInlineInput::SectionTitle { section_index });
                 state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
@@ -74,6 +76,7 @@ impl App {
             }
             state.section_index = idx;
             state.sections_view_row_selected = false;
+            state.section_details_field_index = 0;
             new_index = Some(idx);
         }
         if new_index.is_some() {
@@ -88,10 +91,12 @@ impl App {
         self.view_edit_state = Some(ViewEditState {
             draft: view,
             region: ViewEditRegion::Criteria,
+            pane_focus: ViewEditPaneFocus::Details,
             criteria_index: 0,
             unmatched_field_index: 0,
             section_index: 0,
             sections_view_row_selected: false,
+            section_details_field_index: 0,
             section_expanded: None,
             overlay: None,
             inline_input: None,
@@ -112,6 +117,12 @@ impl App {
 
     fn view_details_criteria_row_count(state: &ViewEditState) -> usize {
         state.draft.criteria.criteria.len().max(1)
+    }
+
+    fn view_edit_showing_view_details(state: &ViewEditState) -> bool {
+        state.region != ViewEditRegion::Sections
+            || state.sections_view_row_selected
+            || state.draft.sections.get(state.section_index).is_none()
     }
 
     fn view_details_focus_index(state: &ViewEditState) -> usize {
@@ -136,6 +147,26 @@ impl App {
             } else {
                 state.region = ViewEditRegion::Unmatched;
                 state.unmatched_field_index = (new_index - criteria_rows).min(1);
+            }
+        }
+    }
+
+    fn toggle_view_edit_pane_focus(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.pane_focus = match state.pane_focus {
+                ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
+                ViewEditPaneFocus::Details => ViewEditPaneFocus::Sections,
+            };
+
+            if state.pane_focus == ViewEditPaneFocus::Sections {
+                if state.region != ViewEditRegion::Sections {
+                    state.sections_view_row_selected = true;
+                }
+            } else if state.region == ViewEditRegion::Sections {
+                if state.sections_view_row_selected {
+                    state.region = ViewEditRegion::Criteria;
+                }
+                state.section_details_field_index = 0;
             }
         }
     }
@@ -446,15 +477,11 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Tab => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.region = state.region.next();
-                }
+                self.toggle_view_edit_pane_focus();
                 return Ok(true);
             }
             KeyCode::BackTab => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.region = state.region.prev();
-                }
+                self.toggle_view_edit_pane_focus();
                 return Ok(true);
             }
             KeyCode::Char('S') => {
@@ -463,17 +490,23 @@ impl App {
             _ => {}
         }
 
-        // Region-specific keys
-        let region = self
-            .view_edit_state
-            .as_ref()
-            .map(|s| s.region)
-            .unwrap_or(ViewEditRegion::Criteria);
+        let Some(state) = &self.view_edit_state else {
+            return Ok(false);
+        };
 
-        match region {
-            ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),
-            ViewEditRegion::Sections => self.handle_view_edit_sections_key(code),
-            ViewEditRegion::Unmatched => self.handle_view_edit_unmatched_key(code),
+        match state.pane_focus {
+            ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(code),
+            ViewEditPaneFocus::Details => {
+                if Self::view_edit_showing_view_details(state) {
+                    match state.region {
+                        ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),
+                        ViewEditRegion::Unmatched => self.handle_view_edit_unmatched_key(code),
+                        ViewEditRegion::Sections => self.handle_view_edit_criteria_key(code),
+                    }
+                } else {
+                    self.handle_view_edit_section_details_key(code)
+                }
+            }
         }
     }
 
@@ -624,6 +657,52 @@ impl App {
     // Sections region
     // -------------------------------------------------------------------------
 
+    fn handle_view_edit_section_details_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        let field_count = 8usize;
+        let current_index = self
+            .view_edit_state
+            .as_ref()
+            .map(|s| {
+                s.section_details_field_index
+                    .min(field_count.saturating_sub(1))
+            })
+            .unwrap_or(0);
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.section_details_field_index =
+                        (current_index + 1).min(field_count.saturating_sub(1));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.section_details_field_index = current_index.saturating_sub(1);
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let mapped = match current_index {
+                    0 => Some(KeyCode::Char('e')),
+                    1 => Some(KeyCode::Char('f')),
+                    2 => Some(KeyCode::Char('c')),
+                    3 => Some(KeyCode::Char('a')),
+                    4 => Some(KeyCode::Char('r')),
+                    5 => Some(KeyCode::Char('h')),
+                    6 => Some(KeyCode::Char('m')),
+                    7 => Some(KeyCode::Enter),
+                    _ => None,
+                };
+                if let Some(mapped) = mapped {
+                    return self.handle_view_edit_sections_key(mapped);
+                }
+            }
+            _ => {
+                return self.handle_view_edit_sections_key(code);
+            }
+        }
+        Ok(true)
+    }
+
     fn handle_view_edit_sections_key(&mut self, code: KeyCode) -> Result<bool, String> {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
@@ -638,10 +717,14 @@ impl App {
                     if state.sections_view_row_selected {
                         if len > 0 {
                             state.sections_view_row_selected = false;
+                            state.region = ViewEditRegion::Sections;
                             state.section_index = 0;
+                            state.section_details_field_index = 0;
                         }
                     } else {
+                        state.region = ViewEditRegion::Sections;
                         state.section_index = next_index_clamped(idx, len, 1);
+                        state.section_details_field_index = 0;
                     }
                 }
             }
@@ -650,8 +733,11 @@ impl App {
                     if !state.sections_view_row_selected {
                         if idx == 0 || len == 0 {
                             state.sections_view_row_selected = true;
+                            state.region = ViewEditRegion::Sections;
                         } else {
+                            state.region = ViewEditRegion::Sections;
                             state.section_index = next_index_clamped(idx, len, -1);
+                            state.section_details_field_index = 0;
                         }
                     }
                 }
@@ -728,6 +814,7 @@ impl App {
                 if selecting_view_row {
                     if let Some(state) = &mut self.view_edit_state {
                         state.region = ViewEditRegion::Criteria;
+                        state.pane_focus = ViewEditPaneFocus::Details;
                     }
                     return Ok(true);
                 }
