@@ -684,6 +684,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 #### 3.2 Sections Pane (Left Pane) Implementation
 
 - [ ] Render a dedicated sections list pane with synthetic `View Properties` row
+- [x] Prototype synthetic `View Properties` row in current left pane (render-only, no row selection behavior yet)
 - [ ] Add selection navigation (`j/k`, arrows)
 - [ ] Implement row mapping and stable selection identity across mutations
 - [x] Add internal section insertion helper with explicit insert index (prep for above/below shortcuts)
@@ -700,6 +701,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 #### 3.3 Details Pane (Right Pane) Implementation
 
 - [ ] Render a field-based details pane for selected row
+- [x] Prototype calmer 2-pane `ViewEdit` layout by moving `Sections` left and nesting current criteria/unmatched content on the right
 - [ ] Implement details focus movement (`j/k`)
 - [ ] Implement section field editing:
   - [ ] Title (inline text)
