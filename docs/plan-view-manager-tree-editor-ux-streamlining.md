@@ -685,6 +685,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 - [ ] Render a dedicated sections list pane with synthetic `View Properties` row
 - [x] Prototype synthetic `View Properties` row in current left pane (render-only, no row selection behavior yet)
+- [x] Add minimal synthetic `View Properties` row interaction in current `ViewEdit` (select from Sections pane, `Enter` jumps to view criteria details)
 - [ ] Add selection navigation (`j/k`, arrows)
 - [ ] Implement row mapping and stable selection identity across mutations
 - [x] Add internal section insertion helper with explicit insert index (prep for above/below shortcuts)

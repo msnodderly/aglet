@@ -2587,7 +2587,8 @@ impl App {
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
-            let view_row_focused = state.region != ViewEditRegion::Sections;
+            let view_row_focused = state.region != ViewEditRegion::Sections
+                || (state.region == ViewEditRegion::Sections && state.sections_view_row_selected);
             if view_row_focused {
                 selected_line = Some(0);
             }
@@ -2614,15 +2615,17 @@ impl App {
                 items.push(ListItem::new(Line::from("  (no sections — n:add)")));
             } else {
                 for (i, section) in state.draft.sections.iter().enumerate() {
-                    if i == state.section_index {
+                    if i == state.section_index && !state.sections_view_row_selected {
                         selected_line = Some(items.len());
                     }
-                    let cursor =
-                        if i == state.section_index && state.region == ViewEditRegion::Sections {
-                            ">"
-                        } else {
-                            " "
-                        };
+                    let cursor = if i == state.section_index
+                        && state.region == ViewEditRegion::Sections
+                        && !state.sections_view_row_selected
+                    {
+                        ">"
+                    } else {
+                        " "
+                    };
                     let is_expanded = state.section_expanded == Some(i);
                     let expand_icon = if is_expanded { "▾" } else { "▸" };
 
@@ -2637,12 +2640,14 @@ impl App {
                         format!("{} {} {}. {}", cursor, expand_icon, i + 1, section.title)
                     };
 
-                    let style =
-                        if i == state.section_index && state.region == ViewEditRegion::Sections {
-                            Style::default().add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        };
+                    let style = if i == state.section_index
+                        && state.region == ViewEditRegion::Sections
+                        && !state.sections_view_row_selected
+                    {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
                     items.push(ListItem::new(Line::from(title)).style(style));
 
                     // Only render detail lines for the expanded section
