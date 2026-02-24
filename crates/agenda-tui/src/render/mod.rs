@@ -2467,15 +2467,20 @@ impl App {
             return;
         };
 
-        // Split into 3 vertical regions: Criteria / Sections / Unmatched
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(50),
-                Constraint::Percentage(25),
-            ])
+        // Default Phase 3 layout: calmer 2-pane editor.
+        // Left pane is the sections list; right pane contains view details
+        // (criteria + unmatched) until the full field-based details pane lands.
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
             .split(area);
+        let sections_area = panes[0];
+        let details_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+            .split(panes[1]);
+        let criteria_area = details_chunks[0];
+        let unmatched_area = details_chunks[1];
 
         let focused_border = Color::Cyan;
         let inactive_border = Color::Blue;
@@ -2562,7 +2567,7 @@ impl App {
             }
 
             let list = List::new(items).block(block);
-            frame.render_widget(list, chunks[0]);
+            frame.render_widget(list, criteria_area);
         }
 
         // ── Sections region ──────────────────────────────────────────────────
@@ -2582,6 +2587,29 @@ impl App {
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
+            let view_row_focused = state.region != ViewEditRegion::Sections;
+            if view_row_focused {
+                selected_line = Some(0);
+            }
+            let view_row_style = if view_row_focused {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            let view_row_label = match state.region {
+                ViewEditRegion::Criteria => "criteria",
+                ViewEditRegion::Sections => "view",
+                ViewEditRegion::Unmatched => "unmatched",
+            };
+            items.push(
+                ListItem::new(Line::from(format!(
+                    "{}  View Properties ({view_row_label})  [{}]",
+                    if view_row_focused { ">" } else { " " },
+                    state.draft.name
+                )))
+                .style(view_row_style),
+            );
+
             if state.draft.sections.is_empty() {
                 items.push(ListItem::new(Line::from("  (no sections — n:add)")));
             } else {
@@ -2678,9 +2706,13 @@ impl App {
             }
 
             let content_len = items.len();
-            let mut list_state = Self::list_state_for(chunks[1], selected_line);
-            frame.render_stateful_widget(List::new(items).block(block), chunks[1], &mut list_state);
-            Self::render_vertical_scrollbar(frame, chunks[1], content_len, list_state.offset());
+            let mut list_state = Self::list_state_for(sections_area, selected_line);
+            frame.render_stateful_widget(
+                List::new(items).block(block),
+                sections_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, sections_area, content_len, list_state.offset());
         }
 
         // ── Unmatched region ─────────────────────────────────────────────────
@@ -2715,15 +2747,14 @@ impl App {
                 Style::default()
             };
             let para = Paragraph::new(Line::from(text).style(style)).block(block);
-            frame.render_widget(para, chunks[2]);
+            frame.render_widget(para, unmatched_area);
         }
 
         // ── Picker overlay ───────────────────────────────────────────────────
         if let Some(overlay) = &state.overlay {
             let overlay_area = {
-                let x = area.x + area.width * 6 / 10;
-                let w = area.width * 4 / 10;
-                Rect::new(x, area.y, w, area.height)
+                let w = panes[1].width.max(1);
+                Rect::new(panes[1].x, panes[1].y, w, panes[1].height)
             };
             frame.render_widget(Clear, overlay_area);
             match overlay {
