@@ -708,13 +708,13 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [x] Prototype `j/k` details-row traversal for view-level details (criteria rows + unmatched rows) while preserving legacy region model
 - [x] Prototype view-details row actions (`Enter`/`Space`) for `When include/exclude`, view display mode, and unmatched rows
 - [ ] Implement section field editing:
-  - [ ] Title (inline text)
+  - [x] Title (inline text) (available via details row action and section shortcut)
   - [ ] Criteria (overlay/picker)
   - [ ] Columns (overlay/picker)
   - [ ] On insert assign (overlay/picker)
   - [ ] On remove unassign (overlay/picker)
-  - [ ] Show children toggle
-  - [ ] Display mode override cycle
+  - [x] Show children toggle (details row action + shortcut)
+  - [x] Display mode override cycle (details row action + shortcut)
 - [ ] Implement view field editing on `View Properties` row:
   - [ ] Name
   - [ ] Criteria
@@ -723,7 +723,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
   - [ ] Unmatched visible
   - [ ] Unmatched label
   - [ ] (optional phase in Phase 3) remove-from-view unassign set
-- [ ] Ensure field labels/help are concise and status/footer stays accurate
+- [x] Ensure field labels/help are concise and status/footer stays accurate (iterative; updated for pane focus and expanded view-details row actions)
 
 #### 3.4 Overlay / Picker Infrastructure In Editor
 
