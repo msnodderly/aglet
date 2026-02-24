@@ -49,6 +49,7 @@ impl App {
             if let Some(section) = state.draft.sections.get(section_index) {
                 state.region = ViewEditRegion::Sections;
                 state.section_index = section_index;
+                state.sections_view_row_selected = false;
                 state.section_expanded = Some(section_index);
                 state.inline_input = Some(ViewEditInlineInput::SectionTitle { section_index });
                 state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
@@ -72,6 +73,7 @@ impl App {
                 }
             }
             state.section_index = idx;
+            state.sections_view_row_selected = false;
             new_index = Some(idx);
         }
         if new_index.is_some() {
@@ -88,6 +90,7 @@ impl App {
             region: ViewEditRegion::Criteria,
             criteria_index: 0,
             section_index: 0,
+            sections_view_row_selected: false,
             section_expanded: None,
             overlay: None,
             inline_input: None,
@@ -571,37 +574,65 @@ impl App {
         };
         let len = state.draft.sections.len();
         let idx = state.section_index;
+        let selecting_view_row = state.sections_view_row_selected;
 
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(state) = &mut self.view_edit_state {
-                    state.section_index = next_index_clamped(idx, len, 1);
+                    if state.sections_view_row_selected {
+                        if len > 0 {
+                            state.sections_view_row_selected = false;
+                            state.section_index = 0;
+                        }
+                    } else {
+                        state.section_index = next_index_clamped(idx, len, 1);
+                    }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 if let Some(state) = &mut self.view_edit_state {
-                    state.section_index = next_index_clamped(idx, len, -1);
+                    if !state.sections_view_row_selected {
+                        if idx == 0 || len == 0 {
+                            state.sections_view_row_selected = true;
+                        } else {
+                            state.section_index = next_index_clamped(idx, len, -1);
+                        }
+                    }
                 }
             }
             KeyCode::Char('n') => {
-                let insert_index = if len == 0 { 0 } else { (idx + 1).min(len) };
+                let insert_index = if selecting_view_row || len == 0 {
+                    0
+                } else {
+                    (idx + 1).min(len)
+                };
                 if let Some(new_index) = self.insert_view_edit_section(insert_index) {
                     self.begin_view_edit_section_title_input(new_index);
                 }
             }
             KeyCode::Char('N') => {
-                let insert_index = if len == 0 { 0 } else { idx.min(len) };
+                let insert_index = if selecting_view_row || len == 0 {
+                    0
+                } else {
+                    idx.min(len)
+                };
                 if let Some(new_index) = self.insert_view_edit_section(insert_index) {
                     self.begin_view_edit_section_title_input(new_index);
                 }
             }
             KeyCode::Char('x') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < state.draft.sections.len() {
                         state.draft.sections.remove(idx);
                         let new_len = state.draft.sections.len();
                         if state.section_index >= new_len && new_len > 0 {
                             state.section_index = new_len - 1;
+                        }
+                        if new_len == 0 {
+                            state.sections_view_row_selected = true;
                         }
                         if state.section_expanded == Some(idx) {
                             state.section_expanded = None;
@@ -612,6 +643,9 @@ impl App {
                 }
             }
             KeyCode::Char('[') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if let Some(state) = &mut self.view_edit_state {
                     if idx > 0 && idx < state.draft.sections.len() {
                         state.draft.sections.swap(idx, idx - 1);
@@ -622,6 +656,9 @@ impl App {
                 }
             }
             KeyCode::Char(']') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if let Some(state) = &mut self.view_edit_state {
                     if idx + 1 < state.draft.sections.len() {
                         state.draft.sections.swap(idx, idx + 1);
@@ -632,6 +669,12 @@ impl App {
                 }
             }
             KeyCode::Enter => {
+                if selecting_view_row {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.region = ViewEditRegion::Criteria;
+                    }
+                    return Ok(true);
+                }
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < len {
                         if state.section_expanded == Some(idx) {
@@ -643,10 +686,16 @@ impl App {
                 }
             }
             KeyCode::Char('t') | KeyCode::Char('e') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 self.begin_view_edit_section_title_input(idx);
             }
             // Expanded section detail keys
             KeyCode::Char('f') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
@@ -659,6 +708,9 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
@@ -671,6 +723,9 @@ impl App {
                 }
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
@@ -683,6 +738,9 @@ impl App {
                 }
             }
             KeyCode::Char('r') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if idx < len {
                     let first = first_non_reserved_category_index(&self.category_rows);
                     if let Some(state) = &mut self.view_edit_state {
@@ -695,6 +753,9 @@ impl App {
                 }
             }
             KeyCode::Char('h') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if idx < len {
                     if let Some(state) = &mut self.view_edit_state {
                         if let Some(section) = state.draft.sections.get_mut(idx) {
@@ -707,6 +768,9 @@ impl App {
                 }
             }
             KeyCode::Char('m') | KeyCode::Char('M') => {
+                if selecting_view_row {
+                    return Ok(true);
+                }
                 if idx < len {
                     if let Some(state) = &mut self.view_edit_state {
                         if let Some(section) = state.draft.sections.get_mut(idx) {

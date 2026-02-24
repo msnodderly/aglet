@@ -244,6 +244,7 @@ struct ViewEditState {
     region: ViewEditRegion,
     criteria_index: usize,
     section_index: usize,
+    sections_view_row_selected: bool,
     section_expanded: Option<usize>,
     overlay: Option<ViewEditOverlay>,
     inline_input: Option<ViewEditInlineInput>,
@@ -6680,6 +6681,55 @@ mod tests {
             state.inline_input,
             Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
         ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_sections_can_select_view_properties_row_and_enter_opens_criteria() {
+        let (store, db_path) = make_test_store_with_view("view-props-row-select");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to sections");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Sections
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+            .expect("select synthetic view row");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert!(state.sections_view_row_selected);
+        assert_eq!(state.section_index, 0, "section cursor is preserved");
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter should open criteria details");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Criteria
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
