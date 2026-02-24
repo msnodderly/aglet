@@ -1023,15 +1023,27 @@ impl App {
                 self.move_category_cursor(-1)
             }
             KeyCode::Char('K') => {
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    return Ok(false);
+                }
                 self.reorder_selected_category_sibling(-1, agenda)?;
             }
             KeyCode::Char('J') => {
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    return Ok(false);
+                }
                 self.reorder_selected_category_sibling(1, agenda)?;
             }
             KeyCode::Char('H') => {
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    return Ok(false);
+                }
                 self.outdent_selected_category(agenda)?;
             }
             KeyCode::Char('L') => {
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    return Ok(false);
+                }
                 self.indent_selected_category_under_previous_sibling(agenda)?;
             }
             KeyCode::Char('n') => {
