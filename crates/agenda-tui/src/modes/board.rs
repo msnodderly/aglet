@@ -2800,9 +2800,6 @@ impl App {
                     Ok(()) => {
                         let view_name = view.name.clone();
                         self.refresh(agenda.store())?;
-                        self.view_pending_name = None;
-                        self.view_create_include_selection.clear();
-                        self.view_create_exclude_selection.clear();
                         self.input_panel = None;
                         self.name_input_context = None;
                         if let Some(new_view) =

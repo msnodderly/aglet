@@ -30,7 +30,6 @@ impl App {
             Mode::FilterInput => self.handle_filter_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ViewEdit => self.handle_view_edit_key(code, agenda),
-            Mode::ViewCreateCategory => self.handle_view_create_category_key(code, agenda),
             Mode::ViewDeleteConfirm => self.handle_view_delete_key(code, agenda),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(code, agenda),
             Mode::BoardColumnDeleteConfirm => {

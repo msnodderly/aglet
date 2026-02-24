@@ -30,7 +30,6 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.view_pending_name = None;
                 self.view_pending_edit_name = None;
                 self.input_panel =
                     Some(input_panel::InputPanel::new_name_input("", "New view name"));
@@ -132,117 +131,6 @@ impl App {
             KeyCode::Char('n') | KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
                 self.status = "Delete canceled".to_string();
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    pub(crate) fn toggle_view_create_include(&mut self, category_id: CategoryId) {
-        if !self.view_create_include_selection.insert(category_id) {
-            self.view_create_include_selection.remove(&category_id);
-        }
-        self.view_create_exclude_selection.remove(&category_id);
-    }
-
-    pub(crate) fn toggle_view_create_exclude(&mut self, category_id: CategoryId) {
-        if !self.view_create_exclude_selection.insert(category_id) {
-            self.view_create_exclude_selection.remove(&category_id);
-        }
-        self.view_create_include_selection.remove(&category_id);
-    }
-
-    pub(crate) fn handle_view_create_category_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::ViewPicker;
-                self.view_pending_name = None;
-                self.view_create_include_selection.clear();
-                self.view_create_exclude_selection.clear();
-                self.status = "View create canceled".to_string();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.category_rows.is_empty() {
-                    self.view_category_index =
-                        next_index(self.view_category_index, self.category_rows.len(), 1);
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !self.category_rows.is_empty() {
-                    self.view_category_index =
-                        next_index(self.view_category_index, self.category_rows.len(), -1);
-                }
-            }
-            KeyCode::Char(' ') | KeyCode::Char('+') => {
-                if let Some(row) = self.category_rows.get(self.view_category_index) {
-                    self.toggle_view_create_include(row.id);
-                }
-            }
-            KeyCode::Char('-') => {
-                if let Some(row) = self.category_rows.get(self.view_category_index) {
-                    self.toggle_view_create_exclude(row.id);
-                }
-            }
-            KeyCode::Enter => {
-                let Some(name) = self.view_pending_name.clone() else {
-                    self.mode = Mode::ViewPicker;
-                    self.status = "View create failed: missing name".to_string();
-                    return Ok(false);
-                };
-
-                let mut view = View::new(name.clone());
-                if self.view_create_include_selection.is_empty()
-                    && self.view_create_exclude_selection.is_empty()
-                {
-                    if let Some(row) = self.category_rows.get(self.view_category_index) {
-                        view.criteria.set_criterion(CriterionMode::And, row.id);
-                    }
-                } else {
-                    for &id in &self.view_create_include_selection {
-                        view.criteria.set_criterion(CriterionMode::And, id);
-                    }
-                    for &id in &self.view_create_exclude_selection {
-                        view.criteria.set_criterion(CriterionMode::Not, id);
-                    }
-                }
-                if view.sections.is_empty() {
-                    view.sections.push(Self::view_edit_default_section(
-                        Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
-                    ));
-                }
-
-                match agenda.store().create_view(&view) {
-                    Ok(()) => {
-                        let include_count = view.criteria.and_category_ids().count();
-                        let exclude_count = view.criteria.not_category_ids().count();
-                        let view_name = view.name.clone();
-                        self.refresh(agenda.store())?;
-                        self.view_pending_name = None;
-                        self.view_create_include_selection.clear();
-                        self.view_create_exclude_selection.clear();
-                        if let Some(new_view) =
-                            self.views.iter().find(|v| v.name == view_name).cloned()
-                        {
-                            self.open_view_edit_new_view_focus_first_section(new_view);
-                        } else {
-                            self.mode = Mode::ViewPicker;
-                            self.status = format!(
-                                "Created view {} (include={}, exclude={})",
-                                view_name, include_count, exclude_count
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        self.mode = Mode::ViewPicker;
-                        self.view_create_include_selection.clear();
-                        self.view_create_exclude_selection.clear();
-                        self.status = format!("View create failed: {err}");
-                    }
-                }
             }
             _ => {}
         }

@@ -66,9 +66,6 @@ impl App {
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
-        if matches!(self.mode, Mode::ViewCreateCategory) {
-            self.render_view_category_picker(frame, centered_rect(72, 72, frame.area()));
-        }
         if self.mode == Mode::CategoryDirectEdit {
             let popup_area = centered_rect(64, 62, frame.area());
             self.render_category_direct_edit_picker(frame, popup_area);
@@ -1520,7 +1517,6 @@ impl App {
                 }
             }
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
-            Mode::ViewCreateCategory => "Set include/exclude categories for new view".to_string(),
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::BoardAddColumnPicker => {
@@ -1569,9 +1565,6 @@ impl App {
                 "j/k:select  Enter:switch  N:new  r:rename  x:delete  e:edit  Esc:back"
             }
             Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
-            Mode::ViewCreateCategory => {
-                "j/k:select  +:include  -:exclude  Space:toggle  Enter:create  Esc:cancel"
-            }
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     match state.region {
@@ -1871,83 +1864,6 @@ impl App {
         Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
-    pub(crate) fn render_view_category_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(area);
-        frame.render_widget(
-            Paragraph::new("Choose criteria for new view (+ include, - exclude, Enter create)"),
-            chunks[0],
-        );
-
-        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
-            vec![ListItem::new(Line::from("(no categories available)"))]
-        } else {
-            self.category_rows
-                .iter()
-                .map(|row| {
-                    let mut flags = Vec::new();
-                    if row.is_reserved {
-                        flags.push("reserved");
-                    }
-                    if row.is_exclusive {
-                        flags.push("exclusive");
-                    }
-                    let suffix = if flags.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" [{}]", flags.join(","))
-                    };
-                    let check = if self.view_create_include_selection.contains(&row.id) {
-                        "[+]"
-                    } else if self.view_create_exclude_selection.contains(&row.id) {
-                        "[-]"
-                    } else {
-                        "[ ]"
-                    };
-                    let category_name = with_note_marker(row.name.clone(), row.has_note);
-                    let text = format!(
-                        "{check} {}{}{}",
-                        "  ".repeat(row.depth),
-                        category_name,
-                        suffix
-                    );
-                    ListItem::new(Line::from(text))
-                })
-                .collect()
-        };
-
-        let title = match self.mode {
-            Mode::ViewCreateCategory => "Create View Criteria",
-            _ => "View Criteria",
-        };
-        let mut state = Self::list_state_for(
-            chunks[1],
-            if self.category_rows.is_empty() {
-                None
-            } else {
-                Some(self.view_category_index)
-            },
-        );
-        let item_count = items.len();
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title(title)
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            chunks[1],
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
-    }
     pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
