@@ -701,7 +701,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 #### 3.3 Details Pane (Right Pane) Implementation
 
-- [ ] Render a field-based details pane for selected row
+- [x] Render a field-based details pane for selected row (render-first prototype; existing keybindings still drive edits)
 - [x] Prototype calmer 2-pane `ViewEdit` layout by moving `Sections` left and nesting current criteria/unmatched content on the right
 - [ ] Implement details focus movement (`j/k`)
 - [ ] Implement section field editing:
