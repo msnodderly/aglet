@@ -6662,6 +6662,98 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_details_enter_opens_picker_backed_rows() {
+        let (store, db_path) = make_test_store_with_view("section-details-picker-rows");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to sections");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select section");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to details");
+
+        // Field 1: Criteria
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to criteria field");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open section criteria picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::SectionCriteria
+            })
+        ));
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close picker");
+
+        // Field 2: Columns
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to columns field");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open section columns picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::SectionColumns
+            })
+        ));
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close picker");
+
+        // Field 3: On insert assign
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to on-insert field");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open on-insert picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::SectionOnInsertAssign
+            })
+        ));
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close picker");
+
+        // Field 4: On remove unassign
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to on-remove field");
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open on-remove picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::SectionOnRemoveUnassign
+            })
+        ));
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close picker");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
         let (store, db_path) = make_test_store_with_view("section-x-delete-confirm");
         let classifier = SubstringClassifier;

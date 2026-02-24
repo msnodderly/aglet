@@ -2735,7 +2735,7 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Criteria: {}",
+                        "  Criteria (Enter): {}",
                         if criteria_lines.is_empty() {
                             "(none)".to_string()
                         } else {
@@ -2774,26 +2774,26 @@ impl App {
                         }
                     };
                 items.push(
-                    ListItem::new(Line::from(format!("  Columns: {columns_summary}")))
+                    ListItem::new(Line::from(format!("  Columns (Enter): {columns_summary}")))
                         .style(style_for_section_field(2, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  On insert assign: {}",
+                        "  On insert assign (Enter): {}",
                         summarize_category_set(&section.on_insert_assign)
                     )))
                     .style(style_for_section_field(3, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  On remove unassign: {}",
+                        "  On remove unassign (Enter): {}",
                         summarize_category_set(&section.on_remove_unassign)
                     )))
                     .style(style_for_section_field(4, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Show children: {}",
+                        "  Show children (Enter): {}",
                         if section.show_children { "yes" } else { "no" }
                     )))
                     .style(style_for_section_field(5, &mut selected_line)),
@@ -2804,12 +2804,14 @@ impl App {
                     Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
                 };
                 items.push(
-                    ListItem::new(Line::from(format!("  Display override: {mode_label}")))
-                        .style(style_for_section_field(6, &mut selected_line)),
+                    ListItem::new(Line::from(format!(
+                        "  Display override (Enter): {mode_label}"
+                    )))
+                    .style(style_for_section_field(6, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Expanded in list: {}",
+                        "  Expanded in list (Enter): {}",
                         if state.section_expanded == Some(state.section_index) {
                             "yes"
                         } else {

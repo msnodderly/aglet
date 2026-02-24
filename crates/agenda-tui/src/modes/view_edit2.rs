@@ -928,6 +928,8 @@ impl App {
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
+                    self.status = "Edit section criteria: j/k select  Space/Enter:toggle  Esc:done"
+                        .to_string();
                 }
             }
             KeyCode::Char('a') => {
@@ -943,6 +945,8 @@ impl App {
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
+                    self.status = "Edit on-insert assign: j/k select  Space/Enter:toggle  Esc:done"
+                        .to_string();
                 }
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
@@ -958,6 +962,8 @@ impl App {
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
+                    self.status = "Edit section columns: j/k select  Space/Enter:toggle  Esc:done"
+                        .to_string();
                 }
             }
             KeyCode::Char('r') => {
@@ -973,6 +979,9 @@ impl App {
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
+                    self.status =
+                        "Edit on-remove unassign: j/k select  Space/Enter:toggle  Esc:done"
+                            .to_string();
                 }
             }
             KeyCode::Char('h') => {
