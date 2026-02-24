@@ -1568,11 +1568,11 @@ impl App {
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.pane_focus == ViewEditPaneFocus::Sections {
-                        "Enter:expand/open-details  n:below+name  N:above+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:remove  [/]:reorder  Tab:pane  S:save  Esc:cancel"
+                        "Enter:expand/open-details  n:below+name  N:above+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:delete(confirm)  [/]:reorder  Tab:pane  S:save  Esc:cancel"
                     } else {
                         match state.region {
                             ViewEditRegion::Criteria => "j/k:details row  n:add  x:remove  Space/Enter:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:pane  S:save  Esc:cancel",
-                            ViewEditRegion::Sections => "j/k:details field  Enter/Space:field action  e/t/f/c/a/r/h/m shortcuts  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Sections => "j/k:details field  Enter/Space:field action  e/t/f/c/a/r/h/m/x shortcuts  Tab:pane  S:save  Esc:cancel",
                             ViewEditRegion::Unmatched => "j/k:details row  Enter/Space:row action  [/]:when-buckets  m:display  t/l:unmatched shortcuts  Tab:pane  S:save  Esc:cancel",
                         }
                     }
@@ -3120,6 +3120,37 @@ impl App {
                 .block(
                     Block::default()
                         .title(" Confirm ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if let Some(section_index) = state.section_delete_confirm {
+            let section_name = state
+                .draft
+                .sections
+                .get(section_index)
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| "(missing)".to_string());
+            let w = area.width.min(64);
+            let h = 6;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Delete section?"),
+                    Line::from(format!("\"{section_name}\"")),
+                    Line::from(""),
+                    Line::from("y: delete section   n/Esc: cancel"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Confirm Delete ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow)),
                 )

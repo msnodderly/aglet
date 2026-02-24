@@ -699,6 +699,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
   - [ ] `J/K` reorder selected section
 - [ ] Implement inline insert/rename flows with correct insert indices
 - [ ] Add inline delete confirmation flow(s)
+- [x] Prototype section delete confirmation flow in current `ViewEdit` (`x` prompts, `y/n` confirm/cancel from both panes)
 
 #### 3.3 Details Pane (Right Pane) Implementation
 
