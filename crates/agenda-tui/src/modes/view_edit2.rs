@@ -479,7 +479,7 @@ impl App {
                     if let Some(state) = &mut self.view_edit_state {
                         state.discard_confirm = true;
                     }
-                    self.status = "Discard view edits? y/n".to_string();
+                    self.status = "Discard unsaved changes? y/n".to_string();
                 } else {
                     self.view_edit_state = None;
                     self.mode = Mode::ViewPicker;
@@ -836,12 +836,16 @@ impl App {
                         } else {
                             state.section_expanded = Some(idx);
                         }
+                        state.section_details_field_index = 7;
                     }
                 }
             }
             KeyCode::Char('t') | KeyCode::Char('e') => {
                 if selecting_view_row {
                     return Ok(true);
+                }
+                if let Some(state) = &mut self.view_edit_state {
+                    state.section_details_field_index = 0;
                 }
                 self.begin_view_edit_section_title_input(idx);
             }

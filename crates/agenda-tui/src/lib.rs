@@ -6593,6 +6593,74 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_details_enter_toggles_expanded_row() {
+        let (store, db_path) = make_test_store_with_view("section-details-expand-row");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to sections pane");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select section row");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to details pane");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Sections
+        );
+
+        for _ in 0..7 {
+            app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+                .expect("advance details field");
+        }
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .section_details_field_index,
+            7
+        );
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle expanded from details row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().section_expanded,
+            Some(0)
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle expanded off from details row");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_category_picker_allows_multi_select_with_enter() {
         let (store, db_path) = make_test_store_with_view("picker-multi");
         let classifier = SubstringClassifier;

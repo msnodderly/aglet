@@ -3113,9 +3113,9 @@ impl App {
             frame.render_widget(Clear, overlay_area);
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from("Discard view edits?"),
+                    Line::from("Discard unsaved changes?"),
                     Line::from(""),
-                    Line::from("y: discard   n/Esc: continue editing"),
+                    Line::from("y: discard changes   n/Esc: keep editing"),
                 ])
                 .block(
                     Block::default()
