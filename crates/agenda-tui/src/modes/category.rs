@@ -945,9 +945,7 @@ impl App {
                 | KeyCode::Tab
                 | KeyCode::BackTab
                 | KeyCode::Down
-                | KeyCode::Up
-                | KeyCode::Char('j')
-                | KeyCode::Char('k') => {
+                | KeyCode::Up => {
                     self.set_category_manager_filter_editing(false);
                 }
                 _ => {
