@@ -610,6 +610,7 @@ impl App {
         self.collect_assigned_child_categories_for_parent(item, meta.parent_id)
     }
 
+    #[allow(dead_code)]
     fn build_current_column_direct_edit_rows(&self) -> Vec<CategoryDirectEditRow> {
         let assigned_child_ids = self.current_column_assigned_child_ids();
         let mut rows: Vec<CategoryDirectEditRow> = assigned_child_ids
@@ -1276,6 +1277,7 @@ impl App {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn open_category_direct_edit(&mut self) {
         let Some(meta) = self.current_category_direct_edit_column_meta() else {
             return;
@@ -1974,7 +1976,7 @@ impl App {
                     self.status = "Filter cleared".to_string();
                 }
             }
-            KeyCode::F(8) | KeyCode::Char('v') => {
+            KeyCode::F(8) | KeyCode::Char('v') | KeyCode::Char('V') => {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =

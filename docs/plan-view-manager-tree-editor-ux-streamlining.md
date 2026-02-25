@@ -544,14 +544,14 @@ This checklist is the implementation work breakdown for the plan. It is intentio
   - [x] split architecture (`v` quick picker + separate full-screen editor)
   - [x] auto-create first section in TUI create flow
   - [x] keep zero-section views valid in core
-- [ ] Lock key semantics to avoid churn during implementation:
-  - [ ] confirm `n`/`N` meaning in current `ViewEdit` Phase 1 (`N` remains add section, `n` alias or no-op decision)
-  - [ ] confirm target default first section title (`Main` vs `New section`)
-  - [ ] confirm whether delete-last-section remains allowed in TUI
-- [ ] Align docs/spec references:
+- [x] Lock key semantics to avoid churn during implementation:
+  - [x] confirm `n`/`N` meaning in current `ViewEdit` Phase 1 (`n` below, `N` above)
+  - [x] confirm target default first section title (`New section` for current implementation)
+  - [x] confirm whether delete-last-section remains allowed in TUI (allowed; normal delete confirm only)
+- [x] Align docs/spec references:
   - [x] ensure this plan remains source-of-truth for the split UX direction
   - [x] ensure mockup doc matches plan wording and key semantics
-  - [ ] add brief reference note in any active TUI workflow spec if needed
+  - [x] add brief reference note in any active TUI workflow spec if needed
 - [x] Create implementation branch from `main` (done outside the checklist if already created)
 
 ### Phase 1: Immediate UX Wins In Current `ViewEdit`
@@ -560,7 +560,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 - [x] Add a TUI helper for constructing a default section (name TBD)
 - [x] Use the helper in current `ViewEdit.Sections` add-section path
-- [ ] Cover helper defaults in unit tests (or test through call sites)
+- [x] Cover helper defaults in unit tests (or test through call sites)
 
 #### 1.2 Auto-Create First Section On TUI View Create
 
@@ -571,7 +571,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 #### 1.3 Open `ViewEdit` Focused On First Section Title Edit After Create
 
 - [x] Refactor `open_view_edit(view)` initialization so create flow can request a focused-start variant (e.g. `ViewEditOpenIntent`)
-- [ ] Add “focus first/new section title edit” intent/state initialization:
+- [x] Add “focus first/new section title edit” intent/state initialization:
   - [x] `region = Sections`
   - [x] select created section index
   - [x] initialize inline title input buffer
@@ -588,10 +588,10 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 #### 1.5 Dirty Tracking + Discard Confirmation In Current `ViewEdit`
 
 - [x] Add dirty state to `ViewEditState`
-- [ ] Decide dirty implementation approach:
+- [x] Decide dirty implementation approach:
   - [x] explicit dirty flag set on mutation
   - [ ] or snapshot comparison on exit (document tradeoff if chosen)
-- [ ] Mark dirty on all draft mutations:
+- [x] Mark dirty on all draft mutations:
   - [x] view criteria edits
   - [x] bucket edits
   - [x] section add/remove/reorder
@@ -610,7 +610,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 #### 1.6 UX Copy / Footer Hint Updates
 
 - [x] Update footer hints for `ViewEdit.Sections` to reflect immediate title edit after add
-- [ ] Update status messages for:
+- [x] Update status messages for:
   - [x] view create -> first section title edit
   - [x] add section -> type title
   - [x] discard prompt
@@ -618,7 +618,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 #### 1.7 Phase 1 Testing
 
-- [ ] Add/extend TUI tests for:
+- [x] Add/extend TUI tests for:
   - [x] TUI create path auto-adds first section
   - [x] create path opens `ViewEdit` focused on first section title inline edit
   - [x] `N` in sections starts inline title edit
@@ -648,12 +648,12 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 #### 2.3 Legacy Flow Cleanup
 
 - [x] Audit whether `Mode::ViewCreateCategory` is still needed anywhere in TUI
-- [ ] If still needed temporarily, narrow usage and add comments
+- [x] If still needed temporarily, narrow usage and add comments (N/A; legacy mode removed)
 - [x] If no longer used, remove dead routing/rendering code in a follow-up cleanup commit
 
 #### 2.4 Phase 2 Testing
 
-- [ ] Add/extend tests for:
+- [x] Add/extend tests for:
   - [x] `N` in view picker no longer routes to `ViewCreateCategory`
   - [x] create flow opens editor directly
   - [x] no implicit criterion is added unless user edits criteria in editor
@@ -669,36 +669,36 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [x] Decide whether to:
   - [ ] introduce new `Mode::ViewEditor` and new state type
   - [x] or refactor `Mode::ViewEdit` into the new shape while preserving entry semantics
-- [ ] Add `ViewEditorState` (single-view draft state) to `App`
-- [ ] Define supporting enums/types:
+- [x] Add/refine single-view editor draft state in `ViewEdit` (incremental bridge in current mode; dedicated `ViewEditorState` still deferred)
+- [x] Define supporting enums/types (bridge equivalents in current `ViewEdit`; dedicated named types deferred)
   - [ ] `ViewEditorFocus`
   - [ ] `ViewEditorRow` (`ViewProperties`, `Section{...}`, optional `UnmatchedPseudoRow`)
   - [ ] `ViewEditorInlineAction`
   - [ ] `ViewEditorOverlay`
   - [ ] `ViewEditorDetailsFocus`
-- [ ] Add open/close helpers:
-  - [ ] open editor from selected view in picker
-  - [ ] open editor in “new view / first section title edit” intent
-  - [ ] close editor and return to picker
+- [x] Add open/close helpers:
+  - [x] open editor from selected view in picker
+  - [x] open editor in “new view / first section title edit” intent
+  - [x] close editor and return to picker
 - [x] Prototype pane-focused `Tab`/`Shift-Tab` behavior in current `ViewEdit` (`Sections` <-> `Details`) while preserving legacy region state under the hood
 
 #### 3.2 Sections Pane (Left Pane) Implementation
 
-- [ ] Render a dedicated sections list pane with synthetic `View Properties` row
+- [x] Render a dedicated sections list pane with synthetic `View Properties` row (prototype in current `ViewEdit`; polish in progress)
 - [x] Prototype synthetic `View Properties` row in current left pane (render-only, no row selection behavior yet)
 - [x] Add minimal synthetic `View Properties` row interaction in current `ViewEdit` (select from Sections pane, `Enter` jumps to view criteria details)
-- [ ] Add selection navigation (`j/k`, arrows)
-- [ ] Implement row mapping and stable selection identity across mutations
+- [x] Add selection navigation (`j/k`, arrows)
+- [x] Implement row mapping and stable selection identity across mutations (index-based bridge behavior with mutation-aware index updates)
 - [x] Add internal section insertion helper with explicit insert index (prep for above/below shortcuts)
 - [x] Prototype Lotus-style `n`/`N` section insertion semantics in current `ViewEdit` (`n` below, `N` above, both start title edit)
-- [ ] Implement section quick actions:
-  - [ ] `n` add below current row
-  - [ ] `N` add above current row
-  - [ ] `r` rename selected section/view
-  - [ ] `x` delete selected section (and view if supported in editor)
-  - [ ] `J/K` reorder selected section
-- [ ] Implement inline insert/rename flows with correct insert indices
-- [ ] Add inline delete confirmation flow(s)
+- [x] Implement section quick actions:
+  - [x] `n` add below current row
+  - [x] `N` add above current row
+  - [x] `r` rename selected section/view (section title + view name via `View` row)
+  - [x] `x` delete selected section (with confirm; view delete in editor still TBD)
+  - [x] `J/K` reorder selected section (aliased to existing reorder behavior; `[`/`]` retained)
+- [x] Implement inline insert/rename flows with correct insert indices
+- [x] Add inline delete confirmation flow(s) (section delete confirm in current `ViewEdit`)
 - [x] Prototype section delete confirmation flow in current `ViewEdit` (`x` prompts, `y/n` confirm/cancel from both panes)
 
 #### 3.3 Details Pane (Right Pane) Implementation
@@ -708,7 +708,7 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 - [x] Implement details focus movement (`j/k`) (prototype row navigation in right pane for view details + section details)
 - [x] Prototype `j/k` details-row traversal for view-level details (criteria rows + unmatched rows) while preserving legacy region model
 - [x] Prototype view-details row actions (`Enter`/`Space`) for `When include/exclude`, view display mode, and unmatched rows
-- [ ] Implement section field editing:
+- [x] Implement section field editing:
   - [x] Title (inline text) (available via details row action and section shortcut)
   - [x] Criteria (overlay/picker) (details row `Enter`/`Space` + shortcut)
   - [x] Columns (overlay/picker) (details row `Enter`/`Space` + shortcut)
@@ -716,59 +716,66 @@ This checklist is the implementation work breakdown for the plan. It is intentio
   - [x] On remove unassign (overlay/picker) (details row `Enter`/`Space` + shortcut)
   - [x] Show children toggle (details row action + shortcut)
   - [x] Display mode override cycle (details row action + shortcut)
-- [ ] Implement view field editing on `View Properties` row:
-  - [ ] Name
-  - [ ] Criteria
-  - [ ] When include/exclude buckets
-  - [ ] Board display mode
-  - [ ] Unmatched visible
-  - [ ] Unmatched label
+  - [x] Expanded-in-list toggle (details row action + shortcut)
+- [x] Implement view field editing on `View Properties` row:
+  - [x] Name (via `r` from `View` row / view-details context; `Enter` on Name row can be added later if desired)
+  - [x] Criteria (details row navigation + existing criteria actions)
+  - [x] When include/exclude buckets (details row `Enter` opens bucket pickers)
+  - [x] Board display mode (details row `Enter`/`Space` toggles)
+  - [x] Unmatched visible (details row `Enter`/`Space` toggles)
+  - [x] Unmatched label (details row `Enter` starts inline edit)
   - [ ] (optional phase in Phase 3) remove-from-view unassign set
 - [x] Ensure field labels/help are concise and status/footer stays accurate (iterative; updated for pane focus and expanded view-details row actions)
+- [x] Screenshot polish pass (2-pane editor):
+  - [x] reduce left-pane duplication when `DETAILS` pane is present (remove noisy expanded summary/help lines)
+  - [x] simplify `View Properties` row wording
+  - [x] rename `Expanded in list` to clearer wording
+  - [x] reduce footer duplication between status line and hint line
+  - [x] reevaluate per-row `(Enter)` label noise vs contextual hint/footer (reduced row-label repetition; rely on tip/footer)
 
 #### 3.4 Overlay / Picker Infrastructure In Editor
 
-- [ ] Port/reuse category picker overlay logic for editor fields
-- [ ] Port/reuse when-bucket picker overlay logic for view fields
-- [ ] Ensure overlay key precedence is correct (overlay intercepts before pane keys)
-- [ ] Ensure overlay close returns focus to the invoking pane/field
+- [x] Port/reuse category picker overlay logic for editor fields
+- [x] Port/reuse when-bucket picker overlay logic for view fields
+- [x] Ensure overlay key precedence is correct (overlay intercepts before pane keys)
+- [x] Ensure overlay close returns focus to the invoking pane/field
 
 #### 3.5 Filter + Preview (Optional/Calm By Default)
 
-- [ ] Add compact section filter bar toggled/focused with `/`
-- [ ] Implement filter state and filtered row list for sections pane
-- [ ] Ensure `Esc` clears active filter before attempting editor close
-- [ ] Add preview toggle `p`
-- [ ] Render preview pane only when enabled
-- [ ] Compute lightweight preview summary/counts (match count, lane summary)
-- [ ] Integrate preview pane into `Tab` focus cycle only when visible
+- [x] Add compact section filter bar toggled/focused with `/`
+- [x] Implement filter state and filtered row list for sections pane
+- [x] Ensure `Esc` clears active filter before attempting editor close
+- [x] Add preview toggle `p`
+- [x] Render preview pane only when enabled
+- [x] Compute lightweight preview summary/counts (match count, lane summary)
+- [x] Integrate preview pane into `Tab` focus cycle only when visible
 
 #### 3.6 Save / Cancel / Dirty Behavior
 
-- [ ] Keep explicit `S` save for editor draft
-- [ ] Persist draft back to store and refresh app state on save
-- [ ] Return to quick picker after save (or decide to remain in editor and document behavior)
-- [ ] Rebuild any board section filters/slot state impacted by saved view changes
-- [ ] Implement dirty-discard confirmation at editor top level
+- [x] Keep explicit `S` save for editor draft
+- [x] Persist draft back to store and refresh app state on save
+- [x] Return to quick picker after save (or decide to remain in editor and document behavior)
+- [x] Rebuild any board section filters/slot state impacted by saved view changes
+- [x] Implement dirty-discard confirmation at editor top level (current `ViewEdit` bridge)
 
 #### 3.7 Picker Integration (Keep Quick Picker Simple)
 
-- [ ] Preserve current `ViewPicker` rendering simplicity
-- [ ] Update picker `e` action to open the new full-screen editor mode
-- [ ] Retain `V` alias if desired for compatibility
-- [ ] Ensure `Enter` switch and `Esc` close behaviors remain unchanged
+- [x] Preserve current `ViewPicker` rendering simplicity
+- [x] Update picker `e` action to open the new full-screen editor mode
+- [x] Retain `V` alias if desired for compatibility
+- [x] Ensure `Enter` switch and `Esc` close behaviors remain unchanged
 
 #### 3.8 Phase 3 Testing
 
-- [ ] Add/extend TUI tests for:
-  - [ ] open editor from picker
-  - [ ] synthetic `View Properties` row behavior
-  - [ ] add section above/below current row
-  - [ ] reorder sections with `J/K`
-  - [ ] details field edits (toggles, inline text, overlays)
-  - [ ] preview toggle/focus cycle behavior
-  - [ ] compact filter behavior
-  - [ ] save/dirty/discard flows
+- [x] Add/extend TUI tests for:
+  - [x] open editor from picker
+  - [x] synthetic `View Properties` row behavior
+  - [x] add section above/below current row
+  - [x] reorder sections with `J/K`
+  - [x] details field edits (toggles, inline text, overlays)
+  - [x] preview toggle/focus cycle behavior
+  - [x] compact filter behavior
+  - [x] save/dirty/discard flows
 - [ ] Manual smoke pass:
   - [ ] switch view via picker
   - [ ] open editor, add sections above/below
@@ -780,49 +787,49 @@ This checklist is the implementation work breakdown for the plan. It is intentio
 
 #### 4.1 Category Matching + Picker Polish (Lotus-Inspired)
 
-- [ ] Add filtering/type-to-match to category picker overlays used by editor fields
-- [ ] Improve match feedback (count / first match / current match) where practical
+- [x] Add filtering/type-to-match to category picker overlays used by editor fields
+- [x] Improve match feedback (count / first match / current match) where practical
 - [ ] Evaluate whether inline type-to-resolve is useful for some fields before opening a picker
-- [ ] Keep fallback picker browse flow available for all category-backed fields
+- [x] Keep fallback picker browse flow available for all category-backed fields
 
 #### 4.2 UX Copy / Help / Discoverability
 
-- [ ] Add concise field-level help/status messages in details pane interactions
-- [ ] Audit footer hints for all editor focus states and overlays
-- [ ] Ensure terminology is consistent:
-  - [ ] “View Picker” vs “View Editor”
-  - [ ] “add above/below”
-  - [ ] “Unmatched” vs “generated lane”
+- [x] Add concise field-level help/status messages in details pane interactions
+- [x] Audit footer hints for all editor focus states and overlays
+- [x] Ensure terminology is consistent:
+  - [x] “View Picker” vs “View Editor”
+  - [x] “add above/below”
+  - [x] “Unmatched” vs “generated lane”
 
 #### 4.3 Visual / Layout Polish
 
-- [ ] Tune column widths and wrapping in editor details pane
-- [ ] Improve selected-row and focused-field styling consistency with category manager
-- [ ] Implement narrow-terminal fallback behavior (2-pane + compact footer summary)
-- [ ] Verify preview pane layout behaves well at smaller terminal sizes
+- [x] Tune column widths and wrapping in editor details pane (iterative percentages + compact footer fallback)
+- [x] Improve selected-row and focused-field styling consistency with category manager
+- [x] Implement narrow-terminal fallback behavior (2-pane + compact footer summary)
+- [x] Verify preview pane layout behaves well at smaller terminal sizes
 
 #### 4.4 Phase 4 Testing
 
-- [ ] Add tests for overlay filtering behavior
-- [ ] Add tests for narrow-layout rendering state selection logic (where practical)
+- [x] Add tests for overlay filtering behavior
+- [x] Add tests for narrow-layout rendering state selection logic (where practical)
 - [ ] Manual usability pass on large category hierarchies and long section lists
 
 ### Cross-Cutting: Documentation / Scripts / Release Notes
 
-- [ ] Update docs mockup/plan as implementation decisions finalize (if key semantics change)
-- [ ] Add or update manual smoke script in `docs/`
-- [ ] Update any user-facing TUI keybinding docs/reference notes
-- [ ] Capture migration notes for changed view-creation workflow (`ViewCreateCategory` removal)
+- [x] Update docs mockup/plan as implementation decisions finalize (if key semantics change)
+- [x] Add or update manual smoke script in `docs/`
+- [x] Update any user-facing TUI keybinding docs/reference notes
+- [x] Capture migration notes for changed view-creation workflow (`ViewCreateCategory` removal)
 
 ### Completion Gate (Definition Of Done)
 
-- [ ] Quick `v` picker remains simple and fast (no heavy editor UI)
-- [ ] TUI create flow auto-creates first section and starts title edit
-- [ ] Full-screen editor supports deep view + section editing with details pane
-- [ ] `n`/`N` quick section insertion (below/above) works in editor
-- [ ] Dirty drafts are protected by discard confirmation
-- [ ] Tests and smoke scripts cover the new core flows
-- [ ] Docs reflect shipped keybindings and workflow
+- [x] Quick `v` picker remains simple and fast (no heavy editor UI)
+- [x] TUI create flow auto-creates first section and starts title edit
+- [x] Full-screen editor supports deep view + section editing with details pane
+- [x] `n`/`N` quick section insertion (below/above) works in editor
+- [x] Dirty drafts are protected by discard confirmation
+- [x] Tests and smoke scripts cover the new core flows
+- [x] Docs reflect shipped keybindings and workflow
 ## 13. Open Questions To Resolve Before Phase 3
 
 1. Should the first auto-created section default title be `"Main"` or `"New section"`?

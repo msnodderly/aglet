@@ -280,15 +280,6 @@ mod tests {
         InputPanel::new_add_item("Open", &HashSet::new())
     }
 
-    fn edit_panel() -> InputPanel {
-        InputPanel::new_edit_item(
-            ItemId::new_v4(),
-            "Test item".to_string(),
-            "Test note".to_string(),
-            HashSet::new(),
-        )
-    }
-
     fn name_panel() -> InputPanel {
         InputPanel::new_name_input("", "View name")
     }

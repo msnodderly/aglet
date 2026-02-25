@@ -45,8 +45,8 @@ impl App {
 
         self.render_main(frame, layout[1]);
 
-        let footer = self.render_footer();
         let footer_area = layout[2];
+        let footer = self.render_footer(footer_area.width);
         frame.render_widget(footer, footer_area);
         if let Some((x, y)) = self.input_cursor_position(footer_area) {
             frame.set_cursor_position((x, y));
@@ -1483,9 +1483,13 @@ impl App {
             .wrap(Wrap { trim: false })
     }
 
-    pub(crate) fn render_footer(&self) -> Paragraph<'_> {
+    pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
         let status = self.footer_status_text();
-        let hints = self.footer_hint_text();
+        let hints = if self.mode == Mode::ViewEdit && width < 100 {
+            "ViewEdit: Tab:pane  j/k:move  Enter/Space:edit  /:filter  p:preview  S:save  Esc:cancel"
+        } else {
+            self.footer_hint_text()
+        };
         let text = ratatui::text::Text::from(vec![
             ratatui::text::Line::from(status),
             ratatui::text::Line::from(ratatui::text::Span::styled(
@@ -1568,12 +1572,14 @@ impl App {
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.pane_focus == ViewEditPaneFocus::Sections {
-                        "Enter:expand/open-details  n:below+name  N:above+name  e/t:rename  +/-:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display-override  x:delete(confirm)  [/]:reorder  Tab:pane  S:save  Esc:cancel"
+                        "Sections pane: j/k:select  /:filter  Enter:expand/open-details  n/N:add+name  r:rename view(row)  x:delete(confirm)  J/K or [/]:reorder  p:preview  Tab:pane  S:save  Esc:cancel"
+                    } else if state.pane_focus == ViewEditPaneFocus::Preview {
+                        "Preview pane: j/k:scroll  p:hide preview  Tab:pane  S:save  Esc:cancel (Esc clears section filter first)"
                     } else {
                         match state.region {
-                            ViewEditRegion::Criteria => "j/k:details row  n:add  x:remove  Space/Enter:toggle+/-  ]/[:when-buckets  m:display(single/multi)  Tab:pane  S:save  Esc:cancel",
-                            ViewEditRegion::Sections => "j/k:details field  Enter/Space:field action  e/t/f/c/a/r/h/m/x shortcuts  Tab:pane  S:save  Esc:cancel",
-                            ViewEditRegion::Unmatched => "j/k:details row  Enter/Space:row action  [/]:when-buckets  m:display  t/l:unmatched shortcuts  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Criteria => "Details pane: j/k:row  Enter/Space:toggle/edit  r:rename view  n:add criterion  x:remove criterion  ]/[:when buckets  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Sections => "Details pane: j/k:field  Enter/Space:field action  e/t/f/c/a/r/h/m/x shortcuts (optional)  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Unmatched => "Details pane: j/k:row  Enter/Space:row action  r:rename view  [/]:when buckets  m:display  t/l:unmatched  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
                         }
                     }
                 } else {
@@ -2471,12 +2477,35 @@ impl App {
             return;
         };
 
-        let panes = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-            .split(area);
+        let preview_three_column = state.preview_visible && area.width >= 120 && area.height >= 12;
+        let preview_stacked_right = state.preview_visible && !preview_three_column;
+        let panes = if preview_three_column {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(36),
+                    Constraint::Percentage(42),
+                    Constraint::Percentage(22),
+                ])
+                .split(area)
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .split(area)
+        };
         let sections_area = panes[0];
-        let details_area = panes[1];
+        let (details_area, preview_area) = if preview_three_column && panes.len() > 2 {
+            (panes[1], Some(panes[2]))
+        } else if preview_stacked_right {
+            let right = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+                .split(panes[1]);
+            (right[0], Some(right[1]))
+        } else {
+            (panes[1], None)
+        };
 
         let focused_border = Color::Cyan;
         let inactive_border = Color::Blue;
@@ -2550,10 +2579,23 @@ impl App {
                     BoardDisplayMode::MultiLine => "multi-line",
                 };
 
-                items.push(ListItem::new(Line::from(format!(
-                    "  Name: {}",
-                    state.draft.name
-                ))));
+                let editing_view_name =
+                    matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
+                let view_name_text = if editing_view_name {
+                    format!("◀ {}", state.inline_buf.text())
+                } else {
+                    state.draft.name.clone()
+                };
+                let view_name_style = if editing_view_name {
+                    selected_line = Some(0);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!("  Name (r): {view_name_text}")))
+                        .style(view_name_style),
+                );
                 items.push(ListItem::new(Line::from("  Criteria:")));
 
                 let criteria_row_start = items.len();
@@ -2735,7 +2777,7 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Criteria (Enter): {}",
+                        "  Criteria: {}",
                         if criteria_lines.is_empty() {
                             "(none)".to_string()
                         } else {
@@ -2774,26 +2816,26 @@ impl App {
                         }
                     };
                 items.push(
-                    ListItem::new(Line::from(format!("  Columns (Enter): {columns_summary}")))
+                    ListItem::new(Line::from(format!("  Columns: {columns_summary}")))
                         .style(style_for_section_field(2, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  On insert assign (Enter): {}",
+                        "  On insert assign: {}",
                         summarize_category_set(&section.on_insert_assign)
                     )))
                     .style(style_for_section_field(3, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  On remove unassign (Enter): {}",
+                        "  On remove unassign: {}",
                         summarize_category_set(&section.on_remove_unassign)
                     )))
                     .style(style_for_section_field(4, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Show children (Enter): {}",
+                        "  Show children: {}",
                         if section.show_children { "yes" } else { "no" }
                     )))
                     .style(style_for_section_field(5, &mut selected_line)),
@@ -2804,14 +2846,12 @@ impl App {
                     Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
                 };
                 items.push(
-                    ListItem::new(Line::from(format!(
-                        "  Display override (Enter): {mode_label}"
-                    )))
-                    .style(style_for_section_field(6, &mut selected_line)),
+                    ListItem::new(Line::from(format!("  Display override: {mode_label}")))
+                        .style(style_for_section_field(6, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Expanded in list (Enter): {}",
+                        "  Expand in Sections list: {}",
                         if state.section_expanded == Some(state.section_index) {
                             "yes"
                         } else {
@@ -2821,7 +2861,7 @@ impl App {
                     .style(style_for_section_field(7, &mut selected_line)),
                 );
                 items.push(ListItem::new(Line::from(
-                    "  Section keys: e/t f c a r h m  [/]:reorder  x:remove",
+                    "  Tip: Enter/Space edits selected field (J/K or [/] reorder; shortcuts optional)",
                 )));
             } else {
                 items.push(ListItem::new(Line::from("  No selection")));
@@ -2851,8 +2891,20 @@ impl App {
                 }
             });
 
+            let filter_active = !state.sections_filter_buf.trimmed().is_empty();
+            let filter_editing = matches!(
+                state.inline_input,
+                Some(ViewEditInlineInput::SectionsFilter)
+            );
+            let sections_title = if filter_editing {
+                format!(" SECTIONS  /{}◀ ", state.sections_filter_buf.text())
+            } else if filter_active {
+                format!(" SECTIONS  /{} ", state.sections_filter_buf.text())
+            } else {
+                " SECTIONS ".to_string()
+            };
             let block = Block::default()
-                .title(" SECTIONS ")
+                .title(sections_title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(
                     if state.pane_focus == ViewEditPaneFocus::Sections {
@@ -2875,24 +2927,43 @@ impl App {
             } else {
                 Style::default()
             };
-            let view_row_label = match state.region {
-                ViewEditRegion::Criteria => "criteria",
-                ViewEditRegion::Sections => "view",
-                ViewEditRegion::Unmatched => "unmatched",
-            };
             items.push(
                 ListItem::new(Line::from(format!(
-                    "{}  View Properties ({view_row_label})  [{}]",
+                    "{}  View: {}",
                     if view_row_focused { ">" } else { " " },
-                    state.draft.name
+                    state.draft.name,
                 )))
                 .style(view_row_style),
             );
 
+            let visible_section_indices: Vec<usize> = {
+                let q = state.sections_filter_buf.trimmed().to_ascii_lowercase();
+                if q.is_empty() {
+                    (0..state.draft.sections.len()).collect()
+                } else {
+                    state
+                        .draft
+                        .sections
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| {
+                            if s.title.to_ascii_lowercase().contains(&q) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                }
+            };
+
             if state.draft.sections.is_empty() {
                 items.push(ListItem::new(Line::from("  (no sections — n:add)")));
+            } else if visible_section_indices.is_empty() {
+                items.push(ListItem::new(Line::from("  (no matching sections)")));
             } else {
-                for (i, section) in state.draft.sections.iter().enumerate() {
+                for i in visible_section_indices {
+                    let section = &state.draft.sections[i];
                     if i == state.section_index
                         && !state.sections_view_row_selected
                         && sections_pane_focused
@@ -2934,59 +3005,27 @@ impl App {
                     items.push(ListItem::new(Line::from(title)).style(style));
 
                     if is_expanded {
-                        if !section.criteria.criteria.is_empty() {
-                            let mut parts: Vec<String> = section
-                                .criteria
-                                .criteria
-                                .iter()
-                                .map(|c| {
-                                    let prefix = match c.mode {
-                                        CriterionMode::And => "+",
-                                        CriterionMode::Not => "-",
-                                        CriterionMode::Or => "|",
-                                    };
-                                    let name = category_names
-                                        .get(&c.category_id)
-                                        .cloned()
-                                        .unwrap_or_else(|| c.category_id.to_string());
-                                    format!("{prefix}{name}")
-                                })
-                                .collect();
-                            parts.sort_by_key(|s| s.to_ascii_lowercase());
-                            items.push(ListItem::new(Line::from(format!(
-                                "     criteria: {}",
-                                parts.join(" ")
-                            ))));
-                        }
-                        let section_columns: Vec<String> = if section.columns.is_empty() {
-                            vec!["(none)".to_string()]
-                        } else {
-                            section
-                                .columns
-                                .iter()
-                                .map(|column| {
-                                    let name = category_names
-                                        .get(&column.heading)
-                                        .cloned()
-                                        .unwrap_or_else(|| "(deleted)".to_string());
-                                    format!("{name}[w:{}]", column.width)
-                                })
-                                .collect()
-                        };
-                        items.push(ListItem::new(Line::from(format!(
-                            "     columns: {}",
-                            section_columns.join(", ")
-                        ))));
+                        let criteria_count = section.criteria.criteria.len();
+                        let columns_count = section.columns.len();
                         let mode_label = match section.board_display_mode_override {
                             None => "inherit".to_string(),
                             Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
                             Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
                         };
                         items.push(ListItem::new(Line::from(format!(
-                            "     children:{}  display:{}  (e/t:title  f:criteria  c:columns  a:on-insert  r:on-remove  h:children  m:display)",
-                            if section.show_children { "yes" } else { "no" }
-                            ,
-                            mode_label
+                            "     criteria:{}  columns:{}  children:{}  display:{}",
+                            if criteria_count == 0 {
+                                "none".to_string()
+                            } else {
+                                criteria_count.to_string()
+                            },
+                            if columns_count == 0 {
+                                "none".to_string()
+                            } else {
+                                columns_count.to_string()
+                            },
+                            if section.show_children { "yes" } else { "no" },
+                            mode_label,
                         ))));
                     }
                 }
@@ -3002,21 +3041,152 @@ impl App {
             Self::render_vertical_scrollbar(frame, sections_area, content_len, list_state.offset());
         }
 
+        // ── Preview pane (optional) ─────────────────────────────────────────
+        if let Some(preview_area) = preview_area {
+            let preview_focused = state.pane_focus == ViewEditPaneFocus::Preview;
+            let preview_border = if preview_focused {
+                focused_border
+            } else {
+                inactive_border
+            };
+
+            let reference_date = Local::now().date_naive();
+            let resolved = resolve_view(
+                &state.draft,
+                &self.all_items,
+                &self.categories,
+                reference_date,
+            );
+            let mut preview_items: Vec<ListItem<'_>> = Vec::new();
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Matches: {}",
+                state.preview_count
+            ))));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Sections: {} configured",
+                state.draft.sections.len()
+            ))));
+            preview_items.push(ListItem::new(Line::from("")));
+
+            if resolved.sections.is_empty() {
+                preview_items.push(ListItem::new(Line::from("  (no section lanes)")));
+            } else {
+                for section in &resolved.sections {
+                    let subsection_count = section.subsections.len();
+                    let section_count = if subsection_count == 0 {
+                        section.items.len()
+                    } else {
+                        section.subsections.iter().map(|s| s.items.len()).sum()
+                    };
+                    preview_items.push(ListItem::new(Line::from(format!(
+                        "  {}: {}",
+                        section.title, section_count
+                    ))));
+                    if subsection_count > 0 {
+                        preview_items.push(ListItem::new(Line::from(format!(
+                            "    generated: {}",
+                            subsection_count
+                        ))));
+                    }
+                }
+            }
+
+            let unmatched_count = resolved
+                .unmatched
+                .as_ref()
+                .map(|items| items.len())
+                .unwrap_or(0);
+            preview_items.push(ListItem::new(Line::from("")));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Unmatched: {} ({})",
+                if state.draft.show_unmatched {
+                    "shown"
+                } else {
+                    "hidden"
+                },
+                unmatched_count
+            ))));
+
+            let selected_preview_row = if preview_items.is_empty() {
+                None
+            } else {
+                Some(
+                    state
+                        .preview_scroll
+                        .min(preview_items.len().saturating_sub(1)),
+                )
+            };
+            let content_len = preview_items.len();
+            let mut list_state = Self::list_state_for(preview_area, selected_preview_row);
+            frame.render_stateful_widget(
+                List::new(preview_items)
+                    .block(
+                        Block::default()
+                            .title(" PREVIEW ")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(preview_border)),
+                    )
+                    .highlight_style(if preview_focused {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }),
+                preview_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, preview_area, content_len, list_state.offset());
+        }
+
         // ── Picker overlay ───────────────────────────────────────────────────
         if let Some(overlay) = &state.overlay {
             let overlay_area = {
-                let w = panes[1].width.max(1);
-                Rect::new(panes[1].x, panes[1].y, w, panes[1].height)
+                let w = details_area.width.max(1);
+                Rect::new(details_area.x, details_area.y, w, details_area.height)
             };
             frame.render_widget(Clear, overlay_area);
             match overlay {
                 ViewEditOverlay::CategoryPicker { target } => {
-                    let title = " Pick categories (Space/Enter toggle, Esc done) ";
+                    let overlay_filter = state.overlay_filter_buf.text();
+                    let filtered_indices: Vec<usize> = if overlay_filter.trim().is_empty() {
+                        (0..self.category_rows.len()).collect()
+                    } else {
+                        let q = overlay_filter.trim().to_ascii_lowercase();
+                        self.category_rows
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, row)| {
+                                if row.name.to_ascii_lowercase().contains(&q) {
+                                    Some(i)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    };
+                    let selected_filtered_index = filtered_indices
+                        .iter()
+                        .position(|&i| i == state.picker_index)
+                        .unwrap_or(0);
+                    let title = if overlay_filter.trim().is_empty() {
+                        format!(
+                            " Pick categories  {}/{}  (type filter, Space/Enter toggle, Esc done) ",
+                            (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
+                            filtered_indices.len()
+                        )
+                    } else {
+                        format!(
+                            " Pick categories /{}  {}/{} ",
+                            overlay_filter,
+                            (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
+                            filtered_indices.len()
+                        )
+                    };
                     let section_expanded = state.section_expanded.unwrap_or(0);
                     let items: Vec<ListItem<'_>> = self
                         .category_rows
                         .iter()
                         .enumerate()
+                        .filter(|(i, _)| filtered_indices.contains(i))
                         .map(|(i, row)| {
                             let indent = "  ".repeat(row.depth);
                             let checked = match target {
@@ -3067,8 +3237,14 @@ impl App {
                         .title(title)
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow));
-                    let mut list_state =
-                        Self::list_state_for(overlay_area, Some(state.picker_index));
+                    let mut list_state = Self::list_state_for(
+                        overlay_area,
+                        if filtered_indices.is_empty() {
+                            None
+                        } else {
+                            Some(selected_filtered_index)
+                        },
+                    );
                     frame.render_stateful_widget(
                         List::new(items).block(block),
                         overlay_area,
@@ -3115,9 +3291,9 @@ impl App {
             frame.render_widget(Clear, overlay_area);
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from("Discard unsaved changes?"),
+                    Line::from("Save changes before closing?"),
                     Line::from(""),
-                    Line::from("y: discard changes   n/Esc: keep editing"),
+                    Line::from("y: save and close   n: discard   Esc: keep editing"),
                 ])
                 .block(
                     Block::default()

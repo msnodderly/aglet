@@ -34,7 +34,7 @@ impl App {
     }
 
     fn view_edit_default_status() -> String {
-        "Edit view: Tab=pane  S=save  Esc=cancel".to_string()
+        "View editor".to_string()
     }
 
     fn set_view_edit_dirty(&mut self) {
@@ -59,6 +59,22 @@ impl App {
                 state.discard_confirm = false;
                 self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
             }
+        }
+    }
+
+    fn begin_view_edit_name_input(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            let current = state.draft.name.clone();
+            state.sections_view_row_selected = true;
+            if state.region == ViewEditRegion::Sections {
+                state.region = ViewEditRegion::Criteria;
+            }
+            state.pane_focus = ViewEditPaneFocus::Details;
+            state.inline_input = Some(ViewEditInlineInput::ViewName);
+            state.inline_buf = text_buffer::TextBuffer::new(current);
+            state.discard_confirm = false;
+            state.section_delete_confirm = None;
+            self.status = "View name: type text  Enter:confirm  Esc:cancel".to_string();
         }
     }
 
@@ -103,7 +119,11 @@ impl App {
             inline_input: None,
             inline_buf: text_buffer::TextBuffer::empty(),
             picker_index: 0,
+            overlay_filter_buf: text_buffer::TextBuffer::empty(),
             preview_count,
+            preview_visible: false,
+            preview_scroll: 0,
+            sections_filter_buf: text_buffer::TextBuffer::empty(),
             dirty: false,
             discard_confirm: false,
             section_delete_confirm: None,
@@ -130,6 +150,103 @@ impl App {
         state.region != ViewEditRegion::Sections
             || state.sections_view_row_selected
             || state.draft.sections.get(state.section_index).is_none()
+    }
+
+    fn view_edit_section_filter_query(state: &ViewEditState) -> Option<String> {
+        let q = state.sections_filter_buf.trimmed();
+        if q.is_empty() {
+            None
+        } else {
+            Some(q.to_ascii_lowercase())
+        }
+    }
+
+    fn view_edit_visible_section_indices(state: &ViewEditState) -> Vec<usize> {
+        let Some(filter) = Self::view_edit_section_filter_query(state) else {
+            return (0..state.draft.sections.len()).collect();
+        };
+        state
+            .draft
+            .sections
+            .iter()
+            .enumerate()
+            .filter_map(|(i, section)| {
+                let title = section.title.to_ascii_lowercase();
+                if title.contains(&filter) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn view_edit_filter_is_active(state: &ViewEditState) -> bool {
+        Self::view_edit_section_filter_query(state).is_some()
+    }
+
+    fn view_edit_overlay_category_filter_query(state: &ViewEditState) -> Option<String> {
+        let q = state.overlay_filter_buf.trimmed();
+        if q.is_empty() {
+            None
+        } else {
+            Some(q.to_ascii_lowercase())
+        }
+    }
+
+    fn view_edit_filtered_category_row_indices(&self, state: &ViewEditState) -> Vec<usize> {
+        let Some(filter) = Self::view_edit_overlay_category_filter_query(state) else {
+            return (0..self.category_rows.len()).collect();
+        };
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| {
+                if row.name.to_ascii_lowercase().contains(&filter) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn clear_view_edit_section_filter(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.sections_filter_buf.clear();
+            if matches!(
+                state.inline_input,
+                Some(ViewEditInlineInput::SectionsFilter)
+            ) {
+                state.inline_input = None;
+            }
+        }
+        self.normalize_view_edit_sections_selection_for_filter();
+        self.status = "Section filter cleared".to_string();
+    }
+
+    fn normalize_view_edit_sections_selection_for_filter(&mut self) {
+        let Some(state) = &mut self.view_edit_state else {
+            return;
+        };
+        let visible = Self::view_edit_visible_section_indices(state);
+        if visible.is_empty() {
+            state.sections_view_row_selected = true;
+            if state.region == ViewEditRegion::Sections {
+                state.section_details_field_index = 0;
+            }
+            return;
+        }
+
+        if state.sections_view_row_selected {
+            return;
+        }
+        if !visible.contains(&state.section_index) {
+            state.section_index = visible[0];
+            if state.region == ViewEditRegion::Sections {
+                state.section_details_field_index = 0;
+            }
+        }
     }
 
     fn view_details_focus_index(state: &ViewEditState) -> usize {
@@ -164,23 +281,53 @@ impl App {
         }
     }
 
-    fn toggle_view_edit_pane_focus(&mut self) {
+    fn cycle_view_edit_pane_focus(&mut self, forward: bool) {
         if let Some(state) = &mut self.view_edit_state {
-            state.pane_focus = match state.pane_focus {
-                ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
-                ViewEditPaneFocus::Details => ViewEditPaneFocus::Sections,
+            let next = if state.preview_visible {
+                match (state.pane_focus, forward) {
+                    (ViewEditPaneFocus::Sections, true) => ViewEditPaneFocus::Details,
+                    (ViewEditPaneFocus::Details, true) => ViewEditPaneFocus::Preview,
+                    (ViewEditPaneFocus::Preview, true) => ViewEditPaneFocus::Sections,
+                    (ViewEditPaneFocus::Sections, false) => ViewEditPaneFocus::Preview,
+                    (ViewEditPaneFocus::Details, false) => ViewEditPaneFocus::Sections,
+                    (ViewEditPaneFocus::Preview, false) => ViewEditPaneFocus::Details,
+                }
+            } else {
+                match state.pane_focus {
+                    ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
+                    ViewEditPaneFocus::Details => ViewEditPaneFocus::Sections,
+                    ViewEditPaneFocus::Preview => ViewEditPaneFocus::Sections,
+                }
             };
+            state.pane_focus = next;
 
             if state.pane_focus == ViewEditPaneFocus::Sections {
                 if state.region != ViewEditRegion::Sections {
                     state.sections_view_row_selected = true;
                 }
-            } else if state.region == ViewEditRegion::Sections {
+            } else if state.pane_focus == ViewEditPaneFocus::Details
+                && state.region == ViewEditRegion::Sections
+            {
                 if state.sections_view_row_selected {
                     state.region = ViewEditRegion::Criteria;
                 }
                 state.section_details_field_index = 0;
             }
+        }
+    }
+
+    fn toggle_view_edit_preview_visible(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.preview_visible = !state.preview_visible;
+            if !state.preview_visible && state.pane_focus == ViewEditPaneFocus::Preview {
+                state.pane_focus = ViewEditPaneFocus::Sections;
+            }
+            state.preview_scroll = 0;
+            self.status = if state.preview_visible {
+                "Preview pane shown".to_string()
+            } else {
+                "Preview pane hidden".to_string()
+            };
         }
     }
 
@@ -198,6 +345,7 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             state.overlay = None;
             state.picker_index = 0;
+            state.overlay_filter_buf.clear();
         }
         self.status = Self::view_edit_default_status();
     }
@@ -347,7 +495,7 @@ impl App {
             .map(|s| s.discard_confirm)
             .unwrap_or(false)
         {
-            self.handle_view_edit_discard_confirm_key(code)?;
+            self.handle_view_edit_discard_confirm_key(code, agenda)?;
             return Ok(false);
         }
 
@@ -367,14 +515,24 @@ impl App {
         Ok(false)
     }
 
-    fn handle_view_edit_discard_confirm_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_discard_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.discard_confirm = false;
+                }
+                return self.handle_view_edit_save(agenda);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.view_edit_state = None;
                 self.mode = Mode::ViewPicker;
-                self.status = "View edit canceled".to_string();
+                self.status = "Discarded unsaved changes".to_string();
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.discard_confirm = false;
                 }
@@ -415,9 +573,18 @@ impl App {
         let inline = state.inline_input.clone();
         match code {
             KeyCode::Esc => {
+                let mut clear_buf = true;
                 if let Some(state) = &mut self.view_edit_state {
+                    if matches!(
+                        state.inline_input,
+                        Some(ViewEditInlineInput::SectionsFilter)
+                    ) {
+                        clear_buf = false;
+                    }
                     state.inline_input = None;
-                    state.inline_buf.clear();
+                    if clear_buf {
+                        state.inline_buf.clear();
+                    }
                 }
                 self.status = Self::view_edit_default_status();
             }
@@ -427,7 +594,21 @@ impl App {
                 };
                 let text = state.inline_buf.trimmed().to_string();
                 let mut changed = false;
+                let mut filter_done_status: Option<String> = None;
                 match &inline {
+                    Some(ViewEditInlineInput::SectionsFilter) => {
+                        state.inline_input = None;
+                        let status = if Self::view_edit_filter_is_active(state) {
+                            format!("Section filter: {}", state.sections_filter_buf.text())
+                        } else {
+                            Self::view_edit_default_status()
+                        };
+                        filter_done_status = Some(status);
+                    }
+                    Some(ViewEditInlineInput::ViewName) => {
+                        changed = state.draft.name != text;
+                        state.draft.name = text;
+                    }
                     Some(ViewEditInlineInput::SectionTitle { section_index }) => {
                         if let Some(section) = state.draft.sections.get_mut(*section_index) {
                             changed = section.title != text;
@@ -440,17 +621,46 @@ impl App {
                     }
                     None => {}
                 }
+                if filter_done_status.is_some() {
+                    state.inline_buf.clear();
+                }
                 state.inline_input = None;
-                state.inline_buf.clear();
+                if filter_done_status.is_none() {
+                    state.inline_buf.clear();
+                }
                 if changed {
                     state.dirty = true;
                     state.discard_confirm = false;
                 }
+                if let Some(status) = filter_done_status {
+                    // mutable borrow ends before normalization/status update
+                    let _ = state;
+                    self.normalize_view_edit_sections_selection_for_filter();
+                    self.status = status;
+                    return Ok(true);
+                }
                 self.status = Self::view_edit_default_status();
             }
             _ => {
+                let mut filter_status: Option<String> = None;
                 if let Some(state) = &mut self.view_edit_state {
-                    state.inline_buf.handle_key(code, false);
+                    match inline {
+                        Some(ViewEditInlineInput::SectionsFilter) => {
+                            state.sections_filter_buf.handle_key(code, false);
+                            filter_status = Some(if Self::view_edit_filter_is_active(state) {
+                                format!("Section filter: {}", state.sections_filter_buf.text())
+                            } else {
+                                "Section filter".to_string()
+                            });
+                        }
+                        _ => {
+                            state.inline_buf.handle_key(code, false);
+                        }
+                    }
+                }
+                if let Some(status) = filter_status {
+                    self.normalize_view_edit_sections_selection_for_filter();
+                    self.status = status;
                 }
             }
         }
@@ -470,29 +680,94 @@ impl App {
         let section_expanded = state.section_expanded.unwrap_or(0);
 
         match overlay {
-            Some(ViewEditOverlay::CategoryPicker { target }) => match code {
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if let Some(state) = &mut self.view_edit_state {
-                        state.picker_index =
-                            next_index_clamped(picker_index, self.category_rows.len(), 1);
+            Some(ViewEditOverlay::CategoryPicker { target }) => {
+                let filtered_indices = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(|s| self.view_edit_filtered_category_row_indices(s))
+                    .unwrap_or_default();
+                let current_visible_pos = filtered_indices
+                    .iter()
+                    .position(|&actual_idx| actual_idx == picker_index)
+                    .unwrap_or(0);
+                match code {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            if let Some(&actual_idx) = filtered_indices.get(
+                                (current_visible_pos + 1)
+                                    .min(filtered_indices.len().saturating_sub(1)),
+                            ) {
+                                state.picker_index = actual_idx;
+                            }
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            if let Some(&actual_idx) =
+                                filtered_indices.get(current_visible_pos.saturating_sub(1))
+                            {
+                                state.picker_index = actual_idx;
+                            }
+                        }
+                    }
+                    KeyCode::Char(' ') | KeyCode::Enter => {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_expanded,
+                                    row.id,
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.close_view_edit_overlay();
+                    }
+                    _ => {
+                        let mut consumed = false;
+                        let mut overlay_query: Option<String> = None;
+                        if let Some(state) = &mut self.view_edit_state {
+                            consumed = state.overlay_filter_buf.handle_key(code, false);
+                            if consumed {
+                                overlay_query = Some(state.overlay_filter_buf.text().to_string());
+                            }
+                        }
+                        if consumed {
+                            let filtered = if overlay_query
+                                .as_deref()
+                                .map(str::trim)
+                                .unwrap_or("")
+                                .is_empty()
+                            {
+                                (0..self.category_rows.len()).collect::<Vec<usize>>()
+                            } else {
+                                let q = overlay_query
+                                    .as_deref()
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_ascii_lowercase();
+                                self.category_rows
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, row)| {
+                                        if row.name.to_ascii_lowercase().contains(&q) {
+                                            Some(i)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<usize>>()
+                            };
+                            if let Some(&actual_idx) = filtered.first() {
+                                if let Some(state) = &mut self.view_edit_state {
+                                    state.picker_index = actual_idx;
+                                }
+                            }
+                        }
                     }
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if let Some(state) = &mut self.view_edit_state {
-                        state.picker_index =
-                            next_index_clamped(picker_index, self.category_rows.len(), -1);
-                    }
-                }
-                KeyCode::Char(' ') | KeyCode::Enter => {
-                    if let Some(row) = self.category_rows.get(picker_index).cloned() {
-                        self.toggle_category_picker_selection(target, section_expanded, row.id);
-                    }
-                }
-                KeyCode::Esc => {
-                    self.close_view_edit_overlay();
-                }
-                _ => {}
-            },
+            }
             Some(ViewEditOverlay::BucketPicker { target }) => {
                 let options = when_bucket_options();
                 match code {
@@ -551,6 +826,15 @@ impl App {
         // Global keys first
         match code {
             KeyCode::Esc => {
+                let filter_active = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_edit_filter_is_active)
+                    .unwrap_or(false);
+                if filter_active {
+                    self.clear_view_edit_section_filter();
+                    return Ok(true);
+                }
                 let is_dirty = self
                     .view_edit_state
                     .as_ref()
@@ -560,7 +844,7 @@ impl App {
                     if let Some(state) = &mut self.view_edit_state {
                         state.discard_confirm = true;
                     }
-                    self.status = "Discard unsaved changes? y/n".to_string();
+                    self.status = "Unsaved changes: save before closing? y=save n=discard Esc=keep editing".to_string();
                 } else {
                     self.view_edit_state = None;
                     self.mode = Mode::ViewPicker;
@@ -569,15 +853,29 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Tab => {
-                self.toggle_view_edit_pane_focus();
+                self.cycle_view_edit_pane_focus(true);
                 return Ok(true);
             }
             KeyCode::BackTab => {
-                self.toggle_view_edit_pane_focus();
+                self.cycle_view_edit_pane_focus(false);
                 return Ok(true);
             }
             KeyCode::Char('S') => {
                 return self.handle_view_edit_save(agenda);
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                self.toggle_view_edit_preview_visible();
+                return Ok(true);
+            }
+            KeyCode::Char('/') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.pane_focus = ViewEditPaneFocus::Sections;
+                    state.inline_input = Some(ViewEditInlineInput::SectionsFilter);
+                    state.sections_view_row_selected = state.sections_view_row_selected
+                        || state.region != ViewEditRegion::Sections;
+                }
+                self.status = "Section filter: type to filter  Enter:done  Esc:close".to_string();
+                return Ok(true);
             }
             _ => {}
         }
@@ -599,6 +897,7 @@ impl App {
                     self.handle_view_edit_section_details_key(code)
                 }
             }
+            ViewEditPaneFocus::Preview => self.handle_view_edit_preview_key(code),
         }
     }
 
@@ -662,6 +961,9 @@ impl App {
                     state.picker_index = first;
                 }
                 self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done".to_string();
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.begin_view_edit_name_input();
             }
             KeyCode::Char('x') => {
                 let mut changed = false;
@@ -802,20 +1104,29 @@ impl App {
         let len = state.draft.sections.len();
         let idx = state.section_index;
         let selecting_view_row = state.sections_view_row_selected;
+        let visible_indices = Self::view_edit_visible_section_indices(state);
+        let current_visible_pos = visible_indices.iter().position(|&i| i == idx);
 
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(state) = &mut self.view_edit_state {
                     if state.sections_view_row_selected {
-                        if len > 0 {
+                        if let Some(&first_visible) = visible_indices.first() {
                             state.sections_view_row_selected = false;
                             state.region = ViewEditRegion::Sections;
-                            state.section_index = 0;
+                            state.section_index = first_visible;
                             state.section_details_field_index = 0;
                         }
                     } else {
                         state.region = ViewEditRegion::Sections;
-                        state.section_index = next_index_clamped(idx, len, 1);
+                        if let Some(pos) = current_visible_pos {
+                            let next_pos = (pos + 1).min(visible_indices.len().saturating_sub(1));
+                            state.section_index = visible_indices[next_pos];
+                        } else if let Some(&first_visible) = visible_indices.first() {
+                            state.section_index = first_visible;
+                        } else if len > 0 {
+                            state.section_index = next_index_clamped(idx, len, 1);
+                        }
                         state.section_details_field_index = 0;
                     }
                 }
@@ -823,18 +1134,31 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => {
                 if let Some(state) = &mut self.view_edit_state {
                     if !state.sections_view_row_selected {
-                        if idx == 0 || len == 0 {
+                        let at_first_visible = current_visible_pos.map(|p| p == 0).unwrap_or(true);
+                        if at_first_visible || visible_indices.is_empty() {
                             state.sections_view_row_selected = true;
                             state.region = ViewEditRegion::Sections;
                         } else {
                             state.region = ViewEditRegion::Sections;
-                            state.section_index = next_index_clamped(idx, len, -1);
+                            if let Some(pos) = current_visible_pos {
+                                state.section_index = visible_indices[pos.saturating_sub(1)];
+                            } else {
+                                state.section_index = visible_indices[0];
+                            }
                             state.section_details_field_index = 0;
                         }
                     }
                 }
             }
             KeyCode::Char('n') => {
+                let filter_active = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_edit_filter_is_active)
+                    .unwrap_or(false);
+                if filter_active {
+                    self.clear_view_edit_section_filter();
+                }
                 let insert_index = if selecting_view_row || len == 0 {
                     0
                 } else {
@@ -845,6 +1169,14 @@ impl App {
                 }
             }
             KeyCode::Char('N') => {
+                let filter_active = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_edit_filter_is_active)
+                    .unwrap_or(false);
+                if filter_active {
+                    self.clear_view_edit_section_filter();
+                }
                 let insert_index = if selecting_view_row || len == 0 {
                     0
                 } else {
@@ -860,7 +1192,7 @@ impl App {
                 }
                 self.request_view_edit_section_delete(idx);
             }
-            KeyCode::Char('[') => {
+            KeyCode::Char('[') | KeyCode::Char('K') => {
                 if selecting_view_row {
                     return Ok(true);
                 }
@@ -873,7 +1205,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char(']') => {
+            KeyCode::Char(']') | KeyCode::Char('J') => {
                 if selecting_view_row {
                     return Ok(true);
                 }
@@ -966,8 +1298,9 @@ impl App {
                         .to_string();
                 }
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('r') | KeyCode::Char('R') => {
                 if selecting_view_row {
+                    self.begin_view_edit_name_input();
                     return Ok(true);
                 }
                 if idx < len {
@@ -1026,6 +1359,23 @@ impl App {
     // Unmatched region
     // -------------------------------------------------------------------------
 
+    fn handle_view_edit_preview_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.preview_scroll = state.preview_scroll.saturating_add(1);
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.preview_scroll = state.preview_scroll.saturating_sub(1);
+                }
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
     fn handle_view_edit_unmatched_key(&mut self, code: KeyCode) -> Result<bool, String> {
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
@@ -1064,6 +1414,9 @@ impl App {
                     state.inline_buf = text_buffer::TextBuffer::new(current);
                 }
                 self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.begin_view_edit_name_input();
             }
             KeyCode::Char(']') => {
                 if let Some(state) = &mut self.view_edit_state {
