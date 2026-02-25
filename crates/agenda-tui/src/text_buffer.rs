@@ -5,7 +5,7 @@ use tui_textarea::{CursorMove, TextArea};
 ///
 /// `cursor` is a char offset into `text`. It may transiently exceed the text
 /// length; all public accessors clamp it on read.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct TextBuffer {
     text: String,
     cursor: usize,
