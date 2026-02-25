@@ -1140,11 +1140,20 @@ impl App {
                                 .iter()
                                 .enumerate()
                                 .map(|(col_idx, column)| {
+                                    let is_numeric_column = column.heading_value_kind
+                                        == CategoryValueKind::Numeric;
                                     let value = match column.kind {
                                         ColumnKind::When => item
                                             .when_date
                                             .map(|dt| dt.to_string())
                                             .unwrap_or_else(|| "\u{2013}".to_string()),
+                                        ColumnKind::Standard if is_numeric_column => {
+                                            let numeric_val = item
+                                                .assignments
+                                                .get(&column.heading_id)
+                                                .and_then(|a| a.numeric_value);
+                                            format_numeric_cell(numeric_val, None)
+                                        }
                                         ColumnKind::Standard => standard_column_value(
                                             item,
                                             &column.child_ids,
@@ -1154,6 +1163,7 @@ impl App {
                                     let content = if effective_display_mode
                                         == BoardDisplayMode::MultiLine
                                         && column.kind == ColumnKind::Standard
+                                        && !is_numeric_column
                                     {
                                         let lines = if value == "\u{2013}" {
                                             vec!["-".to_string()]
@@ -1166,6 +1176,8 @@ impl App {
                                             )
                                         };
                                         lines.join("\n")
+                                    } else if is_numeric_column {
+                                        right_pad_cell(&value, column.width)
                                     } else {
                                         truncate_board_cell(&value, column.width)
                                     };
@@ -1225,6 +1237,65 @@ impl App {
                         })
                         .collect()
                 };
+
+                // Append SUM/AVG footer rows for sections with numeric columns.
+                let has_numeric_columns = layout
+                    .columns
+                    .iter()
+                    .any(|c| c.heading_value_kind == CategoryValueKind::Numeric);
+                let mut rows = rows;
+                if has_numeric_columns && !slot.items.is_empty() {
+                    let item_refs: Vec<&Item> = slot.items.iter().collect();
+                    let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
+                    let footer_style = Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD);
+
+                    for (label, extract_value) in [
+                        ("SUM", Box::new(|agg: &NumericAggregate| Some(agg.sum)) as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>),
+                        ("AVG", Box::new(|agg: &NumericAggregate| agg.avg()) as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>),
+                    ] {
+                        let mut footer_cells = vec![
+                            Cell::from(String::new()),
+                            Cell::from(String::new()),
+                        ];
+                        let category_footer_cells: Vec<Cell<'_>> = aggregates
+                            .iter()
+                            .enumerate()
+                            .map(|(col_idx, agg_opt)| {
+                                let text = agg_opt
+                                    .as_ref()
+                                    .and_then(|agg| {
+                                        if agg.count == 0 {
+                                            None
+                                        } else {
+                                            extract_value(agg)
+                                        }
+                                    })
+                                    .map(|v| {
+                                        right_pad_cell(
+                                            &format_numeric_cell(Some(v), None),
+                                            layout.columns[col_idx].width,
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                                Cell::from(text).style(footer_style)
+                            })
+                            .collect();
+                        let mut left_cats: Vec<Cell<'_>> =
+                            category_footer_cells[..item_board_column_index].to_vec();
+                        let right_cats: Vec<Cell<'_>> =
+                            category_footer_cells[item_board_column_index..].to_vec();
+                        footer_cells.append(&mut left_cats);
+                        footer_cells
+                            .push(Cell::from(format!("  {label}")).style(footer_style));
+                        footer_cells.extend(right_cats);
+                        if synthetic_categories_width > 0 {
+                            footer_cells.push(Cell::from(String::new()));
+                        }
+                        rows.push(Row::new(footer_cells));
+                    }
+                }
 
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);
                 frame.render_stateful_widget(
@@ -2244,10 +2315,17 @@ impl App {
                     ])
                     .split(details_inner);
 
+                let type_label = match row.value_kind {
+                    CategoryValueKind::Tag => "Tag",
+                    CategoryValueKind::Numeric => "Numeric",
+                };
                 frame.render_widget(
                     Paragraph::new(vec![
                         Line::from(format!("Selected: {}", row.name)),
-                        Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
+                        Line::from(format!(
+                            "Type: {}    Depth: {}    Children: {}",
+                            type_label, row.depth, child_count
+                        )),
                         Line::from(format!("Parent: {}", parent_name)),
                         Line::from(if row.is_reserved {
                             "Reserved: yes (read-only config)".to_string()

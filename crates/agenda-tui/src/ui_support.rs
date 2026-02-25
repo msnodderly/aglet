@@ -254,12 +254,43 @@ pub(super) struct BoardColumnLayout {
     pub(super) columns: Vec<BoardColumnSpec>,
 }
 
+/// Returns true if the category is eligible to be used as a board/section column heading.
+///
+/// Rules:
+/// - "Entry" is never valid (reserved for item text).
+/// - "When" is valid only if top-level.
+/// - Numeric categories are always valid (they are leaf column heads).
+/// - All other categories must be non-leaf (have children).
+pub(super) fn is_valid_column_heading(category: &Category) -> bool {
+    if category.name.eq_ignore_ascii_case("Entry") {
+        return false;
+    }
+    if category.name.eq_ignore_ascii_case("When") {
+        return category.parent.is_none();
+    }
+    if category.value_kind == CategoryValueKind::Numeric {
+        return true;
+    }
+    !category.children.is_empty()
+}
+
+/// Determine the ColumnKind for a given heading category.
+pub(super) fn column_kind_for_heading(category: &Category) -> ColumnKind {
+    if category.name.eq_ignore_ascii_case("When") {
+        ColumnKind::When
+    } else {
+        ColumnKind::Standard
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct BoardColumnSpec {
     pub(super) label: String,
     pub(super) width: usize,
     pub(super) kind: ColumnKind,
     pub(super) child_ids: Vec<CategoryId>,
+    pub(super) heading_id: CategoryId,
+    pub(super) heading_value_kind: CategoryValueKind,
 }
 
 pub(super) fn compute_board_layout(
@@ -320,11 +351,17 @@ pub(super) fn compute_board_layout(
                     .unwrap_or_default(),
                 ColumnKind::When => Vec::new(),
             };
+            let heading_value_kind = cat_by_id
+                .get(&col.heading)
+                .map(|c| c.value_kind)
+                .unwrap_or_default();
             BoardColumnSpec {
                 label,
                 width,
                 kind: col.kind,
                 child_ids,
+                heading_id: col.heading,
+                heading_value_kind,
             }
         })
         .collect();
@@ -358,6 +395,122 @@ pub(super) fn standard_column_value(
     }
     matches.sort_by_key(|n| n.to_ascii_lowercase());
     matches.join(", ")
+}
+
+/// Format a numeric value for display in a board cell.
+///
+/// Returns the en-dash placeholder when value is None.
+pub(super) fn format_numeric_cell(
+    value: Option<rust_decimal::Decimal>,
+    format: Option<&NumericFormat>,
+) -> String {
+    let Some(v) = value else {
+        return "\u{2013}".to_string();
+    };
+    let fmt = format.cloned().unwrap_or_default();
+    let rounded = v.round_dp(fmt.decimal_places as u32);
+    let raw = format!("{:.prec$}", rounded, prec = fmt.decimal_places as usize);
+
+    let formatted = if fmt.use_thousands_separator {
+        add_thousands_separator(&raw)
+    } else {
+        raw
+    };
+
+    match &fmt.currency_symbol {
+        Some(sym) => format!("{sym}{formatted}"),
+        None => formatted,
+    }
+}
+
+fn add_thousands_separator(s: &str) -> String {
+    let (integer_part, decimal_part) = match s.find('.') {
+        Some(pos) => (&s[..pos], Some(&s[pos..])),
+        None => (s, None),
+    };
+    let negative = integer_part.starts_with('-');
+    let digits = if negative {
+        &integer_part[1..]
+    } else {
+        integer_part
+    };
+    let mut result = String::new();
+    for (i, ch) in digits.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    let reversed: String = result.chars().rev().collect();
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    out.push_str(&reversed);
+    if let Some(dec) = decimal_part {
+        out.push_str(dec);
+    }
+    out
+}
+
+/// Aggregate numeric values across items for a given column.
+#[derive(Default, Clone, Debug)]
+pub(super) struct NumericAggregate {
+    pub(super) count: usize,
+    pub(super) sum: rust_decimal::Decimal,
+}
+
+impl NumericAggregate {
+    pub(super) fn push(&mut self, v: rust_decimal::Decimal) {
+        self.count += 1;
+        self.sum += v;
+    }
+
+    pub(super) fn avg(&self) -> Option<rust_decimal::Decimal> {
+        if self.count > 0 {
+            Some(self.sum / rust_decimal::Decimal::from(self.count as u32))
+        } else {
+            None
+        }
+    }
+}
+
+/// Compute per-column aggregates for numeric columns from a list of items.
+pub(super) fn compute_column_aggregates(
+    items: &[&Item],
+    columns: &[BoardColumnSpec],
+) -> Vec<Option<NumericAggregate>> {
+    columns
+        .iter()
+        .map(|col| {
+            if col.heading_value_kind != CategoryValueKind::Numeric {
+                return None;
+            }
+            let mut agg = NumericAggregate::default();
+            for item in items {
+                if let Some(val) = item
+                    .assignments
+                    .get(&col.heading_id)
+                    .and_then(|a| a.numeric_value)
+                {
+                    agg.push(val);
+                }
+            }
+            Some(agg)
+        })
+        .collect()
+}
+
+/// Right-align text within a cell by left-padding with spaces.
+/// Truncates from the left if the text exceeds the width.
+pub(super) fn right_pad_cell(text: &str, width: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count >= width {
+        // Truncate: keep the rightmost `width` characters
+        text.chars().skip(char_count - width).collect()
+    } else {
+        format!("{:>width$}", text, width = width)
+    }
 }
 
 pub(super) fn has_note_text(note: Option<&str>) -> bool {
@@ -487,6 +640,7 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
             is_exclusive: category.is_exclusive,
             is_actionable: category.is_actionable,
             enable_implicit_string: category.enable_implicit_string,
+            value_kind: category.value_kind,
         })
         .collect()
 }
@@ -792,6 +946,8 @@ mod tests {
             modified_at: Utc::now(),
             conditions: Vec::new(),
             actions: Vec::new(),
+            value_kind: Default::default(),
+            numeric_format: None,
         }
     }
 
@@ -881,5 +1037,196 @@ mod tests {
     fn wrap_text_for_board_cell_wraps_on_word_boundaries() {
         let lines = wrap_text_for_board_cell("alpha beta gamma", 6);
         assert_eq!(lines, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn is_valid_column_heading_accepts_numeric_leaf() {
+        let mut cat = make_category("Cost");
+        cat.value_kind = CategoryValueKind::Numeric;
+        assert!(is_valid_column_heading(&cat));
+    }
+
+    #[test]
+    fn is_valid_column_heading_rejects_childless_tag() {
+        let cat = make_category("Orphan");
+        assert!(!is_valid_column_heading(&cat));
+    }
+
+    #[test]
+    fn is_valid_column_heading_accepts_non_leaf_tag() {
+        let mut cat = make_category("Status");
+        cat.children = vec![CategoryId::new_v4()];
+        assert!(is_valid_column_heading(&cat));
+    }
+
+    #[test]
+    fn is_valid_column_heading_rejects_entry() {
+        let mut cat = make_category("Entry");
+        cat.children = vec![CategoryId::new_v4()];
+        assert!(!is_valid_column_heading(&cat));
+    }
+
+    #[test]
+    fn is_valid_column_heading_accepts_toplevel_when() {
+        let cat = make_category("When");
+        assert!(is_valid_column_heading(&cat));
+    }
+
+    #[test]
+    fn is_valid_column_heading_rejects_non_toplevel_when() {
+        let mut cat = make_category("When");
+        cat.parent = Some(CategoryId::new_v4());
+        assert!(!is_valid_column_heading(&cat));
+    }
+
+    // --- format_numeric_cell tests ---
+
+    #[test]
+    fn format_numeric_cell_none_returns_dash() {
+        assert_eq!(format_numeric_cell(None, None), "\u{2013}");
+    }
+
+    #[test]
+    fn format_numeric_cell_default_format() {
+        use rust_decimal::Decimal;
+        let result = format_numeric_cell(Some(Decimal::new(24596, 2)), None);
+        assert_eq!(result, "245.96");
+    }
+
+    #[test]
+    fn format_numeric_cell_with_currency_and_thousands() {
+        use rust_decimal::Decimal;
+        let fmt = NumericFormat {
+            decimal_places: 2,
+            currency_symbol: Some("$".to_string()),
+            use_thousands_separator: true,
+        };
+        let result = format_numeric_cell(Some(Decimal::new(123456789, 2)), Some(&fmt));
+        assert_eq!(result, "$1,234,567.89");
+    }
+
+    #[test]
+    fn format_numeric_cell_rounds_to_decimal_places() {
+        use rust_decimal::Decimal;
+        let fmt = NumericFormat {
+            decimal_places: 0,
+            currency_symbol: None,
+            use_thousands_separator: false,
+        };
+        let result = format_numeric_cell(Some(Decimal::new(2567, 2)), Some(&fmt));
+        assert_eq!(result, "26");
+    }
+
+    #[test]
+    fn format_numeric_cell_integer_shows_decimals() {
+        use rust_decimal::Decimal;
+        let result = format_numeric_cell(Some(Decimal::new(42, 0)), None);
+        assert_eq!(result, "42.00");
+    }
+
+    // --- right_pad_cell tests ---
+
+    #[test]
+    fn right_pad_cell_pads_short_text() {
+        assert_eq!(right_pad_cell("42", 8), "      42");
+    }
+
+    #[test]
+    fn right_pad_cell_truncates_long_text() {
+        assert_eq!(right_pad_cell("$1,234,567.89", 10), "234,567.89");
+    }
+
+    // --- NumericAggregate tests ---
+
+    #[test]
+    fn numeric_aggregate_sum_and_avg() {
+        use rust_decimal::Decimal;
+        let mut agg = NumericAggregate::default();
+        agg.push(Decimal::new(100, 0));
+        agg.push(Decimal::new(200, 0));
+        agg.push(Decimal::new(300, 0));
+        assert_eq!(agg.count, 3);
+        assert_eq!(agg.sum, Decimal::new(600, 0));
+        assert_eq!(agg.avg(), Some(Decimal::new(200, 0)));
+    }
+
+    #[test]
+    fn numeric_aggregate_empty_avg_is_none() {
+        let agg = NumericAggregate::default();
+        assert_eq!(agg.avg(), None);
+    }
+
+    // --- compute_column_aggregates tests ---
+
+    #[test]
+    fn compute_column_aggregates_ignores_tag_columns() {
+        use rust_decimal::Decimal;
+        let mut item = Item::new("test".to_string());
+        let cat_id = CategoryId::new_v4();
+        item.assignments.insert(
+            cat_id,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: Utc::now(),
+                sticky: true,
+                origin: None,
+                numeric_value: Some(Decimal::new(100, 0)),
+            },
+        );
+        let col = BoardColumnSpec {
+            label: "Status".to_string(),
+            width: 12,
+            kind: ColumnKind::Standard,
+            child_ids: vec![],
+            heading_id: cat_id,
+            heading_value_kind: CategoryValueKind::Tag,
+        };
+        let items: Vec<&Item> = vec![&item];
+        let result = compute_column_aggregates(&items, &[col]);
+        assert!(result[0].is_none());
+    }
+
+    #[test]
+    fn compute_column_aggregates_sums_numeric_columns() {
+        use rust_decimal::Decimal;
+        let cat_id = CategoryId::new_v4();
+        let mut item1 = Item::new("a".to_string());
+        item1.assignments.insert(
+            cat_id,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: Utc::now(),
+                sticky: true,
+                origin: None,
+                numeric_value: Some(Decimal::new(100, 0)),
+            },
+        );
+        let mut item2 = Item::new("b".to_string());
+        item2.assignments.insert(
+            cat_id,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: Utc::now(),
+                sticky: true,
+                origin: None,
+                numeric_value: Some(Decimal::new(250, 0)),
+            },
+        );
+        let item3 = Item::new("c".to_string()); // no assignment
+
+        let col = BoardColumnSpec {
+            label: "Cost".to_string(),
+            width: 12,
+            kind: ColumnKind::Standard,
+            child_ids: vec![],
+            heading_id: cat_id,
+            heading_value_kind: CategoryValueKind::Numeric,
+        };
+        let items: Vec<&Item> = vec![&item1, &item2, &item3];
+        let result = compute_column_aggregates(&items, &[col]);
+        let agg = result[0].as_ref().unwrap();
+        assert_eq!(agg.count, 2);
+        assert_eq!(agg.sum, Decimal::new(350, 0));
+        assert_eq!(agg.avg(), Some(Decimal::new(175, 0)));
     }
 }
