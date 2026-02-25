@@ -806,3 +806,16 @@ Key binding changes that existing users will notice. **Note**: items marked `(sp
 | `t` in View Manager Definition pane to toggle Criteria/Columns | `Tab` in ViewEdit cycles Criteria → Sections → Unmatched (current); will include Columns when FR `cf6b7dd8` ships | No Columns region yet |
 | `e` in ViewPicker to open View Editor overlay | `e` in ViewPicker to open ViewEdit (full-screen) | Same key, different presentation |
 | `Enter` in View Editor to save | `S` in ViewEdit to save (Phase 5e) | |
+
+### 14.1 Current Split Picker + Editor Workflow (Implementation Note)
+
+Current implementation (branch-level behavior) keeps a split model:
+
+- `v` opens a lightweight **View Picker** for quick switching and simple CRUD
+- `e` from the picker opens a full-screen **View Editor** for deep editing
+- creating a new view from the picker opens the editor directly, auto-creates the first section, and starts section-title inline edit
+
+See current reference notes:
+
+- `/Users/mds/src/aglet/docs/view-editor-keybindings-current.md`
+- `/Users/mds/src/aglet/docs/view-editor-migration-notes.md`

@@ -190,6 +190,7 @@ enum Mode {
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
+    #[allow(dead_code)]
     CategoryCreateConfirm { name: String, parent_id: CategoryId },
 }
 
@@ -212,6 +213,7 @@ enum ViewEditRegion {
 enum ViewEditPaneFocus {
     Sections,
     Details,
+    Preview,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -222,6 +224,8 @@ enum ViewEditOverlay {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum ViewEditInlineInput {
+    ViewName,
+    SectionsFilter,
     SectionTitle { section_index: usize },
     UnmatchedLabel,
 }
@@ -241,7 +245,11 @@ struct ViewEditState {
     inline_input: Option<ViewEditInlineInput>,
     inline_buf: text_buffer::TextBuffer,
     picker_index: usize,
+    overlay_filter_buf: text_buffer::TextBuffer,
     preview_count: usize,
+    preview_visible: bool,
+    preview_scroll: usize,
+    sections_filter_buf: text_buffer::TextBuffer,
     dirty: bool,
     discard_confirm: bool,
     section_delete_confirm: Option<usize>,
@@ -334,11 +342,13 @@ struct CategoryManagerState {
 
 #[derive(Clone, Debug)]
 struct CategorySuggestState {
+    #[allow(dead_code)]
     suggest_index: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AddColumnDirection {
+    #[allow(dead_code)]
     Left,
     Right,
 }
@@ -420,6 +430,7 @@ struct CategoryDirectEditRow {
 
 #[derive(Clone)]
 struct CategoryDirectEditState {
+    #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
     parent_name: String,
@@ -440,6 +451,7 @@ enum CategoryColumnPickerFocus {
 
 #[derive(Clone)]
 struct CategoryColumnPickerState {
+    #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
     parent_name: String,
@@ -461,6 +473,7 @@ impl CategoryDirectEditRow {
         }
     }
 
+    #[allow(dead_code)]
     fn resolved(category_id: CategoryId, name: String) -> Self {
         Self {
             input: text_buffer::TextBuffer::new(name),
@@ -6266,8 +6279,8 @@ mod tests {
             .map(|s| s.discard_confirm)
             .unwrap_or(false));
 
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
-            .expect("decline discard");
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("keep editing");
         assert!(app.view_edit_state.is_some());
         assert!(!app
             .view_edit_state
@@ -6278,7 +6291,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("esc prompts again");
         app.handle_view_edit_key(KeyCode::Char('y'), &agenda)
-            .expect("confirm discard");
+            .expect("confirm save and close");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
 
@@ -6921,16 +6934,16 @@ mod tests {
             .expect("open category picker");
         assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
-        let work_idx = app
-            .category_rows
-            .iter()
-            .position(|r| r.name == "Work")
-            .expect("work row");
         let home_idx = app
             .category_rows
             .iter()
             .position(|r| r.name == "Home")
             .expect("home row");
+        let work_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Work")
+            .expect("work row");
 
         if let Some(state) = &mut app.view_edit_state {
             state.picker_index = work_idx;
@@ -6966,6 +6979,63 @@ mod tests {
             .expect("close category picker");
         assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
         assert_eq!(app.mode, Mode::ViewEdit);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_category_picker_type_filter_updates_selected_match() {
+        let (store, db_path) = make_test_store_with_view("picker-type-filter");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let home = Category::new("Home".to_string());
+        store.create_category(&work).expect("create work category");
+        store.create_category(&home).expect("create home category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("open category picker");
+        let home_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Home")
+            .expect("home row");
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = home_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
+            .expect("type picker filter");
+        app.handle_view_edit_key(KeyCode::Char('o'), &agenda)
+            .expect("type picker filter");
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.overlay_filter_buf.text(), "ho");
+        assert_eq!(
+            state.picker_index, home_idx,
+            "filter should select first matching row"
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle filtered category");
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .criteria
+            .mode_for(home.id)
+            .is_some());
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -7217,6 +7287,67 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_uppercase_jk_reorders_sections() {
+        let (store, db_path) = make_test_store_with_view("section-uppercase-jk-reorder");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        view.sections.push(Section {
+            title: "Bravo".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to sections");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select first section");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select second section");
+        assert_eq!(app.view_edit_state.as_ref().unwrap().section_index, 1);
+
+        app.handle_view_edit_key(KeyCode::Char('K'), &agenda)
+            .expect("move selected section up");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(state.section_index, 0);
+        assert_eq!(state.draft.sections[0].title, "Bravo");
+        assert_eq!(state.draft.sections[1].title, "Alpha");
+
+        app.handle_view_edit_key(KeyCode::Char('J'), &agenda)
+            .expect("move selected section down");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(state.section_index, 1);
+        assert_eq!(state.draft.sections[0].title, "Alpha");
+        assert_eq!(state.draft.sections[1].title, "Bravo");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_sections_can_select_view_properties_row_and_enter_opens_criteria() {
         let (store, db_path) = make_test_store_with_view("view-props-row-select");
         let classifier = SubstringClassifier;
@@ -7258,6 +7389,224 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().region,
             ViewEditRegion::Criteria
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
+        let (store, db_path) = make_test_store_with_view("view-row-rename");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab to sections");
+        assert!(
+            app.view_edit_state
+                .as_ref()
+                .expect("state")
+                .sections_view_row_selected
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('r'), &agenda)
+            .expect("start view rename");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().inline_input,
+            Some(super::ViewEditInlineInput::ViewName)
+        ));
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.inline_buf = super::text_buffer::TextBuffer::new("UX Board".to_string());
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("commit view name");
+
+        let state = app.view_edit_state.as_ref().expect("state");
+        assert_eq!(state.draft.name, "UX Board");
+        assert!(state.dirty, "renaming view should mark draft dirty");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
+        let (store, db_path) = make_test_store_with_view("view-edit-sections-filter");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        view.sections.push(Section {
+            title: "Bravo".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('/'), &agenda)
+            .expect("open section filter");
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.pane_focus, ViewEditPaneFocus::Sections);
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::SectionsFilter)
+        ));
+
+        app.handle_view_edit_key(KeyCode::Char('b'), &agenda)
+            .expect("type filter");
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .sections_filter_buf
+                .text(),
+            "b"
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("finish filter edit");
+        assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_none());
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .sections_filter_buf
+                .text(),
+            "b"
+        );
+
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc clears active filter before closing");
+        assert_eq!(app.mode, Mode::ViewEdit, "editor should stay open");
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .sections_filter_buf
+                .text(),
+            ""
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
+        let (store, db_path) = make_test_store_with_view("view-edit-preview-toggle");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        app.open_view_edit(view);
+
+        assert!(!app.view_edit_state.as_ref().unwrap().preview_visible);
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
+            .expect("show preview");
+        assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("details -> preview");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Preview
+        );
+
+        app.handle_view_edit_key(KeyCode::BackTab, &agenda)
+            .expect("preview -> details");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("details -> preview again");
+        app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
+            .expect("hide preview while preview focused");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert!(!state.preview_visible);
+        assert_eq!(state.pane_focus, ViewEditPaneFocus::Sections);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_preview_renders_on_narrow_terminal_without_panic() {
+        let (store, db_path) = make_test_store_with_view("view-edit-preview-narrow-render");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+        app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
+            .expect("show preview");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("details -> preview focus");
+
+        let backend = TestBackend::new(90, 28);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("narrow preview render should not panic");
 
         let _ = std::fs::remove_file(&db_path);
     }
