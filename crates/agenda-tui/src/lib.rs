@@ -7730,6 +7730,10 @@ mod tests {
 
         let work = Category::new("Work".to_string());
         store.create_category(&work).expect("create work category");
+        // Give Work a child so it qualifies as a valid column heading.
+        let mut sub = Category::new("SubWork".to_string());
+        sub.parent = Some(work.id);
+        store.create_category(&sub).expect("create sub category");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
@@ -7757,6 +7761,7 @@ mod tests {
             })
         ));
 
+        // Navigate to Work — it has children so it's a valid column heading.
         let work_idx = app
             .category_rows
             .iter()
@@ -7771,6 +7776,115 @@ mod tests {
             .columns
             .iter()
             .any(|column| column.heading == work.id));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_column_picker_excludes_leaf_tag_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-leaf-tag");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Leaf tag category — should be hidden from column picker.
+        let leaf = Category::new("OrphanTag".to_string());
+        store.create_category(&leaf).expect("create leaf");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+
+        // Attempt to toggle the leaf category via its raw index.
+        let leaf_idx = app.category_rows.iter().position(|r| r.name == "OrphanTag").unwrap();
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = leaf_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        // OrphanTag should NOT have been added (filtered out).
+        assert!(
+            !app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns.iter().any(|c| c.heading == leaf.id),
+            "leaf tag category should be excluded from column picker"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_column_picker_includes_non_leaf_tag_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-nonleaf");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Status".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut child = Category::new("Active".to_string());
+        child.parent = Some(parent.id);
+        store.create_category(&child).expect("create child");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+
+        let status_idx = app.category_rows.iter().position(|r| r.name == "Status").unwrap();
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = status_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        assert!(
+            app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns.iter().any(|c| c.heading == parent.id),
+            "non-leaf tag category should be selectable as column heading"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_column_picker_includes_numeric_leaf_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-numeric");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create numeric");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+
+        let cost_idx = app.category_rows.iter().position(|r| r.name == "Cost").unwrap();
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = cost_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        assert!(
+            app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns.iter().any(|c| c.heading == cost.id),
+            "numeric leaf category should be selectable as column heading"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }

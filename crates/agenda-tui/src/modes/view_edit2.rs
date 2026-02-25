@@ -195,18 +195,37 @@ impl App {
     }
 
     fn view_edit_filtered_category_row_indices(&self, state: &ViewEditState) -> Vec<usize> {
-        let Some(filter) = Self::view_edit_overlay_category_filter_query(state) else {
-            return (0..self.category_rows.len()).collect();
+        let filter = Self::view_edit_overlay_category_filter_query(state);
+        let is_column_picker = matches!(
+            state.overlay,
+            Some(ViewEditOverlay::CategoryPicker {
+                target: CategoryEditTarget::SectionColumns,
+            })
+        );
+        let cat_by_id: HashMap<CategoryId, &Category> = if is_column_picker {
+            self.categories.iter().map(|c| (c.id, c)).collect()
+        } else {
+            HashMap::new()
         };
         self.category_rows
             .iter()
             .enumerate()
             .filter_map(|(i, row)| {
-                if row.name.to_ascii_lowercase().contains(&filter) {
-                    Some(i)
-                } else {
-                    None
+                if let Some(ref q) = filter {
+                    if !row.name.to_ascii_lowercase().contains(q) {
+                        return None;
+                    }
                 }
+                if is_column_picker {
+                    if let Some(cat) = cat_by_id.get(&row.id) {
+                        if !is_valid_column_heading(cat) {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+                Some(i)
             })
             .collect()
     }
@@ -726,39 +745,15 @@ impl App {
                     }
                     _ => {
                         let mut consumed = false;
-                        let mut overlay_query: Option<String> = None;
                         if let Some(state) = &mut self.view_edit_state {
                             consumed = state.overlay_filter_buf.handle_key(code, false);
-                            if consumed {
-                                overlay_query = Some(state.overlay_filter_buf.text().to_string());
-                            }
                         }
                         if consumed {
-                            let filtered = if overlay_query
-                                .as_deref()
-                                .map(str::trim)
-                                .unwrap_or("")
-                                .is_empty()
-                            {
-                                (0..self.category_rows.len()).collect::<Vec<usize>>()
-                            } else {
-                                let q = overlay_query
-                                    .as_deref()
-                                    .unwrap_or("")
-                                    .trim()
-                                    .to_ascii_lowercase();
-                                self.category_rows
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(i, row)| {
-                                        if row.name.to_ascii_lowercase().contains(&q) {
-                                            Some(i)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<Vec<usize>>()
-                            };
+                            let filtered = self
+                                .view_edit_state
+                                .as_ref()
+                                .map(|s| self.view_edit_filtered_category_row_indices(s))
+                                .unwrap_or_default();
                             if let Some(&actual_idx) = filtered.first() {
                                 if let Some(state) = &mut self.view_edit_state {
                                     state.picker_index = actual_idx;
@@ -1296,7 +1291,7 @@ impl App {
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
-                    self.status = "Edit section columns: j/k select  Space/Enter:toggle  Esc:done"
+                    self.status = "Edit section columns: j/k select  Space/Enter:toggle  Esc:done  (leaf tags hidden)"
                         .to_string();
                 }
             }
