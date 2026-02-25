@@ -1,4 +1,5 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -26,6 +27,8 @@ pub struct Assignment {
     pub assigned_at: DateTime<Utc>,
     pub sticky: bool,
     pub origin: Option<String>,
+    #[serde(default)]
+    pub numeric_value: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +53,41 @@ pub struct Category {
     pub modified_at: DateTime<Utc>,
     pub conditions: Vec<Condition>,
     pub actions: Vec<Action>,
+    #[serde(default)]
+    pub value_kind: CategoryValueKind,
+    #[serde(default)]
+    pub numeric_format: Option<NumericFormat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CategoryValueKind {
+    #[default]
+    Tag,
+    Numeric,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NumericFormat {
+    #[serde(default = "default_numeric_decimal_places")]
+    pub decimal_places: u8,
+    #[serde(default)]
+    pub currency_symbol: Option<String>,
+    #[serde(default)]
+    pub use_thousands_separator: bool,
+}
+
+const fn default_numeric_decimal_places() -> u8 {
+    2
+}
+
+impl Default for NumericFormat {
+    fn default() -> Self {
+        Self {
+            decimal_places: default_numeric_decimal_places(),
+            currency_symbol: None,
+            use_thousands_separator: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,6 +367,8 @@ impl Category {
             modified_at: now,
             conditions: Vec::new(),
             actions: Vec::new(),
+            value_kind: CategoryValueKind::Tag,
+            numeric_format: None,
         }
     }
 }

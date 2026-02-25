@@ -353,6 +353,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
+            numeric_value: None,
         }
     }
 

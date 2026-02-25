@@ -338,6 +338,7 @@ fn assign_if_unassigned(
         assigned_at: Utc::now(),
         sticky: true,
         origin,
+        numeric_value: None,
     };
 
     store.assign_item(item_id, category_id, &assignment)?;
@@ -409,6 +410,7 @@ fn assign_subsumption_ancestors(
                     assigned_at: Utc::now(),
                     sticky: true,
                     origin: subsumption_origin.clone(),
+                    numeric_value: None,
                 };
                 store.assign_item(item_id, ancestor_id, &assignment)?;
                 entry.insert(assignment);
@@ -518,6 +520,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
+            numeric_value: None,
         }
     }
 
