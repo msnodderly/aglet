@@ -144,6 +144,16 @@ When writing TUI code, check `lib.rs` for the actual struct definitions rather
 than trusting the spec shapes verbatim. File a feature request if you find a
 gap that matters.
 
+## ViewEdit Criteria Row Ordering (Surprising Bug)
+
+In the View Editor details pane, be careful not to sort a display-only copy of
+criteria rows unless you also preserve a mapping back to the underlying draft
+criteria vector. `state.criteria_index` edits the draft vector by index, so a
+sorted rendered list can make the highlighted row and edited row diverge.
+
+If you change ViewEdit criteria rendering, keep row order stable (draft order)
+or explicitly carry source indices through render + input handling.
+
 ## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
 
 In the rewritten category manager (`c` / `F9`), the Details pane uses `j/k` for

@@ -191,7 +191,10 @@ enum Mode {
     CategoryColumnPicker,
     BoardAddColumnPicker,
     #[allow(dead_code)]
-    CategoryCreateConfirm { name: String, parent_id: CategoryId },
+    CategoryCreateConfirm {
+        name: String,
+        parent_id: CategoryId,
+    },
 }
 
 /// Disambiguates which name-input operation is in flight when Mode::InputPanel
@@ -6140,6 +6143,22 @@ mod tests {
         (store, db_path)
     }
 
+    fn terminal_buffer_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buf = terminal.backend().buffer();
+        let area = buf.area;
+        (0..area.height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..area.width {
+                    if let Some(cell) = buf.cell((x, y)) {
+                        line.push_str(cell.symbol());
+                    }
+                }
+                line
+            })
+            .collect()
+    }
+
     #[test]
     fn view_picker_e_opens_view_edit() {
         let (store, db_path) = make_test_store_with_view("e-opens");
@@ -6156,6 +6175,62 @@ mod tests {
 
         assert_eq!(app.mode, Mode::ViewEdit);
         assert!(app.view_edit_state.is_some());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_criteria_rows_render_in_draft_order_and_toggle_selected_row() {
+        let (store, db_path) = make_test_store_with_view("criteria-order-render");
+
+        let critical = Category::new("Critical".to_string());
+        let low = Category::new("Low".to_string());
+        let medium = Category::new("Medium".to_string());
+        store.create_category(&critical).expect("critical");
+        store.create_category(&low).expect("low");
+        store.create_category(&medium).expect("medium");
+
+        let mut view = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "TestView")
+            .expect("TestView");
+        view.criteria.set_criterion(CriterionMode::And, medium.id);
+        view.criteria.set_criterion(CriterionMode::Or, critical.id);
+        view.criteria.set_criterion(CriterionMode::Not, low.id);
+        store.update_view(&view).expect("update view");
+
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("refreshed TestView");
+        app.open_view_edit(view);
+
+        let backend = TestBackend::new(140, 35);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render");
+        let text = terminal_buffer_lines(&terminal).join("\n");
+
+        let medium_pos = text.find("Include: Medium").expect("Include row");
+        let critical_pos = text.find("Match any: Critical").expect("Match any row");
+        let low_pos = text.find("Exclude: Low").expect("Exclude row");
+        assert!(
+            medium_pos < critical_pos && critical_pos < low_pos,
+            "criteria rows should preserve draft order in details pane"
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle first criteria row");
+        let state = app.view_edit_state.as_ref().expect("view edit state");
+        assert_eq!(state.draft.criteria.criteria[0].category_id, medium.id);
+        assert_eq!(state.draft.criteria.criteria[0].mode, CriterionMode::Not);
 
         let _ = std::fs::remove_file(&db_path);
     }
