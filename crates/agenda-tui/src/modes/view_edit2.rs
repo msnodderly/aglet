@@ -844,7 +844,9 @@ impl App {
                     if let Some(state) = &mut self.view_edit_state {
                         state.discard_confirm = true;
                     }
-                    self.status = "Unsaved changes: save before closing? y=save n=discard Esc=keep editing".to_string();
+                    self.status =
+                        "Unsaved changes: save before closing? y=save n=discard Esc=keep editing"
+                            .to_string();
                 } else {
                     self.view_edit_state = None;
                     self.mode = Mode::ViewPicker;

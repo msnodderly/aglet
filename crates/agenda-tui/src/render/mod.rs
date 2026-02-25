@@ -1577,7 +1577,7 @@ impl App {
                         "Preview pane: j/k:scroll  p:hide preview  Tab:pane  S:save  Esc:cancel (Esc clears section filter first)"
                     } else {
                         match state.region {
-                            ViewEditRegion::Criteria => "Details pane: j/k:row  Enter/Space:toggle/edit  r:rename view  n:add criterion  x:remove criterion  ]/[:when buckets  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
+                            ViewEditRegion::Criteria => "Details pane: j/k:row  Enter/Space:cycle criterion mode (Include/Exclude/Match any)  r:rename view  n:add criterion  x:remove criterion  ]/[:when buckets  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
                             ViewEditRegion::Sections => "Details pane: j/k:field  Enter/Space:field action  e/t/f/c/a/r/h/m/x shortcuts (optional)  Tab:pane  S:save  Esc:cancel",
                             ViewEditRegion::Unmatched => "Details pane: j/k:row  Enter/Space:row action  r:rename view  [/]:when buckets  m:display  t/l:unmatched  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
                         }
@@ -2514,8 +2514,16 @@ impl App {
 
         // ── Details pane (row-based, view or selected section) ──────────────
         {
+            let criterion_mode_label = |mode: CriterionMode| -> &'static str {
+                match mode {
+                    CriterionMode::And => "Include",
+                    CriterionMode::Not => "Exclude",
+                    CriterionMode::Or => "Match any",
+                }
+            };
+
             let summarize_query = |query: &Query| -> Vec<String> {
-                let mut lines: Vec<String> = query
+                query
                     .criteria
                     .iter()
                     .map(|criterion| {
@@ -2523,16 +2531,9 @@ impl App {
                             .get(&criterion.category_id)
                             .cloned()
                             .unwrap_or_else(|| "(deleted)".to_string());
-                        let sign = match criterion.mode {
-                            CriterionMode::And => "+",
-                            CriterionMode::Not => "-",
-                            CriterionMode::Or => "|",
-                        };
-                        format!("{sign}{name}")
+                        format!("{}: {}", criterion_mode_label(criterion.mode), name)
                     })
-                    .collect();
-                lines.sort_by_key(|s| s.to_ascii_lowercase());
-                lines
+                    .collect()
             };
 
             let summarize_category_set = |set: &std::collections::HashSet<CategoryId>| -> String {
@@ -2742,7 +2743,7 @@ impl App {
                 );
 
                 items.push(ListItem::new(Line::from(
-                    "  View keys: n/x/Space ]/[ m (criteria)  t/l (unmatched)",
+                    "  View keys: n:add  x:remove  Enter/Space:cycle criterion mode  ]/[:when  m:display  t/l:unmatched",
                 )));
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
@@ -2781,7 +2782,7 @@ impl App {
                         if criteria_lines.is_empty() {
                             "(none)".to_string()
                         } else {
-                            criteria_lines.join(" ")
+                            criteria_lines.join("; ")
                         }
                     )))
                     .style(criteria_style),
