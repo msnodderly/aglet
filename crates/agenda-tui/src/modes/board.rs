@@ -423,13 +423,7 @@ impl App {
     }
 
     fn is_valid_board_column_heading_category(category: &Category) -> bool {
-        if category.name.eq_ignore_ascii_case("Entry") {
-            return false;
-        }
-        if category.name.eq_ignore_ascii_case("When") {
-            return category.parent.is_none();
-        }
-        !category.children.is_empty()
+        is_valid_column_heading(category)
     }
 
     fn board_add_column_scope_ids(&self) -> Vec<CategoryId> {
@@ -810,19 +804,28 @@ impl App {
                 );
                 return;
             }
-            let parent_label = existing_cat
-                .parent
-                .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
-                .map(|c| c.name.as_str())
-                .unwrap_or("(top level)");
-            if existing_cat.children.is_empty()
-                && !existing_cat.name.eq_ignore_ascii_case("When")
-            {
-                self.status = format!(
-                    "Category '{}' exists under '{}' but has no subcategories, so it cannot be a column heading yet.",
-                    existing_cat.name, parent_label
-                );
+            if !is_valid_column_heading(existing_cat) {
+                let parent_label = existing_cat
+                    .parent
+                    .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
+                    .map(|c| c.name.as_str());
+                self.status = if let Some(parent_name) = parent_label {
+                    format!(
+                        "Category '{}' exists under '{}' and is not a valid column heading.",
+                        existing_cat.name, parent_name
+                    )
+                } else {
+                    format!(
+                        "Category '{}' is not a valid column heading: needs subcategories or numeric type.",
+                        existing_cat.name
+                    )
+                };
             } else {
+                let parent_label = existing_cat
+                    .parent
+                    .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("(top level)");
                 self.status = format!(
                     "Category '{}' already exists under '{}'; use Enter to insert it.",
                     existing_cat.name, parent_label
@@ -868,17 +871,13 @@ impl App {
         };
         if !Self::is_valid_board_column_heading_category(heading_category) {
             self.status = format!(
-                "Invalid column heading '{}': choose a category with subcategories (or When)",
+                "Invalid column heading '{}': needs subcategories, numeric type, or be When",
                 heading_category.name
             );
             return Ok(());
         }
 
-        let kind = if heading_category.name.eq_ignore_ascii_case("When") {
-            ColumnKind::When
-        } else {
-            ColumnKind::Standard
-        };
+        let kind = column_kind_for_heading(heading_category);
 
         let insert_index = add_state.anchor.insert_index.min(section.columns.len());
         let item_column_index_before = add_state
@@ -1311,6 +1310,19 @@ impl App {
             self.status = "Editing 'When' date not yet implemented inline".to_string();
             return;
         }
+
+        // Numeric column → open numeric value editor instead of category picker.
+        let is_numeric = self
+            .categories
+            .iter()
+            .find(|c| c.id == meta.parent_id)
+            .map(|c| c.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if is_numeric {
+            self.open_numeric_column_editor(&meta);
+            return;
+        }
+
         let is_exclusive = self
             .categories
             .iter()
@@ -1340,6 +1352,34 @@ impl App {
         self.clamp_category_column_picker_list_index();
         self.status = format!(
             "Set {}: type to filter, Space toggle, Enter save, Esc cancel",
+            meta.parent_name
+        );
+    }
+
+    fn open_numeric_column_editor(&mut self, meta: &CategoryDirectEditColumnMeta) {
+        // Pre-fill with the current numeric value if one exists.
+        let current_value = self
+            .selected_item()
+            .and_then(|item| {
+                item.assignments
+                    .get(&meta.parent_id)
+                    .and_then(|a| a.numeric_value)
+            })
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+
+        self.numeric_edit_target = Some(NumericEditTarget {
+            item_id: meta.item_id,
+            category_id: meta.parent_id,
+        });
+        self.input_panel = Some(input_panel::InputPanel::new_name_input(
+            &current_value,
+            &format!("Set {} value", meta.parent_name),
+        ));
+        self.name_input_context = Some(NameInputContext::NumericValueEdit);
+        self.mode = Mode::InputPanel;
+        self.status = format!(
+            "Enter numeric value for {}, Save to confirm, Esc to cancel",
             meta.parent_name
         );
     }
@@ -1577,11 +1617,29 @@ impl App {
                 }
                 return Ok(false);
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 self.move_category_column_picker_list(-1);
                 return Ok(false);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
+                self.move_category_column_picker_list(1);
+                return Ok(false);
+            }
+            KeyCode::Char('k')
+                if !matches!(
+                    self.category_column_picker_state().map(|s| &s.focus),
+                    Some(CategoryColumnPickerFocus::FilterInput)
+                ) =>
+            {
+                self.move_category_column_picker_list(-1);
+                return Ok(false);
+            }
+            KeyCode::Char('j')
+                if !matches!(
+                    self.category_column_picker_state().map(|s| &s.focus),
+                    Some(CategoryColumnPickerFocus::FilterInput)
+                ) =>
+            {
                 self.move_category_column_picker_list(1);
                 return Ok(false);
             }
@@ -2178,11 +2236,11 @@ impl App {
                 self.status = "Add column canceled".to_string();
                 return Ok(false);
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Down => {
                 self.move_board_add_column_suggest_cursor(1);
                 return Ok(false);
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up => {
                 self.move_board_add_column_suggest_cursor(-1);
                 return Ok(false);
             }
@@ -2246,7 +2304,12 @@ impl App {
         }
 
         match code {
-            KeyCode::Char('S') | KeyCode::Char('s') => {
+            KeyCode::Char('S') | KeyCode::Char('s')
+                if !matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Input)
+                ) =>
+            {
                 self.apply_category_direct_edit_draft(agenda)?;
                 return Ok(false);
             }
@@ -2267,7 +2330,12 @@ impl App {
                 self.autocomplete_from_suggestion();
                 return Ok(false);
             }
-            KeyCode::Char('+') => {
+            KeyCode::Char('+')
+                if !matches!(
+                    self.active_category_direct_edit_focus(),
+                    Some(CategoryDirectEditFocus::Input)
+                ) =>
+            {
                 self.category_direct_edit_add_blank_row_guarded();
                 return Ok(false);
             }
@@ -2762,6 +2830,7 @@ impl App {
             Some(NameInputContext::ViewCreate) | Some(NameInputContext::ViewRename) => {
                 Mode::ViewPicker
             }
+            Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             None => Mode::Normal,
         }
     }
@@ -2857,6 +2926,59 @@ impl App {
                         self.view_pending_edit_name = None;
                         self.mode = Mode::ViewPicker;
                         self.status = format!("View rename failed: {err}");
+                    }
+                }
+            }
+            Some(NameInputContext::NumericValueEdit) => {
+                let Some(target) = self.numeric_edit_target.take() else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::Normal;
+                    self.status = "Numeric edit: no target".to_string();
+                    return Ok(());
+                };
+
+                if name.is_empty() {
+                    // Treat empty as "clear value" — unassign the category.
+                    // For MVP, just close without changes.
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::Normal;
+                    self.status = "Numeric value cleared (no change saved)".to_string();
+                    return Ok(());
+                }
+
+                let normalized = name.replace(',', "");
+                match normalized.parse::<rust_decimal::Decimal>() {
+                    Ok(decimal_value) => {
+                        match agenda.assign_item_numeric_manual(
+                            target.item_id,
+                            target.category_id,
+                            decimal_value,
+                            Some("manual:tui.numeric-edit".to_string()),
+                        ) {
+                            Ok(_result) => {
+                                self.refresh(agenda.store())?;
+                                self.input_panel = None;
+                                self.name_input_context = None;
+                                self.mode = Mode::Normal;
+                                self.status =
+                                    format!("Set value to {}", decimal_value.normalize());
+                            }
+                            Err(err) => {
+                                self.input_panel = None;
+                                self.name_input_context = None;
+                                self.mode = Mode::Normal;
+                                self.status = format!("Numeric save failed: {err}");
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Keep the panel open so the user can fix the input.
+                        self.numeric_edit_target = Some(target);
+                        self.status =
+                            format!("Invalid number: '{}'. Edit the value or Esc to cancel.", name);
+                        return Ok(());
                     }
                 }
             }
@@ -3252,6 +3374,7 @@ mod tests {
             is_exclusive,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         }
     }
 

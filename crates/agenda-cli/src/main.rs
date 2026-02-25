@@ -6,11 +6,14 @@ use std::path::PathBuf;
 use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
-use agenda_core::model::{Category, CategoryId, CriterionMode, Item, ItemId, Query, View};
+use agenda_core::model::{
+    Category, CategoryId, CategoryValueKind, CriterionMode, Item, ItemId, Query, View,
+};
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use chrono::{Local, NaiveDateTime};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -23,6 +26,21 @@ struct Cli {
 
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CategoryTypeArg {
+    Tag,
+    Numeric,
+}
+
+impl CategoryTypeArg {
+    fn into_model(self) -> CategoryValueKind {
+        match self {
+            Self::Tag => CategoryValueKind::Tag,
+            Self::Numeric => CategoryValueKind::Numeric,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -109,6 +127,8 @@ enum CategoryCommand {
         exclusive: bool,
         #[arg(long = "disable-implicit-string")]
         disable_implicit_string: bool,
+        #[arg(long = "type", value_enum)]
+        category_type: Option<CategoryTypeArg>,
     },
 
     /// Delete a category by name
@@ -139,12 +159,21 @@ enum CategoryCommand {
         note: Option<String>,
         #[arg(long = "clear-note")]
         clear_note: bool,
+        #[arg(long = "type", value_enum)]
+        category_type: Option<CategoryTypeArg>,
     },
 
     /// Assign an item to a category by id/name
     Assign {
         item_id: String,
         category_name: String,
+    },
+
+    /// Set a numeric value assignment for a numeric category
+    SetValue {
+        item_id: String,
+        category_name: String,
+        value: String,
     },
 
     /// Unassign an item from a category
@@ -522,9 +551,26 @@ fn cmd_category(
                 .map(|s| s.as_str())
                 .unwrap_or("(root)");
             println!("parent:          {}", parent_label);
+            println!(
+                "type:            {}",
+                category_value_kind_label(category.value_kind)
+            );
             println!("exclusive:       {}", category.is_exclusive);
             println!("actionable:      {}", category.is_actionable);
             println!("implicit_string: {}", category.enable_implicit_string);
+            if category.value_kind == CategoryValueKind::Numeric {
+                if let Some(format) = &category.numeric_format {
+                    println!("numeric.decimals: {}", format.decimal_places);
+                    println!(
+                        "numeric.currency: {}",
+                        format.currency_symbol.as_deref().unwrap_or("(none)")
+                    );
+                    println!(
+                        "numeric.thousands_separator: {}",
+                        format.use_thousands_separator
+                    );
+                }
+            }
             if let Some(note) = &category.note {
                 println!("note:            {}", note);
             }
@@ -596,6 +642,7 @@ fn cmd_category(
             parent,
             exclusive,
             disable_implicit_string,
+            category_type,
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let requested_name = name.clone();
@@ -606,6 +653,9 @@ fn cmd_category(
                 .transpose()?;
             category.is_exclusive = exclusive;
             category.enable_implicit_string = !disable_implicit_string;
+            if let Some(category_type) = category_type {
+                category.value_kind = category_type.into_model();
+            }
 
             let result = match agenda.create_category(&category) {
                 Ok(result) => result,
@@ -625,8 +675,11 @@ fn cmd_category(
                 Err(other) => return Err(other.to_string()),
             };
             println!(
-                "created category {} (processed_items={}, affected_items={})",
-                category.name, result.processed_items, result.affected_items
+                "created category {} (type={}, processed_items={}, affected_items={})",
+                category.name,
+                category_value_kind_label(category.value_kind),
+                result.processed_items,
+                result.affected_items
             );
             Ok(())
         }
@@ -685,6 +738,7 @@ fn cmd_category(
             implicit_string,
             note,
             clear_note,
+            category_type,
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
@@ -694,8 +748,9 @@ fn cmd_category(
                 && implicit_string.is_none()
                 && note.is_none()
                 && !clear_note
+                && category_type.is_none()
             {
-                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --note, or --clear-note".to_string());
+                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --type, --note, or --clear-note".to_string());
             }
             if let Some(val) = exclusive {
                 category.is_exclusive = val;
@@ -715,12 +770,16 @@ fn cmd_category(
                     Some(new_note)
                 };
             }
+            if let Some(category_type) = category_type {
+                category.value_kind = category_type.into_model();
+            }
             let result = agenda
                 .update_category(&category)
                 .map_err(|e| e.to_string())?;
             println!(
-                "updated {} (exclusive={}, actionable={}, implicit_string={}, processed_items={}, affected_items={})",
+                "updated {} (type={}, exclusive={}, actionable={}, implicit_string={}, processed_items={}, affected_items={})",
                 category.name,
+                category_value_kind_label(category.value_kind),
                 category.is_exclusive,
                 category.is_actionable,
                 category.enable_implicit_string,
@@ -736,6 +795,10 @@ fn cmd_category(
             let item_id = parse_item_id(&item_id)?;
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &category_name)?;
+            let category = categories
+                .iter()
+                .find(|c| c.id == category_id)
+                .ok_or_else(|| format!("category not found: {category_name}"))?;
 
             if category_name.eq_ignore_ascii_case("Done") {
                 agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
@@ -745,11 +808,43 @@ fn cmd_category(
                 );
                 return Ok(());
             }
+            if category.value_kind == CategoryValueKind::Numeric {
+                return Err(format!(
+                    "category '{}' is Numeric; use `agenda category set-value <item-id> \"{}\" <number>`",
+                    category.name, category.name
+                ));
+            }
 
             let result = agenda
                 .assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))
                 .map_err(|e| e.to_string())?;
             println!("assigned item {} to category {}", item_id, category_name);
+            if !result.new_assignments.is_empty() {
+                println!("new_assignments={}", result.new_assignments.len());
+            }
+            Ok(())
+        }
+        CategoryCommand::SetValue {
+            item_id,
+            category_name,
+            value,
+        } => {
+            let item_id = parse_item_id(&item_id)?;
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &category_name)?;
+            let numeric_value = parse_decimal_value(&value)?;
+            let result = agenda
+                .assign_item_numeric_manual(
+                    item_id,
+                    category_id,
+                    numeric_value,
+                    Some("manual:cli.set-value".to_string()),
+                )
+                .map_err(|e| e.to_string())?;
+            println!(
+                "set value for item {} category {} = {}",
+                item_id, category_name, numeric_value
+            );
             if !result.new_assignments.is_empty() {
                 println!("new_assignments={}", result.new_assignments.len());
             }
@@ -925,6 +1020,24 @@ fn duplicate_category_create_error(
     )
 }
 
+fn category_value_kind_label(kind: CategoryValueKind) -> &'static str {
+    match kind {
+        CategoryValueKind::Tag => "Tag",
+        CategoryValueKind::Numeric => "Numeric",
+    }
+}
+
+fn parse_decimal_value(input: &str) -> Result<Decimal, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("value cannot be empty".to_string());
+    }
+    let normalized = trimmed.replace(',', "");
+    normalized
+        .parse::<Decimal>()
+        .map_err(|e| format!("invalid decimal value '{input}': {e}"))
+}
+
 fn print_items_for_view(
     view: &View,
     items: &[Item],
@@ -974,9 +1087,11 @@ fn print_items_for_view(
 #[cfg(test)]
 mod tests {
     use super::{
-        duplicate_category_create_error, parsed_when_feedback_line, unknown_hashtag_feedback_line,
+        duplicate_category_create_error, parse_decimal_value, parsed_when_feedback_line,
+        unknown_hashtag_feedback_line,
     };
     use chrono::NaiveDate;
+    use rust_decimal::Decimal;
     use uuid::Uuid;
 
     #[test]
@@ -1018,6 +1133,19 @@ mod tests {
     #[test]
     fn unknown_hashtag_feedback_line_omits_when_no_unknown_tokens() {
         assert_eq!(unknown_hashtag_feedback_line(&[]), None);
+    }
+
+    #[test]
+    fn parse_decimal_value_accepts_commas() {
+        assert_eq!(
+            parse_decimal_value("1,234.50").unwrap(),
+            Decimal::new(123450, 2)
+        );
+    }
+
+    #[test]
+    fn parse_decimal_value_rejects_empty() {
+        assert!(parse_decimal_value("   ").is_err());
     }
 }
 
@@ -1070,7 +1198,7 @@ fn print_category_subtree(
 ) {
     let indent = "  ".repeat(depth);
     let flags = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         if category.is_exclusive {
             " [exclusive]"
         } else {
@@ -1083,6 +1211,11 @@ fn print_category_subtree(
         },
         if !category.is_actionable {
             " [non-actionable]"
+        } else {
+            ""
+        },
+        if category.value_kind == CategoryValueKind::Numeric {
+            " [numeric]"
         } else {
             ""
         }

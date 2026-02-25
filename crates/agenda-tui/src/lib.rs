@@ -5,8 +5,8 @@ use std::path::Path;
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    BoardDisplayMode, Category, CategoryId, Column, ColumnKind, CriterionMode, Item, ItemId, Query,
-    Section, View, WhenBucket,
+    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
+    Item, ItemId, NumericFormat, Query, Section, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -141,6 +141,7 @@ struct CategoryListRow {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
+    value_kind: CategoryValueKind,
 }
 
 #[derive(Clone)]
@@ -203,6 +204,15 @@ enum Mode {
 enum NameInputContext {
     ViewCreate,
     ViewRename,
+    /// Editing a numeric cell value in the board.
+    NumericValueEdit,
+}
+
+/// Pending state for an in-flight numeric cell edit.
+#[derive(Clone, Copy, Debug)]
+struct NumericEditTarget {
+    item_id: ItemId,
+    category_id: CategoryId,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -573,6 +583,7 @@ struct App {
     picker_index: usize,
     view_pending_edit_name: Option<String>,
     view_edit_state: Option<ViewEditState>,
+    numeric_edit_target: Option<NumericEditTarget>,
 
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
@@ -616,6 +627,7 @@ impl Default for App {
             picker_index: 0,
             view_pending_edit_name: None,
             view_edit_state: None,
+            numeric_edit_target: None,
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
@@ -660,8 +672,8 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, Column, ColumnKind,
-        CriterionMode, Item, ItemId, Query, Section, View, WhenBucket,
+        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
+        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -696,6 +708,7 @@ mod tests {
             assigned_at: chrono::Utc::now(),
             sticky: false,
             origin: None,
+            numeric_value: None,
         };
         item.assignments.insert(high.id, assignment.clone());
         item.assignments.insert(medium.id, assignment.clone());
@@ -1125,6 +1138,8 @@ mod tests {
         assert!(!saved_before.assignments.contains_key(&alpha.id));
         assert!(!saved_before.assignments.contains_key(&alpha_beta.id));
 
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('s'), &agenda)
             .expect("save draft");
         let saved_after = store.get_item(item.id).expect("load item after save");
@@ -1307,12 +1322,16 @@ mod tests {
             CategoryDirectEditFocus::Input
         );
 
+        // Tab away from Input so '+' acts as add-row command instead of typing
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('+'), &agenda)
             .expect("plus adds row");
 
         let state = app.category_direct_edit_state().expect("direct edit state");
         assert_eq!(state.rows.len(), 2);
         assert_eq!(state.active_row, 1);
+        // add_blank_row_guarded resets focus to Input
         assert_eq!(state.focus, CategoryDirectEditFocus::Input);
         assert!(app.status.contains("Added row"));
     }
@@ -1362,12 +1381,16 @@ mod tests {
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        // Tab away from Input so '+' acts as command instead of typing
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('+'), &agenda)
             .expect("plus handled");
 
         let state = app.category_direct_edit_state().expect("direct edit state");
         assert_eq!(state.rows.len(), 1);
-        assert_eq!(state.focus, CategoryDirectEditFocus::Input);
+        // Focus stays at Suggestions (Tab destination) since exclusive guard blocked add
+        assert_eq!(state.focus, CategoryDirectEditFocus::Suggestions);
         assert!(app.status.contains("exclusive"));
     }
 
@@ -1714,6 +1737,9 @@ mod tests {
             state.active_row = 0;
         }
 
+        // Tab away from Input so 'S' acts as save command instead of typing
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('S'), &agenda)
             .expect("save draft");
         assert_eq!(app.mode, Mode::Normal);
@@ -3329,6 +3355,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         };
         let user = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -3339,6 +3366,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            value_kind: CategoryValueKind::Tag,
         };
 
         assert_eq!(
@@ -3358,6 +3386,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         };
         let when = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -3368,6 +3397,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         };
 
         assert_eq!(first_non_reserved_category_index(&[done, when]), 0);
@@ -3754,7 +3784,10 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
                 .expect("type view name");
         }
-        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+        // Tab from Text to SaveButton, then Enter to save (S types into text when focus is Text)
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save button");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("save name input");
 
         assert_eq!(app.mode, Mode::ViewEdit);
@@ -4168,6 +4201,7 @@ mod tests {
             assigned_at: chrono::Utc::now(),
             sticky: false,
             origin: None,
+            numeric_value: None,
         };
         item.assignments.insert(alpha.id, assignment.clone());
         item.assignments.insert(beta.id, assignment);
@@ -6087,6 +6121,7 @@ mod tests {
                 assigned_at: chrono::Utc::now(),
                 sticky: true,
                 origin: None,
+                numeric_value: None,
             },
         );
         item.assignments.insert(
@@ -6096,6 +6131,7 @@ mod tests {
                 assigned_at: chrono::Utc::now(),
                 sticky: true,
                 origin: None,
+                numeric_value: None,
             },
         );
         let names = HashMap::from([
@@ -7767,6 +7803,10 @@ mod tests {
 
         let work = Category::new("Work".to_string());
         store.create_category(&work).expect("create work category");
+        // Give Work a child so it qualifies as a valid column heading.
+        let mut sub = Category::new("SubWork".to_string());
+        sub.parent = Some(work.id);
+        store.create_category(&sub).expect("create sub category");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
@@ -7794,6 +7834,7 @@ mod tests {
             })
         ));
 
+        // Navigate to Work — it has children so it's a valid column heading.
         let work_idx = app
             .category_rows
             .iter()
@@ -7808,6 +7849,115 @@ mod tests {
             .columns
             .iter()
             .any(|column| column.heading == work.id));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_column_picker_excludes_leaf_tag_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-leaf-tag");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Leaf tag category — should be hidden from column picker.
+        let leaf = Category::new("OrphanTag".to_string());
+        store.create_category(&leaf).expect("create leaf");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+
+        // Attempt to toggle the leaf category via its raw index.
+        let leaf_idx = app.category_rows.iter().position(|r| r.name == "OrphanTag").unwrap();
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = leaf_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        // OrphanTag should NOT have been added (filtered out).
+        assert!(
+            !app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns.iter().any(|c| c.heading == leaf.id),
+            "leaf tag category should be excluded from column picker"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_column_picker_includes_non_leaf_tag_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-nonleaf");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Status".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut child = Category::new("Active".to_string());
+        child.parent = Some(parent.id);
+        store.create_category(&child).expect("create child");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+
+        let status_idx = app.category_rows.iter().position(|r| r.name == "Status").unwrap();
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = status_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        assert!(
+            app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns.iter().any(|c| c.heading == parent.id),
+            "non-leaf tag category should be selectable as column heading"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn section_column_picker_includes_numeric_leaf_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-numeric");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create numeric");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+
+        let cost_idx = app.category_rows.iter().position(|r| r.name == "Cost").unwrap();
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = cost_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        assert!(
+            app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns.iter().any(|c| c.heading == cost.id),
+            "numeric leaf category should be selectable as column heading"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -8174,6 +8324,200 @@ mod tests {
             app.section_filters.iter().all(|f| f.is_none()),
             "all filters should be cleared after view switch"
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    // --- Phase 6: Numeric cell editing tests ---
+
+    /// Helper: create a store with a numeric "Cost" category, a view with the Cost column,
+    /// and one item. Returns (store, classifier, cost_category_id, item_id, db_path).
+    fn setup_numeric_column_board(suffix: &str) -> (
+        Store,
+        SubstringClassifier,
+        CategoryId,
+        ItemId,
+        std::path::PathBuf,
+    ) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-numeric-{suffix}-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create Cost");
+
+        let item = Item::new("Test expense".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        (store, classifier, cost.id, item.id, db_path)
+    }
+
+    #[test]
+    fn numeric_column_enter_opens_numeric_editor_not_category_picker() {
+        let (store, classifier, _cost_id, _item_id, db_path) = setup_numeric_column_board("enter");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        // Column 0 = item, column 1 = Cost
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("press Enter on numeric column");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.name_input_context,
+            Some(NameInputContext::NumericValueEdit)
+        );
+        assert!(
+            app.category_column_picker.is_none(),
+            "should not open category picker for numeric columns"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn numeric_column_edit_saves_value_and_returns_to_normal() {
+        let (store, classifier, cost_id, item_id, db_path) = setup_numeric_column_board("save");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        // Open editor
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open numeric editor");
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        // Type a value
+        for ch in "245.96".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type digit");
+        }
+
+        // Tab to Save button, then Enter
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("tab to save");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save numeric value");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.contains("245.96"));
+
+        // Verify persisted
+        let assignments = store.get_assignments_for_item(item_id).expect("assignments");
+        let value = assignments
+            .get(&cost_id)
+            .and_then(|a| a.numeric_value)
+            .expect("should have numeric value");
+        assert_eq!(value, rust_decimal::Decimal::new(24596, 2));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn numeric_column_edit_invalid_input_shows_error_and_keeps_panel_open() {
+        let (store, classifier, _cost_id, _item_id, db_path) = setup_numeric_column_board("invalid");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        // Open editor
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open numeric editor");
+
+        // Type invalid input
+        for ch in "abc".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type invalid");
+        }
+
+        // Tab to Save button, then Enter
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("tab to save");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt save");
+
+        // Panel should still be open
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(
+            app.status.contains("Invalid number"),
+            "should show validation error, got: {}",
+            app.status
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn numeric_column_edit_prefills_existing_value() {
+        let (store, classifier, cost_id, item_id, db_path) = setup_numeric_column_board("prefill");
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Set an initial value
+        agenda
+            .assign_item_numeric_manual(
+                item_id,
+                cost_id,
+                rust_decimal::Decimal::new(5000, 2),
+                Some("test".to_string()),
+            )
+            .expect("set initial value");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        // Open editor
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open numeric editor");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        let panel_text = app
+            .input_panel
+            .as_ref()
+            .map(|p| p.text.trimmed().to_string())
+            .unwrap_or_default();
+        assert_eq!(panel_text, "50.00", "should prefill existing value");
 
         let _ = std::fs::remove_file(&db_path);
     }

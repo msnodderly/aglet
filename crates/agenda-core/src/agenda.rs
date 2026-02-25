@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{NaiveDate, NaiveDateTime, Timelike, Utc};
+use rust_decimal::Decimal;
 
 use crate::dates::{BasicDateParser, DateParser};
 use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, ProcessItemResult};
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    Assignment, AssignmentSource, Category, CategoryId, Item, ItemId, Section, View,
+    Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Item, ItemId, Section,
+    View,
 };
 use crate::store::Store;
 
@@ -117,6 +119,36 @@ impl<'a> Agenda<'a> {
             assigned_at: Utc::now(),
             sticky: true,
             origin: origin.or_else(|| Some("manual".to_string())),
+            numeric_value: None,
+        };
+
+        self.store.assign_item(item_id, category_id, &assignment)?;
+        self.assign_subsumption_for_category(item_id, category_id)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
+    pub fn assign_item_numeric_manual(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        numeric_value: Decimal,
+        origin: Option<String>,
+    ) -> Result<ProcessItemResult> {
+        let category = self.store.get_category(category_id)?;
+        if category.value_kind != CategoryValueKind::Numeric {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("category '{}' is not Numeric", category.name),
+            });
+        }
+
+        self.enforce_manual_exclusive_siblings(item_id, category_id)?;
+
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: origin.or_else(|| Some("manual:numeric".to_string())),
+            numeric_value: Some(numeric_value),
         };
 
         self.store.assign_item(item_id, category_id, &assignment)?;
@@ -220,6 +252,7 @@ impl<'a> Agenda<'a> {
             assigned_at: now,
             sticky: true,
             origin: Some("manual:done".to_string()),
+            numeric_value: None,
         };
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
@@ -265,6 +298,7 @@ impl<'a> Agenda<'a> {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some(origin.to_string()),
+            numeric_value: None,
         };
 
         for category_id in targets {
@@ -334,6 +368,7 @@ impl<'a> Agenda<'a> {
                     assigned_at: Utc::now(),
                     sticky: true,
                     origin: Some(format!("subsumption:{parent_name}")),
+                    numeric_value: None,
                 };
                 self.store.assign_item(item_id, parent_id, &assignment)?;
                 entry.insert(assignment);
@@ -407,6 +442,7 @@ impl<'a> Agenda<'a> {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some("nlp:date".to_string()),
+            numeric_value: None,
         };
         self.store
             .assign_item(item_id, when_category_id, &assignment)
@@ -451,13 +487,14 @@ mod tests {
     use std::collections::HashSet;
 
     use chrono::{NaiveDate, NaiveDateTime, Utc};
+    use rust_decimal::Decimal;
 
     use super::Agenda;
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
-        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, CriterionMode, Item,
-        Query, Section, View, WhenBucket,
+        Action, Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Condition,
+        CriterionMode, Item, Query, Section, View, WhenBucket,
     };
     use crate::query::{resolve_view, resolve_when_bucket};
     use crate::store::Store;
@@ -497,6 +534,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some(origin.to_string()),
+            numeric_value: None,
         }
     }
 
@@ -905,6 +943,64 @@ mod tests {
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(!assignments.contains_key(&high.id));
         assert!(assignments.contains_key(&medium.id));
+    }
+
+    #[test]
+    fn assign_item_numeric_manual_sets_payload_and_subsumption_ancestor_has_none() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let project = category("Project", false);
+        store.create_category(&project).unwrap();
+        let mut cost = child_category("Cost", project.id, false);
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).unwrap();
+
+        let item = Item::new("Vendor invoice".to_string());
+        store.create_item(&item).unwrap();
+
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                cost.id,
+                Decimal::new(24596, 2),
+                Some("manual:test".to_string()),
+            )
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&cost.id).and_then(|a| a.numeric_value),
+            Some(Decimal::new(24596, 2))
+        );
+        assert_eq!(
+            assignments.get(&project.id).and_then(|a| a.numeric_value),
+            None
+        );
+        assert_eq!(
+            assignments.get(&project.id).map(|a| a.source),
+            Some(AssignmentSource::Subsumption)
+        );
+    }
+
+    #[test]
+    fn assign_item_numeric_manual_rejects_non_numeric_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let tag = category("TagOnly", false);
+        store.create_category(&tag).unwrap();
+
+        let item = Item::new("Test".to_string());
+        store.create_item(&item).unwrap();
+
+        let err = agenda
+            .assign_item_numeric_manual(item.id, tag.id, Decimal::new(10, 0), None)
+            .unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+        assert!(err.to_string().contains("not Numeric"));
     }
 
     #[test]
