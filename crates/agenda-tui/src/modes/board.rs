@@ -1310,6 +1310,19 @@ impl App {
             self.status = "Editing 'When' date not yet implemented inline".to_string();
             return;
         }
+
+        // Numeric column → open numeric value editor instead of category picker.
+        let is_numeric = self
+            .categories
+            .iter()
+            .find(|c| c.id == meta.parent_id)
+            .map(|c| c.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if is_numeric {
+            self.open_numeric_column_editor(&meta);
+            return;
+        }
+
         let is_exclusive = self
             .categories
             .iter()
@@ -1339,6 +1352,34 @@ impl App {
         self.clamp_category_column_picker_list_index();
         self.status = format!(
             "Set {}: type to filter, Space toggle, Enter save, Esc cancel",
+            meta.parent_name
+        );
+    }
+
+    fn open_numeric_column_editor(&mut self, meta: &CategoryDirectEditColumnMeta) {
+        // Pre-fill with the current numeric value if one exists.
+        let current_value = self
+            .selected_item()
+            .and_then(|item| {
+                item.assignments
+                    .get(&meta.parent_id)
+                    .and_then(|a| a.numeric_value)
+            })
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+
+        self.numeric_edit_target = Some(NumericEditTarget {
+            item_id: meta.item_id,
+            category_id: meta.parent_id,
+        });
+        self.input_panel = Some(input_panel::InputPanel::new_name_input(
+            &current_value,
+            &format!("Set {} value", meta.parent_name),
+        ));
+        self.name_input_context = Some(NameInputContext::NumericValueEdit);
+        self.mode = Mode::InputPanel;
+        self.status = format!(
+            "Enter numeric value for {}, Save to confirm, Esc to cancel",
             meta.parent_name
         );
     }
@@ -2789,6 +2830,7 @@ impl App {
             Some(NameInputContext::ViewCreate) | Some(NameInputContext::ViewRename) => {
                 Mode::ViewPicker
             }
+            Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             None => Mode::Normal,
         }
     }
@@ -2884,6 +2926,59 @@ impl App {
                         self.view_pending_edit_name = None;
                         self.mode = Mode::ViewPicker;
                         self.status = format!("View rename failed: {err}");
+                    }
+                }
+            }
+            Some(NameInputContext::NumericValueEdit) => {
+                let Some(target) = self.numeric_edit_target.take() else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::Normal;
+                    self.status = "Numeric edit: no target".to_string();
+                    return Ok(());
+                };
+
+                if name.is_empty() {
+                    // Treat empty as "clear value" — unassign the category.
+                    // For MVP, just close without changes.
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::Normal;
+                    self.status = "Numeric value cleared (no change saved)".to_string();
+                    return Ok(());
+                }
+
+                let normalized = name.replace(',', "");
+                match normalized.parse::<rust_decimal::Decimal>() {
+                    Ok(decimal_value) => {
+                        match agenda.assign_item_numeric_manual(
+                            target.item_id,
+                            target.category_id,
+                            decimal_value,
+                            Some("manual:tui.numeric-edit".to_string()),
+                        ) {
+                            Ok(_result) => {
+                                self.refresh(agenda.store())?;
+                                self.input_panel = None;
+                                self.name_input_context = None;
+                                self.mode = Mode::Normal;
+                                self.status =
+                                    format!("Set value to {}", decimal_value.normalize());
+                            }
+                            Err(err) => {
+                                self.input_panel = None;
+                                self.name_input_context = None;
+                                self.mode = Mode::Normal;
+                                self.status = format!("Numeric save failed: {err}");
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Keep the panel open so the user can fix the input.
+                        self.numeric_edit_target = Some(target);
+                        self.status =
+                            format!("Invalid number: '{}'. Edit the value or Esc to cancel.", name);
+                        return Ok(());
                     }
                 }
             }

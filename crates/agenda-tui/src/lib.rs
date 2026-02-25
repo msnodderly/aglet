@@ -204,6 +204,15 @@ enum Mode {
 enum NameInputContext {
     ViewCreate,
     ViewRename,
+    /// Editing a numeric cell value in the board.
+    NumericValueEdit,
+}
+
+/// Pending state for an in-flight numeric cell edit.
+#[derive(Clone, Copy, Debug)]
+struct NumericEditTarget {
+    item_id: ItemId,
+    category_id: CategoryId,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -574,6 +583,7 @@ struct App {
     picker_index: usize,
     view_pending_edit_name: Option<String>,
     view_edit_state: Option<ViewEditState>,
+    numeric_edit_target: Option<NumericEditTarget>,
 
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
@@ -617,6 +627,7 @@ impl Default for App {
             picker_index: 0,
             view_pending_edit_name: None,
             view_edit_state: None,
+            numeric_edit_target: None,
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
@@ -8126,6 +8137,200 @@ mod tests {
             app.section_filters.iter().all(|f| f.is_none()),
             "all filters should be cleared after view switch"
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    // --- Phase 6: Numeric cell editing tests ---
+
+    /// Helper: create a store with a numeric "Cost" category, a view with the Cost column,
+    /// and one item. Returns (store, classifier, cost_category_id, item_id, db_path).
+    fn setup_numeric_column_board(suffix: &str) -> (
+        Store,
+        SubstringClassifier,
+        CategoryId,
+        ItemId,
+        std::path::PathBuf,
+    ) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-numeric-{suffix}-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create Cost");
+
+        let item = Item::new("Test expense".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        (store, classifier, cost.id, item.id, db_path)
+    }
+
+    #[test]
+    fn numeric_column_enter_opens_numeric_editor_not_category_picker() {
+        let (store, classifier, _cost_id, _item_id, db_path) = setup_numeric_column_board("enter");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        // Column 0 = item, column 1 = Cost
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("press Enter on numeric column");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.name_input_context,
+            Some(NameInputContext::NumericValueEdit)
+        );
+        assert!(
+            app.category_column_picker.is_none(),
+            "should not open category picker for numeric columns"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn numeric_column_edit_saves_value_and_returns_to_normal() {
+        let (store, classifier, cost_id, item_id, db_path) = setup_numeric_column_board("save");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        // Open editor
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open numeric editor");
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        // Type a value
+        for ch in "245.96".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type digit");
+        }
+
+        // Tab to Save button, then Enter
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("tab to save");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save numeric value");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.contains("245.96"));
+
+        // Verify persisted
+        let assignments = store.get_assignments_for_item(item_id).expect("assignments");
+        let value = assignments
+            .get(&cost_id)
+            .and_then(|a| a.numeric_value)
+            .expect("should have numeric value");
+        assert_eq!(value, rust_decimal::Decimal::new(24596, 2));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn numeric_column_edit_invalid_input_shows_error_and_keeps_panel_open() {
+        let (store, classifier, _cost_id, _item_id, db_path) = setup_numeric_column_board("invalid");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        // Open editor
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open numeric editor");
+
+        // Type invalid input
+        for ch in "abc".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type invalid");
+        }
+
+        // Tab to Save button, then Enter
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("tab to save");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt save");
+
+        // Panel should still be open
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(
+            app.status.contains("Invalid number"),
+            "should show validation error, got: {}",
+            app.status
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn numeric_column_edit_prefills_existing_value() {
+        let (store, classifier, cost_id, item_id, db_path) = setup_numeric_column_board("prefill");
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Set an initial value
+        agenda
+            .assign_item_numeric_manual(
+                item_id,
+                cost_id,
+                rust_decimal::Decimal::new(5000, 2),
+                Some("test".to_string()),
+            )
+            .expect("set initial value");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        // Open editor
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open numeric editor");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        let panel_text = app
+            .input_panel
+            .as_ref()
+            .map(|p| p.text.trimmed().to_string())
+            .unwrap_or_default();
+        assert_eq!(panel_text, "50.00", "should prefill existing value");
 
         let _ = std::fs::remove_file(&db_path);
     }
