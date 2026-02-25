@@ -840,7 +840,8 @@ impl App {
         if popup_area.width < 3 || popup_area.height < 3 {
             return None;
         }
-        let regions = input_panel_popup_regions(popup_area, panel.kind)?;
+        let regions =
+            input_panel_popup_regions(popup_area, panel.kind, panel.numeric_values.len())?;
         match panel.focus {
             InputPanelFocus::Text => {
                 let prefix_len = "  Text> ".chars().count().min(u16::MAX as usize) as u16;
@@ -881,6 +882,28 @@ impl App {
                     .saturating_add(visible_line.min(u16::MAX as usize) as u16)
                     .min(max_y);
                 Some((cursor_x, cursor_y))
+            }
+            InputPanelFocus::NumericValues => {
+                let numeric_rect = regions.numeric_values?;
+                if let Some(draft) = panel.numeric_values.get(panel.numeric_cursor) {
+                    // "  CatName: " prefix + cursor position within buffer
+                    let prefix_len =
+                        (draft.category_name.chars().count() + 4).min(u16::MAX as usize) as u16; // "  Name: "
+                    let input_chars = draft.buffer.cursor().min(u16::MAX as usize) as u16;
+                    let row_offset = panel.numeric_cursor.min(u16::MAX as usize) as u16;
+                    let max_x = numeric_rect
+                        .x
+                        .saturating_add(numeric_rect.width.saturating_sub(1));
+                    let cursor_x = numeric_rect
+                        .x
+                        .saturating_add(prefix_len)
+                        .saturating_add(input_chars)
+                        .min(max_x);
+                    let cursor_y = numeric_rect.y.saturating_add(row_offset);
+                    Some((cursor_x, cursor_y))
+                } else {
+                    None
+                }
             }
             InputPanelFocus::CategoriesButton
             | InputPanelFocus::SaveButton
@@ -1618,6 +1641,7 @@ impl App {
                                 InputPanelFocus::Text => "Text",
                                 InputPanelFocus::Note => "Note",
                                 InputPanelFocus::CategoriesButton => "Categories",
+                                InputPanelFocus::NumericValues => "Numeric Values",
                                 InputPanelFocus::SaveButton => "Save",
                                 InputPanelFocus::CancelButton => "Cancel",
                             }
@@ -1711,7 +1735,9 @@ impl App {
             return;
         }
 
-        let Some(regions) = input_panel_popup_regions(area, panel.kind) else {
+        let Some(regions) =
+            input_panel_popup_regions(area, panel.kind, panel.numeric_values.len())
+        else {
             return;
         };
 
@@ -1793,6 +1819,35 @@ impl App {
                 format!("{cat_marker}  {}", cat_names.join(", "))
             };
             frame.render_widget(Paragraph::new(cat_display), categories_rect);
+        }
+
+        // Numeric values section
+        if let Some(numeric_rect) = regions.numeric_values {
+            let is_focused = panel.focus == InputPanelFocus::NumericValues;
+            let lines: Vec<Line<'_>> = panel
+                .numeric_values
+                .iter()
+                .enumerate()
+                .map(|(i, draft)| {
+                    let marker = if is_focused && i == panel.numeric_cursor {
+                        ">"
+                    } else {
+                        " "
+                    };
+                    let style = if is_focused && i == panel.numeric_cursor {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(
+                        Span::styled(
+                            format!("{marker} {}: {}", draft.category_name, draft.buffer.text()),
+                            style,
+                        )
+                    )
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(lines), numeric_rect);
         }
 
         if let Some(preview_rect) = regions.preview {

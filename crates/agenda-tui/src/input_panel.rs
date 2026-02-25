@@ -2,8 +2,19 @@ use std::collections::HashSet;
 
 use agenda_core::model::{CategoryId, ItemId};
 use crossterm::event::KeyCode;
+use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
+
+/// Draft state for a single numeric value being edited in the InputPanel.
+#[derive(Clone, Debug)]
+pub(crate) struct NumericValueDraft {
+    pub(crate) category_id: CategoryId,
+    pub(crate) category_name: String,
+    pub(crate) buffer: TextBuffer,
+    /// The original value when the panel was opened, for change detection.
+    pub(crate) original: Option<Decimal>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InputPanelKind {
@@ -20,6 +31,7 @@ pub(crate) enum InputPanelFocus {
     Text,
     Note,
     CategoriesButton,
+    NumericValues,
     SaveButton,
     CancelButton,
 }
@@ -65,6 +77,10 @@ pub(crate) struct InputPanel {
     pub(crate) preview_context: String,
     /// `Some` while the embedded category picker overlay is open.
     pub(crate) category_picker: Option<CategoryPickerState>,
+    /// Numeric values assigned to this item via numeric categories.
+    pub(crate) numeric_values: Vec<NumericValueDraft>,
+    /// Cursor index within `numeric_values` when focused on NumericValues.
+    pub(crate) numeric_cursor: usize,
 }
 
 impl InputPanel {
@@ -81,6 +97,8 @@ impl InputPanel {
             item_id: None,
             preview_context: format_section_context(section_title, on_insert_assign),
             category_picker: None,
+            numeric_values: Vec::new(),
+            numeric_cursor: 0,
         }
     }
 
@@ -89,6 +107,7 @@ impl InputPanel {
         text: String,
         note: String,
         categories: HashSet<CategoryId>,
+        numeric_values: Vec<NumericValueDraft>,
     ) -> Self {
         Self {
             kind: InputPanelKind::EditItem,
@@ -99,6 +118,8 @@ impl InputPanel {
             item_id: Some(item_id),
             preview_context: String::new(),
             category_picker: None,
+            numeric_values,
+            numeric_cursor: 0,
         }
     }
 
@@ -112,6 +133,8 @@ impl InputPanel {
             item_id: None,
             preview_context: label.to_string(),
             category_picker: None,
+            numeric_values: Vec::new(),
+            numeric_cursor: 0,
         }
     }
 
@@ -177,6 +200,7 @@ impl InputPanel {
                 }
             }
             InputPanelFocus::CategoriesButton => self.handle_categories_button(code),
+            InputPanelFocus::NumericValues => self.handle_numeric_values(code),
             InputPanelFocus::SaveButton => self.handle_save_button(code),
             InputPanelFocus::CancelButton => self.handle_cancel_button(code),
         }
@@ -196,7 +220,8 @@ impl InputPanel {
             // Capital S saves only when not editing text fields
             KeyCode::Char('S')
                 if self.focus != InputPanelFocus::Text
-                    && self.focus != InputPanelFocus::Note =>
+                    && self.focus != InputPanelFocus::Note
+                    && self.focus != InputPanelFocus::NumericValues =>
             {
                 Some(InputPanelAction::Save)
             }
@@ -225,6 +250,35 @@ impl InputPanel {
         }
     }
 
+    fn handle_numeric_values(&mut self, code: KeyCode) -> InputPanelAction {
+        match code {
+            KeyCode::Up => {
+                if self.numeric_cursor > 0 {
+                    self.numeric_cursor -= 1;
+                }
+                InputPanelAction::Handled
+            }
+            KeyCode::Down => {
+                if self.numeric_cursor + 1 < self.numeric_values.len() {
+                    self.numeric_cursor += 1;
+                }
+                InputPanelAction::Handled
+            }
+            _ => {
+                if let Some(draft) = self.numeric_values.get_mut(self.numeric_cursor) {
+                    if draft.buffer.handle_key(code, false) {
+                        return InputPanelAction::Handled;
+                    }
+                }
+                InputPanelAction::Unhandled
+            }
+        }
+    }
+
+    fn has_numeric_values(&self) -> bool {
+        !self.numeric_values.is_empty()
+    }
+
     fn active_buffer_mut(&mut self) -> &mut TextBuffer {
         match self.focus {
             InputPanelFocus::Note => &mut self.note,
@@ -242,7 +296,14 @@ impl InputPanel {
                 }
             }
             InputPanelFocus::Note => InputPanelFocus::CategoriesButton,
-            InputPanelFocus::CategoriesButton => InputPanelFocus::SaveButton,
+            InputPanelFocus::CategoriesButton => {
+                if self.has_numeric_values() {
+                    InputPanelFocus::NumericValues
+                } else {
+                    InputPanelFocus::SaveButton
+                }
+            }
+            InputPanelFocus::NumericValues => InputPanelFocus::SaveButton,
             InputPanelFocus::SaveButton => InputPanelFocus::CancelButton,
             InputPanelFocus::CancelButton => InputPanelFocus::Text,
         };
@@ -253,9 +314,12 @@ impl InputPanel {
             InputPanelFocus::Text => InputPanelFocus::CancelButton,
             InputPanelFocus::Note => InputPanelFocus::Text,
             InputPanelFocus::CategoriesButton => InputPanelFocus::Note,
+            InputPanelFocus::NumericValues => InputPanelFocus::CategoriesButton,
             InputPanelFocus::SaveButton => {
                 if self.kind == InputPanelKind::NameInput {
                     InputPanelFocus::Text
+                } else if self.has_numeric_values() {
+                    InputPanelFocus::NumericValues
                 } else {
                     InputPanelFocus::CategoriesButton
                 }
@@ -546,7 +610,13 @@ mod tests {
         let id = ItemId::new_v4();
         let mut cats = HashSet::new();
         cats.insert(CategoryId::new_v4());
-        let p = InputPanel::new_edit_item(id, "My item".into(), "My note".into(), cats.clone());
+        let p = InputPanel::new_edit_item(
+            id,
+            "My item".into(),
+            "My note".into(),
+            cats.clone(),
+            Vec::new(),
+        );
         assert_eq!(p.kind, InputPanelKind::EditItem);
         assert_eq!(p.text.text(), "My item");
         assert_eq!(p.note.text(), "My note");

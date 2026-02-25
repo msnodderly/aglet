@@ -841,6 +841,8 @@ pub(super) struct InputPanelPopupRegions {
     pub(super) note: Option<Rect>,
     pub(super) note_inner: Option<Rect>,
     pub(super) categories: Option<Rect>,
+    /// Region for numeric value rows (only when there are numeric values).
+    pub(super) numeric_values: Option<Rect>,
     pub(super) preview: Option<Rect>,
     pub(super) buttons: Rect,
     pub(super) help: Rect,
@@ -849,6 +851,7 @@ pub(super) struct InputPanelPopupRegions {
 pub(super) fn input_panel_popup_regions(
     area: Rect,
     kind: crate::input_panel::InputPanelKind,
+    numeric_count: usize,
 ) -> Option<InputPanelPopupRegions> {
     if area.width < 3 || area.height < 3 {
         return None;
@@ -887,27 +890,36 @@ pub(super) fn input_panel_popup_regions(
                 note: None,
                 note_inner: None,
                 categories: None,
+                numeric_values: None,
                 preview: None,
                 buttons: chunks[3],
                 help: chunks[4],
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
-            // heading + text + note(min 3) + categories + preview + buttons + help = 9 minimum
-            if inner.height < 9 {
+            let numeric_rows = numeric_count as u16;
+            // heading + text + note(min 3) + categories + numeric + preview + buttons + help
+            let min_height = 9 + numeric_rows;
+            if inner.height < min_height.min(9) {
+                // Require at least 9 rows even with numeric values
                 return None;
             }
+            let mut constraints = vec![
+                Constraint::Length(1), // heading
+                Constraint::Length(1), // text
+                Constraint::Min(3),    // note
+                Constraint::Length(1), // categories
+            ];
+            if numeric_rows > 0 {
+                constraints.push(Constraint::Length(numeric_rows)); // numeric values
+            }
+            constraints.push(Constraint::Length(1)); // preview
+            constraints.push(Constraint::Length(1)); // buttons
+            constraints.push(Constraint::Length(1)); // help
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // heading
-                    Constraint::Length(1), // text
-                    Constraint::Min(3),    // note
-                    Constraint::Length(1), // categories
-                    Constraint::Length(1), // preview
-                    Constraint::Length(1), // buttons
-                    Constraint::Length(1), // help
-                ])
+                .constraints(constraints)
                 .split(inner);
             let note = chunks[2];
             let note_inner = Rect {
@@ -916,15 +928,21 @@ pub(super) fn input_panel_popup_regions(
                 width: note.width.saturating_sub(2),
                 height: note.height.saturating_sub(2),
             };
+            let (numeric_idx, preview_idx, buttons_idx, help_idx) = if numeric_rows > 0 {
+                (Some(4), 5, 6, 7)
+            } else {
+                (None, 4, 5, 6)
+            };
             Some(InputPanelPopupRegions {
                 heading: chunks[0],
                 text: chunks[1],
                 note: Some(note),
                 note_inner: Some(note_inner),
                 categories: Some(chunks[3]),
-                preview: Some(chunks[4]),
-                buttons: chunks[5],
-                help: chunks[6],
+                numeric_values: numeric_idx.map(|i| chunks[i]),
+                preview: Some(chunks[preview_idx]),
+                buttons: chunks[buttons_idx],
+                help: chunks[help_idx],
             })
         }
     }

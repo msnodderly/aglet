@@ -3485,6 +3485,7 @@ mod tests {
             "abcd".to_string(),
             String::new(),
             Default::default(),
+            Vec::new(),
         );
         let app = App {
             mode: Mode::InputPanel,
@@ -4232,6 +4233,7 @@ mod tests {
             "hello".to_string(),
             String::new(),
             Default::default(),
+            Vec::new(),
         );
         // Set note buffer with multiline content and cursor mid-second-line.
         panel.note = text_buffer::TextBuffer::with_cursor(
@@ -8520,5 +8522,247 @@ mod tests {
         assert_eq!(panel_text, "50.00", "should prefill existing value");
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    // --- Edit panel numeric values tests ---
+
+    /// Helper: create a store with a numeric "Cost" category, assign an item to it
+    /// with a numeric value, and return the pieces needed for edit-panel tests.
+    fn setup_edit_panel_numeric(suffix: &str) -> (
+        Store,
+        SubstringClassifier,
+        CategoryId,
+        ItemId,
+        std::path::PathBuf,
+    ) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-editnum-{suffix}-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create Cost");
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        // Assign item to cost with a numeric value
+        let agenda = Agenda::new(&store, &classifier);
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                cost.id,
+                rust_decimal::Decimal::new(4200, 2),
+                Some("test:setup".to_string()),
+            )
+            .expect("assign numeric");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        (store, classifier, cost.id, item.id, db_path)
+    }
+
+    #[test]
+    fn edit_panel_shows_numeric_values_for_assigned_numeric_categories() {
+        let (store, classifier, cost_id, _item_id, db_path) =
+            setup_edit_panel_numeric("shows");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        // Press 'e' to open edit panel
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        let panel = app.input_panel.as_ref().expect("panel should exist");
+        assert_eq!(panel.numeric_values.len(), 1);
+        assert_eq!(panel.numeric_values[0].category_id, cost_id);
+        assert_eq!(panel.numeric_values[0].category_name, "Cost");
+        assert_eq!(panel.numeric_values[0].buffer.text(), "42");
+        assert_eq!(
+            panel.numeric_values[0].original,
+            Some(rust_decimal::Decimal::new(4200, 2))
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn edit_panel_numeric_value_edit_and_save_persists() {
+        let (store, classifier, cost_id, item_id, db_path) =
+            setup_edit_panel_numeric("save");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+
+        // Tab to NumericValues: Text -> Note -> Categories -> NumericValues
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::NumericValues
+        );
+
+        // Clear existing value and type new one
+        // Select all text (the buffer has "42")
+        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
+        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
+        for ch in "99.50".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
+        }
+
+        // Save with S
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::SaveButton
+        );
+        app.handle_key(KeyCode::Enter, &agenda).expect("save");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.contains("updated"), "status: {}", app.status);
+
+        // Verify persisted
+        let assignments = store
+            .get_assignments_for_item(item_id)
+            .expect("assignments");
+        let value = assignments
+            .get(&cost_id)
+            .and_then(|a| a.numeric_value)
+            .expect("should have numeric value");
+        assert_eq!(value, rust_decimal::Decimal::new(9950, 2));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn edit_panel_invalid_numeric_shows_error_keeps_panel_open() {
+        let (store, classifier, _cost_id, _item_id, db_path) =
+            setup_edit_panel_numeric("invalid");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+
+        // Tab to NumericValues
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+
+        // Clear and type invalid
+        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
+        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
+        for ch in "abc".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
+        }
+
+        // Tab to save button and press Enter
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
+        app.handle_key(KeyCode::Enter, &agenda).expect("attempt save");
+
+        // Panel should still be open with error
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(
+            app.status.contains("Invalid numeric value"),
+            "should show error, got: {}",
+            app.status
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn edit_panel_focus_cycle_skips_numeric_when_no_numeric_categories() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        // Create a non-numeric category
+        let status = Category::new("Status".to_string());
+        store.create_category(&status).expect("create Status");
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        let panel = app.input_panel.as_ref().unwrap();
+        assert!(panel.numeric_values.is_empty());
+
+        // Tab cycle: Text -> Note -> Categories -> Save (skips NumericValues)
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Note
+        );
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::CategoriesButton
+        );
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::SaveButton
+        );
     }
 }

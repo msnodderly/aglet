@@ -2506,9 +2506,35 @@ impl App {
                 })
                 .map(|(id, _)| *id)
                 .collect();
+            // Collect numeric value drafts for assigned numeric categories.
+            let numeric_values: Vec<input_panel::NumericValueDraft> = item
+                .assignments
+                .iter()
+                .filter_map(|(cat_id, assignment)| {
+                    let cat = self.categories.iter().find(|c| c.id == *cat_id)?;
+                    if cat.value_kind != agenda_core::model::CategoryValueKind::Numeric {
+                        return None;
+                    }
+                    Some(input_panel::NumericValueDraft {
+                        category_id: *cat_id,
+                        category_name: cat.name.clone(),
+                        buffer: crate::text_buffer::TextBuffer::new(
+                            assignment
+                                .numeric_value
+                                .map(|v| v.normalize().to_string())
+                                .unwrap_or_default(),
+                        ),
+                        original: assignment.numeric_value,
+                    })
+                })
+                .collect();
             let item_id = item.id;
             self.input_panel = Some(input_panel::InputPanel::new_edit_item(
-                item_id, text, note, categories,
+                item_id,
+                text,
+                note,
+                categories,
+                numeric_values,
             ));
             self.mode = Mode::InputPanel;
             self.status = "Edit item: S to save, Tab cycles fields, Esc to cancel".to_string();
@@ -2764,6 +2790,7 @@ impl App {
             Some(panel.note.text().to_string())
         };
         let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
+        let numeric_drafts = panel.numeric_values.clone();
 
         let mut item = agenda
             .store()
@@ -2784,15 +2811,43 @@ impl App {
             .map(|(id, _)| *id)
             .collect();
 
+        // Check for numeric value changes.
+        let has_numeric_changes = numeric_drafts.iter().any(|draft| {
+            let trimmed = draft.buffer.trimmed();
+            if trimmed.is_empty() {
+                return false; // empty = keep existing, no change
+            }
+            match trimmed.replace(',', "").parse::<rust_decimal::Decimal>() {
+                Ok(new_val) => draft.original != Some(new_val),
+                Err(_) => true, // invalid input counts as a "change" (will error on save)
+            }
+        });
+
         let no_text_change = item.text == updated_text;
         let no_note_change = item.note == updated_note;
         let no_cat_change = existing_categories == new_categories;
 
-        if no_text_change && no_note_change && no_cat_change {
+        if no_text_change && no_note_change && no_cat_change && !has_numeric_changes {
             self.input_panel = None;
             self.mode = Mode::Normal;
             self.status = "Edit canceled: no changes".to_string();
             return Ok(());
+        }
+
+        // Validate numeric values before making any changes.
+        for draft in &numeric_drafts {
+            let trimmed = draft.buffer.trimmed();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.replace(',', "").parse::<rust_decimal::Decimal>().is_err() {
+                self.status = format!(
+                    "Invalid numeric value for '{}': '{}'",
+                    draft.category_name,
+                    trimmed
+                );
+                return Ok(());
+            }
         }
 
         // Update text and note.
@@ -2814,6 +2869,24 @@ impl App {
         }
         for cat_id in existing_categories.difference(&new_categories) {
             let _ = agenda.unassign_item_manual(item_id, *cat_id);
+        }
+
+        // Apply numeric value changes.
+        for draft in &numeric_drafts {
+            let trimmed = draft.buffer.trimmed();
+            if trimmed.is_empty() {
+                continue; // keep existing value
+            }
+            let new_val: rust_decimal::Decimal = trimmed.replace(',', "").parse().unwrap();
+            if draft.original == Some(new_val) {
+                continue; // no change
+            }
+            let _ = agenda.assign_item_numeric_manual(
+                item_id,
+                draft.category_id,
+                new_val,
+                Some("manual:input_panel.edit".to_string()),
+            );
         }
 
         self.refresh(agenda.store())?;
