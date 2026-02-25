@@ -336,6 +336,25 @@ pub(super) fn compute_board_layout(
 
     item_width = item_width.max(if available > 0 { 1 } else { 0 });
 
+    // Redistribute excess Item width to columns when Item is disproportionately wide.
+    // Cap Item at 50% of available space; distribute surplus evenly across columns.
+    if !configured_widths.is_empty() && available > 0 {
+        let max_item = available / 2;
+        if item_width > max_item {
+            let surplus = item_width - max_item;
+            let per_col = surplus / configured_widths.len();
+            let mut leftover = surplus % configured_widths.len();
+            for w in configured_widths.iter_mut() {
+                *w += per_col;
+                if leftover > 0 {
+                    *w += 1;
+                    leftover -= 1;
+                }
+            }
+            item_width = max_item;
+        }
+    }
+
     let columns: Vec<BoardColumnSpec> = view_columns
         .iter()
         .zip(configured_widths.iter())
