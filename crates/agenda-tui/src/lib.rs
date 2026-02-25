@@ -2600,6 +2600,79 @@ mod tests {
     }
 
     #[test]
+    fn board_add_column_picker_allows_nested_non_leaf_heading() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        let mut pending = Category::new("Pending".to_string());
+        pending.parent = Some(status.id);
+        status.children = vec![pending.id];
+
+        let mut project = Category::new("Project".to_string());
+        let mut phase = Category::new("Phase".to_string());
+        let mut phase_task = Category::new("Phase Task".to_string());
+        phase.parent = Some(project.id);
+        phase_task.parent = Some(phase.id);
+        project.children = vec![phase.id];
+        phase.children = vec![phase_task.id];
+
+        for cat in [&status, &pending, &project, &phase, &phase_task] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: status.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Char('+'), &agenda)
+            .expect("open add-column picker");
+        let suggestions = app.get_board_add_column_suggest_matches();
+        assert!(
+            suggestions.contains(&phase.id),
+            "nested non-leaf heading should be suggested"
+        );
+
+        for ch in "Phase".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type in picker");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("insert nested non-leaf heading");
+
+        assert_eq!(app.mode, Mode::Normal);
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        let headings: Vec<CategoryId> = saved.sections[0]
+            .columns
+            .iter()
+            .map(|c| c.heading)
+            .collect();
+        assert_eq!(headings, vec![status.id, phase.id]);
+    }
+
+    #[test]
     fn board_add_column_picker_rejects_creating_new_leaf_heading() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

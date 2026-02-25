@@ -100,6 +100,13 @@ cargo run --bin agenda-cli -- --db feature-requests.ag category assign be6f0754 
 cargo run --bin agenda-cli -- --db feature-requests.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
 ```
 
+## Item ID Prefix Matching (Stale Guidance)
+
+The CLI currently parses item IDs with `Uuid::parse_str`, so short UUID prefixes
+like `be6f0754` do **not** work for item commands (for example `show`, `edit`,
+and `category assign`). Use the full UUID until prefix resolution is
+re-implemented in the CLI parser.
+
 **Create-then-assign pattern.** `agenda-cli add` prints the new ID on the last
 line. Capture it and assign categories with `&&`-chained commands:
 
@@ -153,6 +160,16 @@ sorted rendered list can make the highlighted row and edited row diverge.
 
 If you change ViewEdit criteria rendering, keep row order stable (draft order)
 or explicitly carry source indices through render + input handling.
+
+## View Columns Storage vs CLI Display (Surprising)
+
+Board/table columns are stored on `View.sections[*].columns` (serialized inside
+`views.sections_json`). The `views.columns_json` column is a legacy field and is
+ignored by current `Store::row_to_view`.
+
+Related gotcha: CLI `agenda-cli view show` prints section item tables but does
+not render section column definitions at all, so board-column changes are only
+visible in the TUI today.
 
 ## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
 

@@ -429,7 +429,7 @@ impl App {
         if category.name.eq_ignore_ascii_case("When") {
             return category.parent.is_none();
         }
-        category.parent.is_none() && !category.children.is_empty()
+        !category.children.is_empty()
     }
 
     fn board_add_column_scope_ids(&self) -> Vec<CategoryId> {
@@ -489,7 +489,7 @@ impl App {
             }
             self.category_suggest = None;
             self.status = if typed.is_empty() {
-                "Add column: type to filter top-level categories with children (or When)"
+                "Add column: type to filter categories with children (or When)"
                     .to_string()
             } else {
                 "No valid column heading match. Enter explains why (leaf headings are invalid)."
@@ -815,17 +815,12 @@ impl App {
                 .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
                 .map(|c| c.name.as_str())
                 .unwrap_or("(top level)");
-            if existing_cat.parent.is_some() {
-                self.status = format!(
-                    "Category '{}' exists under '{}'. Column headings must be top-level categories with children (or When).",
-                    existing_cat.name, parent_label
-                );
-            } else if existing_cat.children.is_empty()
+            if existing_cat.children.is_empty()
                 && !existing_cat.name.eq_ignore_ascii_case("When")
             {
                 self.status = format!(
-                    "Category '{}' is top-level but has no subcategories, so it cannot be a column heading yet.",
-                    existing_cat.name
+                    "Category '{}' exists under '{}' but has no subcategories, so it cannot be a column heading yet.",
+                    existing_cat.name, parent_label
                 );
             } else {
                 self.status = format!(
@@ -872,15 +867,10 @@ impl App {
             return Ok(());
         };
         if !Self::is_valid_board_column_heading_category(heading_category) {
-            self.status = if heading_category.parent.is_some() {
-                "Invalid column heading: choose a top-level category with subcategories (or When)"
-                    .to_string()
-            } else {
-                format!(
-                    "Invalid column heading '{}': add subcategories first",
-                    heading_category.name
-                )
-            };
+            self.status = format!(
+                "Invalid column heading '{}': choose a category with subcategories (or When)",
+                heading_category.name
+            );
             return Ok(());
         }
 
