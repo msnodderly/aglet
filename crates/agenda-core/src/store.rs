@@ -3,16 +3,18 @@ use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
+use rust_decimal::Decimal;
 use serde_json;
 use uuid::Uuid;
 
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, Condition,
-    DeletionLogEntry, Item, ItemId, Query, Section, View,
+    Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
+    CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, NumericFormat, Query, Section,
+    View,
 };
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -41,7 +43,9 @@ CREATE TABLE IF NOT EXISTS categories (
     modified_at            TEXT NOT NULL,
     sort_order             INTEGER NOT NULL DEFAULT 0,
     conditions_json        TEXT NOT NULL DEFAULT '[]',
-    actions_json           TEXT NOT NULL DEFAULT '[]'
+    actions_json           TEXT NOT NULL DEFAULT '[]',
+    value_kind             TEXT NOT NULL DEFAULT 'Tag',
+    numeric_format_json    TEXT NOT NULL DEFAULT 'null'
 );
 
 CREATE TABLE IF NOT EXISTS assignments (
@@ -51,6 +55,7 @@ CREATE TABLE IF NOT EXISTS assignments (
     assigned_at TEXT NOT NULL,
     sticky      INTEGER NOT NULL DEFAULT 1,
     origin      TEXT,
+    numeric_value TEXT,
     PRIMARY KEY (item_id, category_id)
 );
 
@@ -291,10 +296,12 @@ impl Store {
                 name: category.name.clone(),
             });
         }
+        Self::validate_category_type_shape(category)?;
 
         if let Some(parent_id) = category.parent {
             // Ensure parent exists so callers get a deterministic NotFound error.
-            self.get_category(parent_id)?;
+            let parent = self.get_category(parent_id)?;
+            Self::validate_parent_accepts_children(&parent)?;
         }
 
         let conditions_json = serde_json::to_string(&category.conditions).map_err(|err| {
@@ -306,6 +313,12 @@ impl Store {
             serde_json::to_string(&category.actions).map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
             })?;
+        let numeric_format_json =
+            serde_json::to_string(&category.numeric_format).map_err(|err| {
+                AgendaError::StorageError {
+                    source: Box::new(err),
+                }
+            })?;
 
         let sort_order = self.next_category_sort_order(category.parent)?;
 
@@ -313,8 +326,9 @@ impl Store {
             .execute(
                 "INSERT INTO categories (
                     id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
-                    created_at, modified_at, sort_order, conditions_json, actions_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    created_at, modified_at, sort_order, conditions_json, actions_json,
+                    value_kind, numeric_format_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     category.id.to_string(),
                     category.name,
@@ -328,6 +342,8 @@ impl Store {
                     sort_order,
                     conditions_json,
                     actions_json,
+                    Self::category_value_kind_to_db(category.value_kind),
+                    numeric_format_json,
                 ],
             )
             .map_err(|err| Self::map_category_write_error(err, &category.name))?;
@@ -338,7 +354,8 @@ impl Store {
     pub fn get_category(&self, id: CategoryId) -> Result<Category> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
-                    created_at, modified_at, conditions_json, actions_json, sort_order
+                    created_at, modified_at, conditions_json, actions_json, sort_order,
+                    value_kind, numeric_format_json
              FROM categories WHERE id = ?1",
         )?;
         let (mut category, _) = stmt
@@ -379,7 +396,14 @@ impl Store {
                 message: "category cannot be its own parent".to_string(),
             });
         }
+        Self::validate_category_type_shape(category)?;
         self.validate_category_parent(category.id, category.parent)?;
+        self.validate_category_type_transition(&existing, category)?;
+
+        if let Some(parent_id) = category.parent {
+            let parent = self.get_category(parent_id)?;
+            Self::validate_parent_accepts_children(&parent)?;
+        }
 
         let conditions_json = serde_json::to_string(&category.conditions).map_err(|err| {
             AgendaError::StorageError {
@@ -389,6 +413,12 @@ impl Store {
         let actions_json =
             serde_json::to_string(&category.actions).map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
+            })?;
+        let numeric_format_json =
+            serde_json::to_string(&category.numeric_format).map_err(|err| {
+                AgendaError::StorageError {
+                    source: Box::new(err),
+                }
             })?;
         let modified_at = Utc::now();
 
@@ -403,8 +433,10 @@ impl Store {
                      note = ?6,
                      modified_at = ?7,
                      conditions_json = ?8,
-                     actions_json = ?9
-                 WHERE id = ?10",
+                     actions_json = ?9,
+                     value_kind = ?10,
+                     numeric_format_json = ?11
+                 WHERE id = ?12",
                 params![
                     category.name,
                     category.parent.map(|id| id.to_string()),
@@ -415,6 +447,8 @@ impl Store {
                     modified_at.to_rfc3339(),
                     conditions_json,
                     actions_json,
+                    Self::category_value_kind_to_db(category.value_kind),
+                    numeric_format_json,
                     category.id.to_string(),
                 ],
             )
@@ -469,7 +503,8 @@ impl Store {
             });
         }
         if let Some(parent_id) = new_parent_id {
-            self.get_category(parent_id)?;
+            let parent = self.get_category(parent_id)?;
+            Self::validate_parent_accepts_children(&parent)?;
         }
         self.validate_category_parent(category_id, new_parent_id)?;
 
@@ -538,7 +573,8 @@ impl Store {
     pub fn get_hierarchy(&self) -> Result<Vec<Category>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
-                    created_at, modified_at, conditions_json, actions_json, sort_order
+                    created_at, modified_at, conditions_json, actions_json, sort_order,
+                    value_kind, numeric_format_json
              FROM categories
              ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
         )?;
@@ -785,7 +821,7 @@ impl Store {
 
     fn load_assignments(&self, mut item: Item) -> Result<Item> {
         let mut stmt = self.conn.prepare(
-            "SELECT category_id, source, assigned_at, sticky, origin
+            "SELECT category_id, source, assigned_at, sticky, origin, numeric_value
              FROM assignments WHERE item_id = ?1",
         )?;
         let rows = stmt.query_map(params![item.id.to_string()], |row| {
@@ -794,11 +830,19 @@ impl Store {
             let assigned_str: String = row.get(2)?;
             let sticky_int: i32 = row.get(3)?;
             let origin: Option<String> = row.get(4)?;
-            Ok((cat_str, source_str, assigned_str, sticky_int, origin))
+            let numeric_value: Option<String> = row.get(5)?;
+            Ok((
+                cat_str,
+                source_str,
+                assigned_str,
+                sticky_int,
+                origin,
+                numeric_value,
+            ))
         })?;
 
         for row in rows {
-            let (cat_str, source_str, assigned_str, sticky_int, origin) = row?;
+            let (cat_str, source_str, assigned_str, sticky_int, origin, numeric_value_str) = row?;
             let cat_id = Uuid::parse_str(&cat_str).unwrap_or_default();
             let source = match source_str.as_str() {
                 "Manual" => AssignmentSource::Manual,
@@ -810,6 +854,7 @@ impl Store {
             let assigned_at = DateTime::parse_from_rfc3339(&assigned_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_default();
+            let numeric_value = numeric_value_str.and_then(|s| s.parse::<Decimal>().ok());
             item.assignments.insert(
                 cat_id,
                 Assignment {
@@ -817,6 +862,7 @@ impl Store {
                     assigned_at,
                     sticky: sticky_int != 0,
                     origin,
+                    numeric_value,
                 },
             );
         }
@@ -871,8 +917,8 @@ impl Store {
             AssignmentSource::Subsumption => "Subsumption",
         };
         self.conn.execute(
-            "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, numeric_value)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 item_id.to_string(),
                 category_id.to_string(),
@@ -880,6 +926,7 @@ impl Store {
                 assignment.assigned_at.to_rfc3339(),
                 assignment.sticky as i32,
                 assignment.origin,
+                assignment.numeric_value.map(|v| v.to_string()),
             ],
         )?;
         Ok(())
@@ -916,9 +963,14 @@ impl Store {
         let conditions_json: String = row.get(9)?;
         let actions_json: String = row.get(10)?;
         let sort_order: i64 = row.get(11)?;
+        let value_kind_str: String = row.get(12)?;
+        let numeric_format_json: String = row.get(13)?;
 
         let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
         let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
+        let value_kind = Self::category_value_kind_from_db(&value_kind_str);
+        let numeric_format: Option<NumericFormat> =
+            serde_json::from_str(&numeric_format_json).unwrap_or(None);
 
         Ok((
             Category {
@@ -938,6 +990,8 @@ impl Store {
                     .unwrap_or_default(),
                 conditions,
                 actions,
+                value_kind,
+                numeric_format,
             },
             sort_order,
         ))
@@ -1175,6 +1229,92 @@ impl Store {
         Ok(id_str.and_then(|s| Uuid::parse_str(&s).ok()))
     }
 
+    fn category_assignment_count(&self, category_id: CategoryId) -> Result<i64> {
+        let count = self.conn.query_row(
+            "SELECT COUNT(*) FROM assignments WHERE category_id = ?1",
+            params![category_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    fn category_value_kind_to_db(kind: CategoryValueKind) -> &'static str {
+        match kind {
+            CategoryValueKind::Tag => "Tag",
+            CategoryValueKind::Numeric => "Numeric",
+        }
+    }
+
+    fn category_value_kind_from_db(raw: &str) -> CategoryValueKind {
+        if raw.eq_ignore_ascii_case("numeric") {
+            CategoryValueKind::Numeric
+        } else {
+            CategoryValueKind::Tag
+        }
+    }
+
+    fn validate_parent_accepts_children(parent: &Category) -> Result<()> {
+        if parent.value_kind == CategoryValueKind::Numeric {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "cannot add child under numeric category '{}'; numeric categories must be leaves",
+                    parent.name
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_category_type_shape(category: &Category) -> Result<()> {
+        if category.value_kind == CategoryValueKind::Numeric && !category.children.is_empty() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("numeric category '{}' cannot have children", category.name),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_category_type_transition(
+        &self,
+        existing: &Category,
+        updated: &Category,
+    ) -> Result<()> {
+        if existing.value_kind == updated.value_kind {
+            return Ok(());
+        }
+
+        match (existing.value_kind, updated.value_kind) {
+            (CategoryValueKind::Tag, CategoryValueKind::Numeric) => {
+                if !existing.children.is_empty() {
+                    return Err(AgendaError::InvalidOperation {
+                        message: format!(
+                            "cannot convert category '{}' to Numeric while it has children",
+                            existing.name
+                        ),
+                    });
+                }
+                if self.category_assignment_count(existing.id)? > 0 {
+                    return Err(AgendaError::InvalidOperation {
+                        message: format!(
+                            "cannot convert category '{}' to Numeric after assignments already exist",
+                            existing.name
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            (CategoryValueKind::Numeric, CategoryValueKind::Tag) => {
+                Err(AgendaError::InvalidOperation {
+                    message: format!(
+                        "cannot convert numeric category '{}' back to Tag",
+                        existing.name
+                    ),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn insert_reserved_category(&self, name: &str) -> Result<CategoryId> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
@@ -1187,8 +1327,9 @@ impl Store {
             .execute(
                 "INSERT INTO categories (
                     id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
-                    created_at, modified_at, sort_order, conditions_json, actions_json
-                 ) VALUES (?1, ?2, NULL, 0, 0, 0, NULL, ?3, ?3, ?4, '[]', '[]')",
+                    created_at, modified_at, sort_order, conditions_json, actions_json,
+                    value_kind, numeric_format_json
+                 ) VALUES (?1, ?2, NULL, 0, 0, 0, NULL, ?3, ?3, ?4, '[]', '[]', 'Tag', 'null')",
                 params![id.to_string(), name, now, sort_order],
             )
             .map_err(|err| Self::map_category_write_error(err, name))?;
@@ -1294,6 +1435,20 @@ impl Store {
                 "ALTER TABLE views ADD COLUMN board_display_mode TEXT NOT NULL DEFAULT 'SingleLine';",
             )?;
         }
+        if !self.column_exists("categories", "value_kind")? {
+            self.conn.execute_batch(
+                "ALTER TABLE categories ADD COLUMN value_kind TEXT NOT NULL DEFAULT 'Tag';",
+            )?;
+        }
+        if !self.column_exists("categories", "numeric_format_json")? {
+            self.conn.execute_batch(
+                "ALTER TABLE categories ADD COLUMN numeric_format_json TEXT NOT NULL DEFAULT 'null';",
+            )?;
+        }
+        if !self.column_exists("assignments", "numeric_value")? {
+            self.conn
+                .execute_batch("ALTER TABLE assignments ADD COLUMN numeric_value TEXT;")?;
+        }
 
         if from_version < 3 {
             // Inject kind field into existing columns_json.
@@ -1356,11 +1511,12 @@ impl Store {
 mod tests {
     use super::*;
     use crate::model::{
-        Assignment, AssignmentSource, BoardDisplayMode, Category, Column, ColumnKind,
-        CriterionMode, Item, Query, Section, View,
+        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
+        ColumnKind, CriterionMode, Item, NumericFormat, Query, Section, View,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
+    use rust_decimal::Decimal;
     use std::collections::HashSet;
     use uuid::Uuid;
 
@@ -1659,6 +1815,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
+            numeric_value: None,
         };
         store
             .assign_item(item.id, category_id, &assignment)
@@ -1778,6 +1935,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some("manual".to_string()),
+            numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &assignment).unwrap();
 
@@ -1786,6 +1944,33 @@ mod tests {
         assert!(assignments.contains_key(&cat_id));
         assert_eq!(assignments[&cat_id].source, AssignmentSource::Manual);
         assert_eq!(assignments[&cat_id].origin.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn test_assign_and_get_numeric_assignment_value() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Expense item".to_string());
+        let item_id = item.id;
+        store.create_item(&item).unwrap();
+
+        let mut cat = new_category("Cost");
+        cat.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cat).unwrap();
+
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: Some("manual".to_string()),
+            numeric_value: Some(Decimal::new(24596, 2)),
+        };
+        store.assign_item(item_id, cat.id, &assignment).unwrap();
+
+        let assignments = store.get_assignments_for_item(item_id).unwrap();
+        assert_eq!(
+            assignments.get(&cat.id).and_then(|a| a.numeric_value),
+            Some(Decimal::new(24596, 2))
+        );
     }
 
     #[test]
@@ -1801,6 +1986,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some("cat:Status".to_string()),
+            numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &a1).unwrap();
 
@@ -1810,6 +1996,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: false,
             origin: Some("manual".to_string()),
+            numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &a2).unwrap();
 
@@ -1832,6 +2019,7 @@ mod tests {
             assigned_at: Utc::now(),
             sticky: true,
             origin: None,
+            numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &assignment).unwrap();
         assert_eq!(store.get_assignments_for_item(item_id).unwrap().len(), 1);
@@ -1868,6 +2056,7 @@ mod tests {
                 assigned_at: Utc::now(),
                 sticky: true,
                 origin: None,
+                numeric_value: None,
             };
             store.assign_item(item_id, cat_id, &a).unwrap();
         }
@@ -1913,6 +2102,51 @@ mod tests {
 
         let loaded_child = store.get_category(child.id).unwrap();
         assert_eq!(loaded_child.parent, Some(root.id));
+    }
+
+    #[test]
+    fn test_create_and_get_numeric_category_roundtrip() {
+        let store = Store::open_memory().unwrap();
+        let mut category = new_category("Cost");
+        category.value_kind = CategoryValueKind::Numeric;
+        category.numeric_format = Some(NumericFormat {
+            decimal_places: 2,
+            currency_symbol: Some("$".to_string()),
+            use_thousands_separator: true,
+        });
+        store.create_category(&category).unwrap();
+
+        let loaded = store.get_category(category.id).unwrap();
+        assert_eq!(loaded.value_kind, CategoryValueKind::Numeric);
+        assert_eq!(
+            loaded
+                .numeric_format
+                .as_ref()
+                .and_then(|f| f.currency_symbol.as_deref()),
+            Some("$")
+        );
+        assert_eq!(
+            loaded
+                .numeric_format
+                .as_ref()
+                .map(|f| f.use_thousands_separator),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_create_category_rejects_child_under_numeric_parent() {
+        let store = Store::open_memory().unwrap();
+        let mut parent = new_category("Cost");
+        parent.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&parent).unwrap();
+
+        let mut child = new_category("SubCost");
+        child.parent = Some(parent.id);
+
+        let err = store.create_category(&child).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+        assert!(err.to_string().contains("numeric category"));
     }
 
     #[test]
