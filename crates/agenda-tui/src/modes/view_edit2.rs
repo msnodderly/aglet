@@ -432,9 +432,9 @@ impl App {
                             section.columns.iter().position(|col| col.heading == cat_id)
                         {
                             section.columns.remove(existing_index);
-                        } else {
+                        } else if let Some(cat) = self.categories.iter().find(|c| c.id == cat_id) {
                             section.columns.push(Column {
-                                kind: ColumnKind::Standard,
+                                kind: column_kind_for_heading(cat),
                                 heading: cat_id,
                                 width: 12,
                             });

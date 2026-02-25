@@ -5,8 +5,8 @@ use std::path::Path;
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    BoardDisplayMode, Category, CategoryId, Column, ColumnKind, CriterionMode, Item, ItemId, Query,
-    Section, View, WhenBucket,
+    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
+    Item, ItemId, NumericFormat, Query, Section, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -141,6 +141,7 @@ struct CategoryListRow {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
+    value_kind: CategoryValueKind,
 }
 
 #[derive(Clone)]
@@ -660,8 +661,8 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, Column, ColumnKind,
-        CriterionMode, Item, ItemId, Query, Section, View, WhenBucket,
+        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
+        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -696,6 +697,7 @@ mod tests {
             assigned_at: chrono::Utc::now(),
             sticky: false,
             origin: None,
+            numeric_value: None,
         };
         item.assignments.insert(high.id, assignment.clone());
         item.assignments.insert(medium.id, assignment.clone());
@@ -1125,6 +1127,8 @@ mod tests {
         assert!(!saved_before.assignments.contains_key(&alpha.id));
         assert!(!saved_before.assignments.contains_key(&alpha_beta.id));
 
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('s'), &agenda)
             .expect("save draft");
         let saved_after = store.get_item(item.id).expect("load item after save");
@@ -1307,12 +1311,16 @@ mod tests {
             CategoryDirectEditFocus::Input
         );
 
+        // Tab away from Input so '+' acts as add-row command instead of typing
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('+'), &agenda)
             .expect("plus adds row");
 
         let state = app.category_direct_edit_state().expect("direct edit state");
         assert_eq!(state.rows.len(), 2);
         assert_eq!(state.active_row, 1);
+        // add_blank_row_guarded resets focus to Input
         assert_eq!(state.focus, CategoryDirectEditFocus::Input);
         assert!(app.status.contains("Added row"));
     }
@@ -1362,12 +1370,16 @@ mod tests {
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        // Tab away from Input so '+' acts as command instead of typing
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('+'), &agenda)
             .expect("plus handled");
 
         let state = app.category_direct_edit_state().expect("direct edit state");
         assert_eq!(state.rows.len(), 1);
-        assert_eq!(state.focus, CategoryDirectEditFocus::Input);
+        // Focus stays at Suggestions (Tab destination) since exclusive guard blocked add
+        assert_eq!(state.focus, CategoryDirectEditFocus::Suggestions);
         assert!(app.status.contains("exclusive"));
     }
 
@@ -1714,6 +1726,9 @@ mod tests {
             state.active_row = 0;
         }
 
+        // Tab away from Input so 'S' acts as save command instead of typing
+        app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
+            .expect("tab away from Input");
         app.handle_category_direct_edit_key(KeyCode::Char('S'), &agenda)
             .expect("save draft");
         assert_eq!(app.mode, Mode::Normal);
@@ -3256,6 +3271,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         };
         let user = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -3266,6 +3282,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            value_kind: CategoryValueKind::Tag,
         };
 
         assert_eq!(
@@ -3285,6 +3302,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         };
         let when = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -3295,6 +3313,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            value_kind: CategoryValueKind::Tag,
         };
 
         assert_eq!(first_non_reserved_category_index(&[done, when]), 0);
@@ -3681,7 +3700,10 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
                 .expect("type view name");
         }
-        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+        // Tab from Text to SaveButton, then Enter to save (S types into text when focus is Text)
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save button");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("save name input");
 
         assert_eq!(app.mode, Mode::ViewEdit);
@@ -4095,6 +4117,7 @@ mod tests {
             assigned_at: chrono::Utc::now(),
             sticky: false,
             origin: None,
+            numeric_value: None,
         };
         item.assignments.insert(alpha.id, assignment.clone());
         item.assignments.insert(beta.id, assignment);
@@ -6014,6 +6037,7 @@ mod tests {
                 assigned_at: chrono::Utc::now(),
                 sticky: true,
                 origin: None,
+                numeric_value: None,
             },
         );
         item.assignments.insert(
@@ -6023,6 +6047,7 @@ mod tests {
                 assigned_at: chrono::Utc::now(),
                 sticky: true,
                 origin: None,
+                numeric_value: None,
             },
         );
         let names = HashMap::from([
