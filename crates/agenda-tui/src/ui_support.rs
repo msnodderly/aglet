@@ -911,8 +911,8 @@ pub(super) fn input_panel_popup_regions(
             let halves = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(40), // note
-                    Constraint::Percentage(60), // categories
+                    Constraint::Percentage(60), // note
+                    Constraint::Percentage(40), // categories
                 ])
                 .split(middle);
 
