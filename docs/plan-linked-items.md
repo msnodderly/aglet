@@ -541,7 +541,7 @@ Show link info in Preview Summary panel (`render/mod.rs`) beneath Categories:
 - `Blocks:` immediate dependents
 - `Related:` immediate related items
 
-Current branch status:
+Current status (merged to `main`):
 
 - Implemented in preview summary (`Preview: Summary`)
 - Cached/populated via `App::refresh(...)`
@@ -921,109 +921,109 @@ Phase 1 exit criteria:
 
 ### Phase 2: SQLite Schema and Migration (`crates/agenda-core/src/store.rs`)
 
-- [ ] Bump `SCHEMA_VERSION` from `5` to `6` (or next available version if drifted again).
-- [ ] Add `item_links` table to `SCHEMA_SQL`.
-- [ ] Add `CHECK` constraints:
+- [x] Bump `SCHEMA_VERSION` from `5` to `6` (or next available version if drifted again).
+- [x] Add `item_links` table to `SCHEMA_SQL`.
+- [x] Add `CHECK` constraints:
   - no self-link
   - allowed kinds only (`depends-on`, `related`)
   - normalized ordering for `related`
-- [ ] Add indices for:
+- [x] Add indices for:
   - `(item_id, kind)`
   - `(other_item_id, kind)`
   - `(kind)`
-- [ ] Add migration block in `apply_migrations(from_version)` for v6.
-- [ ] Ensure migration SQL is idempotent (`IF NOT EXISTS`).
-- [ ] Verify `init()` behavior for:
+- [x] Add migration block in `apply_migrations(from_version)` for v6.
+- [x] Ensure migration SQL is idempotent (`IF NOT EXISTS`).
+- [x] Verify `init()` behavior for:
   - fresh DBs (schema contains `item_links`)
   - upgraded DBs (`user_version` set to 6)
-- [ ] Add/extend schema tests:
+- [x] Add/extend schema tests:
   - table exists
   - schema version bumped
   - idempotent `init()` still passes
 
 Phase 2 exit criteria:
 
-- [ ] Fresh and upgraded DBs have `item_links`.
-- [ ] Existing tests still pass around init/migration behavior.
+- [x] Fresh and upgraded DBs have `item_links`.
+- [x] Existing tests still pass around init/migration behavior.
 
 ### Phase 3: Store Persistence + Query APIs (`crates/agenda-core/src/store.rs`)
 
 #### 3A. Helpers and Row Parsing
 
-- [ ] Add kind string encoder (`ItemLinkKind -> &str`).
-- [ ] Add kind parser (`&str -> ItemLinkKind`) with explicit handling for unknown values.
-- [ ] Add row-to-link parser helper for `item_links` rows.
-- [ ] Choose parse strategy for invalid DB values:
+- [x] Add kind string encoder (`ItemLinkKind -> &str`).
+- [x] Add kind parser (`&str -> ItemLinkKind`) with explicit handling for unknown values.
+- [x] Add row-to-link parser helper for `item_links` rows.
+- [x] Choose parse strategy for invalid DB values:
   - hard error (preferred)
   - defensive fallback (only if necessary)
 
 #### 3B. Write APIs
 
-- [ ] Implement `create_item_link(&self, link: &ItemLink) -> Result<()>`.
-- [ ] Implement `delete_item_link(...) -> Result<()>` as idempotent delete.
-- [ ] Implement `item_link_exists(...) -> Result<bool>`.
-- [ ] Confirm FK behavior is acceptable for non-existent items (Agenda will pre-validate but Store can still return storage error).
+- [x] Implement `create_item_link(&self, link: &ItemLink) -> Result<()>`.
+- [x] Implement `delete_item_link(...) -> Result<()>` as idempotent delete.
+- [x] Implement `item_link_exists(...) -> Result<bool>`.
+- [x] Confirm FK behavior is acceptable for non-existent items (Agenda will pre-validate but Store can still return storage error).
 
 #### 3C. Read APIs (Immediate Neighbors)
 
-- [ ] Implement `list_dependency_ids_for_item(item_id)` (outbound `depends-on`).
-- [ ] Implement `list_dependent_ids_for_item(item_id)` (inbound inverse / `blocks` view).
-- [ ] Implement `list_related_ids_for_item(item_id)` (symmetric query over normalized rows).
-- [ ] Implement optional `list_item_links_for_item(item_id)` convenience method.
-- [ ] Define deterministic ordering at Store level (e.g., by `created_at`) and document that display layers may re-sort.
+- [x] Implement `list_dependency_ids_for_item(item_id)` (outbound `depends-on`).
+- [x] Implement `list_dependent_ids_for_item(item_id)` (inbound inverse / `blocks` view).
+- [x] Implement `list_related_ids_for_item(item_id)` (symmetric query over normalized rows).
+- [x] Implement optional `list_item_links_for_item(item_id)` convenience method.
+- [x] Define deterministic ordering at Store level (e.g., by `created_at`) and document that display layers may re-sort.
 
 #### 3D. Store Tests
 
-- [ ] Add tests for `create_item_link` / `delete_item_link`.
-- [ ] Add test for `item_link_exists`.
-- [ ] Add test for `depends-on` outbound lookup.
-- [ ] Add test for `depends-on` inbound lookup (`blocks` inverse).
-- [ ] Add test for `related` symmetric lookup from both endpoints.
-- [ ] Add test for DB self-link constraint rejection.
-- [ ] Add test for DB normalized `related` check rejecting unnormalized row (if inserted directly).
-- [ ] Add test that deleting an item cascades and removes `item_links`.
-- [ ] Add test that two different kinds may coexist for same pair (`depends-on` and `related`).
+- [x] Add tests for `create_item_link` / `delete_item_link`.
+- [x] Add test for `item_link_exists`.
+- [x] Add test for `depends-on` outbound lookup.
+- [x] Add test for `depends-on` inbound lookup (`blocks` inverse).
+- [x] Add test for `related` symmetric lookup from both endpoints.
+- [x] Add test for DB self-link constraint rejection.
+- [x] Add test for DB normalized `related` check rejecting unnormalized row (if inserted directly).
+- [x] Add test that deleting an item cascades and removes `item_links`.
+- [x] Add test that two different kinds may coexist for same pair (`depends-on` and `related`).
 
 Phase 3 exit criteria:
 
-- [ ] Store APIs persist and retrieve both link kinds correctly.
-- [ ] Symmetric `related` behavior works via single normalized row.
+- [x] Store APIs persist and retrieve both link kinds correctly.
+- [x] Symmetric `related` behavior works via single normalized row.
 
 ### Phase 4: Agenda Semantic APIs + Validation (`crates/agenda-core/src/agenda.rs`)
 
 #### 4A. Public APIs
 
-- [ ] Add `LinkItemsResult` struct.
-- [ ] Implement `link_items_depends_on`.
-- [ ] Implement `link_items_blocks` (argument inversion alias).
-- [ ] Implement `link_items_related`.
-- [ ] Implement `unlink_items_depends_on`.
-- [ ] Implement `unlink_items_blocks`.
-- [ ] Implement `unlink_items_related`.
+- [x] Add `LinkItemsResult` struct.
+- [x] Implement `link_items_depends_on`.
+- [x] Implement `link_items_blocks` (argument inversion alias).
+- [x] Implement `link_items_related`.
+- [x] Implement `unlink_items_depends_on`.
+- [x] Implement `unlink_items_blocks`.
+- [x] Implement `unlink_items_related`.
 - [ ] Implement `link_items_depends_on_many` batch API.
 
 #### 4B. Private Helpers
 
-- [ ] Add `normalize_related_pair(a, b)` helper.
-- [ ] Add `build_link(...)` helper for `ItemLink`.
-- [ ] Add item existence validation helper (e.g., `ensure_item_exists(item_id)` or direct `get_item` checks).
-- [ ] Add self-link validation helper shared across kinds.
-- [ ] Add duplicate-short-circuit checks using `Store::item_link_exists`.
+- [x] Add `normalize_related_pair(a, b)` helper.
+- [x] Add `build_link(...)` helper for `ItemLink`.
+- [x] Add item existence validation helper (e.g., `ensure_item_exists(item_id)` or direct `get_item` checks).
+- [x] Add self-link validation helper shared across kinds.
+- [x] Add duplicate-short-circuit checks using `Store::item_link_exists`.
 
 #### 4C. Cycle Detection (`depends-on` only)
 
-- [ ] Implement `ensure_depends_on_no_cycle(dependent, dependency)`.
-- [ ] Ensure cycle check runs before insert.
-- [ ] Confirm cycle detection traverses only `depends-on` edges.
-- [ ] Confirm `related` links skip cycle logic entirely.
-- [ ] Decide and document error messages for:
+- [x] Implement `ensure_depends_on_no_cycle(dependent, dependency)`.
+- [x] Ensure cycle check runs before insert.
+- [x] Confirm cycle detection traverses only `depends-on` edges.
+- [x] Confirm `related` links skip cycle logic entirely.
+- [x] Decide and document error messages for:
   - self-link
   - duplicate
   - cycle
 
 #### 4D. Optional Read/Traversal APIs (Lotus groundwork)
 
-- [ ] Implement immediate read APIs:
+- [x] Implement immediate read APIs:
   - `immediate_prereq_ids`
   - `immediate_dependent_ids`
   - `immediate_related_ids`
@@ -1038,51 +1038,51 @@ Phase 3 exit criteria:
 
 #### 4E. Agenda Tests
 
-- [ ] Add test: `depends-on` rejects self-link.
-- [ ] Add test: `related` rejects self-link.
-- [ ] Add test: `depends-on` cycle rejection (`A->B`, `B->A`).
-- [ ] Add test: longer cycle rejection (`A->B->C`, add `C->A`).
-- [ ] Add test: `related` triangle allowed (`A~B`, `B~C`, `C~A`).
-- [ ] Add test: `link_items_blocks` stores inverse `depends-on` edge correctly.
-- [ ] Add test: `link_items_related` normalizes pair and is idempotent.
+- [x] Add test: `depends-on` rejects self-link.
+- [x] Add test: `related` rejects self-link.
+- [x] Add test: `depends-on` cycle rejection (`A->B`, `B->A`).
+- [x] Add test: longer cycle rejection (`A->B->C`, add `C->A`).
+- [x] Add test: `related` triangle allowed (`A~B`, `B~C`, `C~A`).
+- [x] Add test: `link_items_blocks` stores inverse `depends-on` edge correctly.
+- [x] Add test: `link_items_related` normalizes pair and is idempotent.
 - [ ] Add test: `link_items_depends_on_many` skips duplicates and self.
 - [ ] Add test: `link_items_depends_on_many` returns accurate counts.
 - [ ] Add tests for transitive traversal order/contents (if traversal APIs implemented in this phase).
 
 Phase 4 exit criteria:
 
-- [ ] Agenda enforces all semantic invariants.
-- [ ] `blocks` and `depends-on` are equivalent user vocabularies over one stored representation.
+- [x] Agenda enforces all semantic invariants.
+- [x] `blocks` and `depends-on` are equivalent user vocabularies over one stored representation.
 
 ### Phase 5: CLI Link Commands (`crates/agenda-cli/src/main.rs`)
 
 #### 5A. Command Definitions and Dispatch
 
-- [ ] Add `Command::Link` top-level variant.
-- [ ] Add `LinkCommand` enum with link and unlink variants.
-- [ ] Wire command dispatch in `run()`.
-- [ ] Add `cmd_link(...)` handler function.
+- [x] Add `Command::Link` top-level variant.
+- [x] Add `LinkCommand` enum with link and unlink variants.
+- [x] Wire command dispatch in `run()`.
+- [x] Add `cmd_link(...)` handler function.
 
 #### 5B. Parsing and Execution
 
-- [ ] Reuse `parse_item_id` for all link commands (full UUID only, current behavior).
-- [ ] Implement handler branches:
+- [x] Reuse `parse_item_id` for all link commands (full UUID only, current behavior).
+- [x] Implement handler branches:
   - `depends-on`
   - `blocks`
   - `related`
   - unlink variants
-- [ ] Choose success output format for each command (consistent with existing CLI style).
-- [ ] Choose idempotency messaging:
+- [x] Choose success output format for each command (consistent with existing CLI style).
+- [x] Choose idempotency messaging:
   - silent success on existing link
   - explicit "already exists"
   - count-based output
-- [ ] Map Agenda errors to user-friendly CLI messages (especially cycle/self-link).
+- [x] Map Agenda errors to user-friendly CLI messages (especially cycle/self-link).
 
 #### 5C. CLI Tests
 
-- [ ] Add parser/dispatch unit tests if coverage exists for command parsing patterns.
-- [ ] Add output-focused tests for helper text (if command handler helpers are testable).
-- [ ] Add manual verification script examples in plan/docs for:
+- [x] Add parser/dispatch unit tests if coverage exists for command parsing patterns.
+- [x] Add output-focused tests for helper text (if command handler helpers are testable).
+- [x] Add manual verification script examples in plan/docs for:
   - create `depends-on`
   - create `blocks`
   - create `related`
@@ -1091,74 +1091,74 @@ Phase 4 exit criteria:
 
 Phase 5 exit criteria:
 
-- [ ] CLI can create and remove all MVP link types with both vocabularies.
+- [x] CLI can create and remove all MVP link types with both vocabularies.
 
 ### Phase 6: CLI `show` Enhancements (`crates/agenda-cli/src/main.rs`)
 
 #### 6A. Read and Render Immediate Links
 
-- [ ] Extend `cmd_show` to query immediate links for selected item.
-- [ ] Resolve neighbor IDs to items (text/status) for display.
-- [ ] Render separate sections:
+- [x] Extend `cmd_show` to query immediate links for selected item.
+- [x] Resolve neighbor IDs to items (text/status) for display.
+- [x] Render separate sections:
   - prereqs (`depends-on`)
   - dependents (`blocks`)
   - related
-- [ ] Define behavior when linked item cannot be loaded (should be impossible with FKs, but guard and label if needed).
-- [ ] Sort rendered rows by item text (current recommendation).
+- [x] Define behavior when linked item cannot be loaded (should be impossible with FKs, but guard and label if needed).
+- [x] Sort rendered rows by item text (current recommendation).
 
 #### 6B. Output Format Consistency
 
-- [ ] Match existing `cmd_show` style (labels, indentation, `(none)` markers).
-- [ ] Ensure output remains readable for items with no links.
-- [ ] Confirm categories/assignments output remains unchanged in ordering.
+- [x] Match existing `cmd_show` style (labels, indentation, `(none)` markers).
+- [x] Ensure output remains readable for items with no links.
+- [x] Confirm categories/assignments output remains unchanged in ordering.
 
 #### 6C. CLI Tests / Manual Checks
 
-- [ ] Add tests (if practical) or documented manual checks for `agenda show` link sections.
-- [ ] Manual check one-level semantics:
+- [x] Add tests (if practical) or documented manual checks for `agenda show` link sections.
+- [x] Manual check one-level semantics:
   - only immediate neighbors shown
   - no transitive chain expansion yet
 
 Phase 6 exit criteria:
 
-- [ ] `agenda show` presents link information clearly without regressions.
+- [x] `agenda show` presents link information clearly without regressions.
 
 ### Phase 7: TUI Phase 1 (Read-Only Link Display)
 
 #### 7A. Data Access Strategy
 
-- [ ] Decide where link data is fetched for preview rendering:
+- [x] Decide where link data is fetched for preview rendering:
   - direct Store calls in render path (avoid if possible)
   - precomputed in `App::refresh` (preferred if performance acceptable)
   - on-demand helper methods using `Store` from event/refresh path
-- [ ] Choose minimal implementation for MVP (read-only, immediate neighbors only).
+- [x] Choose minimal implementation for MVP (read-only, immediate neighbors only).
 
 #### 7B. App/Render Changes
 
-- [ ] Add helper(s) to compute immediate link labels for selected item.
-- [ ] Extend `item_details_lines_for_item` in `render/mod.rs` to include:
+- [x] Add helper(s) to compute immediate link labels for selected item.
+- [x] Extend `item_details_lines_for_item` in `render/mod.rs` to include:
   - `Prereqs`
   - `Blocks`
   - `Related`
-- [ ] Preserve existing preview scroll behavior and line counts.
-- [ ] Ensure no layout overflow regressions in preview pane.
+- [x] Preserve existing preview scroll behavior and line counts.
+- [x] Ensure no layout overflow regressions in preview pane.
 
 #### 7C. TUI Tests
 
-- [ ] Add/extend unit tests for preview summary text lines (if feasible with existing helpers).
-- [ ] Manual TUI smoke test:
+- [x] Add/extend unit tests for preview summary text lines (if feasible with existing helpers).
+- [x] Manual TUI smoke test:
   - selected item with all three categories of link output
   - item with no links
   - switching selection updates preview correctly
 
 Phase 7 exit criteria:
 
-- [ ] TUI preview shows immediate link context read-only.
+- [x] TUI preview shows immediate link context read-only.
 
 ### Phase 8: Integration Validation and QA (MVP Cut)
 
-- [ ] Run `cargo test --workspace`.
-- [ ] Run targeted manual CLI scenarios on `feature-requests.ag` or a temp `.ag`:
+- [x] Run `cargo test --workspace`.
+- [x] Run targeted manual CLI scenarios on `feature-requests.ag` or a temp `.ag`:
   - create items
   - add `depends-on`
   - add `blocks` (verify inversion)
@@ -1166,15 +1166,15 @@ Phase 7 exit criteria:
   - reject cycle
   - reject self-link
   - delete item and verify cascade removes links
-- [ ] Manual TUI check (if Phase 7 included in MVP cut).
-- [ ] Verify DB migration on an existing v5 database file (copy/scratch DB).
-- [ ] Verify idempotent startup after migration (`Store::init`).
-- [ ] Confirm no impact on existing engine/category/view flows.
+- [x] Manual TUI check (if Phase 7 included in MVP cut).
+- [x] Verify DB migration on an existing v5 database file (copy/scratch DB).
+- [x] Verify idempotent startup after migration (`Store::init`).
+- [x] Confirm no impact on existing engine/category/view flows.
 
 Phase 8 exit criteria:
 
-- [ ] MVP functionality works end-to-end.
-- [ ] No regressions in existing workflows/tests.
+- [x] MVP functionality works end-to-end.
+- [x] No regressions in existing workflows/tests.
 
 ### Phase 9: Post-MVP Follow-Ups (Planned, Not in MVP)
 
@@ -1273,7 +1273,7 @@ When implementation starts, track each phase as:
 
 Recommended milestone checkpoints:
 
-- [ ] Milestone A: Core schema + Store APIs + tests
-- [ ] Milestone B: Agenda semantics + cycle detection + tests
-- [ ] Milestone C: CLI commands + `show` output
-- [ ] Milestone D: TUI read-only preview (optional for MVP cut if time-boxed)
+- [x] Milestone A: Core schema + Store APIs + tests
+- [x] Milestone B: Agenda semantics + cycle detection + tests
+- [x] Milestone C: CLI commands + `show` output
+- [x] Milestone D: TUI read-only preview (optional for MVP cut if time-boxed)
