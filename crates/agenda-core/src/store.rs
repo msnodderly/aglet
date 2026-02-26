@@ -10,11 +10,11 @@ use uuid::Uuid;
 use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
-    CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, NumericFormat, Query, Section,
-    View,
+    CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
+    NumericFormat, Query, Section, View,
 };
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -86,12 +86,28 @@ CREATE TABLE IF NOT EXISTS deletion_log (
     deleted_by       TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS item_links (
+    item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    origin        TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (item_id, other_item_id, kind),
+    CHECK (item_id <> other_item_id),
+    CHECK (kind IN ('depends-on', 'related')),
+    CHECK (kind <> 'related' OR item_id < other_item_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_assignments_item ON assignments(item_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_category ON assignments(category_id);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_items_when_date ON items(when_date);
 CREATE INDEX IF NOT EXISTS idx_items_is_done ON items(is_done);
 CREATE INDEX IF NOT EXISTS idx_deletion_log_item ON deletion_log(item_id);
+CREATE INDEX IF NOT EXISTS idx_item_links_item_kind ON item_links(item_id, kind);
+CREATE INDEX IF NOT EXISTS idx_item_links_other_kind ON item_links(other_item_id, kind);
+CREATE INDEX IF NOT EXISTS idx_item_links_kind ON item_links(kind);
 ";
 
 pub struct Store {
@@ -900,6 +916,205 @@ impl Store {
         })
     }
 
+    // ── Item link persistence ──────────────────────────────────
+
+    pub fn create_item_link(&self, link: &ItemLink) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO item_links (item_id, other_item_id, kind, created_at, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                link.item_id.to_string(),
+                link.other_item_id.to_string(),
+                Self::item_link_kind_to_db(link.kind),
+                link.created_at.to_rfc3339(),
+                link.origin,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_item_link(
+        &self,
+        item_id: ItemId,
+        other_item_id: ItemId,
+        kind: ItemLinkKind,
+    ) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM item_links
+             WHERE item_id = ?1 AND other_item_id = ?2 AND kind = ?3",
+            params![
+                item_id.to_string(),
+                other_item_id.to_string(),
+                Self::item_link_kind_to_db(kind),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn item_link_exists(
+        &self,
+        item_id: ItemId,
+        other_item_id: ItemId,
+        kind: ItemLinkKind,
+    ) -> Result<bool> {
+        let exists: Option<i32> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM item_links
+                 WHERE item_id = ?1 AND other_item_id = ?2 AND kind = ?3
+                 LIMIT 1",
+                params![
+                    item_id.to_string(),
+                    other_item_id.to_string(),
+                    Self::item_link_kind_to_db(kind),
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(exists.is_some())
+    }
+
+    /// Immediate prerequisites for a dependent item (outbound depends-on edges).
+    pub fn list_dependency_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT other_item_id
+             FROM item_links
+             WHERE item_id = ?1 AND kind = 'depends-on'
+             ORDER BY created_at ASC, other_item_id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![item_id.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|raw| Self::parse_uuid_from_db_text(&raw, "item_links.other_item_id"))
+            .collect()
+    }
+
+    /// Immediate dependents of an item (inbound depends-on edges; inverse "blocks" view).
+    pub fn list_dependent_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT item_id
+             FROM item_links
+             WHERE other_item_id = ?1 AND kind = 'depends-on'
+             ORDER BY created_at ASC, item_id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![item_id.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|raw| Self::parse_uuid_from_db_text(&raw, "item_links.item_id"))
+            .collect()
+    }
+
+    /// Immediate related items (symmetric query over normalized `related` rows).
+    pub fn list_related_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT CASE WHEN item_id = ?1 THEN other_item_id ELSE item_id END AS neighbor_id
+             FROM item_links
+             WHERE kind = 'related' AND (item_id = ?1 OR other_item_id = ?1)
+             ORDER BY created_at ASC, neighbor_id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![item_id.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|raw| Self::parse_uuid_from_db_text(&raw, "item_links.related_neighbor_id"))
+            .collect()
+    }
+
+    /// Optional convenience for `agenda show` / TUI panels.
+    pub fn list_item_links_for_item(&self, item_id: ItemId) -> Result<Vec<ItemLink>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT item_id, other_item_id, kind, created_at, origin
+             FROM item_links
+             WHERE item_id = ?1 OR other_item_id = ?1
+             ORDER BY created_at ASC, item_id ASC, other_item_id ASC, kind ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![item_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|(item_id_str, other_item_id_str, kind_str, created_at_str, origin)| {
+                Self::item_link_from_db_row(
+                    &item_id_str,
+                    &other_item_id_str,
+                    &kind_str,
+                    &created_at_str,
+                    origin,
+                )
+            })
+            .collect()
+    }
+
+    fn item_link_kind_to_db(kind: ItemLinkKind) -> &'static str {
+        match kind {
+            ItemLinkKind::DependsOn => "depends-on",
+            ItemLinkKind::Related => "related",
+        }
+    }
+
+    fn item_link_kind_from_db(kind: &str) -> Result<ItemLinkKind> {
+        match kind {
+            "depends-on" => Ok(ItemLinkKind::DependsOn),
+            "related" => Ok(ItemLinkKind::Related),
+            other => Err(Self::storage_data_error(format!(
+                "invalid item link kind in database: {other}"
+            ))),
+        }
+    }
+
+    fn item_link_from_db_row(
+        item_id_str: &str,
+        other_item_id_str: &str,
+        kind_str: &str,
+        created_at_str: &str,
+        origin: Option<String>,
+    ) -> Result<ItemLink> {
+        let item_id = Self::parse_uuid_from_db_text(item_id_str, "item_links.item_id")?;
+        let other_item_id =
+            Self::parse_uuid_from_db_text(other_item_id_str, "item_links.other_item_id")?;
+        let kind = Self::item_link_kind_from_db(kind_str)?;
+        let created_at = DateTime::parse_from_rfc3339(created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|e| {
+                Self::storage_data_error(format!(
+                    "invalid item_links.created_at '{created_at_str}': {e}"
+                ))
+            })?;
+
+        Ok(ItemLink {
+            item_id,
+            other_item_id,
+            kind,
+            created_at,
+            origin,
+        })
+    }
+
+    fn parse_uuid_from_db_text(raw: &str, field: &'static str) -> Result<Uuid> {
+        Uuid::parse_str(raw).map_err(|e| {
+            Self::storage_data_error(format!("invalid UUID in {field}: {raw} ({e})"))
+        })
+    }
+
+    fn storage_data_error(message: String) -> AgendaError {
+        AgendaError::StorageError {
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, message)),
+        }
+    }
+
     // ── Assignment persistence ──────────────────────────────────
 
     /// Assign an item to a category. If the assignment already exists, it is
@@ -1449,6 +1664,30 @@ impl Store {
             self.conn
                 .execute_batch("ALTER TABLE assignments ADD COLUMN numeric_value TEXT;")?;
         }
+        if from_version < 6 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS item_links (
+                    item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    kind          TEXT NOT NULL,
+                    created_at    TEXT NOT NULL,
+                    origin        TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    PRIMARY KEY (item_id, other_item_id, kind),
+                    CHECK (item_id <> other_item_id),
+                    CHECK (kind IN ('depends-on', 'related')),
+                    CHECK (kind <> 'related' OR item_id < other_item_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_item_links_item_kind
+                    ON item_links(item_id, kind);
+                CREATE INDEX IF NOT EXISTS idx_item_links_other_kind
+                    ON item_links(other_item_id, kind);
+                CREATE INDEX IF NOT EXISTS idx_item_links_kind
+                    ON item_links(kind);
+                "#,
+            )?;
+        }
 
         if from_version < 3 {
             // Inject kind field into existing columns_json.
@@ -1512,7 +1751,8 @@ mod tests {
     use super::*;
     use crate::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
-        ColumnKind, CriterionMode, Item, NumericFormat, Query, Section, View,
+        ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
+        View,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
@@ -1526,6 +1766,23 @@ mod tests {
 
     fn new_view(name: &str) -> View {
         View::new(name.to_string())
+    }
+
+    fn make_item(store: &Store, text: &str) -> ItemId {
+        let item = Item::new(text.to_string());
+        let id = item.id;
+        store.create_item(&item).unwrap();
+        id
+    }
+
+    fn new_item_link(item_id: ItemId, other_item_id: ItemId, kind: ItemLinkKind) -> ItemLink {
+        ItemLink {
+            item_id,
+            other_item_id,
+            kind,
+            created_at: Utc::now(),
+            origin: Some("test".to_string()),
+        }
     }
 
     fn category_id_by_name(store: &Store, name: &str) -> Uuid {
@@ -1587,6 +1844,7 @@ mod tests {
         assert!(tables.contains(&"assignments".to_string()));
         assert!(tables.contains(&"views".to_string()));
         assert!(tables.contains(&"deletion_log".to_string()));
+        assert!(tables.contains(&"item_links".to_string()));
     }
 
     #[test]
@@ -1665,6 +1923,32 @@ mod tests {
         assert_eq!(reserved_after, 3);
         assert_eq!(default_view_before, 1);
         assert_eq!(default_view_after, 1);
+    }
+
+    #[test]
+    fn test_upgrade_from_v5_creates_item_links_table_and_bumps_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", 5).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let version: i32 = store
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let exists: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='item_links'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(exists.as_deref(), Some("item_links"));
     }
 
     #[test]
@@ -1870,6 +2154,217 @@ mod tests {
             .collect();
         assert_eq!(duplicates.len(), 2);
         assert_ne!(duplicates[0].id, duplicates[1].id);
+    }
+
+    #[test]
+    fn test_create_item_link_exists_and_delete_item_link() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+
+        let link = new_item_link(a, b, ItemLinkKind::DependsOn);
+        store.create_item_link(&link).unwrap();
+        assert!(store
+            .item_link_exists(a, b, ItemLinkKind::DependsOn)
+            .unwrap());
+
+        store
+            .delete_item_link(a, b, ItemLinkKind::DependsOn)
+            .unwrap();
+        assert!(!store
+            .item_link_exists(a, b, ItemLinkKind::DependsOn)
+            .unwrap());
+
+        // Idempotent delete.
+        store
+            .delete_item_link(a, b, ItemLinkKind::DependsOn)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_list_dependency_ids_for_item_returns_outbound_depends_on() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+        let d = make_item(&store, "D");
+
+        store
+            .create_item_link(&new_item_link(a, b, ItemLinkKind::DependsOn))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(a, c, ItemLinkKind::DependsOn))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(d, a, ItemLinkKind::DependsOn))
+            .unwrap();
+
+        let deps = store.list_dependency_ids_for_item(a).unwrap();
+        assert_eq!(deps, vec![b, c]);
+    }
+
+    #[test]
+    fn test_list_dependent_ids_for_item_returns_inverse_blocks_view() {
+        let store = Store::open_memory().unwrap();
+        let blocker = make_item(&store, "Blocker");
+        let dep1 = make_item(&store, "Dep1");
+        let dep2 = make_item(&store, "Dep2");
+        let unrelated = make_item(&store, "Unrelated");
+
+        store
+            .create_item_link(&new_item_link(dep1, blocker, ItemLinkKind::DependsOn))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(dep2, blocker, ItemLinkKind::DependsOn))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(unrelated, dep1, ItemLinkKind::DependsOn))
+            .unwrap();
+
+        let dependents = store.list_dependent_ids_for_item(blocker).unwrap();
+        assert_eq!(dependents, vec![dep1, dep2]);
+    }
+
+    #[test]
+    fn test_list_related_ids_for_item_is_symmetric() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+
+        let (ab_left, ab_right) = if a.to_string() < b.to_string() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let (ac_left, ac_right) = if a.to_string() < c.to_string() {
+            (a, c)
+        } else {
+            (c, a)
+        };
+
+        store
+            .create_item_link(&new_item_link(ab_left, ab_right, ItemLinkKind::Related))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(ac_left, ac_right, ItemLinkKind::Related))
+            .unwrap();
+
+        let related_to_a = store.list_related_ids_for_item(a).unwrap();
+        assert_eq!(related_to_a, vec![b, c]);
+
+        let related_to_b = store.list_related_ids_for_item(b).unwrap();
+        assert_eq!(related_to_b, vec![a]);
+    }
+
+    #[test]
+    fn test_list_item_links_for_item_includes_inbound_outbound_and_related() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+        let d = make_item(&store, "D");
+
+        store
+            .create_item_link(&new_item_link(a, b, ItemLinkKind::DependsOn))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(c, a, ItemLinkKind::DependsOn))
+            .unwrap();
+        let (left, right) = if a.to_string() < d.to_string() {
+            (a, d)
+        } else {
+            (d, a)
+        };
+        store
+            .create_item_link(&new_item_link(left, right, ItemLinkKind::Related))
+            .unwrap();
+
+        let links = store.list_item_links_for_item(a).unwrap();
+        assert_eq!(links.len(), 3);
+        assert!(links.iter().any(|l| l.kind == ItemLinkKind::DependsOn && l.item_id == a && l.other_item_id == b));
+        assert!(links.iter().any(|l| l.kind == ItemLinkKind::DependsOn && l.item_id == c && l.other_item_id == a));
+        assert!(links.iter().any(|l| l.kind == ItemLinkKind::Related && ((l.item_id == a && l.other_item_id == d) || (l.item_id == d && l.other_item_id == a))));
+    }
+
+    #[test]
+    fn test_item_links_disallow_self_link_via_db_check() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let result = store.create_item_link(&new_item_link(a, a, ItemLinkKind::DependsOn));
+        assert!(matches!(result, Err(AgendaError::StorageError { .. })));
+    }
+
+    #[test]
+    fn test_item_links_related_requires_normalized_order_via_db_check() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let (low, high) = if a.to_string() < b.to_string() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+
+        // Reverse order should violate CHECK(kind <> 'related' OR item_id < other_item_id).
+        let result = store.create_item_link(&new_item_link(high, low, ItemLinkKind::Related));
+        assert!(matches!(result, Err(AgendaError::StorageError { .. })));
+    }
+
+    #[test]
+    fn test_item_links_allow_depends_on_and_related_for_same_pair() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let (low, high) = if a.to_string() < b.to_string() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+
+        store
+            .create_item_link(&new_item_link(a, b, ItemLinkKind::DependsOn))
+            .unwrap();
+        store
+            .create_item_link(&new_item_link(low, high, ItemLinkKind::Related))
+            .unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM item_links WHERE (item_id = ?1 AND other_item_id = ?2 AND kind = 'depends-on')
+                   OR (item_id = ?3 AND other_item_id = ?4 AND kind = 'related')",
+                params![a.to_string(), b.to_string(), low.to_string(), high.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_delete_item_cascades_item_links() {
+        let store = Store::open_memory().unwrap();
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+
+        store
+            .create_item_link(&new_item_link(a, b, ItemLinkKind::DependsOn))
+            .unwrap();
+        assert_eq!(
+            store.conn
+                .query_row("SELECT COUNT(*) FROM item_links", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+
+        store.delete_item(a, "test").unwrap();
+
+        assert_eq!(
+            store.conn
+                .query_row("SELECT COUNT(*) FROM item_links", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
