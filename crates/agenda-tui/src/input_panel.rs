@@ -1,20 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use agenda_core::model::{CategoryId, ItemId};
 use crossterm::event::KeyCode;
 use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
-
-/// Draft state for a single numeric value being edited in the InputPanel.
-#[derive(Clone, Debug)]
-pub(crate) struct NumericValueDraft {
-    pub(crate) category_id: CategoryId,
-    pub(crate) category_name: String,
-    pub(crate) buffer: TextBuffer,
-    /// The original value when the panel was opened, for change detection.
-    pub(crate) original: Option<Decimal>,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InputPanelKind {
@@ -30,8 +20,7 @@ pub(crate) enum InputPanelKind {
 pub(crate) enum InputPanelFocus {
     Text,
     Note,
-    CategoriesButton,
-    NumericValues,
+    Categories,
     SaveButton,
     CancelButton,
 }
@@ -43,8 +32,10 @@ pub(crate) enum InputPanelAction {
     FocusNext,
     /// Focus moved backward (Shift-Tab).
     FocusPrev,
-    /// Open the category picker overlay.
-    OpenCategoryPicker,
+    /// Toggle the category at the current cursor position.
+    ToggleCategory,
+    /// Move the category cursor by a delta.
+    MoveCategoryCursor(i32),
     /// Save / submit the panel contents.
     Save,
     /// Cancel / discard.
@@ -53,13 +44,6 @@ pub(crate) enum InputPanelAction {
     Handled,
     /// The key was not consumed.
     Unhandled,
-}
-
-/// State for the embedded category picker overlay.
-#[derive(Clone, Debug)]
-pub(crate) struct CategoryPickerState {
-    /// Cursor row within the category list.
-    pub(crate) picker_index: usize,
 }
 
 /// Unified input panel for add-item, edit-item, and name-input flows.
@@ -75,12 +59,13 @@ pub(crate) struct InputPanel {
     pub(crate) item_id: Option<ItemId>,
     /// Descriptive context shown below categories (section name + auto-assign preview).
     pub(crate) preview_context: String,
-    /// `Some` while the embedded category picker overlay is open.
-    pub(crate) category_picker: Option<CategoryPickerState>,
-    /// Numeric values assigned to this item via numeric categories.
-    pub(crate) numeric_values: Vec<NumericValueDraft>,
-    /// Cursor index within `numeric_values` when focused on NumericValues.
-    pub(crate) numeric_cursor: usize,
+    /// Cursor position within the category list.
+    pub(crate) category_cursor: usize,
+    /// Editing buffers for assigned numeric categories.
+    /// Created when a numeric category is toggled on; removed when toggled off.
+    pub(crate) numeric_buffers: HashMap<CategoryId, TextBuffer>,
+    /// Original numeric values for change detection (populated when opening EditItem).
+    pub(crate) numeric_originals: HashMap<CategoryId, Option<Decimal>>,
 }
 
 impl InputPanel {
@@ -96,9 +81,9 @@ impl InputPanel {
             focus: InputPanelFocus::Text,
             item_id: None,
             preview_context: format_section_context(section_title, on_insert_assign),
-            category_picker: None,
-            numeric_values: Vec::new(),
-            numeric_cursor: 0,
+            category_cursor: 0,
+            numeric_buffers: HashMap::new(),
+            numeric_originals: HashMap::new(),
         }
     }
 
@@ -107,7 +92,8 @@ impl InputPanel {
         text: String,
         note: String,
         categories: HashSet<CategoryId>,
-        numeric_values: Vec<NumericValueDraft>,
+        numeric_buffers: HashMap<CategoryId, TextBuffer>,
+        numeric_originals: HashMap<CategoryId, Option<Decimal>>,
     ) -> Self {
         Self {
             kind: InputPanelKind::EditItem,
@@ -117,9 +103,9 @@ impl InputPanel {
             focus: InputPanelFocus::Text,
             item_id: Some(item_id),
             preview_context: String::new(),
-            category_picker: None,
-            numeric_values,
-            numeric_cursor: 0,
+            category_cursor: 0,
+            numeric_buffers,
+            numeric_originals,
         }
     }
 
@@ -132,44 +118,9 @@ impl InputPanel {
             focus: InputPanelFocus::Text,
             item_id: None,
             preview_context: label.to_string(),
-            category_picker: None,
-            numeric_values: Vec::new(),
-            numeric_cursor: 0,
-        }
-    }
-
-    /// Returns `true` if the category picker overlay is currently open.
-    pub(crate) fn category_picker_open(&self) -> bool {
-        self.category_picker.is_some()
-    }
-
-    /// Opens the category picker overlay with cursor at `initial_index`.
-    pub(crate) fn open_category_picker(&mut self, initial_index: usize) {
-        self.category_picker = Some(CategoryPickerState {
-            picker_index: initial_index,
-        });
-    }
-
-    /// Closes the category picker overlay.
-    pub(crate) fn close_category_picker(&mut self) {
-        self.category_picker = None;
-    }
-
-    /// Returns the current picker cursor index, or `None` if the picker is closed.
-    pub(crate) fn picker_index(&self) -> Option<usize> {
-        self.category_picker.as_ref().map(|p| p.picker_index)
-    }
-
-    /// Moves the picker cursor by `delta`, wrapping around within `list_len`.
-    pub(crate) fn move_picker_cursor(&mut self, list_len: usize, delta: i32) {
-        if let Some(picker) = &mut self.category_picker {
-            if list_len == 0 {
-                return;
-            }
-            let current = picker.picker_index as i64;
-            let len = list_len as i64;
-            let new = ((current + delta as i64).rem_euclid(len)) as usize;
-            picker.picker_index = new;
+            category_cursor: 0,
+            numeric_buffers: HashMap::new(),
+            numeric_originals: HashMap::new(),
         }
     }
 
@@ -182,10 +133,15 @@ impl InputPanel {
         }
     }
 
-    /// Handle a keypress. Called only when the category picker overlay is NOT open.
-    /// Returns the action the caller should perform.
-    pub(crate) fn handle_key(&mut self, code: KeyCode) -> InputPanelAction {
-        if let Some(action) = self.handle_focus_navigation(code) {
+    /// Handle a keypress. Returns the action the caller should perform.
+    /// Handle a keypress. `current_row_is_assigned_numeric` tells whether the
+    /// category row at the cursor is an assigned numeric category (for key routing).
+    pub(crate) fn handle_key(
+        &mut self,
+        code: KeyCode,
+        current_row_is_assigned_numeric: bool,
+    ) -> InputPanelAction {
+        if let Some(action) = self.handle_focus_navigation(code, current_row_is_assigned_numeric) {
             return action;
         }
 
@@ -199,14 +155,19 @@ impl InputPanel {
                     InputPanelAction::Unhandled
                 }
             }
-            InputPanelFocus::CategoriesButton => self.handle_categories_button(code),
-            InputPanelFocus::NumericValues => self.handle_numeric_values(code),
+            InputPanelFocus::Categories => {
+                self.handle_categories_focus(code, current_row_is_assigned_numeric)
+            }
             InputPanelFocus::SaveButton => self.handle_save_button(code),
             InputPanelFocus::CancelButton => self.handle_cancel_button(code),
         }
     }
 
-    fn handle_focus_navigation(&mut self, code: KeyCode) -> Option<InputPanelAction> {
+    fn handle_focus_navigation(
+        &mut self,
+        code: KeyCode,
+        current_row_is_assigned_numeric: bool,
+    ) -> Option<InputPanelAction> {
         match code {
             KeyCode::Tab => {
                 self.cycle_focus_forward();
@@ -217,11 +178,12 @@ impl InputPanel {
                 Some(InputPanelAction::FocusPrev)
             }
             KeyCode::Esc => Some(InputPanelAction::Cancel),
-            // Capital S saves only when not editing text fields
+            // Capital S saves only when not editing text fields or numeric value buffers
             KeyCode::Char('S')
                 if self.focus != InputPanelFocus::Text
                     && self.focus != InputPanelFocus::Note
-                    && self.focus != InputPanelFocus::NumericValues =>
+                    && !(self.focus == InputPanelFocus::Categories
+                        && current_row_is_assigned_numeric) =>
             {
                 Some(InputPanelAction::Save)
             }
@@ -229,10 +191,44 @@ impl InputPanel {
         }
     }
 
-    fn handle_categories_button(&self, code: KeyCode) -> InputPanelAction {
+    fn handle_categories_focus(
+        &mut self,
+        code: KeyCode,
+        current_row_is_assigned_numeric: bool,
+    ) -> InputPanelAction {
         match code {
-            KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::OpenCategoryPicker,
-            _ => InputPanelAction::Unhandled,
+            KeyCode::Down | KeyCode::Char('j') => InputPanelAction::MoveCategoryCursor(1),
+            KeyCode::Up | KeyCode::Char('k') => InputPanelAction::MoveCategoryCursor(-1),
+            KeyCode::Char(' ') => InputPanelAction::ToggleCategory,
+            KeyCode::Enter => {
+                if current_row_is_assigned_numeric {
+                    // No-op on numeric row to avoid accidental save
+                    InputPanelAction::Handled
+                } else {
+                    // On tag row, Enter acts as toggle
+                    InputPanelAction::ToggleCategory
+                }
+            }
+            _ => {
+                // Route printable chars and editing keys to numeric buffer if on assigned numeric row
+                if current_row_is_assigned_numeric {
+                    match code {
+                        KeyCode::Char(_)
+                        | KeyCode::Backspace
+                        | KeyCode::Delete
+                        | KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::Home
+                        | KeyCode::End => {
+                            // The caller will route this to the appropriate TextBuffer
+                            InputPanelAction::Handled
+                        }
+                        _ => InputPanelAction::Unhandled,
+                    }
+                } else {
+                    InputPanelAction::Unhandled
+                }
+            }
         }
     }
 
@@ -248,35 +244,6 @@ impl InputPanel {
             KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::Cancel,
             _ => InputPanelAction::Unhandled,
         }
-    }
-
-    fn handle_numeric_values(&mut self, code: KeyCode) -> InputPanelAction {
-        match code {
-            KeyCode::Up => {
-                if self.numeric_cursor > 0 {
-                    self.numeric_cursor -= 1;
-                }
-                InputPanelAction::Handled
-            }
-            KeyCode::Down => {
-                if self.numeric_cursor + 1 < self.numeric_values.len() {
-                    self.numeric_cursor += 1;
-                }
-                InputPanelAction::Handled
-            }
-            _ => {
-                if let Some(draft) = self.numeric_values.get_mut(self.numeric_cursor) {
-                    if draft.buffer.handle_key(code, false) {
-                        return InputPanelAction::Handled;
-                    }
-                }
-                InputPanelAction::Unhandled
-            }
-        }
-    }
-
-    fn has_numeric_values(&self) -> bool {
-        !self.numeric_values.is_empty()
     }
 
     fn active_buffer_mut(&mut self) -> &mut TextBuffer {
@@ -295,15 +262,8 @@ impl InputPanel {
                     InputPanelFocus::Note
                 }
             }
-            InputPanelFocus::Note => InputPanelFocus::CategoriesButton,
-            InputPanelFocus::CategoriesButton => {
-                if self.has_numeric_values() {
-                    InputPanelFocus::NumericValues
-                } else {
-                    InputPanelFocus::SaveButton
-                }
-            }
-            InputPanelFocus::NumericValues => InputPanelFocus::SaveButton,
+            InputPanelFocus::Note => InputPanelFocus::Categories,
+            InputPanelFocus::Categories => InputPanelFocus::SaveButton,
             InputPanelFocus::SaveButton => InputPanelFocus::CancelButton,
             InputPanelFocus::CancelButton => InputPanelFocus::Text,
         };
@@ -313,15 +273,12 @@ impl InputPanel {
         self.focus = match self.focus {
             InputPanelFocus::Text => InputPanelFocus::CancelButton,
             InputPanelFocus::Note => InputPanelFocus::Text,
-            InputPanelFocus::CategoriesButton => InputPanelFocus::Note,
-            InputPanelFocus::NumericValues => InputPanelFocus::CategoriesButton,
+            InputPanelFocus::Categories => InputPanelFocus::Note,
             InputPanelFocus::SaveButton => {
                 if self.kind == InputPanelKind::NameInput {
                     InputPanelFocus::Text
-                } else if self.has_numeric_values() {
-                    InputPanelFocus::NumericValues
                 } else {
-                    InputPanelFocus::CategoriesButton
+                    InputPanelFocus::Categories
                 }
             }
             InputPanelFocus::CancelButton => InputPanelFocus::SaveButton,
@@ -359,52 +316,52 @@ mod tests {
     fn tab_cycles_add_panel_forward() {
         let mut p = add_panel();
         assert_eq!(p.focus, InputPanelFocus::Text);
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
-        p.handle_key(KeyCode::Tab);
-        assert_eq!(p.focus, InputPanelFocus::CategoriesButton);
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::Categories);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
     #[test]
     fn backtab_cycles_add_panel_backward() {
         let mut p = add_panel();
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::BackTab);
-        assert_eq!(p.focus, InputPanelFocus::CategoriesButton);
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::Categories);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
     #[test]
     fn name_panel_tab_skips_note_and_categories() {
         let mut p = name_panel();
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::Tab);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
     #[test]
     fn name_panel_backtab_skips_note_and_categories() {
         let mut p = name_panel();
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::BackTab);
+        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
@@ -416,13 +373,13 @@ mod tests {
         for focus in [
             InputPanelFocus::Text,
             InputPanelFocus::Note,
-            InputPanelFocus::CategoriesButton,
+            InputPanelFocus::Categories,
             InputPanelFocus::SaveButton,
             InputPanelFocus::CancelButton,
         ] {
             p.focus = focus;
             assert_eq!(
-                p.handle_key(KeyCode::Esc),
+                p.handle_key(KeyCode::Esc, false),
                 InputPanelAction::Cancel,
                 "expected Cancel at focus {:?}",
                 focus
@@ -436,40 +393,113 @@ mod tests {
     fn enter_on_save_button_saves() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::SaveButton;
-        assert_eq!(p.handle_key(KeyCode::Enter), InputPanelAction::Save);
+        assert_eq!(p.handle_key(KeyCode::Enter, false), InputPanelAction::Save);
     }
 
     #[test]
     fn space_on_save_button_saves() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::SaveButton;
-        assert_eq!(p.handle_key(KeyCode::Char(' ')), InputPanelAction::Save);
+        assert_eq!(
+            p.handle_key(KeyCode::Char(' '), false),
+            InputPanelAction::Save
+        );
     }
 
     #[test]
     fn enter_on_cancel_button_cancels() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::CancelButton;
-        assert_eq!(p.handle_key(KeyCode::Enter), InputPanelAction::Cancel);
+        assert_eq!(
+            p.handle_key(KeyCode::Enter, false),
+            InputPanelAction::Cancel
+        );
     }
 
+    // --- Categories focus ---
+
     #[test]
-    fn enter_on_categories_button_opens_picker() {
+    fn space_on_categories_returns_toggle() {
         let mut p = add_panel();
-        p.focus = InputPanelFocus::CategoriesButton;
+        p.focus = InputPanelFocus::Categories;
         assert_eq!(
-            p.handle_key(KeyCode::Enter),
-            InputPanelAction::OpenCategoryPicker
+            p.handle_key(KeyCode::Char(' '), false),
+            InputPanelAction::ToggleCategory
         );
     }
 
     #[test]
-    fn space_on_categories_button_opens_picker() {
+    fn j_k_on_categories_returns_cursor_move() {
         let mut p = add_panel();
-        p.focus = InputPanelFocus::CategoriesButton;
+        p.focus = InputPanelFocus::Categories;
         assert_eq!(
-            p.handle_key(KeyCode::Char(' ')),
-            InputPanelAction::OpenCategoryPicker
+            p.handle_key(KeyCode::Char('j'), false),
+            InputPanelAction::MoveCategoryCursor(1)
+        );
+        assert_eq!(
+            p.handle_key(KeyCode::Char('k'), false),
+            InputPanelAction::MoveCategoryCursor(-1)
+        );
+    }
+
+    #[test]
+    fn enter_on_tag_row_toggles() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        assert_eq!(
+            p.handle_key(KeyCode::Enter, false),
+            InputPanelAction::ToggleCategory
+        );
+    }
+
+    #[test]
+    fn enter_on_numeric_row_is_handled_noop() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        assert_eq!(
+            p.handle_key(KeyCode::Enter, true),
+            InputPanelAction::Handled
+        );
+    }
+
+    #[test]
+    fn typing_on_numeric_row_is_handled() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        assert_eq!(
+            p.handle_key(KeyCode::Char('5'), true),
+            InputPanelAction::Handled
+        );
+    }
+
+    #[test]
+    fn typing_on_tag_row_is_unhandled() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        assert_eq!(
+            p.handle_key(KeyCode::Char('5'), false),
+            InputPanelAction::Unhandled
+        );
+    }
+
+    #[test]
+    fn capital_s_saves_from_categories_when_not_numeric() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        assert_eq!(
+            p.handle_key(KeyCode::Char('S'), false),
+            InputPanelAction::Save
+        );
+    }
+
+    #[test]
+    fn capital_s_does_not_save_from_numeric_row() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        // When on assigned numeric row, S should be routed as text input (Handled)
+        assert_eq!(
+            p.handle_key(KeyCode::Char('S'), true),
+            InputPanelAction::Handled
         );
     }
 
@@ -479,7 +509,10 @@ mod tests {
     fn char_consumed_in_text_focus() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::Text;
-        assert_eq!(p.handle_key(KeyCode::Char('x')), InputPanelAction::Handled);
+        assert_eq!(
+            p.handle_key(KeyCode::Char('x'), false),
+            InputPanelAction::Handled
+        );
         assert_eq!(p.text.text(), "x");
     }
 
@@ -487,7 +520,10 @@ mod tests {
     fn char_consumed_in_note_focus() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::Note;
-        assert_eq!(p.handle_key(KeyCode::Char('y')), InputPanelAction::Handled);
+        assert_eq!(
+            p.handle_key(KeyCode::Char('y'), false),
+            InputPanelAction::Handled
+        );
         assert_eq!(p.note.text(), "y");
     }
 
@@ -496,7 +532,7 @@ mod tests {
         let mut p = add_panel();
         p.focus = InputPanelFocus::SaveButton;
         assert_eq!(
-            p.handle_key(KeyCode::Char('z')),
+            p.handle_key(KeyCode::Char('z'), false),
             InputPanelAction::Unhandled
         );
         assert!(p.text.is_empty());
@@ -504,15 +540,9 @@ mod tests {
 
     #[test]
     fn enter_in_text_focus_not_consumed() {
-        // Enter in text field is NOT consumed by the panel (no save-on-Enter from text)
         let mut p = add_panel();
         p.focus = InputPanelFocus::Text;
-        // Enter is handled as focus navigation (Tab handles it); Enter in text is Unhandled
-        // (the caller decides: if text, do nothing special; Enter only does something on buttons)
-        // Actually in handle_focus_navigation we only handle Tab/BackTab/Esc.
-        // Enter in text focus falls through to active_buffer_mut().handle_key(Enter, false)
-        // TextBuffer::handle_key for Enter with multiline=false returns false.
-        let action = p.handle_key(KeyCode::Enter);
+        let action = p.handle_key(KeyCode::Enter, false);
         assert_eq!(action, InputPanelAction::Unhandled);
     }
 
@@ -520,52 +550,13 @@ mod tests {
     fn enter_in_note_focus_inserts_newline() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::Note;
-        p.handle_key(KeyCode::Char('a'));
-        let action = p.handle_key(KeyCode::Enter);
+        p.handle_key(KeyCode::Char('a'), false);
+        let action = p.handle_key(KeyCode::Enter, false);
         assert_eq!(action, InputPanelAction::Handled);
         assert_eq!(p.note.text(), "a\n");
     }
 
-    // --- Category picker overlay ---
-
-    #[test]
-    fn category_picker_starts_closed() {
-        let p = add_panel();
-        assert!(!p.category_picker_open());
-        assert!(p.picker_index().is_none());
-    }
-
-    #[test]
-    fn open_and_close_category_picker() {
-        let mut p = add_panel();
-        p.open_category_picker(3);
-        assert!(p.category_picker_open());
-        assert_eq!(p.picker_index(), Some(3));
-        p.close_category_picker();
-        assert!(!p.category_picker_open());
-        assert!(p.picker_index().is_none());
-    }
-
-    #[test]
-    fn move_picker_cursor_wraps() {
-        let mut p = add_panel();
-        p.open_category_picker(0);
-        p.move_picker_cursor(5, 1);
-        assert_eq!(p.picker_index(), Some(1));
-        p.move_picker_cursor(5, -1);
-        assert_eq!(p.picker_index(), Some(0));
-        // Wrap backward from 0
-        p.move_picker_cursor(5, -1);
-        assert_eq!(p.picker_index(), Some(4));
-    }
-
-    #[test]
-    fn move_picker_cursor_noop_on_empty_list() {
-        let mut p = add_panel();
-        p.open_category_picker(0);
-        p.move_picker_cursor(0, 1); // no-op
-        assert_eq!(p.picker_index(), Some(0));
-    }
+    // --- Category toggle ---
 
     #[test]
     fn toggle_category_adds_and_removes() {
@@ -576,6 +567,30 @@ mod tests {
         assert!(p.categories.contains(&cat_id));
         p.toggle_category(cat_id);
         assert!(!p.categories.contains(&cat_id));
+    }
+
+    // --- Numeric buffer management ---
+
+    #[test]
+    fn numeric_buffer_toggle_on_creates_buffer() {
+        let mut p = add_panel();
+        let cat_id = CategoryId::new_v4();
+        p.categories.insert(cat_id);
+        p.numeric_buffers
+            .insert(cat_id, TextBuffer::empty());
+        assert!(p.numeric_buffers.contains_key(&cat_id));
+    }
+
+    #[test]
+    fn numeric_buffer_toggle_off_removes_buffer() {
+        let mut p = add_panel();
+        let cat_id = CategoryId::new_v4();
+        p.categories.insert(cat_id);
+        p.numeric_buffers
+            .insert(cat_id, TextBuffer::empty());
+        p.categories.remove(&cat_id);
+        p.numeric_buffers.remove(&cat_id);
+        assert!(!p.numeric_buffers.contains_key(&cat_id));
     }
 
     // --- Constructor checks ---
@@ -589,7 +604,6 @@ mod tests {
         assert!(p.categories.is_empty());
         assert!(p.item_id.is_none());
         assert!(p.preview_context.contains("Open"));
-        assert!(!p.category_picker_open());
     }
 
     #[test]
@@ -615,7 +629,8 @@ mod tests {
             "My item".into(),
             "My note".into(),
             cats.clone(),
-            Vec::new(),
+            HashMap::new(),
+            HashMap::new(),
         );
         assert_eq!(p.kind, InputPanelKind::EditItem);
         assert_eq!(p.text.text(), "My item");

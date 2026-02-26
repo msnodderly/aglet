@@ -833,15 +833,10 @@ impl App {
     ) -> Option<(u16, u16)> {
         use input_panel::InputPanelFocus;
 
-        // No cursor while category picker overlay is open (it shows a list, not text)
-        if panel.category_picker_open() {
-            return None;
-        }
         if popup_area.width < 3 || popup_area.height < 3 {
             return None;
         }
-        let regions =
-            input_panel_popup_regions(popup_area, panel.kind, panel.numeric_values.len())?;
+        let regions = input_panel_popup_regions(popup_area, panel.kind)?;
         match panel.focus {
             InputPanelFocus::Text => {
                 let prefix_len = "  Text> ".chars().count().min(u16::MAX as usize) as u16;
@@ -883,31 +878,46 @@ impl App {
                     .min(max_y);
                 Some((cursor_x, cursor_y))
             }
-            InputPanelFocus::NumericValues => {
-                let numeric_rect = regions.numeric_values?;
-                if let Some(draft) = panel.numeric_values.get(panel.numeric_cursor) {
-                    // "  CatName: " prefix + cursor position within buffer
-                    let prefix_len =
-                        (draft.category_name.chars().count() + 4).min(u16::MAX as usize) as u16; // "  Name: "
-                    let input_chars = draft.buffer.cursor().min(u16::MAX as usize) as u16;
-                    let row_offset = panel.numeric_cursor.min(u16::MAX as usize) as u16;
-                    let max_x = numeric_rect
-                        .x
-                        .saturating_add(numeric_rect.width.saturating_sub(1));
-                    let cursor_x = numeric_rect
-                        .x
-                        .saturating_add(prefix_len)
-                        .saturating_add(input_chars)
-                        .min(max_x);
-                    let cursor_y = numeric_rect.y.saturating_add(row_offset);
-                    Some((cursor_x, cursor_y))
-                } else {
-                    None
+            InputPanelFocus::Categories => {
+                // Show cursor in the numeric value field if on an assigned numeric category row.
+                let cat_rect = regions.categories?;
+                let cat_inner = regions.categories_inner?;
+                if cat_inner.width == 0 || cat_inner.height == 0 {
+                    return None;
                 }
+                let row = self.category_rows.get(panel.category_cursor)?;
+                let is_assigned = panel.categories.contains(&row.id);
+                let is_numeric =
+                    row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
+                if is_assigned && is_numeric {
+                    if let Some(buf) = panel.numeric_buffers.get(&row.id) {
+                        // Value field is right-aligned: "[value_]"
+                        // The cursor should be positioned within that field.
+                        let value_text_len = buf.text().chars().count() + 2; // "[" + text + "]"
+                        let buf_cursor = buf.cursor();
+                        // Position: end of inner rect - value_text_len + 1 (for "[") + buf_cursor
+                        let field_start_x = cat_inner
+                            .x
+                            .saturating_add(cat_inner.width)
+                            .saturating_sub(value_text_len as u16);
+                        let cursor_x = field_start_x
+                            .saturating_add(1) // skip "["
+                            .saturating_add(buf_cursor.min(u16::MAX as usize) as u16)
+                            .min(cat_inner.x.saturating_add(cat_inner.width.saturating_sub(1)));
+                        let scroll =
+                            list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor))
+                                as usize;
+                        let visible_row = panel.category_cursor.saturating_sub(scroll);
+                        let cursor_y = cat_inner
+                            .y
+                            .saturating_add(visible_row.min(u16::MAX as usize) as u16)
+                            .min(cat_inner.y.saturating_add(cat_inner.height.saturating_sub(1)));
+                        return Some((cursor_x, cursor_y));
+                    }
+                }
+                None
             }
-            InputPanelFocus::CategoriesButton
-            | InputPanelFocus::SaveButton
-            | InputPanelFocus::CancelButton => None,
+            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton => None,
         }
     }
 
@@ -1627,26 +1637,21 @@ impl App {
             Mode::InputPanel => {
                 if let Some(panel) = &self.input_panel {
                     use input_panel::InputPanelFocus;
-                    if panel.category_picker_open() {
-                        "Category picker open".to_string()
-                    } else {
-                        format!(
-                            "{} (focus: {})",
-                            match panel.kind {
-                                input_panel::InputPanelKind::AddItem => "Add item",
-                                input_panel::InputPanelKind::EditItem => "Edit item",
-                                input_panel::InputPanelKind::NameInput => "Name input",
-                            },
-                            match panel.focus {
-                                InputPanelFocus::Text => "Text",
-                                InputPanelFocus::Note => "Note",
-                                InputPanelFocus::CategoriesButton => "Categories",
-                                InputPanelFocus::NumericValues => "Numeric Values",
-                                InputPanelFocus::SaveButton => "Save",
-                                InputPanelFocus::CancelButton => "Cancel",
-                            }
-                        )
-                    }
+                    format!(
+                        "{} (focus: {})",
+                        match panel.kind {
+                            input_panel::InputPanelKind::AddItem => "Add item",
+                            input_panel::InputPanelKind::EditItem => "Edit item",
+                            input_panel::InputPanelKind::NameInput => "Name input",
+                        },
+                        match panel.focus {
+                            InputPanelFocus::Text => "Text",
+                            InputPanelFocus::Note => "Note",
+                            InputPanelFocus::Categories => "Categories",
+                            InputPanelFocus::SaveButton => "Save",
+                            InputPanelFocus::CancelButton => "Cancel",
+                        }
+                    )
                 } else {
                     self.status.clone()
                 }
@@ -1698,10 +1703,14 @@ impl App {
             Mode::NoteEdit => "S:save (empty=clear)  Esc:cancel",
             Mode::InspectUnassign => "j/k:select  Enter:apply  Esc:cancel",
             Mode::InputPanel => {
-                if self.input_panel.as_ref().map_or(false, |p| p.category_picker_open()) {
-                    "j/k:navigate  Space:toggle  Enter/Esc:close picker"
+                if self
+                    .input_panel
+                    .as_ref()
+                    .map_or(false, |p| p.focus == input_panel::InputPanelFocus::Categories)
+                {
+                    "S:save  Tab:cycle  Space:toggle  j/k:navigate  Esc:cancel"
                 } else {
-                    "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Up/Down in note  Esc:cancel"
+                    "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Esc:cancel"
                 }
             }
             _ => "h/l:move  H/L:reorder col  g(ga/gH/gL):prefix  +:add col  -:remove col  n:add item  e:edit  q:quit",
@@ -1729,15 +1738,7 @@ impl App {
             .border_style(Style::default().fg(Color::Cyan));
         frame.render_widget(block, area);
 
-        // If category picker overlay is open, render it over the popup.
-        if panel.category_picker_open() {
-            self.render_input_panel_category_picker(frame, area, panel);
-            return;
-        }
-
-        let Some(regions) =
-            input_panel_popup_regions(area, panel.kind, panel.numeric_values.len())
-        else {
+        let Some(regions) = input_panel_popup_regions(area, panel.kind) else {
             return;
         };
 
@@ -1765,7 +1766,7 @@ impl App {
             regions.text,
         );
 
-        // Note and Categories (not shown for NameInput)
+        // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
             let note_lines: Vec<Line<'_>> = if panel.note.is_empty() {
                 vec![Line::from("")]
@@ -1805,49 +1806,116 @@ impl App {
             );
         }
 
-        if let Some(categories_rect) = regions.categories {
-            let cat_focused = panel.focus == InputPanelFocus::CategoriesButton;
-            let cat_marker = if cat_focused {
-                "[> Categories <]"
+        // Inline categories list (bordered, scrollable)
+        if let Some(cat_rect) = regions.categories {
+            let cat_focused = panel.focus == InputPanelFocus::Categories;
+            let cat_border_color = if cat_focused {
+                Color::Cyan
             } else {
-                "[Categories]"
+                Color::Blue
             };
-            let cat_names = self.category_names_for_ids(&panel.categories);
-            let cat_display = if cat_names.is_empty() {
-                format!("{cat_marker}  (none)")
+            let cat_title = if cat_focused {
+                "Categories (Space: toggle)"
             } else {
-                format!("{cat_marker}  {}", cat_names.join(", "))
+                "Categories"
             };
-            frame.render_widget(Paragraph::new(cat_display), categories_rect);
-        }
 
-        // Numeric values section
-        if let Some(numeric_rect) = regions.numeric_values {
-            let is_focused = panel.focus == InputPanelFocus::NumericValues;
-            let lines: Vec<Line<'_>> = panel
-                .numeric_values
-                .iter()
-                .enumerate()
-                .map(|(i, draft)| {
-                    let marker = if is_focused && i == panel.numeric_cursor {
-                        ">"
-                    } else {
-                        " "
-                    };
-                    let style = if is_focused && i == panel.numeric_cursor {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    };
-                    Line::from(
-                        Span::styled(
-                            format!("{marker} {}: {}", draft.category_name, draft.buffer.text()),
-                            style,
-                        )
-                    )
-                })
-                .collect();
-            frame.render_widget(Paragraph::new(lines), numeric_rect);
+            let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
+            let inner_width = cat_inner.width as usize;
+
+            let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
+                vec![Line::from("(no categories available)")]
+            } else {
+                self.category_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        let is_assigned = panel.categories.contains(&row.id);
+                        let is_numeric = row.value_kind
+                            == agenda_core::model::CategoryValueKind::Numeric;
+                        let is_cursor = cat_focused && i == panel.category_cursor;
+
+                        let check = if is_assigned && is_numeric {
+                            "- [N] "
+                        } else if is_assigned {
+                            "- [x] "
+                        } else {
+                            "- [ ] "
+                        };
+
+                        let cursor_prefix = if is_cursor { ">" } else { " " };
+                        let indent = "  ".repeat(row.depth);
+                        let reserved = if row.is_reserved {
+                            " [reserved]"
+                        } else {
+                            ""
+                        };
+
+                        // Build the left part: cursor + check + indent + name + reserved
+                        let left = format!(
+                            "{cursor_prefix}{check}{indent}{}{reserved}",
+                            row.name
+                        );
+
+                        // For assigned numeric categories, show value field on the right
+                        if is_assigned && is_numeric {
+                            if let Some(buf) = panel.numeric_buffers.get(&row.id) {
+                                let value_text = format!("[{}]", buf.text());
+                                let left_len = left.chars().count();
+                                let value_len = value_text.chars().count();
+                                let total_needed = left_len + 1 + value_len;
+                                let dot_leaders = if inner_width > total_needed {
+                                    " ".repeat(inner_width - total_needed)
+                                        .chars()
+                                        .enumerate()
+                                        .map(|(i, _)| {
+                                            if i % 2 == 0 { '\u{00B7}' } else { ' ' }
+                                        })
+                                        .collect::<String>()
+                                } else {
+                                    " ".to_string()
+                                };
+                                let full = format!("{left}{dot_leaders}{value_text}");
+                                let style = if is_cursor {
+                                    Style::default().fg(Color::Yellow)
+                                } else {
+                                    Style::default()
+                                };
+                                return Line::from(Span::styled(full, style));
+                            }
+                        }
+
+                        let style = if is_cursor {
+                            Style::default().fg(Color::Yellow)
+                        } else {
+                            Style::default()
+                        };
+                        Line::from(Span::styled(left, style))
+                    })
+                    .collect()
+            };
+
+            let cat_scroll =
+                list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor));
+            let item_count = lines.len();
+
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .scroll((cat_scroll, 0))
+                    .block(
+                        Block::default()
+                            .title(cat_title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(cat_border_color)),
+                    ),
+                cat_rect,
+            );
+            Self::render_vertical_scrollbar(
+                frame,
+                cat_rect,
+                item_count,
+                cat_scroll as usize,
+            );
         }
 
         if let Some(preview_rect) = regions.preview {
@@ -1878,89 +1946,9 @@ impl App {
 
         // Help row
         frame.render_widget(
-            Paragraph::new("S:save  Tab/Shift+Tab:cycle  Enter:activate  Up/Down:note  Esc:cancel"),
+            Paragraph::new("S:save  Tab:cycle  Space:toggle  j/k:move  Esc:cancel"),
             regions.help,
         );
-    }
-
-    /// Render the category picker overlay within the InputPanel popup area.
-    fn render_input_panel_category_picker(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: Rect,
-        panel: &input_panel::InputPanel,
-    ) {
-        let picker_index = panel.picker_index().unwrap_or(0);
-        let category_names = self.category_names_for_ids(&panel.categories);
-        let selected_label = if category_names.is_empty() {
-            "(none selected)".to_string()
-        } else {
-            category_names.join(", ")
-        };
-
-        // Use inner area of the popup for the list
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y.saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
-        };
-        if inner.height < 2 {
-            return;
-        }
-        let chunks = ratatui::layout::Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(inner);
-
-        frame.render_widget(
-            Paragraph::new(format!("Selected: {selected_label}"))
-                .style(Style::default().fg(Color::Yellow)),
-            chunks[0],
-        );
-
-        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
-            vec![ListItem::new("(no categories available)")]
-        } else {
-            self.category_rows
-                .iter()
-                .map(|row| {
-                    let check = if panel.categories.contains(&row.id) {
-                        "■ "
-                    } else {
-                        "□ "
-                    };
-                    let indent = "  ".repeat(row.depth);
-                    let reserved = if row.is_reserved { " [reserved]" } else { "" };
-                    ListItem::new(format!("{check}{indent}{}{reserved}", row.name))
-                })
-                .collect()
-        };
-        let item_count = items.len();
-        let mut state = Self::list_state_for(chunks[1], Some(picker_index));
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style()),
-            chunks[1],
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
-    }
-
-    /// Returns the display names for a set of category IDs.
-    fn category_names_for_ids(
-        &self,
-        ids: &std::collections::HashSet<agenda_core::model::CategoryId>,
-    ) -> Vec<String> {
-        ids.iter()
-            .filter_map(|id| {
-                self.category_rows
-                    .iter()
-                    .find(|row| row.id == *id)
-                    .map(|row| row.name.clone())
-            })
-            .collect()
     }
 
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
