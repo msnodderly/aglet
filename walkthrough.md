@@ -1,1030 +1,1120 @@
-# Linked Items MVP Plan (`depends-on` / `blocks` / `related`)
+# Aglet Codebase Walkthrough
 
-## Goal
+*2026-02-25T01:28:52Z by Showboat 0.6.1*
+<!-- showboat-id: 3e04c8a4-3e4c-4bcf-8273-6036d0a3ba4c -->
 
-Implement item-to-item links in aglet with:
+Aglet is a personal agenda and task-management system built in Rust. It is a workspace of three crates:
 
-- Hard dependency links (`depends-on`)
-- Inverse vocabulary (`blocks`) in CLI/TUI output and commands
-- Soft, bidirectional links (`related`)
+- **`agenda-core`** — the domain library: data model, SQLite storage, a rule engine that auto-categorises items, natural-language date parsing, and view resolution.
+- **`agenda-cli`** — a Clap-powered command-line interface.
+- **`agenda-tui`** — an interactive terminal UI built with ratatui / crossterm.
 
-Out of scope for this MVP:
+The database is a single SQLite file (`.ag` extension). Items flow through a pipeline: text is parsed for dates, matched against category names for auto-assignment, and rules cascade through a fixed-point engine. Views then slice and group items for display.
 
-- `parent-child` links
-- readiness/blocked status integration into query/view engine
-- TUI multi-item marking (but design APIs to support it next)
-- delete/restore link snapshotting in `deletion_log` (follow-up)
+We will walk through the code bottom-up, starting with the data model and working our way up to the frontends.
 
-This plan is designed for the current aglet architecture:
+## 1. Workspace Layout
 
-- storage in `agenda-core/src/store.rs`
-- behavior validation in `agenda-core/src/agenda.rs`
-- CLI surfaces in `agenda-cli/src/main.rs`
-- TUI read-only display first, editing later
+The workspace root `Cargo.toml` declares three member crates:
 
-## Semantics (MVP)
+```bash
+cat Cargo.toml
+```
 
-### Canonical semantics
+```output
+[workspace]
+resolver = "2"
+members = [
+    "crates/agenda-core",
+    "crates/agenda-tui",
+    "crates/agenda-cli",
+]```
+```
 
-- `A depends-on B` means `B blocks A`
-- Store only `depends-on` as the canonical hard dependency direction
-- Expose `blocks` as an alias/inverse in user-facing commands and output
+Each crate has a focused purpose. `agenda-core` depends only on rusqlite, uuid, chrono, serde. The CLI adds clap. The TUI adds ratatui and crossterm. Both frontends depend on `agenda-core`.
 
-### `related` semantics
+## 2. The Data Model (`agenda-core/src/model.rs`)
 
-- `A related B` is non-blocking and bidirectional
-- Persist as a single normalized row (not two mirrored rows)
-- Reads for an item return neighbors from either endpoint column
+Everything starts with four core entities: **Items**, **Categories**, **Views**, and **Assignments**. Let us look at each.
 
-### Invariants
+### Items
 
-- No self-links for any kind
-- `depends-on` must be acyclic
-- `related` does not participate in cycle detection
-- `related` and `depends-on` may coexist between the same pair
+An Item is a task or note. It has text, an optional note, timestamps, an optional `when_date` (parsed from natural language), and a `done` state. Its `assignments` map holds all the categories it belongs to.
 
-## Terminology Mapping
+```bash
+sed -n "9,21p" crates/agenda-core/src/model.rs
+```
 
-| User Phrase | Internal Meaning | Stored Kind | Stored Direction |
-|---|---|---|---|
-| `A depends on B` | hard prerequisite | `depends-on` | `A -> B` |
-| `A blocks B` | inverse hard prerequisite | `depends-on` | store as `B -> A` |
-| `A related B` | soft association | `related` | normalized pair only |
+```output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Item {
+    pub id: ItemId,
+    pub text: String,
+    pub note: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub modified_at: DateTime<Utc>,
+    pub entry_date: NaiveDate,
+    pub when_date: Option<NaiveDateTime>,
+    pub done_date: Option<NaiveDateTime>,
+    pub is_done: bool,
+    pub assignments: HashMap<CategoryId, Assignment>,
+}
+```
 
-## Data Model Additions (`agenda-core/src/model.rs`)
+### Assignments
 
-Add explicit link types to the domain model. Do not embed links into `Item` yet for MVP; keep link loading/querying explicit through `Store` to minimize churn.
+Each assignment records *how* an item came to be in a category. The `AssignmentSource` enum distinguishes manual assignments from engine-driven ones: `Manual` (user did it), `AutoMatch` (implicit string matching), `Action` (a rule fired), or `Subsumption` (inherited from a child category up to its parent).
 
-```rust
-use chrono::{DateTime, Utc};
+```bash
+sed -n "23,37p" crates/agenda-core/src/model.rs
+```
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ItemLinkKind {
-    #[serde(rename = "depends-on")]
-    DependsOn,
-    #[serde(rename = "related")]
-    Related,
+```output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Assignment {
+    pub source: AssignmentSource,
+    pub assigned_at: DateTime<Utc>,
+    pub sticky: bool,
+    pub origin: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssignmentSource {
+    Manual,
+    AutoMatch,
+    Action,
+    Subsumption,
+}
+```
+
+### Categories
+
+Categories form a tree. A parent can be marked `is_exclusive`, meaning only one of its children can be assigned to an item at a time (e.g., a "Priority" parent with children "High" / "Medium" / "Low"). Categories can carry **conditions** (rules that auto-match items) and **actions** (side-effects that fire when the category is assigned).
+
+```bash
+sed -n "39,65p" crates/agenda-core/src/model.rs
+```
+
+```output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Category {
+    pub id: CategoryId,
+    pub name: String,
+    pub parent: Option<CategoryId>,
+    pub children: Vec<CategoryId>,
+    pub is_exclusive: bool,
+    pub is_actionable: bool,
+    pub enable_implicit_string: bool,
+    pub note: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub modified_at: DateTime<Utc>,
+    pub conditions: Vec<Condition>,
+    pub actions: Vec<Action>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ItemLink {
-    /// Endpoint semantics depend on `kind`:
-    /// - DependsOn: item_id = dependent, other_item_id = dependency
-    /// - Related: normalized unordered pair (item_id < other_item_id)
-    pub item_id: ItemId,
-    pub other_item_id: ItemId,
-    pub kind: ItemLinkKind,
-    pub created_at: DateTime<Utc>,
-    pub origin: Option<String>,
+pub enum Condition {
+    ImplicitString,
+    Profile { criteria: Box<Query> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Action {
+    Assign { targets: HashSet<CategoryId> },
+    Remove { targets: HashSet<CategoryId> },
 }
 ```
 
-Optional (nice-to-have for CLI/TUI rendering):
+Key flags on `Category`:
 
-```rust
-#[derive(Debug, Clone)]
-pub struct ItemLinksForItem {
-    pub depends_on: Vec<ItemId>,  // immediate prerequisites
-    pub blocks: Vec<ItemId>,      // immediate dependents (inverse view)
-    pub related: Vec<ItemId>,     // soft links
+- **`is_exclusive`** — on a parent, enforces mutual exclusion among its children.
+- **`is_actionable`** — items must have at least one actionable category to be marked "done".
+- **`enable_implicit_string`** — controls whether the substring classifier auto-matches the category name in item text. Reserved categories (When, Entry, Done) have this disabled so words like "done" in normal text do not trigger assignment.
+
+The two `Condition` variants:
+- `ImplicitString` — matches if the category name appears as a whole word in item text.
+- `Profile` — matches if the item's current assignments satisfy a `Query` (AND/NOT/OR criteria).
+
+The two `Action` variants:
+- `Assign` — when this category matches, also assign additional target categories.
+- `Remove` — when this category matches, remove (unassign) target categories.
+
+### Views, Sections, and Queries
+
+A **View** is a saved lens over the item collection. It has top-level criteria (which items appear at all), an ordered list of **Sections** (sub-groups), and an optional "unmatched" bucket for items that pass the view criteria but do not land in any section.
+
+A **Section** has its own criteria, optional columns (for board-style display), and edit-through sets (`on_insert_assign`, `on_remove_unassign`) that define what category changes happen when a user drags items in/out.
+
+Both views and sections use **Query**, which combines:
+- **Criteria**: a list of `(mode, category_id)` pairs where mode is And, Not, or Or.
+- **Virtual include/exclude**: temporal WhenBucket filters (Overdue, Today, Tomorrow, etc.).
+- **Text search**: optional free-text filter.
+
+```bash
+sed -n "67,102p" crates/agenda-core/src/model.rs
+```
+
+```output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct View {
+    pub id: Uuid,
+    pub name: String,
+    pub criteria: Query,
+    pub sections: Vec<Section>,
+    pub show_unmatched: bool,
+    pub unmatched_label: String,
+    pub remove_from_view_unassign: HashSet<CategoryId>,
+    #[serde(default)]
+    pub item_column_label: Option<String>,
+    #[serde(default)]
+    pub board_display_mode: BoardDisplayMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum BoardDisplayMode {
+    #[default]
+    SingleLine,
+    MultiLine,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Section {
+    pub title: String,
+    pub criteria: Query,
+    #[serde(default)]
+    pub columns: Vec<Column>,
+    #[serde(default)]
+    pub item_column_index: usize,
+    pub on_insert_assign: HashSet<CategoryId>,
+    pub on_remove_unassign: HashSet<CategoryId>,
+    pub show_children: bool,
+    #[serde(default)]
+    pub board_display_mode_override: Option<BoardDisplayMode>,
 }
 ```
 
-## Exact MVP SQLite Schema (`agenda-core/src/store.rs`)
+## 3. Error Handling (`agenda-core/src/error.rs`)
 
-### `SCHEMA_VERSION`
+The crate defines a single `AgendaError` enum with five variants that cover all failure modes. Every public function returns `Result<T, AgendaError>`. SQLite errors are wrapped via a `From<rusqlite::Error>` impl.
 
-Bump:
-
-```rust
-const SCHEMA_VERSION: i32 = 5;
+```bash
+sed -n "6,23p" crates/agenda-core/src/error.rs
 ```
 
-### Add to `SCHEMA_SQL`
+```output
+pub enum AgendaError {
+    /// Referenced entity not found.
+    NotFound { entity: &'static str, id: Uuid },
 
-```sql
-CREATE TABLE IF NOT EXISTS item_links (
-    item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-    other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-    kind          TEXT NOT NULL,
-    created_at    TEXT NOT NULL,
-    origin        TEXT,
-    metadata_json TEXT NOT NULL DEFAULT '{}',
+    /// Category name already exists (case-insensitive).
+    DuplicateName { name: String },
 
-    PRIMARY KEY (item_id, other_item_id, kind),
+    /// Attempted to modify or delete a reserved category (When, Entry, Done).
+    ReservedName { name: String },
 
-    CHECK (item_id <> other_item_id),
-    CHECK (kind IN ('depends-on', 'related')),
-    -- For related links, store a single canonical row by UUID string order.
-    CHECK (kind <> 'related' OR item_id < other_item_id)
-);
+    /// Operation not valid in current state (e.g., assigning to deleted item).
+    InvalidOperation { message: String },
 
-CREATE INDEX IF NOT EXISTS idx_item_links_item_kind
-    ON item_links(item_id, kind);
-CREATE INDEX IF NOT EXISTS idx_item_links_other_kind
-    ON item_links(other_item_id, kind);
-CREATE INDEX IF NOT EXISTS idx_item_links_kind
-    ON item_links(kind);
-```
-
-Notes:
-
-- `metadata_json` is optional for MVP behavior, but cheap to reserve now for future link annotations.
-- UUID lexical comparison is safe here because IDs are fixed-length UUID strings.
-
-### Migration plan (`apply_migrations`)
-
-Use idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` in `apply_migrations` so existing databases upgrade safely.
-
-```rust
-fn apply_migrations(&self, from_version: i32) -> Result<()> {
-    // existing migrations...
-
-    if from_version < 5 {
-        self.conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS item_links (
-                item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                kind          TEXT NOT NULL,
-                created_at    TEXT NOT NULL,
-                origin        TEXT,
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                PRIMARY KEY (item_id, other_item_id, kind),
-                CHECK (item_id <> other_item_id),
-                CHECK (kind IN ('depends-on', 'related')),
-                CHECK (kind <> 'related' OR item_id < other_item_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_item_links_item_kind
-                ON item_links(item_id, kind);
-            CREATE INDEX IF NOT EXISTS idx_item_links_other_kind
-                ON item_links(other_item_id, kind);
-            CREATE INDEX IF NOT EXISTS idx_item_links_kind
-                ON item_links(kind);
-            "#,
-        )?;
-    }
-
-    Ok(())
-}
-```
-
-## Store Layer Design (`agenda-core/src/store.rs`)
-
-Keep `Store` focused on persistence and retrieval; do not put cycle detection here.
-
-### Exact MVP Store API signatures
-
-```rust
-use crate::model::{ItemLink, ItemLinkKind, ItemId};
-use crate::error::Result;
-
-impl Store {
-    pub fn create_item_link(&self, link: &ItemLink) -> Result<()>;
-
-    pub fn delete_item_link(
-        &self,
-        item_id: ItemId,
-        other_item_id: ItemId,
-        kind: ItemLinkKind,
-    ) -> Result<()>;
-
-    pub fn item_link_exists(
-        &self,
-        item_id: ItemId,
-        other_item_id: ItemId,
-        kind: ItemLinkKind,
-    ) -> Result<bool>;
-
-    /// Immediate prerequisites for a dependent item (outbound depends-on edges).
-    pub fn list_dependency_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-
-    /// Immediate dependents of an item (inbound depends-on edges; inverse "blocks" view).
-    pub fn list_dependent_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-
-    /// Immediate related items (symmetric query over normalized `related` rows).
-    pub fn list_related_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-
-    /// Optional convenience for `agenda show` / TUI panels.
-    pub fn list_item_links_for_item(&self, item_id: ItemId) -> Result<Vec<ItemLink>>;
-}
-```
-
-### Store implementation notes
-
-- `create_item_link` should fail with FK error if item IDs do not exist (Agenda will pre-validate for nicer errors).
-- `delete_item_link` should be idempotent (`DELETE ...` and return `Ok(())` even if absent), matching assignment removal style.
-- `item_link_exists` is useful to avoid duplicate insert errors and produce clean status messages in batch linking.
-
-### Row parser + kind encoding helpers
-
-```rust
-fn item_link_kind_to_str(kind: ItemLinkKind) -> &'static str {
-    match kind {
-        ItemLinkKind::DependsOn => "depends-on",
-        ItemLinkKind::Related => "related",
-    }
-}
-
-fn item_link_kind_from_str(s: &str) -> ItemLinkKind {
-    match s {
-        "depends-on" => ItemLinkKind::DependsOn,
-        "related" => ItemLinkKind::Related,
-        _ => ItemLinkKind::Related, // defensive fallback; consider hard error
-    }
-}
-```
-
-### `related` query pattern
-
-```sql
-SELECT item_id, other_item_id, kind, created_at, origin
-FROM item_links
-WHERE kind = 'related'
-  AND (item_id = ?1 OR other_item_id = ?1)
-ORDER BY created_at ASC;
-```
-
-Then map neighbor as:
-
-```rust
-let neighbor_id = if row.item_id == item_id {
-    row.other_item_id
-} else {
-    row.item_id
-};
-```
-
-## Agenda Layer Design (`agenda-core/src/agenda.rs`)
-
-Put all semantic rules here:
-
-- self-link rejection
-- canonicalization for `related`
-- `blocks` alias inversion
-- `depends-on` cycle detection
-- batch linking support for future TUI multi-marking
-
-### Exact MVP Agenda API signatures (as proposed, now concretized)
-
-```rust
-use crate::error::Result;
-use crate::model::{ItemId, ItemLink, ItemLinkKind};
-
-#[derive(Debug, Default, Clone)]
-pub struct LinkItemsResult {
-    pub created: usize,
-    pub skipped_existing: usize,
-}
-
-impl<'a> Agenda<'a> {
-    pub fn link_items_depends_on(
-        &self,
-        dependent_id: ItemId,
-        dependency_id: ItemId,
-        origin: Option<String>,
-    ) -> Result<()>;
-
-    pub fn link_items_blocks(
-        &self,
-        blocker_id: ItemId,
-        blocked_id: ItemId,
-        origin: Option<String>,
-    ) -> Result<()>;
-
-    pub fn link_items_related(
-        &self,
-        a: ItemId,
-        b: ItemId,
-        origin: Option<String>,
-    ) -> Result<()>;
-
-    pub fn unlink_items_depends_on(
-        &self,
-        dependent_id: ItemId,
-        dependency_id: ItemId,
-    ) -> Result<()>;
-
-    pub fn unlink_items_blocks(
-        &self,
-        blocker_id: ItemId,
-        blocked_id: ItemId,
-    ) -> Result<()>;
-
-    pub fn unlink_items_related(&self, a: ItemId, b: ItemId) -> Result<()>;
-
-    /// Batch-friendly API for future TUI multi-marking ("make current item dependent on marked items").
-    pub fn link_items_depends_on_many(
-        &self,
-        dependent_id: ItemId,
-        dependency_ids: &[ItemId],
-        origin: Option<String>,
-    ) -> Result<LinkItemsResult>;
-}
-```
-
-### Optional read APIs (Lotus-style utilities support)
-
-```rust
-impl<'a> Agenda<'a> {
-    pub fn immediate_prereq_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-    pub fn immediate_dependent_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-    pub fn immediate_related_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-
-    pub fn all_prereq_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-    pub fn all_dependent_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
-
-    pub fn list_items_with_prereqs(&self) -> Result<Vec<ItemId>>;
-    pub fn list_items_with_dependents(&self) -> Result<Vec<ItemId>>;
-}
-```
-
-### Canonicalization helpers (Agenda private)
-
-```rust
-fn normalize_related_pair(a: ItemId, b: ItemId) -> (ItemId, ItemId) {
-    let a_str = a.to_string();
-    let b_str = b.to_string();
-    if a_str <= b_str { (a, b) } else { (b, a) }
-}
-
-fn build_link(
-    &self,
-    item_id: ItemId,
-    other_item_id: ItemId,
-    kind: ItemLinkKind,
-    origin: Option<String>,
-) -> ItemLink {
-    ItemLink {
-        item_id,
-        other_item_id,
-        kind,
-        created_at: Utc::now(),
-        origin,
-    }
-}
-```
-
-### Cycle detection (depends-on only)
-
-When adding `dependent -> dependency`, reject if `dependency` already reaches `dependent` through existing `depends-on` edges.
-
-```rust
-fn ensure_depends_on_no_cycle(
-    &self,
-    dependent_id: ItemId,
-    dependency_id: ItemId,
-) -> Result<()> {
-    use std::collections::HashSet;
-
-    if dependent_id == dependency_id {
-        return Err(AgendaError::InvalidOperation {
-            message: "item cannot depend on itself".to_string(),
-        });
-    }
-
-    let mut seen = HashSet::new();
-    let mut stack = vec![dependency_id];
-
-    while let Some(current) = stack.pop() {
-        if !seen.insert(current) {
-            continue;
-        }
-        if current == dependent_id {
-            return Err(AgendaError::InvalidOperation {
-                message: format!(
-                    "adding dependency would create a cycle: {} depends-on ... depends-on {}",
-                    dependency_id, dependent_id
-                ),
-            });
-        }
-        stack.extend(self.store.list_dependency_ids_for_item(current)?);
-    }
-
-    Ok(())
-}
-```
-
-## CLI Implementation Plan (`agenda-cli/src/main.rs`)
-
-### Phase 1 (MVP CLI)
-
-Add a new top-level subcommand:
-
-```rust
-enum Command {
-    // ...
-    Link {
-        #[command(subcommand)]
-        command: LinkCommand,
+    /// SQLite or other storage failure.
+    StorageError {
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
-
-#[derive(Subcommand, Debug)]
-enum LinkCommand {
-    DependsOn { dependent_id: String, dependency_id: String },
-    Blocks { blocker_id: String, blocked_id: String },
-    Related { item_a_id: String, item_b_id: String },
-
-    UnlinkDependsOn { dependent_id: String, dependency_id: String },
-    UnlinkBlocks { blocker_id: String, blocked_id: String },
-    UnlinkRelated { item_a_id: String, item_b_id: String },
-}
 ```
 
-Command behavior:
+## 4. The Storage Layer (`agenda-core/src/store.rs`)
 
-- `depends-on` calls `agenda.link_items_depends_on(...)`
-- `blocks` calls `agenda.link_items_blocks(...)` (inverts args internally)
-- `related` calls `agenda.link_items_related(...)`
-- unlink variants mirror the same semantics
+`Store` wraps a `rusqlite::Connection` and owns the SQLite schema. On first open it creates five tables and their indices:
 
-### Extend `agenda show`
-
-Add link sections after assignments:
-
-```text
-prereqs (depends_on):
-  <id> | open | <text>
-  ...
-
-dependents (blocks):
-  <id> | open | <text>
-  ...
-
-related:
-  <id> | done | <text>
+```bash
+sed -n "19,90p" crates/agenda-core/src/store.rs
 ```
 
-Implementation approach:
+```output
+const SCHEMA_SQL: &str = "
+CREATE TABLE IF NOT EXISTS items (
+    id          TEXT PRIMARY KEY,
+    text        TEXT NOT NULL,
+    note        TEXT,
+    created_at  TEXT NOT NULL,
+    modified_at TEXT NOT NULL,
+    entry_date  TEXT NOT NULL,
+    when_date   TEXT,
+    done_date   TEXT,
+    is_done     INTEGER NOT NULL DEFAULT 0
+);
 
-- use `Store` link queries to get neighbor IDs
-- resolve each neighbor via `get_item`
-- print immediate one-level links only in MVP
+CREATE TABLE IF NOT EXISTS categories (
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    parent_id              TEXT REFERENCES categories(id),
+    is_exclusive           INTEGER NOT NULL DEFAULT 0,
+    is_actionable          INTEGER NOT NULL DEFAULT 1,
+    enable_implicit_string INTEGER NOT NULL DEFAULT 1,
+    note                   TEXT,
+    created_at             TEXT NOT NULL,
+    modified_at            TEXT NOT NULL,
+    sort_order             INTEGER NOT NULL DEFAULT 0,
+    conditions_json        TEXT NOT NULL DEFAULT '[]',
+    actions_json           TEXT NOT NULL DEFAULT '[]'
+);
 
-### Future CLI (Lotus-inspired utilities)
+CREATE TABLE IF NOT EXISTS assignments (
+    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    source      TEXT NOT NULL,
+    assigned_at TEXT NOT NULL,
+    sticky      INTEGER NOT NULL DEFAULT 1,
+    origin      TEXT,
+    PRIMARY KEY (item_id, category_id)
+);
 
-Add traversal commands after MVP:
+CREATE TABLE IF NOT EXISTS views (
+    id                          TEXT PRIMARY KEY,
+    name                        TEXT NOT NULL UNIQUE,
+    criteria_json               TEXT NOT NULL DEFAULT '{}',
+    sections_json               TEXT NOT NULL DEFAULT '[]',
+    columns_json                TEXT NOT NULL DEFAULT '[]',
+    show_unmatched              INTEGER NOT NULL DEFAULT 1,
+    unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
+    remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+    item_column_label           TEXT,
+    board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
+);
 
-- `agenda link prereqs <ITEM_ID> --all-levels`
-- `agenda link depends <ITEM_ID> --all-levels`
-- `agenda link prereqs --every-item`
-- `agenda link depends --every-item`
+CREATE TABLE IF NOT EXISTS deletion_log (
+    id               TEXT PRIMARY KEY,
+    item_id          TEXT NOT NULL,
+    text             TEXT NOT NULL,
+    note             TEXT,
+    entry_date       TEXT NOT NULL,
+    when_date        TEXT,
+    done_date        TEXT,
+    is_done          INTEGER NOT NULL DEFAULT 0,
+    assignments_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at       TEXT NOT NULL,
+    deleted_by       TEXT NOT NULL
+);
 
-These map directly to Lotus Agenda “Show Prereqs / Show Depends” menus.
+CREATE INDEX IF NOT EXISTS idx_assignments_item ON assignments(item_id);
+CREATE INDEX IF NOT EXISTS idx_assignments_category ON assignments(category_id);
+CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
+CREATE INDEX IF NOT EXISTS idx_items_when_date ON items(when_date);
+CREATE INDEX IF NOT EXISTS idx_items_is_done ON items(is_done);
+CREATE INDEX IF NOT EXISTS idx_deletion_log_item ON deletion_log(item_id);
+";
+```
 
-## TUI Plan (`agenda-tui`)
+Key design points in the schema:
 
-### Phase 1 (read-only)
+- **UUIDs as TEXT** primary keys (generated client-side via `uuid::Uuid::new_v4()`).
+- **Category names are UNIQUE COLLATE NOCASE** — no two categories can share the same name regardless of casing.
+- **Assignments** use a composite primary key `(item_id, category_id)` and CASCADE deletes.
+- **Views** store their criteria and sections as JSON blobs (`criteria_json`, `sections_json`).
+- **Deletion log** — deleted items are not lost. They are moved to `deletion_log` with a snapshot of their assignments, enabling restore.
 
-Show link info in Preview Summary panel (`render/mod.rs`) beneath Categories:
+On first launch, the store also creates three **reserved categories** (`When`, `Entry`, `Done`) and a default "All Items" view. Reserved categories have `enable_implicit_string = false` and `is_actionable = false` so they do not interfere with normal text matching.
 
-- `Prereqs:` immediate dependencies
-- `Blocks:` immediate dependents
-- `Related:` immediate related items
+The `Store` exposes CRUD methods for each entity. Category hierarchy is assembled by `get_hierarchy()`, which queries all categories, sorts by `sort_order`, and builds the parent-child tree via a depth-first flattening pass.
 
-No new modes yet.
+## 5. The Text Classifier (`agenda-core/src/matcher.rs`)
 
-### Phase 2 (editing)
+The `Classifier` trait is the extension point for text-to-category matching. The MVP implementation, `SubstringClassifier`, does **case-insensitive word-boundary substring matching**. It finds the category name in the item text, but only if surrounded by non-alphanumeric boundaries—preventing "Condone" from matching "Done" or "Sarahville" from matching "Sarah".
 
-Add link editing workflow from selected item:
+```bash
+sed -n "1,38p" crates/agenda-core/src/matcher.rs
+```
 
-- open a simple link action palette
-- add/remove `depends-on` / `related`
-- reuse item ID parsing + picker patterns where possible
-
-### Phase 3 (Lotus-style multi-item marking)
-
-This is implied by “make current item dependent on marked item(s)” and should be built on top of the batch API already in `Agenda`.
-
-Proposed `App` state addition:
-
-```rust
+```output
 use std::collections::HashSet;
 
-struct App {
-    // ...
-    marked_item_ids: HashSet<ItemId>,
+/// Classifier interface for category matching.
+///
+/// `None` means no match; `Some(confidence)` means match.
+pub trait Classifier: Send + Sync {
+    fn classify(&self, text: &str, category_name: &str) -> Option<f32>;
+}
+
+/// MVP classifier that performs case-insensitive word-boundary substring matches.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SubstringClassifier;
+
+impl Classifier for SubstringClassifier {
+    fn classify(&self, text: &str, category_name: &str) -> Option<f32> {
+        let needle = category_name.trim();
+        if needle.is_empty() {
+            return None;
+        }
+
+        let haystack_lower = text.to_ascii_lowercase();
+        let needle_lower = needle.to_ascii_lowercase();
+
+        let mut offset = 0usize;
+        while let Some(relative_idx) = haystack_lower[offset..].find(&needle_lower) {
+            let start = offset + relative_idx;
+            let end = start + needle_lower.len();
+
+            if has_word_boundaries(&haystack_lower, start, end) {
+                return Some(1.0);
+            }
+
+            offset = start + 1;
+        }
+
+        None
+    }
 }
 ```
 
-Why mark by `ItemId` (not row index):
+The module also provides `extract_hashtag_tokens()` and `unknown_hashtag_tokens()` — these parse `#hashtag` tokens from item text and compare them against known category names. The CLI uses this to warn users about unknown hashtags when adding items.
 
-- survives refresh/view re-resolution
-- works across slots/sections
-- matches Lotus semantics of marked items “in the file”
+## 6. Date Parsing (`agenda-core/src/dates.rs`)
 
-Proposed TUI behavior (follow-up):
+The `DateParser` trait and its `BasicDateParser` implementation extract dates from natural language in item text. It supports:
 
-- mark/unmark current item
-- clear all marks
-- “make current item dependent on marked items” => `link_items_depends_on_many(current, marked, ...)`
-- skip self if current item is marked
+- **Relative words**: "today", "tomorrow", "yesterday"
+- **Relative weekdays**: "this Tuesday", "next Friday"  
+- **Month-day formats**: "March 15", "May 25, 2026"
+- **ISO dates**: "2026-02-24", "20260224"
+- **Numeric M/D/Y**: "2/24/2026"
+- **Compound time**: "tomorrow at 3pm", "next Tuesday at noon", "May 25 at 15:00"
 
-## Traversal Implementation (Lotus “One Level” / “All Levels”)
+The parser is deterministic — no AI, no ambiguity. A `WeekdayDisambiguationPolicy` controls whether "next Tuesday" means the following calendar week (StrictNextWeek, the default) or the next occurrence (InclusiveNext).
 
-### Immediate (One Level)
+```bash
+sed -n "60,73p" crates/agenda-core/src/dates.rs
+```
 
-- `Prereqs`: `Store::list_dependency_ids_for_item(current)`
-- `Depends`: `Store::list_dependent_ids_for_item(current)`
+```output
+impl DateParser for BasicDateParser {
+    fn parse(&self, text: &str, reference_date: NaiveDate) -> Option<ParsedDate> {
+        let bytes = text.as_bytes();
+        let mut best = None;
 
-### Transitive (All Levels)
+        scan_relative_dates(bytes, reference_date, self.weekday_policy, &mut best);
+        scan_month_name_dates(bytes, reference_date, &mut best);
+        scan_iso_dashed_dates(bytes, &mut best);
+        scan_iso_compact_dates(bytes, &mut best);
+        scan_numeric_mdy_dates(bytes, &mut best);
 
-Use BFS/DFS with visited set over the appropriate adjacency query.
+        best.map(|parsed| attach_trailing_time(bytes, parsed))
+    }
+}
+```
 
-```rust
-fn collect_transitive(
-    &self,
-    start: ItemId,
-    next_ids: impl Fn(ItemId) -> Result<Vec<ItemId>>,
-) -> Result<Vec<ItemId>> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    let mut stack = next_ids(start)?;
+The parser runs all scanners and picks the best match. It then checks for a trailing "at <time>" suffix and merges it into the datetime. The `ParsedDate` struct carries byte-offset spans so callers know which part of the text was consumed.
 
-    while let Some(id) = stack.pop() {
-        if !seen.insert(id) {
+## 7. The Rule Engine (`agenda-core/src/engine.rs`)
+
+This is the heart of aglet's automation. When an item is created or updated, `process_item()` runs a **fixed-point loop** over the full category hierarchy. Each pass:
+
+1. Evaluates every category against the item (implicit string match + profile conditions).
+2. For matches, assigns the category (respecting mutual exclusion on exclusive parents).
+3. Fires any **actions** attached to newly matched categories (Assign → add more categories, Remove → defer removals).
+4. Walks up the tree to assign **subsumption ancestors** (if "High" is assigned and its parent is "Priority", then "Priority" is also assigned).
+5. If any new assignments were made, runs another pass (actions can trigger further matches).
+
+The loop converges when a pass produces no new assignments, or errors if it exceeds 10 passes (indicating a cycle). Remove actions are **deferred** until after the loop finishes to avoid interfering with in-progress matching.
+
+All engine writes happen inside a SQLite **savepoint**. If the engine errors (e.g. cycle cap), the savepoint is rolled back and no partial assignments are left behind.
+
+```bash
+sed -n "47,139p" crates/agenda-core/src/engine.rs
+```
+
+```output
+/// Process one item through fixed-point category evaluation.
+///
+/// The engine performs repeated hierarchy passes until a pass yields no new
+/// assignments, or returns an error if it would require more than MAX_PASSES.
+/// Remove actions are deferred during the cascade and applied once at the end.
+pub fn process_item(
+    store: &Store,
+    classifier: &dyn Classifier,
+    item_id: ItemId,
+) -> Result<ProcessItemResult> {
+    run_in_savepoint(store, || process_item_inner(store, classifier, item_id))
+}
+
+/// Evaluate all items in the store against the current hierarchy.
+///
+/// Error strategy for MVP: fail fast. If one item processing run fails,
+/// return that error immediately rather than skipping it and continuing.
+pub fn evaluate_all_items(
+    store: &Store,
+    classifier: &dyn Classifier,
+    category_id: CategoryId,
+) -> Result<EvaluateAllItemsResult> {
+    // Validate the target category exists before beginning retroactive work.
+    store.get_category(category_id)?;
+
+    let mut result = EvaluateAllItemsResult::default();
+    let items = store.list_items()?;
+
+    for item in items {
+        let process_result = process_item(store, classifier, item.id)?;
+
+        result.processed_items += 1;
+        result.total_new_assignments += process_result.new_assignments.len();
+        result.total_deferred_removals += process_result.deferred_removals.len();
+
+        if !process_result.new_assignments.is_empty()
+            || !process_result.deferred_removals.is_empty()
+        {
+            result.affected_items += 1;
+        }
+    }
+
+    Ok(result)
+}
+
+fn process_item_inner(
+    store: &Store,
+    classifier: &dyn Classifier,
+    item_id: ItemId,
+) -> Result<ProcessItemResult> {
+    let item = store.get_item(item_id)?;
+    let categories = store.get_hierarchy()?;
+
+    let mut assignments = item.assignments;
+    let mut seen_pairs: HashSet<(ItemId, CategoryId)> = assignments
+        .keys()
+        .copied()
+        .map(|category_id| (item_id, category_id))
+        .collect();
+
+    let mut result = ProcessItemResult::default();
+
+    for pass in 1..=MAX_PASSES {
+        let pass_result = run_hierarchy_pass(
+            store,
+            classifier,
+            item_id,
+            &item.text,
+            &categories,
+            &mut assignments,
+            &mut seen_pairs,
+        )?;
+
+        let made_new_assignments = !pass_result.new_assignments.is_empty();
+
+        result.new_assignments.extend(pass_result.new_assignments);
+        result
+            .deferred_removals
+            .extend(pass_result.deferred_removals);
+
+        if !made_new_assignments {
+            apply_deferred_removals(store, item_id, &result.deferred_removals)?;
+            return Ok(result);
+        }
+
+        if pass == MAX_PASSES {
+            apply_deferred_removals(store, item_id, &result.deferred_removals)?;
+            return Err(pass_cap_error(item_id));
+        }
+    }
+
+    unreachable!("fixed-point loop should always return from within MAX_PASSES");
+}
+```
+
+The engine also handles **mutual exclusion** during the cascade. When assigning a category whose parent is exclusive, `enforce_mutual_exclusion()` removes any siblings that are already assigned:
+
+```bash
+sed -n "350,381p" crates/agenda-core/src/engine.rs
+```
+
+```output
+fn enforce_mutual_exclusion(
+    store: &Store,
+    item_id: ItemId,
+    category_id: CategoryId,
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    assignments: &mut HashMap<CategoryId, Assignment>,
+) -> Result<()> {
+    let Some(category) = categories_by_id.get(&category_id) else {
+        return Ok(());
+    };
+    let Some(parent_id) = category.parent else {
+        return Ok(());
+    };
+    let Some(parent) = categories_by_id.get(&parent_id) else {
+        return Ok(());
+    };
+    if !parent.is_exclusive {
+        return Ok(());
+    }
+
+    for sibling_id in &parent.children {
+        if *sibling_id == category_id {
             continue;
         }
-        out.push(id);
-        stack.extend(next_ids(id)?);
+
+        if assignments.remove(sibling_id).is_some() {
+            store.unassign_item(item_id, *sibling_id)?;
+        }
     }
 
-    Ok(out)
+    Ok(())
 }
 ```
 
-## Delete / Restore Behavior (MVP Decision)
+## 8. The Integration Layer (`agenda-core/src/agenda.rs`)
 
-MVP decision: **do not snapshot links in `deletion_log` yet**.
+`Agenda` is the synchronous API surface that wires together the Store, Classifier, and Engine. Every mutating operation goes through `Agenda` — it is the single entry point that ensures the engine runs after each change. Here is how item creation flows:
 
-Behavior:
+```bash
+sed -n "14,56p" crates/agenda-core/src/agenda.rs
+```
 
-- deleting an item cascades and removes its links via FK
-- restoring an item does not restore prior links
+```output
+/// Synchronous integration layer that wires Store mutations to engine execution.
+pub struct Agenda<'a> {
+    store: &'a Store,
+    classifier: &'a dyn Classifier,
+    date_parser: BasicDateParser,
+}
 
-Rationale:
-
-- keeps MVP focused on link semantics + UI
-- avoids expanding `deletion_log` schema and restore logic immediately
-
-Follow-up (recommended):
-
-- add `item_links_json` to `deletion_log`
-- restore links best-effort when counterpart items still exist
-
-## Testing Plan
-
-### `agenda-core/src/store.rs`
-
-- schema init creates `item_links`
-- migration from v4 adds `item_links`
-- create/delete `depends-on`
-- create/delete `related`
-- `related` normalization check enforced (via Agenda + DB CHECK)
-- cascade delete removes links when item deleted
-- inbound/outbound/symmetric query helpers return correct IDs
-
-### `agenda-core/src/agenda.rs`
-
-- rejects self `depends-on`
-- rejects self `related`
-- rejects `depends-on` cycle (`A->B`, `B->A`, longer cycle)
-- allows `related` cycles/triangles (`A~B~C~A`)
-- `blocks` alias creates `depends-on` inverse correctly
-- `related` insert is idempotent via normalized pair + exists check
-- `link_items_depends_on_many` reports created/skipped counts correctly
-
-### `agenda-cli/src/main.rs`
-
-- parse/dispatch `link` subcommands
-- `agenda show` prints prereqs/dependents/related sections
-- `blocks` and `depends-on` produce same stored edge semantics
-
-### `agenda-tui` (Phase 1)
-
-- preview summary renders link lines for selected item
-- no regressions to existing category/provenance panels
-
-## Implementation Order (Recommended)
-
-1. `agenda-core/model.rs`
-   - add `ItemLinkKind` + `ItemLink`
-2. `agenda-core/store.rs`
-   - schema v5 + migration
-   - persistence/query helpers
-3. `agenda-core/agenda.rs`
-   - link/unlink APIs
-   - normalization + cycle detection
-   - batch depends-on helper
-4. `agenda-core` tests
-5. `agenda-cli`
-   - `link` subcommands
-   - `show` output enhancements
-6. `agenda-tui` Phase 1
-   - read-only preview display
-7. Follow-up issues
-   - transitive CLI commands (Lotus utilities)
-   - TUI multi-marking + batch link action
-   - delete/restore link snapshotting
-
-## Notes on Future Readiness Integration
-
-If aglet later grows a “ready” command/view semantics based on dependencies:
-
-- only `depends-on` should block readiness
-- `related` remains informational
-- keep per-kind behavior centralized (e.g., helper methods on `ItemLinkKind`)
-
-Example helper:
-
-```rust
-impl ItemLinkKind {
-    pub fn affects_readiness(self) -> bool {
-        matches!(self, ItemLinkKind::DependsOn)
+impl<'a> Agenda<'a> {
+    pub fn new(store: &'a Store, classifier: &'a dyn Classifier) -> Self {
+        Self {
+            store,
+            classifier,
+            date_parser: BasicDateParser::default(),
+        }
     }
 
-    pub fn is_symmetric(self) -> bool {
-        matches!(self, ItemLinkKind::Related)
+    pub fn store(&self) -> &Store {
+        self.store
+    }
+
+    pub fn create_item(&self, item: &Item) -> Result<ProcessItemResult> {
+        self.create_item_with_reference_date(item, Utc::now().date_naive())
+    }
+
+    pub fn create_item_with_reference_date(
+        &self,
+        item: &Item,
+        reference_date: NaiveDate,
+    ) -> Result<ProcessItemResult> {
+        let mut item_to_create = item.clone();
+        let parsed_datetime = self.parse_datetime_from_text(&item_to_create.text, reference_date);
+        if let Some(datetime) = parsed_datetime {
+            item_to_create.when_date = Some(datetime);
+        }
+
+        self.store.create_item(&item_to_create)?;
+
+        if parsed_datetime.is_some() {
+            self.assign_when_provenance(item_to_create.id)?;
+        }
+
+        process_item(self.store, self.classifier, item_to_create.id)
+    }
+```
+
+The flow for `create_item` is:
+
+1. Parse the item text for a date expression → set `when_date` if found.
+2. Persist the item to SQLite via `store.create_item()`.
+3. If a date was parsed, assign the reserved "When" category (provenance tracking).
+4. Run the rule engine via `process_item()` → auto-assigns categories, fires actions, builds subsumption chain.
+
+The Agenda layer also handles **manual assignment** with exclusive sibling enforcement, **mark done/not-done** (toggles the "Done" reserved category), **view/section insert/remove** (translates drag-and-drop semantics into category mutations), and **category CRUD** (creating a category triggers `evaluate_all_items` to retroactively match existing items).
+
+## 9. Query & View Resolution (`agenda-core/src/query.rs`)
+
+When it is time to display data, `resolve_view()` evaluates a View against the full item set:
+
+1. Applies the view's top-level query to get the pool of visible items.
+2. For each section, applies the section's query against the pool.
+3. If a section has `show_children = true` and a single And-criterion pointing to a parent category, it auto-expands into subsections — one per child category.
+4. Items that pass the view query but no section query go into the "unmatched" bucket.
+
+The query evaluator checks AND criteria (item must have all), NOT criteria (item must lack all), OR criteria (item must have at least one), virtual WhenBucket filters, and text search.
+
+```bash
+sed -n "101,162p" crates/agenda-core/src/query.rs
+```
+
+```output
+/// Resolve a view into ordered section groups and an optional unmatched group.
+pub fn resolve_view(
+    view: &View,
+    items: &[Item],
+    categories: &[Category],
+    reference_date: NaiveDate,
+) -> ViewResult {
+    let categories_by_id: HashMap<CategoryId, &Category> = categories
+        .iter()
+        .map(|category| (category.id, category))
+        .collect();
+    let view_items: Vec<Item> = evaluate_query(&view.criteria, items, reference_date)
+        .into_iter()
+        .cloned()
+        .collect();
+
+    let mut matched_in_sections = HashSet::new();
+    let sections = view
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(section_index, section)| {
+            let section_items = evaluate_query(&section.criteria, &view_items, reference_date);
+            matched_in_sections.extend(section_items.iter().map(|item| item.id));
+
+            if let Some(subsections) =
+                expand_show_children_subsections(section, &section_items, &categories_by_id)
+            {
+                return ViewSectionResult {
+                    section_index,
+                    title: section.title.clone(),
+                    items: Vec::new(),
+                    subsections,
+                };
+            }
+
+            ViewSectionResult {
+                section_index,
+                title: section.title.clone(),
+                items: section_items.into_iter().cloned().collect(),
+                subsections: Vec::new(),
+            }
+        })
+        .collect();
+
+    let (unmatched, unmatched_label) = if view.show_unmatched {
+        let unmatched_items = view_items
+            .iter()
+            .filter(|item| !matched_in_sections.contains(&item.id))
+            .cloned()
+            .collect();
+        (Some(unmatched_items), Some(view.unmatched_label.clone()))
+    } else {
+        (None, None)
+    };
+
+    ViewResult {
+        sections,
+        unmatched,
+        unmatched_label,
     }
 }
 ```
 
-## Open Questions (Decide Before Implementation Starts)
-
-- Should `agenda show` include only one-level links (recommended MVP) or also counts for transitive chains?
-- Should `related` links be displayed sorted by creation time or item text? (I recommend item text for readability, keep DB query by created_at optional.)
-- Should CLI support batch `depends-on` immediately (e.g., one dependent + many prerequisites), or defer to TUI multi-marking follow-up?
-
-Current recommendation:
-
-- one-level `show`
-- sort rendered neighbors by item text
-- defer CLI batch syntax, but ship `Agenda::link_items_depends_on_many` now
-
-## Detailed TODO Checklist (Do Not Implement Yet)
-
-This checklist is the execution plan broken into concrete tasks. Phases are ordered, but some sub-tasks can run in parallel once prerequisites land.
-
-### Phase 0: Pre-Implementation Decisions and Task Breakdown
-
-- [ ] Confirm MVP command naming in CLI:
-  - `agenda link depends-on`
-  - `agenda link blocks`
-  - `agenda link related`
-- [ ] Confirm whether unlink commands should be nested under `agenda link` (recommended) or split top-level.
-- [ ] Confirm `agenda show` scope is immediate links only (one-level) for MVP.
-- [ ] Confirm `related` rendering sort order (recommended: by item text in display layer).
-- [ ] Decide whether `metadata_json` ships in MVP schema now (recommended yes, unused initially).
-- [ ] Decide whether `Store::list_item_links_for_item` is required in MVP or deferred in favor of dedicated per-kind query methods.
-- [ ] Convert this plan into tracked implementation tasks (feature requests / issues) with explicit dependencies:
-  - core schema/store
-  - agenda validation + traversal
-  - CLI commands
-  - CLI show output
-  - TUI read-only display
-  - tests + docs follow-up
-
-### Phase 1: Domain Model Additions (`agenda-core/src/model.rs`)
-
-- [ ] Add `ItemLinkKind` enum with serde names:
-  - `depends-on`
-  - `related`
-- [ ] Add `ItemLink` struct with fields:
-  - `item_id`
-  - `other_item_id`
-  - `kind`
-  - `created_at`
-  - `origin`
-- [ ] Decide whether to include `metadata_json` in `ItemLink` model immediately:
-  - if yes, add `metadata_json: String` or typed metadata wrapper
-  - if no, keep DB-only for now and document conversion behavior
-- [ ] Add `ItemLinksForItem` convenience struct (optional, recommended for CLI/TUI ergonomics).
-- [ ] Export model additions via existing module usage (no `lib.rs` change needed unless reexports are added later).
-- [ ] Add/adjust model-level tests if there are serde round-trip tests for enums/structs.
-
-Phase 1 exit criteria:
-
-- [ ] New link types compile in `agenda-core`.
-- [ ] Serde names for `depends-on` / `related` are explicit and stable.
-
-### Phase 2: SQLite Schema and Migration (`agenda-core/src/store.rs`)
-
-- [ ] Bump `SCHEMA_VERSION` from `4` to `5`.
-- [ ] Add `item_links` table to `SCHEMA_SQL`.
-- [ ] Add `CHECK` constraints:
-  - no self-link
-  - allowed kinds only (`depends-on`, `related`)
-  - normalized ordering for `related`
-- [ ] Add indices for:
-  - `(item_id, kind)`
-  - `(other_item_id, kind)`
-  - `(kind)`
-- [ ] Add migration block in `apply_migrations(from_version)` for v5.
-- [ ] Ensure migration SQL is idempotent (`IF NOT EXISTS`).
-- [ ] Verify `init()` behavior for:
-  - fresh DBs (schema contains `item_links`)
-  - upgraded DBs (`user_version` set to 5)
-- [ ] Add/extend schema tests:
-  - table exists
-  - schema version bumped
-  - idempotent `init()` still passes
-
-Phase 2 exit criteria:
-
-- [ ] Fresh and upgraded DBs have `item_links`.
-- [ ] Existing tests still pass around init/migration behavior.
-
-### Phase 3: Store Persistence + Query APIs (`agenda-core/src/store.rs`)
-
-#### 3A. Helpers and Row Parsing
-
-- [ ] Add kind string encoder (`ItemLinkKind -> &str`).
-- [ ] Add kind parser (`&str -> ItemLinkKind`) with explicit handling for unknown values.
-- [ ] Add row-to-link parser helper for `item_links` rows.
-- [ ] Choose parse strategy for invalid DB values:
-  - hard error (preferred)
-  - defensive fallback (only if necessary)
-
-#### 3B. Write APIs
-
-- [ ] Implement `create_item_link(&self, link: &ItemLink) -> Result<()>`.
-- [ ] Implement `delete_item_link(...) -> Result<()>` as idempotent delete.
-- [ ] Implement `item_link_exists(...) -> Result<bool>`.
-- [ ] Confirm FK behavior is acceptable for non-existent items (Agenda will pre-validate but Store can still return storage error).
-
-#### 3C. Read APIs (Immediate Neighbors)
-
-- [ ] Implement `list_dependency_ids_for_item(item_id)` (outbound `depends-on`).
-- [ ] Implement `list_dependent_ids_for_item(item_id)` (inbound inverse / `blocks` view).
-- [ ] Implement `list_related_ids_for_item(item_id)` (symmetric query over normalized rows).
-- [ ] Implement optional `list_item_links_for_item(item_id)` convenience method.
-- [ ] Define deterministic ordering at Store level (e.g., by `created_at`) and document that display layers may re-sort.
-
-#### 3D. Store Tests
-
-- [ ] Add tests for `create_item_link` / `delete_item_link`.
-- [ ] Add test for `item_link_exists`.
-- [ ] Add test for `depends-on` outbound lookup.
-- [ ] Add test for `depends-on` inbound lookup (`blocks` inverse).
-- [ ] Add test for `related` symmetric lookup from both endpoints.
-- [ ] Add test for DB self-link constraint rejection.
-- [ ] Add test for DB normalized `related` check rejecting unnormalized row (if inserted directly).
-- [ ] Add test that deleting an item cascades and removes `item_links`.
-- [ ] Add test that two different kinds may coexist for same pair (`depends-on` and `related`).
-
-Phase 3 exit criteria:
-
-- [ ] Store APIs persist and retrieve both link kinds correctly.
-- [ ] Symmetric `related` behavior works via single normalized row.
-
-### Phase 4: Agenda Semantic APIs + Validation (`agenda-core/src/agenda.rs`)
-
-#### 4A. Public APIs
-
-- [ ] Add `LinkItemsResult` struct.
-- [ ] Implement `link_items_depends_on`.
-- [ ] Implement `link_items_blocks` (argument inversion alias).
-- [ ] Implement `link_items_related`.
-- [ ] Implement `unlink_items_depends_on`.
-- [ ] Implement `unlink_items_blocks`.
-- [ ] Implement `unlink_items_related`.
-- [ ] Implement `link_items_depends_on_many` batch API.
-
-#### 4B. Private Helpers
-
-- [ ] Add `normalize_related_pair(a, b)` helper.
-- [ ] Add `build_link(...)` helper for `ItemLink`.
-- [ ] Add item existence validation helper (e.g., `ensure_item_exists(item_id)` or direct `get_item` checks).
-- [ ] Add self-link validation helper shared across kinds.
-- [ ] Add duplicate-short-circuit checks using `Store::item_link_exists`.
-
-#### 4C. Cycle Detection (`depends-on` only)
-
-- [ ] Implement `ensure_depends_on_no_cycle(dependent, dependency)`.
-- [ ] Ensure cycle check runs before insert.
-- [ ] Confirm cycle detection traverses only `depends-on` edges.
-- [ ] Confirm `related` links skip cycle logic entirely.
-- [ ] Decide and document error messages for:
-  - self-link
-  - duplicate
-  - cycle
-
-#### 4D. Optional Read/Traversal APIs (Lotus groundwork)
-
-- [ ] Implement immediate read APIs:
-  - `immediate_prereq_ids`
-  - `immediate_dependent_ids`
-  - `immediate_related_ids`
-- [ ] Implement internal generic traversal helper (BFS/DFS).
-- [ ] Implement transitive read APIs:
-  - `all_prereq_ids`
-  - `all_dependent_ids`
-- [ ] Implement "Every Item" helper APIs:
-  - `list_items_with_prereqs`
-  - `list_items_with_dependents`
-- [ ] Decide whether these ship in MVP CLI/TUI or remain internal-only until follow-up commands.
-
-#### 4E. Agenda Tests
-
-- [ ] Add test: `depends-on` rejects self-link.
-- [ ] Add test: `related` rejects self-link.
-- [ ] Add test: `depends-on` cycle rejection (`A->B`, `B->A`).
-- [ ] Add test: longer cycle rejection (`A->B->C`, add `C->A`).
-- [ ] Add test: `related` triangle allowed (`A~B`, `B~C`, `C~A`).
-- [ ] Add test: `link_items_blocks` stores inverse `depends-on` edge correctly.
-- [ ] Add test: `link_items_related` normalizes pair and is idempotent.
-- [ ] Add test: `link_items_depends_on_many` skips duplicates and self.
-- [ ] Add test: `link_items_depends_on_many` returns accurate counts.
-- [ ] Add tests for transitive traversal order/contents (if traversal APIs implemented in this phase).
-
-Phase 4 exit criteria:
-
-- [ ] Agenda enforces all semantic invariants.
-- [ ] `blocks` and `depends-on` are equivalent user vocabularies over one stored representation.
-
-### Phase 5: CLI Link Commands (`agenda-cli/src/main.rs`)
-
-#### 5A. Command Definitions and Dispatch
-
-- [ ] Add `Command::Link` top-level variant.
-- [ ] Add `LinkCommand` enum with link and unlink variants.
-- [ ] Wire command dispatch in `run()`.
-- [ ] Add `cmd_link(...)` handler function.
-
-#### 5B. Parsing and Execution
-
-- [ ] Reuse `parse_item_id` for all link commands (full UUID only, current behavior).
-- [ ] Implement handler branches:
-  - `depends-on`
-  - `blocks`
-  - `related`
-  - unlink variants
-- [ ] Choose success output format for each command (consistent with existing CLI style).
-- [ ] Choose idempotency messaging:
-  - silent success on existing link
-  - explicit "already exists"
-  - count-based output
-- [ ] Map Agenda errors to user-friendly CLI messages (especially cycle/self-link).
-
-#### 5C. CLI Tests
-
-- [ ] Add parser/dispatch unit tests if coverage exists for command parsing patterns.
-- [ ] Add output-focused tests for helper text (if command handler helpers are testable).
-- [ ] Add manual verification script examples in plan/docs for:
-  - create `depends-on`
-  - create `blocks`
-  - create `related`
-  - unlink each
-  - cycle rejection
-
-Phase 5 exit criteria:
-
-- [ ] CLI can create and remove all MVP link types with both vocabularies.
-
-### Phase 6: CLI `show` Enhancements (`agenda-cli/src/main.rs`)
-
-#### 6A. Read and Render Immediate Links
-
-- [ ] Extend `cmd_show` to query immediate links for selected item.
-- [ ] Resolve neighbor IDs to items (text/status) for display.
-- [ ] Render separate sections:
-  - prereqs (`depends-on`)
-  - dependents (`blocks`)
-  - related
-- [ ] Define behavior when linked item cannot be loaded (should be impossible with FKs, but guard and label if needed).
-- [ ] Sort rendered rows by item text (current recommendation).
-
-#### 6B. Output Format Consistency
-
-- [ ] Match existing `cmd_show` style (labels, indentation, `(none)` markers).
-- [ ] Ensure output remains readable for items with no links.
-- [ ] Confirm categories/assignments output remains unchanged in ordering.
-
-#### 6C. CLI Tests / Manual Checks
-
-- [ ] Add tests (if practical) or documented manual checks for `agenda show` link sections.
-- [ ] Manual check one-level semantics:
-  - only immediate neighbors shown
-  - no transitive chain expansion yet
-
-Phase 6 exit criteria:
-
-- [ ] `agenda show` presents link information clearly without regressions.
-
-### Phase 7: TUI Phase 1 (Read-Only Link Display)
-
-#### 7A. Data Access Strategy
-
-- [ ] Decide where link data is fetched for preview rendering:
-  - direct Store calls in render path (avoid if possible)
-  - precomputed in `App::refresh` (preferred if performance acceptable)
-  - on-demand helper methods using `Store` from event/refresh path
-- [ ] Choose minimal implementation for MVP (read-only, immediate neighbors only).
-
-#### 7B. App/Render Changes
-
-- [ ] Add helper(s) to compute immediate link labels for selected item.
-- [ ] Extend `item_details_lines_for_item` in `render/mod.rs` to include:
-  - `Prereqs`
-  - `Blocks`
-  - `Related`
-- [ ] Preserve existing preview scroll behavior and line counts.
-- [ ] Ensure no layout overflow regressions in preview pane.
-
-#### 7C. TUI Tests
-
-- [ ] Add/extend unit tests for preview summary text lines (if feasible with existing helpers).
-- [ ] Manual TUI smoke test:
-  - selected item with all three categories of link output
-  - item with no links
-  - switching selection updates preview correctly
-
-Phase 7 exit criteria:
-
-- [ ] TUI preview shows immediate link context read-only.
-
-### Phase 8: Integration Validation and QA (MVP Cut)
-
-- [ ] Run `cargo test --workspace`.
-- [ ] Run targeted manual CLI scenarios on `feature-requests.ag` or a temp `.ag`:
-  - create items
-  - add `depends-on`
-  - add `blocks` (verify inversion)
-  - add `related`
-  - reject cycle
-  - reject self-link
-  - delete item and verify cascade removes links
-- [ ] Manual TUI check (if Phase 7 included in MVP cut).
-- [ ] Verify DB migration on an existing v4 database file (copy/scratch DB).
-- [ ] Verify idempotent startup after migration (`Store::init`).
-- [ ] Confirm no impact on existing engine/category/view flows.
-
-Phase 8 exit criteria:
-
-- [ ] MVP functionality works end-to-end.
-- [ ] No regressions in existing workflows/tests.
-
-### Phase 9: Post-MVP Follow-Ups (Planned, Not in MVP)
-
-#### 9A. Lotus-Style CLI Traversal Utilities
-
-- [ ] Add `agenda link prereqs <ITEM_ID>` (One Level default).
-- [ ] Add `agenda link prereqs <ITEM_ID> --all-levels`.
-- [ ] Add `agenda link depends <ITEM_ID>` (One Level default).
-- [ ] Add `agenda link depends <ITEM_ID> --all-levels`.
-- [ ] Add `agenda link prereqs --every-item`.
-- [ ] Add `agenda link depends --every-item`.
-- [ ] Add output formatting for chain/tree display.
-
-#### 9B. TUI Editing for Links
-
-- [ ] Add link editing mode/palette for selected item.
-- [ ] Add add/remove commands for `depends-on` and `related`.
-- [ ] Reuse picker/input patterns for item selection.
-- [ ] Add status messages for successful/failed link operations.
-
-#### 9C. TUI Multi-Item Marking (Lotus ALT-O analog)
-
-- [ ] Add `marked_item_ids: HashSet<ItemId>` to `App`.
-- [ ] Add mark/unmark current item keybinding(s).
-- [ ] Add clear-marks command.
-- [ ] Add “make current item dependent on marked items” action using `Agenda::link_items_depends_on_many`.
-- [ ] Add UI affordance showing marked count and/or mark indicators.
-- [ ] Add tests for marks surviving refresh/view changes.
-
-#### 9D. Deletion/Restore Link Snapshotting
-
-- [ ] Extend `deletion_log` schema with `item_links_json`.
-- [ ] Snapshot links on delete.
-- [ ] Restore links best-effort on restore if counterpart items exist.
-- [ ] Add tests for partial restore behavior when some linked items are missing.
-
-#### 9E. Readiness/Blocked Views (Future)
-
-- [ ] Define readiness semantics for aglet (if added).
-- [ ] Ensure only `depends-on` affects readiness.
-- [ ] Add CLI/TUI ready/blocked views or filters.
-
-### Cross-Cutting Documentation Tasks
-
-- [ ] Update `/Users/mds/src/aglet/walkthrough.md` after implementation to mention `item_links` schema and link APIs.
-- [ ] Update `/Users/mds/src/aglet/AGENTS.md` if any operational surprises are discovered during implementation (e.g., migration caveats, CLI direction confusion).
-- [ ] Add CLI usage examples for links to docs (if project has a suitable CLI reference file for aglet).
-- [ ] Document exact semantics (`A depends-on B` means `B blocks A`) in user-facing text to prevent direction mistakes.
-
-### Suggested Execution Tracking Format
-
-When implementation starts, track each phase as:
-
-- `pending`
-- `in_progress`
-- `completed`
-- `blocked` (with reason)
-
-Recommended milestone checkpoints:
-
-- [ ] Milestone A: Core schema + Store APIs + tests
-- [ ] Milestone B: Agenda semantics + cycle detection + tests
-- [ ] Milestone C: CLI commands + `show` output
-- [ ] Milestone D: TUI read-only preview (optional for MVP cut if time-boxed)
+The `WhenBucket` system provides temporal grouping. `resolve_when_bucket()` maps a `when_date` to one of: Overdue, Today, Tomorrow, ThisWeek, NextWeek, ThisMonth, Future, or NoDate. Views can include or exclude items based on these buckets without needing actual date-range criteria.
+
+```bash
+sed -n "6,56p" crates/agenda-core/src/query.rs
+```
+
+```output
+/// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
+pub fn resolve_when_bucket(
+    when_date: Option<NaiveDateTime>,
+    reference_date: NaiveDate,
+) -> WhenBucket {
+    let Some(when_datetime) = when_date else {
+        return WhenBucket::NoDate;
+    };
+
+    let when_day = when_datetime.date();
+
+    if when_day < reference_date {
+        return WhenBucket::Overdue;
+    }
+
+    if when_day == reference_date {
+        return WhenBucket::Today;
+    }
+
+    if let Some(tomorrow) = reference_date.succ_opt() {
+        if when_day == tomorrow {
+            return WhenBucket::Tomorrow;
+        }
+    }
+
+    let this_week_start = start_of_iso_week(reference_date);
+    let this_week_end = this_week_start
+        .checked_add_signed(Duration::days(6))
+        .expect("valid week range");
+
+    if when_day > reference_date && when_day >= this_week_start && when_day <= this_week_end {
+        return WhenBucket::ThisWeek;
+    }
+
+    let next_week_start = this_week_start
+        .checked_add_signed(Duration::days(7))
+        .expect("valid next week start");
+    let next_week_end = next_week_start
+        .checked_add_signed(Duration::days(6))
+        .expect("valid next week range");
+
+    if when_day >= next_week_start && when_day <= next_week_end {
+        return WhenBucket::NextWeek;
+    }
+
+    if when_day.year() == reference_date.year() && when_day.month() == reference_date.month() {
+        return WhenBucket::ThisMonth;
+    }
+
+    WhenBucket::Future
+}
+```
+
+## 10. The CLI (`agenda-cli/src/main.rs`)
+
+The CLI is a single-file binary using Clap's derive API. It parses a `--db` path (or `AGENDA_DB` env var, defaulting to `~/.agenda/default.ag`), opens a Store, creates an Agenda, and dispatches commands.
+
+```bash
+sed -n "28,93p" crates/agenda-cli/src/main.rs
+```
+
+```output
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Add a new item
+    Add {
+        text: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Edit an existing item's text, note, and/or done state
+    Edit {
+        item_id: String,
+        /// New text (positional shorthand; also available as --text)
+        text: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "clear-note")]
+        clear_note: bool,
+        #[arg(long)]
+        done: Option<bool>,
+    },
+
+    /// Show a single item with its assignments
+    Show { item_id: String },
+
+    /// List items (optionally filtered)
+    List {
+        #[arg(long)]
+        view: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        include_done: bool,
+    },
+
+    /// Search item text and note
+    Search {
+        query: String,
+        #[arg(long)]
+        include_done: bool,
+    },
+
+    /// Delete an item (writes deletion log)
+    Delete { item_id: String },
+
+    /// List deletion log entries
+    Deleted,
+
+    /// Restore an item from deletion log by log entry id
+    Restore { log_id: String },
+
+    /// Launch the interactive TUI
+    Tui,
+
+    /// Category commands
+    Category {
+        #[command(subcommand)]
+        command: CategoryCommand,
+    },
+
+    /// View commands
+    View {
+        #[command(subcommand)]
+        command: ViewCommand,
+    },
+}
+```
+
+The CLI provides:
+
+- **`add`** — creates an item, runs the engine, reports parsed dates and new assignments, warns about unknown hashtags.
+- **`edit`** — updates text/note/done state, re-runs the engine.
+- **`show`** — detailed single-item view with assignment provenance.
+- **`list`** — shows items through a named view (or the default view), optionally filtered by category.
+- **`search`** — free-text search across item text and notes.
+- **`delete`** / **`deleted`** / **`restore`** — soft-delete lifecycle.
+- **`category`** subcommands — list, create, delete, rename, reparent, assign, unassign.
+- **`view`** subcommands — list, create, rename, delete, show.
+- **`tui`** — launches the interactive terminal UI.
+
+A key detail: running `agenda-cli` with no subcommand defaults to `list`. The `tui` command is special — it delegates to `agenda_tui::run()` before the normal Store/Agenda setup, since the TUI manages its own lifecycle.
+
+Let us see the CLI in action against the project's own dogfooding database (`feature-requests.ag`):
+
+```bash
+cargo run --bin agenda-cli -- --db feature-requests.ag category list 2>/dev/null
+```
+
+```output
+- Area [no-implicit-string]
+  - CLI [exclusive] [no-implicit-string] [non-actionable]
+  - UX
+  - Validation
+  - Display
+  - Automation
+- Done [no-implicit-string] [non-actionable]
+- Entry [no-implicit-string] [non-actionable]
+- Priority [exclusive] [no-implicit-string]
+  - High
+  - Medium
+  - Low
+  - Critical
+- Status [exclusive]
+  - In Progress
+  - Completed
+  - Deferred
+  - Not Started
+  - Pending
+- When [no-implicit-string] [non-actionable]
+```
+
+```bash
+cargo run --bin agenda-cli -- --db feature-requests.ag view list 2>/dev/null
+```
+
+```output
+All Items (sections=3, and=0, not=0, or=0)
+Backlog (sections=1, and=0, not=1, or=0)
+CLI (sections=0, and=1, not=0, or=0)
+Deferred (sections=0, and=1, not=0, or=0)
+High Priority (sections=1, and=1, not=0, or=0)
+Pending (sections=1, and=0, not=0, or=0)
+test view (sections=2, and=1, not=0, or=0)
+UX (sections=2, and=1, not=0, or=0)
+hint: use `agenda view show "<name>"` to see view contents
+```
+
+## 11. The TUI (`agenda-tui/`)
+
+The TUI is a full ratatui application with a rich modal interface. Its structure:
+
+```bash
+find crates/agenda-tui/src -type f -name "*.rs" | sort
+```
+
+```output
+crates/agenda-tui/src/app.rs
+crates/agenda-tui/src/input/mod.rs
+crates/agenda-tui/src/input_panel.rs
+crates/agenda-tui/src/lib.rs
+crates/agenda-tui/src/main.rs
+crates/agenda-tui/src/modes/board.rs
+crates/agenda-tui/src/modes/category.rs
+crates/agenda-tui/src/modes/mod.rs
+crates/agenda-tui/src/modes/view_edit.rs
+crates/agenda-tui/src/modes/view_edit2.rs
+crates/agenda-tui/src/render/mod.rs
+crates/agenda-tui/src/text_buffer.rs
+crates/agenda-tui/src/ui_support.rs
+```
+
+The TUI is organized as:
+
+- **`lib.rs`** — the main `App` struct (≈1600 lines), all state, the `Mode` enum, and `pub fn run()`.
+- **`app.rs`** — the event loop (`App::run`), `refresh()` to rebuild slots from views, cursor movement, and view cycling.
+- **`input/mod.rs`** — key dispatch: routes key events to the right handler based on current `Mode`.
+- **`input_panel.rs`** — unified text input widget for add/edit/rename operations.
+- **`modes/`** — mode-specific handlers: `board.rs` (board/column operations), `category.rs` (category manager with tree + details panes), `view_edit.rs` + `view_edit2.rs` (the view editor with criteria/sections/unmatched regions).
+- **`render/mod.rs`** — all drawing code: layout, tables, overlays, board grids.
+- **`text_buffer.rs`** — a simple text editing buffer with cursor support.
+- **`ui_support.rs`** — helper functions shared across modules.
+
+### The Mode System
+
+The TUI uses a modal architecture. The `Mode` enum has 15+ variants:
+
+```bash
+sed -n "176,203p" crates/agenda-tui/src/lib.rs
+```
+
+```output
+enum Mode {
+    Normal,
+    InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
+    NoteEdit,
+    ItemAssignPicker,
+    ItemAssignInput,
+    InspectUnassign,
+    FilterInput,
+    ViewPicker,
+    ViewEdit,
+    ViewDeleteConfirm,
+    ConfirmDelete,
+    BoardColumnDeleteConfirm,
+    CategoryManager,
+    CategoryDirectEdit,
+    CategoryColumnPicker,
+    BoardAddColumnPicker,
+    #[allow(dead_code)]
+    CategoryCreateConfirm { name: String, parent_id: CategoryId },
+}
+
+/// Disambiguates which name-input operation is in flight when Mode::InputPanel
+/// is open with InputPanelKind::NameInput.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NameInputContext {
+    ViewCreate,
+    ViewRename,
+}
+```
+
+### The Event Loop
+
+The `App::run()` method in `app.rs` is straightforward: draw, poll for key events (200ms timeout), dispatch via `handle_key_event()`. Errors during key handling are caught and displayed in the status bar rather than crashing:
+
+```bash
+sed -n "3,42p" crates/agenda-tui/src/app.rs
+```
+
+```output
+impl App {
+    pub(crate) fn run(
+        &mut self,
+        terminal: &mut TuiTerminal,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        self.refresh(agenda.store())?;
+
+        loop {
+            terminal
+                .draw(|frame| self.draw(frame))
+                .map_err(|e| e.to_string())?;
+
+            if !event::poll(std::time::Duration::from_millis(200)).map_err(|e| e.to_string())? {
+                continue;
+            }
+
+            let Event::Key(key) = event::read().map_err(|e| e.to_string())? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            let should_quit = match self.handle_key_event(key, agenda) {
+                Ok(value) => value,
+                Err(err) => {
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.status = format!("Error: {err}");
+                    false
+                }
+            };
+            if should_quit {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+```
+
+### Refresh & Slots
+
+`App::refresh()` reloads all data from the Store and resolves the current view into **slots**. A slot is a displayable section with a title and a list of items. Sections with `show_children = true` expand into multiple slots (one per child category). The unmatched bucket becomes a slot too. Per-section text filters are applied after resolution.
+
+## 12. How It All Connects
+
+Let us trace what happens end-to-end when a user types:
+
+```
+agenda-cli --db my.ag add "Call Sarah about Project Atlas tomorrow at 3pm"
+```
+
+1. **CLI** parses args, opens `my.ag`, creates `Agenda`.
+2. **`cmd_add()`** checks for unknown hashtags, creates an `Item::new()`.
+3. **`Agenda::create_item_with_reference_date()`**:
+   - Runs `BasicDateParser::parse()` → finds "tomorrow at 3pm" → sets `when_date` to tomorrow 15:00.
+   - Calls `store.create_item()` → INSERT into SQLite.
+   - Assigns the "When" reserved category (provenance: `nlp:date`).
+   - Calls `engine::process_item()`.
+4. **Engine fixed-point loop** (pass 1):
+   - Iterates all categories. `SubstringClassifier` checks each:
+     - "Sarah" → word-boundary match → assigns "Sarah" (if such a category exists).
+     - "Project Atlas" → word-boundary match → assigns "Project Atlas".
+   - For each match, `assign_subsumption_ancestors()` walks up: if "Sarah" is under "People", then "People" is also assigned.
+   - Actions fire: if "Project Atlas" has an `Assign { targets: [Work] }` action, "Work" gets assigned too.
+   - Mutual exclusion: if assigning "High" and parent "Priority" is exclusive, any sibling (Medium, Low) is removed.
+5. **Pass 2**: re-evaluates with new assignments. Profile conditions may now match. Loop continues until stable.
+6. **Deferred removals** are applied (any `Remove` actions).
+7. **CLI** prints `created <uuid>`, `parsed_when=...`, `new_assignments=N`.
+
+When the user later runs `agenda-cli list --view "My View"`:
+
+1. `store.list_items()` loads all items with their assignments.
+2. `store.list_views()` finds the view by name.
+3. `query::resolve_view()` evaluates the view's criteria (AND/NOT/OR on categories, WhenBucket filters, text search), groups into sections, expands show_children subsections, and collects unmatched.
+4. `print_items_for_view()` formats and prints the results.
+
+## 13. Test Coverage
+
+The codebase is heavily tested. Each core module has inline `#[cfg(test)]` modules. Let us run the test suite to see:
+
+```bash
+cargo test --workspace 2>&1 | tail -20
+```
+
+```output
+test result: ok. 215 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running unittests src/main.rs (target/debug/deps/agenda_tui-f3e97fcd7e81f1b5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests agenda_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests agenda_tui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+215 tests across the workspace, all passing. The test suite covers:
+
+- **`store.rs`** — CRUD for all entities, schema migrations, reserved category creation, deletion log, restore, hierarchy building.
+- **`engine.rs`** — fixed-point convergence, cycle detection (cap at 10 passes with savepoint rollback), action cascading, mutual exclusion, deferred removals, idempotent re-runs.
+- **`agenda.rs`** — end-to-end integration: item creation with auto-categorization, manual assignment with exclusive enforcement, done/not-done toggling, section insert/remove, view resolution with filters.
+- **`matcher.rs`** — word-boundary matching, case insensitivity, hashtag extraction.
+- **`dates.rs`** — all date formats, weekday disambiguation policies, compound time parsing, boundary conditions.
+- **`query.rs`** — query evaluation with AND/NOT/OR, WhenBucket resolution, view resolution with sections and show_children expansion.
+- **`lib.rs` (TUI)** — board operations, category direct edit, column picker.
+
+## Summary
+
+Aglet is a carefully layered system:
+
+| Layer | File(s) | Responsibility |
+|-------|---------|---------------|
+| **Data model** | `model.rs` | Items, Categories, Assignments, Views, Queries |
+| **Storage** | `store.rs` | SQLite CRUD, schema, hierarchy, reserved categories |
+| **Classifier** | `matcher.rs` | Word-boundary substring matching, hashtag extraction |
+| **Date parser** | `dates.rs` | Natural language → NaiveDateTime |
+| **Rule engine** | `engine.rs` | Fixed-point auto-assignment, actions, mutual exclusion |
+| **Integration** | `agenda.rs` | Wires Store + Engine + Classifier, transaction boundary |
+| **Query resolution** | `query.rs` | WhenBuckets, view/section evaluation, show_children |
+| **CLI** | `main.rs` (cli) | Clap commands, text output |
+| **TUI** | `lib.rs` + modules | Ratatui modal interface, board views, category manager |
+
+The architecture makes the right tradeoffs for a personal productivity tool: single-user SQLite for simplicity, deterministic rules instead of ML, and a clean separation between the engine (which is purely functional over the store) and the UI frontends that consume it.
