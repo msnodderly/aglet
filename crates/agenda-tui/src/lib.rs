@@ -3485,7 +3485,8 @@ mod tests {
             "abcd".to_string(),
             String::new(),
             Default::default(),
-            Vec::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
         );
         let app = App {
             mode: Mode::InputPanel,
@@ -3560,9 +3561,9 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
-        // Tab → CategoriesButton, Tab → SaveButton
+        // Tab → Categories, Tab → SaveButton
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus categories button");
+            .expect("focus categories");
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus save button");
         assert_eq!(
@@ -4233,7 +4234,8 @@ mod tests {
             "hello".to_string(),
             String::new(),
             Default::default(),
-            Vec::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
         );
         // Set note buffer with multiline content and cursor mid-second-line.
         panel.note = text_buffer::TextBuffer::with_cursor(
@@ -4242,10 +4244,10 @@ mod tests {
         );
         panel.focus = input_panel::InputPanelFocus::Note;
 
-        panel.handle_key(KeyCode::Up);
+        panel.handle_key(KeyCode::Up, false);
         assert_eq!(panel.note.cursor(), "fi".chars().count());
 
-        panel.handle_key(KeyCode::Down);
+        panel.handle_key(KeyCode::Down, false);
         assert_eq!(panel.note.cursor(), "first\nse".chars().count());
     }
 
@@ -8586,7 +8588,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_panel_shows_numeric_values_for_assigned_numeric_categories() {
+    fn edit_panel_shows_numeric_buffers_for_assigned_numeric_categories() {
         let (store, classifier, cost_id, _item_id, db_path) =
             setup_edit_panel_numeric("shows");
         let agenda = Agenda::new(&store, &classifier);
@@ -8602,12 +8604,10 @@ mod tests {
         assert_eq!(app.mode, Mode::InputPanel);
 
         let panel = app.input_panel.as_ref().expect("panel should exist");
-        assert_eq!(panel.numeric_values.len(), 1);
-        assert_eq!(panel.numeric_values[0].category_id, cost_id);
-        assert_eq!(panel.numeric_values[0].category_name, "Cost");
-        assert_eq!(panel.numeric_values[0].buffer.text(), "42");
+        assert!(panel.numeric_buffers.contains_key(&cost_id));
+        assert_eq!(panel.numeric_buffers.get(&cost_id).unwrap().text(), "42");
         assert_eq!(
-            panel.numeric_values[0].original,
+            panel.numeric_originals.get(&cost_id).copied().flatten(),
             Some(rust_decimal::Decimal::new(4200, 2))
         );
 
@@ -8628,24 +8628,35 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to NumericValues: Text -> Note -> Categories -> NumericValues
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        // Tab to Categories: Text -> Note -> Categories
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::NumericValues
+            input_panel::InputPanelFocus::Categories
         );
 
+        // Navigate to the Cost category row using j/k
+        // Find the index of Cost in category_rows
+        let cost_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.id == cost_id)
+            .expect("Cost should be in category_rows");
+        // Navigate to it
+        for _ in 0..cost_idx {
+            app.handle_key(KeyCode::Char('j'), &agenda).expect("j");
+        }
+
         // Clear existing value and type new one
-        // Select all text (the buffer has "42")
+        // The buffer has "42", clear it
         app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
         app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
         for ch in "99.50".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
 
-        // Save with S
+        // Save with Tab to SaveButton then Enter
         app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
@@ -8671,7 +8682,7 @@ mod tests {
 
     #[test]
     fn edit_panel_invalid_numeric_shows_error_keeps_panel_open() {
-        let (store, classifier, _cost_id, _item_id, db_path) =
+        let (store, classifier, cost_id, _item_id, db_path) =
             setup_edit_panel_numeric("invalid");
         let agenda = Agenda::new(&store, &classifier);
 
@@ -8683,10 +8694,19 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to NumericValues
+        // Tab to Categories: Text -> Note -> Categories
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+
+        // Navigate to the Cost category row
+        let cost_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.id == cost_id)
+            .expect("Cost should be in category_rows");
+        for _ in 0..cost_idx {
+            app.handle_key(KeyCode::Char('j'), &agenda).expect("j");
+        }
 
         // Clear and type invalid
         app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
@@ -8711,7 +8731,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_panel_focus_cycle_skips_numeric_when_no_numeric_categories() {
+    fn edit_panel_focus_cycle_categories_always_present() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -8746,9 +8766,9 @@ mod tests {
         assert_eq!(app.mode, Mode::InputPanel);
 
         let panel = app.input_panel.as_ref().unwrap();
-        assert!(panel.numeric_values.is_empty());
+        assert!(panel.numeric_buffers.is_empty());
 
-        // Tab cycle: Text -> Note -> Categories -> Save (skips NumericValues)
+        // Tab cycle: Text -> Note -> Categories -> Save
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
@@ -8757,7 +8777,7 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::CategoriesButton
+            input_panel::InputPanelFocus::Categories
         );
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(

@@ -2506,35 +2506,34 @@ impl App {
                 })
                 .map(|(id, _)| *id)
                 .collect();
-            // Collect numeric value drafts for assigned numeric categories.
-            let numeric_values: Vec<input_panel::NumericValueDraft> = item
-                .assignments
-                .iter()
-                .filter_map(|(cat_id, assignment)| {
-                    let cat = self.categories.iter().find(|c| c.id == *cat_id)?;
-                    if cat.value_kind != agenda_core::model::CategoryValueKind::Numeric {
-                        return None;
+            // Collect numeric buffers and originals for assigned numeric categories.
+            let mut numeric_buffers = std::collections::HashMap::new();
+            let mut numeric_originals = std::collections::HashMap::new();
+            for (cat_id, assignment) in &item.assignments {
+                let cat = self.categories.iter().find(|c| c.id == *cat_id);
+                if let Some(cat) = cat {
+                    if cat.value_kind == agenda_core::model::CategoryValueKind::Numeric {
+                        numeric_buffers.insert(
+                            *cat_id,
+                            crate::text_buffer::TextBuffer::new(
+                                assignment
+                                    .numeric_value
+                                    .map(|v| v.normalize().to_string())
+                                    .unwrap_or_default(),
+                            ),
+                        );
+                        numeric_originals.insert(*cat_id, assignment.numeric_value);
                     }
-                    Some(input_panel::NumericValueDraft {
-                        category_id: *cat_id,
-                        category_name: cat.name.clone(),
-                        buffer: crate::text_buffer::TextBuffer::new(
-                            assignment
-                                .numeric_value
-                                .map(|v| v.normalize().to_string())
-                                .unwrap_or_default(),
-                        ),
-                        original: assignment.numeric_value,
-                    })
-                })
-                .collect();
+                }
+            }
             let item_id = item.id;
             self.input_panel = Some(input_panel::InputPanel::new_edit_item(
                 item_id,
                 text,
                 note,
                 categories,
-                numeric_values,
+                numeric_buffers,
+                numeric_originals,
             ));
             self.mode = Mode::InputPanel;
             self.status = "Edit item: S to save, Tab cycles fields, Esc to cancel".to_string();
@@ -2549,23 +2548,29 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        // If the category picker overlay is open, route keys to it.
-        if self
-            .input_panel
-            .as_ref()
-            .map_or(false, |p| p.category_picker_open())
-        {
-            self.handle_input_panel_picker_key(code);
-            return Ok(false);
-        }
-
         let Some(panel) = &mut self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
             return Ok(false);
         };
 
-        let action = panel.handle_key(code);
+        // Determine if the current category row is an assigned numeric category
+        // (needed for key routing decisions in handle_key).
+        let current_row_is_assigned_numeric = if panel.focus
+            == input_panel::InputPanelFocus::Categories
+        {
+            self.category_rows
+                .get(panel.category_cursor)
+                .map(|row| {
+                    panel.categories.contains(&row.id)
+                        && row.value_kind == agenda_core::model::CategoryValueKind::Numeric
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let action = panel.handle_key(code, current_row_is_assigned_numeric);
 
         use input_panel::InputPanelAction;
         match action {
@@ -2602,67 +2607,45 @@ impl App {
                     }
                 }
             }
-            InputPanelAction::OpenCategoryPicker => {
-                if self.category_rows.is_empty() {
-                    self.status = "No categories available".to_string();
-                } else {
-                    let initial = first_non_reserved_category_index(&self.category_rows);
-                    if let Some(panel) = &mut self.input_panel {
-                        panel.open_category_picker(initial);
-                    }
-                    self.status =
-                        "Categories: j/k navigate, Space toggle, Enter/Esc close".to_string();
-                }
-            }
-            InputPanelAction::FocusNext
-            | InputPanelAction::FocusPrev
-            | InputPanelAction::Handled
-            | InputPanelAction::Unhandled => {}
-        }
-        Ok(false)
-    }
-
-    /// Handle key events while the InputPanel's category picker overlay is open.
-    fn handle_input_panel_picker_key(&mut self, code: KeyCode) {
-        let list_len = self.category_rows.len();
-        match code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(panel) = &mut self.input_panel {
-                    panel.move_picker_cursor(list_len, 1);
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(panel) = &mut self.input_panel {
-                    panel.move_picker_cursor(list_len, -1);
-                }
-            }
-            KeyCode::Char(' ') => {
-                // Read index and row first, then mutate panel.
+            InputPanelAction::ToggleCategory => {
                 let idx = self
                     .input_panel
                     .as_ref()
-                    .and_then(|p| p.picker_index())
+                    .map(|p| p.category_cursor)
                     .unwrap_or(0);
                 let row = self.category_rows.get(idx).cloned();
                 if let Some(row) = row {
                     if !row.is_reserved {
-                        // Determine if this is an add (not currently selected).
                         let is_adding = self
                             .input_panel
                             .as_ref()
                             .map(|p| !p.categories.contains(&row.id))
                             .unwrap_or(false);
+                        let is_numeric =
+                            row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
                         // If adding into an exclusive parent group, clear siblings first.
                         if is_adding {
                             let to_clear = exclusive_siblings_to_clear(&self.category_rows, idx);
                             if let Some(panel) = &mut self.input_panel {
-                                for sibling_id in to_clear {
-                                    panel.categories.remove(&sibling_id);
+                                for sibling_id in &to_clear {
+                                    panel.categories.remove(sibling_id);
+                                    panel.numeric_buffers.remove(sibling_id);
                                 }
                             }
                         }
                         if let Some(panel) = &mut self.input_panel {
                             panel.toggle_category(row.id);
+                            // Manage numeric buffer
+                            if is_numeric {
+                                if is_adding {
+                                    panel.numeric_buffers.insert(
+                                        row.id,
+                                        crate::text_buffer::TextBuffer::empty(),
+                                    );
+                                } else {
+                                    panel.numeric_buffers.remove(&row.id);
+                                }
+                            }
                         }
                         let selected = self
                             .input_panel
@@ -2676,19 +2659,42 @@ impl App {
                     }
                 }
             }
-            KeyCode::Enter | KeyCode::Esc => {
+            InputPanelAction::MoveCategoryCursor(delta) => {
+                let list_len = self.category_rows.len();
                 if let Some(panel) = &mut self.input_panel {
-                    panel.close_category_picker();
+                    if list_len > 0 {
+                        let current = panel.category_cursor as i64;
+                        let len = list_len as i64;
+                        let new = ((current + delta as i64).rem_euclid(len)) as usize;
+                        panel.category_cursor = new;
+                    }
                 }
-                let count = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.categories.len())
-                    .unwrap_or(0);
-                self.status = format!("{} categories selected", count);
             }
-            _ => {}
+            InputPanelAction::Handled => {
+                // If we're on Categories focus and the row is an assigned numeric,
+                // route the key to the numeric buffer.
+                if current_row_is_assigned_numeric {
+                    let cat_id = self
+                        .category_rows
+                        .get(
+                            self.input_panel
+                                .as_ref()
+                                .map(|p| p.category_cursor)
+                                .unwrap_or(0),
+                        )
+                        .map(|r| r.id);
+                    if let Some(cat_id) = cat_id {
+                        if let Some(panel) = &mut self.input_panel {
+                            if let Some(buf) = panel.numeric_buffers.get_mut(&cat_id) {
+                                buf.handle_key(code, false);
+                            }
+                        }
+                    }
+                }
+            }
+            InputPanelAction::FocusNext | InputPanelAction::FocusPrev | InputPanelAction::Unhandled => {}
         }
+        Ok(false)
     }
 
     /// Save an InputPanel(AddItem) to the store.
@@ -2737,6 +2743,22 @@ impl App {
                 *cat_id,
                 Some("manual:input_panel.add".to_string()),
             );
+        }
+
+        // Apply numeric values for assigned numeric categories.
+        for (cat_id, buf) in &panel.numeric_buffers {
+            let trimmed = buf.trimmed();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(val) = trimmed.replace(',', "").parse::<rust_decimal::Decimal>() {
+                let _ = agenda.assign_item_numeric_manual(
+                    item.id,
+                    *cat_id,
+                    val,
+                    Some("manual:input_panel.add".to_string()),
+                );
+            }
         }
 
         // Insert into section context (applies on_insert_assign rules).
@@ -2790,7 +2812,8 @@ impl App {
             Some(panel.note.text().to_string())
         };
         let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
-        let numeric_drafts = panel.numeric_values.clone();
+        let numeric_buffers = panel.numeric_buffers.clone();
+        let numeric_originals = panel.numeric_originals.clone();
 
         let mut item = agenda
             .store()
@@ -2812,13 +2835,14 @@ impl App {
             .collect();
 
         // Check for numeric value changes.
-        let has_numeric_changes = numeric_drafts.iter().any(|draft| {
-            let trimmed = draft.buffer.trimmed();
+        let has_numeric_changes = numeric_buffers.iter().any(|(cat_id, buf)| {
+            let trimmed = buf.trimmed();
             if trimmed.is_empty() {
                 return false; // empty = keep existing, no change
             }
+            let original = numeric_originals.get(cat_id).copied().flatten();
             match trimmed.replace(',', "").parse::<rust_decimal::Decimal>() {
-                Ok(new_val) => draft.original != Some(new_val),
+                Ok(new_val) => original != Some(new_val),
                 Err(_) => true, // invalid input counts as a "change" (will error on save)
             }
         });
@@ -2835,16 +2859,25 @@ impl App {
         }
 
         // Validate numeric values before making any changes.
-        for draft in &numeric_drafts {
-            let trimmed = draft.buffer.trimmed();
+        for (cat_id, buf) in &numeric_buffers {
+            let trimmed = buf.trimmed();
             if trimmed.is_empty() {
                 continue;
             }
-            if trimmed.replace(',', "").parse::<rust_decimal::Decimal>().is_err() {
+            if trimmed
+                .replace(',', "")
+                .parse::<rust_decimal::Decimal>()
+                .is_err()
+            {
+                let cat_name = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == *cat_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("?");
                 self.status = format!(
                     "Invalid numeric value for '{}': '{}'",
-                    draft.category_name,
-                    trimmed
+                    cat_name, trimmed
                 );
                 return Ok(());
             }
@@ -2872,18 +2905,19 @@ impl App {
         }
 
         // Apply numeric value changes.
-        for draft in &numeric_drafts {
-            let trimmed = draft.buffer.trimmed();
+        for (cat_id, buf) in &numeric_buffers {
+            let trimmed = buf.trimmed();
             if trimmed.is_empty() {
                 continue; // keep existing value
             }
             let new_val: rust_decimal::Decimal = trimmed.replace(',', "").parse().unwrap();
-            if draft.original == Some(new_val) {
+            let original = numeric_originals.get(cat_id).copied().flatten();
+            if original == Some(new_val) {
                 continue; // no change
             }
             let _ = agenda.assign_item_numeric_manual(
                 item_id,
-                draft.category_id,
+                *cat_id,
                 new_val,
                 Some("manual:input_panel.edit".to_string()),
             );
