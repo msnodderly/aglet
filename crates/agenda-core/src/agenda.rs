@@ -9,7 +9,7 @@ use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
     Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Item, ItemId, Section,
-    View,
+    ItemLink, ItemLinkKind, ItemLinksForItem, View,
 };
 use crate::store::Store;
 
@@ -18,6 +18,11 @@ pub struct Agenda<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct LinkItemsResult {
+    pub created: bool,
 }
 
 impl<'a> Agenda<'a> {
@@ -282,6 +287,89 @@ impl<'a> Agenda<'a> {
         self.store.delete_item(item_id, deleted_by)
     }
 
+    pub fn link_items_depends_on(
+        &self,
+        dependent_id: ItemId,
+        dependency_id: ItemId,
+    ) -> Result<LinkItemsResult> {
+        self.ensure_not_self_link(dependent_id, dependency_id, "depends-on")?;
+        self.ensure_item_exists(dependent_id)?;
+        self.ensure_item_exists(dependency_id)?;
+
+        if self
+            .store
+            .item_link_exists(dependent_id, dependency_id, ItemLinkKind::DependsOn)?
+        {
+            return Ok(LinkItemsResult { created: false });
+        }
+
+        self.ensure_depends_on_no_cycle(dependent_id, dependency_id)?;
+        let link = self.build_link(dependent_id, dependency_id, ItemLinkKind::DependsOn);
+        self.store.create_item_link(&link)?;
+        Ok(LinkItemsResult { created: true })
+    }
+
+    pub fn link_items_blocks(
+        &self,
+        blocker_id: ItemId,
+        blocked_id: ItemId,
+    ) -> Result<LinkItemsResult> {
+        self.link_items_depends_on(blocked_id, blocker_id)
+    }
+
+    pub fn link_items_related(&self, a: ItemId, b: ItemId) -> Result<LinkItemsResult> {
+        self.ensure_not_self_link(a, b, "related")?;
+        self.ensure_item_exists(a)?;
+        self.ensure_item_exists(b)?;
+
+        let (item_id, other_item_id) = Self::normalize_related_pair(a, b);
+        if self
+            .store
+            .item_link_exists(item_id, other_item_id, ItemLinkKind::Related)?
+        {
+            return Ok(LinkItemsResult { created: false });
+        }
+
+        let link = self.build_link(item_id, other_item_id, ItemLinkKind::Related);
+        self.store.create_item_link(&link)?;
+        Ok(LinkItemsResult { created: true })
+    }
+
+    pub fn unlink_items_depends_on(&self, dependent_id: ItemId, dependency_id: ItemId) -> Result<()> {
+        self.store
+            .delete_item_link(dependent_id, dependency_id, ItemLinkKind::DependsOn)
+    }
+
+    pub fn unlink_items_blocks(&self, blocker_id: ItemId, blocked_id: ItemId) -> Result<()> {
+        self.unlink_items_depends_on(blocked_id, blocker_id)
+    }
+
+    pub fn unlink_items_related(&self, a: ItemId, b: ItemId) -> Result<()> {
+        let (item_id, other_item_id) = Self::normalize_related_pair(a, b);
+        self.store
+            .delete_item_link(item_id, other_item_id, ItemLinkKind::Related)
+    }
+
+    pub fn immediate_prereq_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
+        self.store.list_dependency_ids_for_item(item_id)
+    }
+
+    pub fn immediate_dependent_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
+        self.store.list_dependent_ids_for_item(item_id)
+    }
+
+    pub fn immediate_related_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
+        self.store.list_related_ids_for_item(item_id)
+    }
+
+    pub fn immediate_links_for_item(&self, item_id: ItemId) -> Result<ItemLinksForItem> {
+        Ok(ItemLinksForItem {
+            depends_on: self.immediate_prereq_ids(item_id)?,
+            blocks: self.immediate_dependent_ids(item_id)?,
+            related: self.immediate_related_ids(item_id)?,
+        })
+    }
+
     fn assign_manual_categories(
         &self,
         item_id: ItemId,
@@ -425,6 +513,60 @@ impl<'a> Agenda<'a> {
         Ok(None)
     }
 
+    fn normalize_related_pair(a: ItemId, b: ItemId) -> (ItemId, ItemId) {
+        if a.to_string() < b.to_string() {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+
+    fn build_link(&self, item_id: ItemId, other_item_id: ItemId, kind: ItemLinkKind) -> ItemLink {
+        ItemLink {
+            item_id,
+            other_item_id,
+            kind,
+            created_at: Utc::now(),
+            origin: Some("manual:link".to_string()),
+        }
+    }
+
+    fn ensure_item_exists(&self, item_id: ItemId) -> Result<()> {
+        let _ = self.store.get_item(item_id)?;
+        Ok(())
+    }
+
+    fn ensure_not_self_link(&self, a: ItemId, b: ItemId, relation: &str) -> Result<()> {
+        if a == b {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("cannot create self-link for {relation}"),
+            });
+        }
+        Ok(())
+    }
+
+    fn ensure_depends_on_no_cycle(&self, dependent_id: ItemId, dependency_id: ItemId) -> Result<()> {
+        let mut stack = vec![dependency_id];
+        let mut visited = HashSet::new();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            if current == dependent_id {
+                return Err(AgendaError::InvalidOperation {
+                    message: format!(
+                        "adding dependency would create a cycle: {} depends-on ... depends-on {}",
+                        dependency_id, dependent_id
+                    ),
+                });
+            }
+            stack.extend(self.store.list_dependency_ids_for_item(current)?);
+        }
+
+        Ok(())
+    }
+
     fn parse_datetime_from_text(
         &self,
         text: &str,
@@ -494,7 +636,7 @@ mod tests {
     use crate::matcher::SubstringClassifier;
     use crate::model::{
         Action, Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Condition,
-        CriterionMode, Item, Query, Section, View, WhenBucket,
+        CriterionMode, Item, ItemId, ItemLinkKind, Query, Section, View, WhenBucket,
     };
     use crate::query::{resolve_view, resolve_when_bucket};
     use crate::store::Store;
@@ -563,6 +705,13 @@ mod tests {
             .into_iter()
             .find(|category| category.name.eq_ignore_ascii_case(name))
             .map(|category| category.id)
+    }
+
+    fn make_item(store: &Store, text: &str) -> ItemId {
+        let item = Item::new(text.to_string());
+        let id = item.id;
+        store.create_item(&item).unwrap();
+        id
     }
 
     #[test]
@@ -1710,5 +1859,163 @@ mod tests {
 
         let loaded_parent = store.get_category(parent.id).unwrap();
         assert_eq!(loaded_parent.children, vec![beta.id, alpha.id]);
+    }
+
+    #[test]
+    fn link_items_depends_on_rejects_self_link() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let item_id = make_item(&store, "A");
+
+        let err = agenda.link_items_depends_on(item_id, item_id).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn link_items_related_rejects_self_link() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let item_id = make_item(&store, "A");
+
+        let err = agenda.link_items_related(item_id, item_id).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn link_items_blocks_stores_inverse_depends_on_edge() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let blocker = make_item(&store, "Blocker");
+        let blocked = make_item(&store, "Blocked");
+
+        let result = agenda.link_items_blocks(blocker, blocked).unwrap();
+        assert!(result.created);
+        assert!(store
+            .item_link_exists(blocked, blocker, ItemLinkKind::DependsOn)
+            .unwrap());
+        assert_eq!(agenda.immediate_dependent_ids(blocker).unwrap(), vec![blocked]);
+        assert_eq!(agenda.immediate_prereq_ids(blocked).unwrap(), vec![blocker]);
+    }
+
+    #[test]
+    fn link_items_related_normalizes_pair_and_is_idempotent() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let (low, high) = if a.to_string() < b.to_string() { (a, b) } else { (b, a) };
+
+        let first = agenda.link_items_related(high, low).unwrap();
+        let second = agenda.link_items_related(low, high).unwrap();
+
+        assert!(first.created);
+        assert!(!second.created);
+        assert!(store
+            .item_link_exists(low, high, ItemLinkKind::Related)
+            .unwrap());
+
+        let count: i64 = store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM item_links WHERE kind = 'related'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn link_items_depends_on_rejects_direct_cycle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+
+        agenda.link_items_depends_on(a, b).unwrap();
+        let err = agenda.link_items_depends_on(b, a).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn link_items_depends_on_rejects_longer_cycle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+
+        agenda.link_items_depends_on(a, b).unwrap();
+        agenda.link_items_depends_on(b, c).unwrap();
+        let err = agenda.link_items_depends_on(c, a).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn link_items_related_allows_triangle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+
+        assert!(agenda.link_items_related(a, b).unwrap().created);
+        assert!(agenda.link_items_related(b, c).unwrap().created);
+        assert!(agenda.link_items_related(c, a).unwrap().created);
+
+        let links_a = agenda.immediate_related_ids(a).unwrap();
+        let links_b = agenda.immediate_related_ids(b).unwrap();
+        let links_c = agenda.immediate_related_ids(c).unwrap();
+        assert_eq!(links_a.len(), 2);
+        assert_eq!(links_b.len(), 2);
+        assert_eq!(links_c.len(), 2);
+    }
+
+    #[test]
+    fn unlink_items_blocks_and_related_are_idempotent() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+
+        agenda.link_items_blocks(a, b).unwrap();
+        agenda.link_items_related(a, b).unwrap();
+
+        agenda.unlink_items_blocks(a, b).unwrap();
+        agenda.unlink_items_related(a, b).unwrap();
+        // idempotent delete behavior delegated to Store
+        agenda.unlink_items_blocks(a, b).unwrap();
+        agenda.unlink_items_related(a, b).unwrap();
+
+        assert!(agenda.immediate_dependent_ids(a).unwrap().is_empty());
+        assert!(agenda.immediate_prereq_ids(b).unwrap().is_empty());
+        assert!(agenda.immediate_related_ids(a).unwrap().is_empty());
+        assert!(agenda.immediate_related_ids(b).unwrap().is_empty());
+    }
+
+    #[test]
+    fn immediate_links_for_item_groups_prereqs_blocks_and_related() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+        let d = make_item(&store, "D");
+
+        agenda.link_items_depends_on(a, b).unwrap();
+        agenda.link_items_blocks(a, c).unwrap(); // c depends-on a
+        agenda.link_items_related(a, d).unwrap();
+
+        let links = agenda.immediate_links_for_item(a).unwrap();
+        assert_eq!(links.depends_on, vec![b]);
+        assert_eq!(links.blocks, vec![c]);
+        assert_eq!(links.related, vec![d]);
     }
 }

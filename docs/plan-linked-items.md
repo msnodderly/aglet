@@ -35,8 +35,10 @@ Important updates for implementation on the current branch:
   Linked-items schema work must target **v6** (or later if more migrations land first).
 - `ItemLinkKind`, `ItemLink`, and `ItemLinksForItem` are already present in
   `crates/agenda-core/src/model.rs` with serde-name tests.
-- `item_links` storage, Agenda semantics, CLI commands, and TUI link display are
-  not implemented yet on this branch.
+- Linked-items storage, Agenda semantics, CLI commands, CLI `show` rendering,
+  and TUI read-only preview display are implemented on this branch.
+- TUI link editing, view-level mark/batch linking UX, dependency row markers,
+  and dependency-tree browsing are not implemented yet.
 
 ## Gaps To Fix Before Coding
 
@@ -509,6 +511,26 @@ Add traversal commands after MVP:
 
 These map directly to Lotus Agenda “Show Prereqs / Show Depends” menus.
 
+## Lotus Agenda Reference Findings (2026-02-26)
+
+Relevant Lotus Agenda behavior (from `reference/AgendaHelp.htm`) that informs
+Aglet's design:
+
+- Dependency creation is a **view-level command** (`ALT-O`), not a note/item-edit subfeature.
+- Lotus workflow is **mark items first**, then run dependency command against the
+  current highlighted item, then confirm in a modal **"Make Item Dependent Box"**.
+- Lotus distinguishes dependency browsing from editing via **Utilities Show**
+  menus (`Prereqs`, `Depends`) with `One Level`, `All Levels`, and `Every Item`.
+- Lotus displays a dependency marker (`&`) directly in the item row for scanability.
+- Lotus includes a separate **"Clear Dependencies Box"** to remove all
+  prerequisites from the current item.
+
+Design implication for Aglet:
+
+- keep the **view-level, mark-aware workflow shape**
+- modernize the UX with a richer wizard/picker + explicit preview
+- keep dependency browsing (tree/chain viewing) separate from link editing
+
 ## TUI Plan (`crates/agenda-tui`)
 
 ### Phase 1 (read-only)
@@ -519,19 +541,133 @@ Show link info in Preview Summary panel (`render/mod.rs`) beneath Categories:
 - `Blocks:` immediate dependents
 - `Related:` immediate related items
 
-No new modes yet.
+Current branch status:
+
+- Implemented in preview summary (`Preview: Summary`)
+- Cached/populated via `App::refresh(...)`
+
+No new modes in Phase 1.
 
 ### Phase 2 (editing)
 
-Add link editing workflow from selected item:
+#### UX Direction (Resolved 2026-02-26)
 
-- open a simple link action palette
-- add/remove `depends-on` / `related`
-- reuse item ID parsing + picker patterns where possible
+Primary linking workflow should be a **view-level Link Wizard** opened directly
+from the view with `L` (on the selected item), not a subfunction that requires
+opening the item edit panel first.
+
+Item edit panel still gets convenience features:
+
+- read-only link summary (`Prereqs`, `Blocks`, `Related`)
+- single-item `Clear dependencies` action
+- hint/action to open Link Wizard
+
+#### Exact Workflow (Recommended)
+
+When the user presses `L` in a view:
+
+1. Open **Link Wizard** anchored to the current selected item.
+2. Determine scope:
+   - if no items are marked: scope = current item (single-item mode)
+   - if items are marked: scope = marked items (batch mode)
+3. Choose relationship/action:
+   - `blocked by`
+   - `depends on`
+   - `blocks`
+   - `related to`
+   - `clear dependencies`
+4. If action requires a target item, open/activate target search + picker.
+5. Show a plain-language preview of the operations to apply.
+6. Confirm/apply (or cancel/back).
+
+Notes:
+
+- `blocks` should show a preview line explaining stored semantics (`depends-on` inverse)
+- `clear dependencies` skips target selection and previews removals
+- the same wizard should support future batch linking and batch clear
+
+#### UI Mockup Options (Discussed)
+
+##### Option A (Alternative): Side Panel "Link Composer"
+
+Stays in the view while opening a right-side panel for existing links + add-link composer.
+Good balance, but more layout complexity.
+
+```text
+┌ View ───────────────────────────────────────────────┬ Link Composer ───────────────────┐
+│ > Track day                                         │ Anchor: Track day (open)          │
+│   Task B                                            │                                   │
+│   Task C                                            │ Existing                          │
+│                                                     │  Depends On: Task B, Task C       │
+│                                                     │  Blocks:     (none)               │
+│                                                     │  Related:    Task D               │
+│                                                     │                                   │
+│                                                     │ Add Link                          │
+│                                                     │  Relation: [blocks v]             │
+│                                                     │  Target: issue _                  │
+│                                                     │  Matches: > Issue 123 ...         │
+│                                                     │  Preview: Track day blocks ...    │
+│                                                     │                                   │
+│                                                     │ Enter:add  x:remove  Tab:pane     │
+└─────────────────────────────────────────────────────┴───────────────────────────────────┘
+```
+
+##### Option B (Preferred): Link Wizard (Batch-Capable)
+
+Dedicated modal/wizard that works for one selected item now and marked-item batch
+workflows later (Lotus-inspired shape, modernized UI).
+
+```text
+┌ Link Wizard ───────────────────────────────────────────────────────────┐
+│ Scope                                                                 │
+│   Selected items: 1  (or N marked items)                              │
+│   > Track day                                                         │
+│                                                                       │
+│ Relationship                                                          │
+│   > blocked by                                                        │
+│     depends on                                                        │
+│     blocks                                                            │
+│     related to                                                        │
+│     clear dependencies                                                │
+│                                                                       │
+│ Target item (hidden for "clear dependencies")                         │
+│   Search: issue _                                                     │
+│   > Issue 123 Retry bug                                               │
+│     Issue 201 Billing export                                          │
+│                                                                       │
+│ Preview (N operation(s))                                              │
+│   Track day depends-on Issue 123 Retry bug                            │
+│   (or batch preview lines for each marked item)                       │
+│                                                                       │
+│ [Apply] [Cancel]   Tab:section  j/k:move  Enter:select/apply          │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Dependency Markers In View (Lotus-inspired)
+
+Add row-level dependency markers (similar in spirit to the note marker) so users
+can scan for dependency state without opening preview.
+
+Direction:
+
+- mark items that have prerequisites (`depends-on` outbound edges; blocked items)
+- mark items that block others (dependents / inbound edges)
+- exact glyphs are TBD, but should support distinguishing "blocked" vs "blocking"
+
+#### Phase 2 Scope (Implementation)
+
+Add view-level link editing workflow and item-edit-panel convenience actions:
+
+- `L` opens Link Wizard from the view on selected item
+- add/remove `depends-on` / `blocks` / `related`
+- include `clear dependencies` action (single-item at minimum)
+- reuse item picker/search patterns where possible
+- keep item edit panel as convenience summary + clear/open-wizard entry point
 
 ### Phase 3 (Lotus-style multi-item marking)
 
-This is implied by “make current item dependent on marked item(s)” and should be built on top of the batch API already in `Agenda`.
+This is implied by “make current item dependent on marked item(s)” and should be
+built on top of the batch API already in `Agenda`, reusing the same Link Wizard.
 
 Proposed `App` state addition:
 
@@ -554,8 +690,19 @@ Proposed TUI behavior (follow-up):
 
 - mark/unmark current item
 - clear all marks
-- “make current item dependent on marked items” => `link_items_depends_on_many(current, marked, ...)`
-- skip self if current item is marked
+- `L` opens Link Wizard in batch mode when marks exist
+- “blocked by” / “depends on” / `clear dependencies` actions apply to all marked items
+- skip self-link operations automatically if current item is also in marked set
+- show preview count and per-item action list before apply
+
+#### Future Dependency Tree / Chain Viewer (separate from wizard)
+
+Dependency-tree browsing should be a separate viewer/command (not folded into
+the Link Wizard), using the traversal APIs below:
+
+- one-level and all-level prereq/depends views
+- eventual hierarchy/tree display for "items blocking items blocking items"
+- maps conceptually to Lotus "Utilities Show Prereqs / Depends"
 
 ## Traversal Implementation (Lotus “One Level” / “All Levels”)
 
@@ -686,17 +833,23 @@ impl ItemLinkKind {
 }
 ```
 
-## Open Questions (Decide Before Implementation Starts)
+## Open Questions (Updated 2026-02-26)
 
-- Should `agenda show` include only one-level links (recommended MVP) or also counts for transitive chains?
-- Should `related` links be displayed sorted by creation time or item text? (I recommend item text for readability, keep DB query by created_at optional.)
-- Should CLI support batch `depends-on` immediately (e.g., one dependent + many prerequisites), or defer to TUI multi-marking follow-up?
+Resolved so far:
 
-Current recommendation:
+- `agenda show` should display **one-level** links only in MVP (no transitive expansion)
+- display layers should sort rendered neighbors by **item text** for readability
+- CLI batch syntax can be deferred; batch linking should be handled by future TUI
+  multi-marking + Link Wizard batch mode
+- TUI linking should be a **view-level `L` workflow** (Link Wizard), not item-edit-panel-first
+- keep a **Clear dependencies** convenience action, inspired by Lotus
+- dependency tree browsing should be a **separate workflow** from link editing
 
-- one-level `show`
-- sort rendered neighbors by item text
-- defer CLI batch syntax, but ship `Agenda::link_items_depends_on_many` now
+Remaining decisions:
+
+- exact dependency marker glyph set for row scanability (`blocked`, `blocking`, `both`)
+- whether to ship an item-edit-panel "Open Link Wizard" button and keybinding in
+  the same release as the view-level `L` wizard, or immediately after
 
 ## Detailed TODO Checklist (Do Not Implement Yet)
 
@@ -704,15 +857,19 @@ This checklist is the execution plan broken into concrete tasks. Phases are orde
 
 ### Phase 0: Pre-Implementation Decisions and Task Breakdown
 
-- [ ] Confirm MVP command naming in CLI:
+- [x] Confirm MVP command naming in CLI:
   - `agenda link depends-on`
   - `agenda link blocks`
   - `agenda link related`
-- [ ] Confirm whether unlink commands should be nested under `agenda link` (recommended) or split top-level.
-- [ ] Confirm `agenda show` scope is immediate links only (one-level) for MVP.
-- [ ] Confirm `related` rendering sort order (recommended: by item text in display layer).
+- [x] Confirm whether unlink commands should be nested under `agenda link` (recommended) or split top-level.
+- [x] Confirm `agenda show` scope is immediate links only (one-level) for MVP.
+- [x] Confirm `related` rendering sort order (recommended: by item text in display layer).
 - [ ] Decide whether `metadata_json` ships in MVP schema now (recommended yes, unused initially).
 - [ ] Decide whether `Store::list_item_links_for_item` is required in MVP or deferred in favor of dedicated per-kind query methods.
+- [x] Decide TUI linking entry point and workflow shape:
+  - view-level `L` opens Link Wizard
+  - mark-aware batch mode in follow-up
+  - item edit panel gets summary + clear/open-wizard convenience
 - [ ] Convert this plan into tracked implementation tasks (feature requests / issues) with explicit dependencies:
   - core schema/store
   - agenda validation + traversal
@@ -1015,28 +1172,60 @@ Phase 8 exit criteria:
 
 #### 9B. TUI Editing for Links
 
-- [ ] Add link editing mode/palette for selected item.
-- [ ] Add add/remove commands for `depends-on` and `related`.
-- [ ] Reuse picker/input patterns for item selection.
+- [ ] Add view-level `L` Link Wizard for selected item (single-item mode).
+- [ ] Add relationship choices:
+  - `blocked by`
+  - `depends on`
+  - `blocks`
+  - `related to`
+  - `clear dependencies`
+- [ ] Add target item search/picker for relationship modes that require a target.
+- [ ] Add explicit preview panel/list before apply (plain-language operations).
+- [ ] Add add/remove commands for `depends-on` / `blocks` / `related`.
+- [ ] Add `clear dependencies` action (single-item at minimum).
+- [ ] Reuse picker/search patterns for item selection.
 - [ ] Add status messages for successful/failed link operations.
+- [ ] Add item edit panel convenience features:
+  - read-only link summary
+  - `Clear dependencies` action
+  - hint/action to open Link Wizard
 
 #### 9C. TUI Multi-Item Marking (Lotus ALT-O analog)
 
 - [ ] Add `marked_item_ids: HashSet<ItemId>` to `App`.
 - [ ] Add mark/unmark current item keybinding(s).
 - [ ] Add clear-marks command.
-- [ ] Add “make current item dependent on marked items” action using `Agenda::link_items_depends_on_many`.
+- [ ] Make `L` open Link Wizard in batch mode when marks exist.
+- [ ] Add “blocked by” / “depends on” batch actions using `Agenda::link_items_depends_on_many` (or equivalent batch APIs).
+- [ ] Add batch `clear dependencies` action.
 - [ ] Add UI affordance showing marked count and/or mark indicators.
 - [ ] Add tests for marks surviving refresh/view changes.
 
-#### 9D. Deletion/Restore Link Snapshotting
+#### 9D. TUI Dependency Markers In Views
+
+- [ ] Add row-level dependency markers (Lotus-inspired) in the item list/board row marker area.
+- [ ] Distinguish at least:
+  - item has prerequisites (blocked)
+  - item has dependents (blocking)
+  - both states (combined marker or dual marker)
+- [ ] Ensure marker rendering coexists with note/done/alarm indicators.
+- [ ] Add tests for marker rendering state combinations.
+
+#### 9E. Deletion/Restore Link Snapshotting
 
 - [ ] Extend `deletion_log` schema with `item_links_json`.
 - [ ] Snapshot links on delete.
 - [ ] Restore links best-effort on restore if counterpart items exist.
 - [ ] Add tests for partial restore behavior when some linked items are missing.
 
-#### 9E. Readiness/Blocked Views (Future)
+#### 9F. Dependency Tree / Chain Viewer (Future)
+
+- [ ] Add TUI dependency browser/viewer separate from Link Wizard.
+- [ ] Support one-level and all-level traversal for prereqs and dependents.
+- [ ] Add hierarchy/tree rendering for "items blocking items blocking items".
+- [ ] Add navigation from selected item into dependency tree viewer and back.
+
+#### 9G. Readiness/Blocked Views (Future)
 
 - [ ] Define readiness semantics for aglet (if added).
 - [ ] Ensure only `depends-on` affects readiness.

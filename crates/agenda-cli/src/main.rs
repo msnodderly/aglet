@@ -108,6 +108,12 @@ enum Command {
         #[command(subcommand)]
         command: ViewCommand,
     },
+
+    /// Item-to-item link commands
+    Link {
+        #[command(subcommand)]
+        command: LinkCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -209,6 +215,49 @@ enum ViewCommand {
     Delete { name: String },
 }
 
+#[derive(Subcommand, Debug)]
+enum LinkCommand {
+    /// Create a dependency link: ITEM depends on DEPENDS_ON_ITEM
+    #[command(name = "depends-on")]
+    DependsOn {
+        item_id: String,
+        depends_on_item_id: String,
+    },
+
+    /// Create inverse dependency vocabulary: BLOCKER blocks BLOCKED
+    Blocks {
+        blocker_item_id: String,
+        blocked_item_id: String,
+    },
+
+    /// Create a bidirectional related link
+    Related {
+        item_a_id: String,
+        item_b_id: String,
+    },
+
+    /// Remove a dependency link: ITEM no longer depends on DEPENDS_ON_ITEM
+    #[command(name = "unlink-depends-on")]
+    UnlinkDependsOn {
+        item_id: String,
+        depends_on_item_id: String,
+    },
+
+    /// Remove inverse dependency vocabulary: BLOCKER no longer blocks BLOCKED
+    #[command(name = "unlink-blocks")]
+    UnlinkBlocks {
+        blocker_item_id: String,
+        blocked_item_id: String,
+    },
+
+    /// Remove a related link
+    #[command(name = "unlink-related")]
+    UnlinkRelated {
+        item_a_id: String,
+        item_b_id: String,
+    },
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("error: {err}");
@@ -257,6 +306,7 @@ fn run() -> Result<(), String> {
         Command::Restore { log_id } => cmd_restore(&store, log_id),
         Command::Category { command } => cmd_category(&agenda, &store, command),
         Command::View { command } => cmd_view(&agenda, &store, command),
+        Command::Link { command } => cmd_link(&agenda, command),
         Command::Tui => Ok(()),
     }
 }
@@ -413,6 +463,10 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
         }
     }
 
+    for line in item_link_section_lines(store, item.id)? {
+        println!("{line}");
+    }
+
     Ok(())
 }
 
@@ -524,6 +578,148 @@ fn cmd_restore(store: &Store, log_id_str: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     println!("restored item {}", item_id);
     Ok(())
+}
+
+fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
+    match command {
+        LinkCommand::DependsOn {
+            item_id,
+            depends_on_item_id,
+        } => {
+            let item_id = parse_item_id(&item_id)?;
+            let depends_on_item_id = parse_item_id(&depends_on_item_id)?;
+            let result = agenda
+                .link_items_depends_on(item_id, depends_on_item_id)
+                .map_err(|e| e.to_string())?;
+            if result.created {
+                println!("linked {} depends-on {}", item_id, depends_on_item_id);
+            } else {
+                println!("link already exists: {} depends-on {}", item_id, depends_on_item_id);
+            }
+            Ok(())
+        }
+        LinkCommand::Blocks {
+            blocker_item_id,
+            blocked_item_id,
+        } => {
+            let blocker_item_id = parse_item_id(&blocker_item_id)?;
+            let blocked_item_id = parse_item_id(&blocked_item_id)?;
+            let result = agenda
+                .link_items_blocks(blocker_item_id, blocked_item_id)
+                .map_err(|e| e.to_string())?;
+            if result.created {
+                println!("linked {} blocks {}", blocker_item_id, blocked_item_id);
+            } else {
+                println!(
+                    "link already exists: {} blocks {}",
+                    blocker_item_id, blocked_item_id
+                );
+            }
+            Ok(())
+        }
+        LinkCommand::Related { item_a_id, item_b_id } => {
+            let item_a_id = parse_item_id(&item_a_id)?;
+            let item_b_id = parse_item_id(&item_b_id)?;
+            let result = agenda
+                .link_items_related(item_a_id, item_b_id)
+                .map_err(|e| e.to_string())?;
+            if result.created {
+                println!("linked {} related {}", item_a_id, item_b_id);
+            } else {
+                println!("link already exists: {} related {}", item_a_id, item_b_id);
+            }
+            Ok(())
+        }
+        LinkCommand::UnlinkDependsOn {
+            item_id,
+            depends_on_item_id,
+        } => {
+            let item_id = parse_item_id(&item_id)?;
+            let depends_on_item_id = parse_item_id(&depends_on_item_id)?;
+            agenda
+                .unlink_items_depends_on(item_id, depends_on_item_id)
+                .map_err(|e| e.to_string())?;
+            println!("unlinked {} depends-on {}", item_id, depends_on_item_id);
+            Ok(())
+        }
+        LinkCommand::UnlinkBlocks {
+            blocker_item_id,
+            blocked_item_id,
+        } => {
+            let blocker_item_id = parse_item_id(&blocker_item_id)?;
+            let blocked_item_id = parse_item_id(&blocked_item_id)?;
+            agenda
+                .unlink_items_blocks(blocker_item_id, blocked_item_id)
+                .map_err(|e| e.to_string())?;
+            println!("unlinked {} blocks {}", blocker_item_id, blocked_item_id);
+            Ok(())
+        }
+        LinkCommand::UnlinkRelated { item_a_id, item_b_id } => {
+            let item_a_id = parse_item_id(&item_a_id)?;
+            let item_b_id = parse_item_id(&item_b_id)?;
+            agenda
+                .unlink_items_related(item_a_id, item_b_id)
+                .map_err(|e| e.to_string())?;
+            println!("unlinked {} related {}", item_a_id, item_b_id);
+            Ok(())
+        }
+    }
+}
+
+fn item_link_section_lines(store: &Store, item_id: ItemId) -> Result<Vec<String>, String> {
+    let prereqs = resolve_link_neighbors(
+        store,
+        store
+            .list_dependency_ids_for_item(item_id)
+            .map_err(|e| e.to_string())?,
+    )?;
+    let dependents = resolve_link_neighbors(
+        store,
+        store
+            .list_dependent_ids_for_item(item_id)
+            .map_err(|e| e.to_string())?,
+    )?;
+    let related = resolve_link_neighbors(
+        store,
+        store
+            .list_related_ids_for_item(item_id)
+            .map_err(|e| e.to_string())?,
+    )?;
+
+    let mut lines = Vec::new();
+    append_link_section_lines(&mut lines, "prereqs", &prereqs);
+    append_link_section_lines(&mut lines, "dependents (blocks)", &dependents);
+    append_link_section_lines(&mut lines, "related", &related);
+    Ok(lines)
+}
+
+fn resolve_link_neighbors(store: &Store, ids: Vec<ItemId>) -> Result<Vec<(String, String)>, String> {
+    let mut rows = Vec::new();
+    for id in ids {
+        match store.get_item(id) {
+            Ok(item) => rows.push((
+                item.text.to_ascii_lowercase(),
+                format!("  {} | {} | {}", id, if item.is_done { "done" } else { "open" }, item.text),
+            )),
+            Err(_) => rows.push((
+                id.to_string(),
+                format!("  {} | missing | (linked item unavailable)", id),
+            )),
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(rows)
+}
+
+fn append_link_section_lines(lines: &mut Vec<String>, label: &str, rows: &[(String, String)]) {
+    if rows.is_empty() {
+        lines.push(format!("{label}: (none)"));
+        return;
+    }
+    lines.push(format!("{label}:"));
+    for (_, line) in rows {
+        lines.push(line.clone());
+    }
 }
 
 fn cmd_category(
@@ -1087,10 +1283,15 @@ fn print_items_for_view(
 #[cfg(test)]
 mod tests {
     use super::{
-        duplicate_category_create_error, parse_decimal_value, parsed_when_feedback_line,
-        unknown_hashtag_feedback_line,
+        duplicate_category_create_error, item_link_section_lines, parse_decimal_value,
+        parsed_when_feedback_line, Cli, Command, LinkCommand, unknown_hashtag_feedback_line,
     };
+    use agenda_core::agenda::Agenda;
+    use agenda_core::matcher::SubstringClassifier;
+    use agenda_core::model::Item;
+    use agenda_core::store::Store;
     use chrono::NaiveDate;
+    use clap::Parser;
     use rust_decimal::Decimal;
     use uuid::Uuid;
 
@@ -1146,6 +1347,86 @@ mod tests {
     #[test]
     fn parse_decimal_value_rejects_empty() {
         assert!(parse_decimal_value("   ").is_err());
+    }
+
+    #[test]
+    fn clap_parses_link_depends_on_subcommand() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "link",
+            "depends-on",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "123e4567-e89b-12d3-a456-426614174001",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Link {
+                command:
+                    LinkCommand::DependsOn {
+                        item_id,
+                        depends_on_item_id,
+                    },
+            }) => {
+                assert_eq!(item_id, "123e4567-e89b-12d3-a456-426614174000");
+                assert_eq!(depends_on_item_id, "123e4567-e89b-12d3-a456-426614174001");
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_link_unlink_related_subcommand() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "link",
+            "unlink-related",
+            "a",
+            "b",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Link {
+                command: LinkCommand::UnlinkRelated { item_a_id, item_b_id },
+            }) => {
+                assert_eq!(item_a_id, "a");
+                assert_eq!(item_b_id, "b");
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_link_section_lines_include_prereqs_blocks_and_related() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        let c = Item::new("Task C".to_string());
+        let d = Item::new("Task D".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+        store.create_item(&c).expect("create c");
+        store.create_item(&d).expect("create d");
+
+        agenda
+            .link_items_depends_on(a.id, b.id)
+            .expect("link depends-on");
+        agenda.link_items_blocks(c.id, a.id).expect("link blocks");
+        agenda.link_items_related(a.id, d.id).expect("link related");
+
+        let lines = item_link_section_lines(&store, a.id).expect("render link lines");
+        assert!(lines.iter().any(|line| line == "prereqs:"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "dependents (blocks): (none)" || line == "dependents (blocks):"));
+        assert!(lines.iter().any(|line| line == "related:"));
+        assert!(lines.iter().any(|line| line.contains("Task B")));
+        assert!(lines.iter().any(|line| line.contains("Task C")));
+        assert!(lines.iter().any(|line| line.contains("Task D")));
     }
 }
 

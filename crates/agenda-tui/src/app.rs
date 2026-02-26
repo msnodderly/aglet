@@ -64,6 +64,21 @@ impl App {
         self.sync_category_manager_state_from_selection();
         let items = store.list_items().map_err(|e| e.to_string())?;
         self.all_items = items.clone();
+        self.item_links_by_item_id.clear();
+        for item in &items {
+            let links = agenda_core::model::ItemLinksForItem {
+                depends_on: store
+                    .list_dependency_ids_for_item(item.id)
+                    .map_err(|e| e.to_string())?,
+                blocks: store
+                    .list_dependent_ids_for_item(item.id)
+                    .map_err(|e| e.to_string())?,
+                related: store
+                    .list_related_ids_for_item(item.id)
+                    .map_err(|e| e.to_string())?,
+            };
+            self.item_links_by_item_id.insert(item.id, links);
+        }
 
         let mut slots = Vec::new();
         if self.views.is_empty() {

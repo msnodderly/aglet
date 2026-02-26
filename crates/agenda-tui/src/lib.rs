@@ -6,7 +6,7 @@ use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
-    Item, ItemId, NumericFormat, Query, Section, View, WhenBucket,
+    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -577,6 +577,7 @@ struct App {
     preview_mode: PreviewMode,
     normal_focus: NormalFocus,
     all_items: Vec<Item>,
+    item_links_by_item_id: HashMap<ItemId, ItemLinksForItem>,
 
     views: Vec<View>,
     view_index: usize,
@@ -622,6 +623,7 @@ impl Default for App {
             preview_mode: PreviewMode::Summary,
             normal_focus: NormalFocus::Board,
             all_items: Vec::new(),
+            item_links_by_item_id: HashMap::new(),
             views: Vec::new(),
             view_index: 0,
             picker_index: 0,
@@ -4225,6 +4227,61 @@ mod tests {
         assert!(plain
             .iter()
             .any(|line| line == "  Alpha, Beta" || line == "  Beta, Alpha"));
+    }
+
+    #[test]
+    fn item_details_summary_includes_link_sections() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-link-preview-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        let c = Item::new("Task C".to_string());
+        let d = Item::new("Task D".to_string());
+        store.create_item(&a).expect("create A");
+        store.create_item(&b).expect("create B");
+        store.create_item(&c).expect("create C");
+        store.create_item(&d).expect("create D");
+
+        agenda
+            .link_items_depends_on(a.id, b.id)
+            .expect("A depends-on B");
+        agenda
+            .link_items_blocks(c.id, a.id)
+            .expect("C blocks A");
+        agenda
+            .link_items_related(a.id, d.id)
+            .expect("A related D");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        let loaded_a = store.get_item(a.id).expect("reload A");
+        let lines = app.item_details_lines_for_item(&loaded_a);
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+
+        assert!(plain.iter().any(|line| line == "Prereqs"));
+        assert!(plain.iter().any(|line| line == "Blocks"));
+        assert!(plain.iter().any(|line| line == "Related"));
+        assert!(plain.iter().any(|line| line.contains("Task B")));
+        assert!(plain.iter().any(|line| line.contains("Task C")));
+        assert!(plain.iter().any(|line| line.contains("Task D")));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
