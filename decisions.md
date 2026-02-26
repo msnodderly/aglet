@@ -72,8 +72,8 @@ policies are a later enhancement.
 ### Linked-item editing is a view-level workflow (not item-edit-panel-first)
 
 Linked-item creation/removal should be triggered directly from the view screen
-with `L` on the selected item, rather than being primarily embedded inside the
-item edit panel.
+via dedicated linking keys (`b` / `B`) on the selected item, rather than being
+primarily embedded inside the item edit panel.
 
 Rationale:
 
@@ -81,17 +81,23 @@ Rationale:
 - better fits future multi-select / marked-item batch linking
 - avoids overloading the already-dense item edit panel
 
-### Use a Link Wizard (batch-capable) as the primary TUI linking UI
+### Use a Link Wizard as the primary TUI linking UI (single-item first, batch later)
 
 The preferred TUI direction is a dedicated Link Wizard opened from the view via
-`L`, using a batch-capable flow even for single-item operations.
+`b` / `B`:
+
+- `b` opens the wizard with `blocked by` preselected
+- `B` opens the wizard with `blocks` preselected
+
+`L` remains reserved for board-column reordering. The wizard should keep a
+batch-capable design, but batch/marked-item mode is a follow-up phase.
 
 Planned behavior:
 
-- if no items are marked, wizard scope defaults to the current item
-- if items are marked, wizard opens in batch mode over marked items
+- current phase: single-item scope defaults to the current item
+- later phase: if items are marked, wizard opens in batch mode over marked items
 - wizard presents:
-  - scope (selected/marked items)
+  - scope (selected item now; marked items later)
   - relationship choice (`blocked by`, `depends on`, `blocks`, `related to`,
     and `clear dependencies`)
   - target-item picker/search (not needed for `clear dependencies`)
@@ -133,6 +139,22 @@ Planned direction:
 
 This mirrors Lotus Agenda's "Utilities Show Prereqs / Depends" model while
 keeping editing and browsing distinct.
+
+### Relationship-aware filtering/search is a core goal (prioritize "Ready")
+
+The purpose of linked-item relationships is not only editing/visibility; Aglet
+should eventually support filtering/searching based on dependency state.
+
+Priority direction:
+
+- first relationship-aware view/filter target is **Ready** = "not blocked"
+- readiness should be driven by `depends-on` / blocking relationships (not
+  `related`)
+- batch/mark linking mode can be deferred behind core readiness filtering work
+
+Exact query syntax and edge semantics (for example how done prerequisites affect
+"ready") can be finalized in the filtering/query phase, but "Ready view" is a
+planned primary outcome of this feature line.
 
 ### Lotus reference behavior adopted conceptually (with modernized UX)
 

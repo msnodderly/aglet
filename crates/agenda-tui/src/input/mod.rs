@@ -23,6 +23,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::InputPanel => self.handle_input_panel_key(code, agenda),
+            Mode::LinkWizard => self.handle_link_wizard_key(code, agenda),
             Mode::NoteEdit => self.handle_note_edit_key(code, agenda),
             Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),
             Mode::ItemAssignInput => self.handle_item_assign_category_input_key(code, agenda),

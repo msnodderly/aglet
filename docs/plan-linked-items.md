@@ -553,8 +553,15 @@ No new modes in Phase 1.
 #### UX Direction (Resolved 2026-02-26)
 
 Primary linking workflow should be a **view-level Link Wizard** opened directly
-from the view with `L` (on the selected item), not a subfunction that requires
+from the view with `b` / `B` (on the selected item), not a subfunction that requires
 opening the item edit panel first.
+
+Binding direction (resolved):
+
+- `b` opens Link Wizard with `blocked by` preselected
+- `B` opens Link Wizard with `blocks` preselected
+- keep `L` reserved for board-column reordering
+- mark/batch mode is deferred to a follow-up phase (wizard design remains batch-ready)
 
 Item edit panel still gets convenience features:
 
@@ -564,12 +571,14 @@ Item edit panel still gets convenience features:
 
 #### Exact Workflow (Recommended)
 
-When the user presses `L` in a view:
+When the user presses `b` or `B` in a view:
 
 1. Open **Link Wizard** anchored to the current selected item.
+   - `b` defaults to `blocked by`
+   - `B` defaults to `blocks`
 2. Determine scope:
-   - if no items are marked: scope = current item (single-item mode)
-   - if items are marked: scope = marked items (batch mode)
+   - current phase: scope = current item (single-item mode)
+   - later phase: if items are marked, scope = marked items (batch mode)
 3. Choose relationship/action:
    - `blocked by`
    - `depends on`
@@ -585,6 +594,7 @@ Notes:
 - `blocks` should show a preview line explaining stored semantics (`depends-on` inverse)
 - `clear dependencies` skips target selection and previews removals
 - the same wizard should support future batch linking and batch clear
+- current implementation can ship single-item first; batch mode should not block progress
 
 #### UI Mockup Options (Discussed)
 
@@ -615,7 +625,8 @@ Good balance, but more layout complexity.
 ##### Option B (Preferred): Link Wizard (Batch-Capable)
 
 Dedicated modal/wizard that works for one selected item now and marked-item batch
-workflows later (Lotus-inspired shape, modernized UI).
+workflows later (Lotus-inspired shape, modernized UI). This is the preferred
+design and matches the current single-item TUI implementation direction.
 
 ```text
 ┌ Link Wizard ───────────────────────────────────────────────────────────┐
@@ -658,7 +669,7 @@ Direction:
 
 Add view-level link editing workflow and item-edit-panel convenience actions:
 
-- `L` opens Link Wizard from the view on selected item
+- `b` / `B` open Link Wizard from the view on selected item (preselecting block direction)
 - add/remove `depends-on` / `blocks` / `related`
 - include `clear dependencies` action (single-item at minimum)
 - reuse item picker/search patterns where possible
@@ -668,6 +679,9 @@ Add view-level link editing workflow and item-edit-panel convenience actions:
 
 This is implied by “make current item dependent on marked item(s)” and should be
 built on top of the batch API already in `Agenda`, reusing the same Link Wizard.
+
+This phase is intentionally deferred until after single-item wizard stabilization
+and relationship-aware filtering/readiness work.
 
 Proposed `App` state addition:
 
@@ -690,7 +704,7 @@ Proposed TUI behavior (follow-up):
 
 - mark/unmark current item
 - clear all marks
-- `L` opens Link Wizard in batch mode when marks exist
+- `b` / `B` open Link Wizard in batch mode when marks exist (preselecting relation)
 - “blocked by” / “depends on” / `clear dependencies` actions apply to all marked items
 - skip self-link operations automatically if current item is also in marked set
 - show preview count and per-item action list before apply
@@ -841,15 +855,16 @@ Resolved so far:
 - display layers should sort rendered neighbors by **item text** for readability
 - CLI batch syntax can be deferred; batch linking should be handled by future TUI
   multi-marking + Link Wizard batch mode
-- TUI linking should be a **view-level `L` workflow** (Link Wizard), not item-edit-panel-first
+- TUI linking should be a **view-level `b` / `B` workflow** (Link Wizard), not item-edit-panel-first
 - keep a **Clear dependencies** convenience action, inspired by Lotus
 - dependency tree browsing should be a **separate workflow** from link editing
+- relationship-aware filtering is a core goal; first target is a **Ready** ("not blocked") view/filter
 
 Remaining decisions:
 
 - exact dependency marker glyph set for row scanability (`blocked`, `blocking`, `both`)
 - whether to ship an item-edit-panel "Open Link Wizard" button and keybinding in
-  the same release as the view-level `L` wizard, or immediately after
+  the same release as the view-level `b` / `B` wizard, or immediately after
 
 ## Detailed TODO Checklist (Do Not Implement Yet)
 
@@ -867,9 +882,12 @@ This checklist is the execution plan broken into concrete tasks. Phases are orde
 - [ ] Decide whether `metadata_json` ships in MVP schema now (recommended yes, unused initially).
 - [ ] Decide whether `Store::list_item_links_for_item` is required in MVP or deferred in favor of dedicated per-kind query methods.
 - [x] Decide TUI linking entry point and workflow shape:
-  - view-level `L` opens Link Wizard
+  - view-level `b` / `B` open Link Wizard (preselecting block direction)
+  - keep `L` for column reorder
   - mark-aware batch mode in follow-up
   - item edit panel gets summary + clear/open-wizard convenience
+- [x] Defer TUI mark/batch linking mode to a later phase after single-item wizard.
+- [x] Prioritize relationship-aware filtering follow-up (`Ready` / not blocked) over batch mode polish.
 - [ ] Convert this plan into tracked implementation tasks (feature requests / issues) with explicit dependencies:
   - core schema/store
   - agenda validation + traversal
@@ -1172,19 +1190,20 @@ Phase 8 exit criteria:
 
 #### 9B. TUI Editing for Links
 
-- [ ] Add view-level `L` Link Wizard for selected item (single-item mode).
-- [ ] Add relationship choices:
+- [x] Add view-level `b` / `B` Link Wizard for selected item (single-item mode).
+- [x] `b` preselects `blocked by`; `B` preselects `blocks`.
+- [x] Add relationship choices:
   - `blocked by`
   - `depends on`
   - `blocks`
   - `related to`
   - `clear dependencies`
-- [ ] Add target item search/picker for relationship modes that require a target.
-- [ ] Add explicit preview panel/list before apply (plain-language operations).
+- [x] Add target item search/picker for relationship modes that require a target.
+- [x] Add explicit preview panel/list before apply (plain-language operations).
 - [ ] Add add/remove commands for `depends-on` / `blocks` / `related`.
-- [ ] Add `clear dependencies` action (single-item at minimum).
-- [ ] Reuse picker/search patterns for item selection.
-- [ ] Add status messages for successful/failed link operations.
+- [x] Add `clear dependencies` action (single-item at minimum).
+- [x] Reuse picker/search patterns for item selection.
+- [x] Add status messages for successful/failed link operations.
 - [ ] Add item edit panel convenience features:
   - read-only link summary
   - `Clear dependencies` action
@@ -1192,10 +1211,12 @@ Phase 8 exit criteria:
 
 #### 9C. TUI Multi-Item Marking (Lotus ALT-O analog)
 
+Deferred follow-up phase (do not block current single-item linking/readiness work).
+
 - [ ] Add `marked_item_ids: HashSet<ItemId>` to `App`.
 - [ ] Add mark/unmark current item keybinding(s).
 - [ ] Add clear-marks command.
-- [ ] Make `L` open Link Wizard in batch mode when marks exist.
+- [ ] Make `b` / `B` open Link Wizard in batch mode when marks exist.
 - [ ] Add “blocked by” / “depends on” batch actions using `Agenda::link_items_depends_on_many` (or equivalent batch APIs).
 - [ ] Add batch `clear dependencies` action.
 - [ ] Add UI affordance showing marked count and/or mark indicators.
@@ -1227,9 +1248,12 @@ Phase 8 exit criteria:
 
 #### 9G. Readiness/Blocked Views (Future)
 
-- [ ] Define readiness semantics for aglet (if added).
-- [ ] Ensure only `depends-on` affects readiness.
-- [ ] Add CLI/TUI ready/blocked views or filters.
+- [ ] Define readiness semantics for aglet ("Ready" = not blocked) and document edge cases.
+- [ ] Ensure only dependency/blocking relationships (`depends-on`) affect readiness (`related` does not).
+- [ ] Decide whether done prerequisites still block readiness or are treated as satisfied.
+- [ ] Add query/filter support for dependency state (at minimum `ready` / `blocked`).
+- [ ] Add a user-facing "Ready" view/filter (CLI and/or TUI).
+- [ ] Add tests for readiness filtering with mixed `depends-on`, `related`, and done items.
 
 ### Cross-Cutting Documentation Tasks
 
