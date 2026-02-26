@@ -835,7 +835,6 @@ pub(super) fn input_panel_popup_area(area: Rect) -> Rect {
 }
 
 pub(super) struct InputPanelPopupRegions {
-    pub(super) heading: Rect,
     pub(super) text: Rect,
     /// Present for AddItem / EditItem; absent for NameInput.
     pub(super) note: Option<Rect>,
@@ -843,7 +842,6 @@ pub(super) struct InputPanelPopupRegions {
     /// Bordered multi-line region for the inline category list.
     pub(super) categories: Option<Rect>,
     pub(super) categories_inner: Option<Rect>,
-    pub(super) preview: Option<Rect>,
     pub(super) buttons: Rect,
     pub(super) help: Rect,
 }
@@ -869,14 +867,13 @@ pub(super) fn input_panel_popup_regions(
     use crate::input_panel::InputPanelKind;
     match kind {
         InputPanelKind::NameInput => {
-            // heading + text + buttons + help = 4 lines minimum
-            if inner.height < 4 {
+            // text + buttons + help = 3 lines minimum
+            if inner.height < 3 {
                 return None;
             }
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1),
                     Constraint::Length(1),
                     Constraint::Min(0),
                     Constraint::Length(1),
@@ -884,44 +881,49 @@ pub(super) fn input_panel_popup_regions(
                 ])
                 .split(inner);
             Some(InputPanelPopupRegions {
-                heading: chunks[0],
-                text: chunks[1],
+                text: chunks[0],
                 note: None,
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
-                preview: None,
-                buttons: chunks[3],
-                help: chunks[4],
+                buttons: chunks[2],
+                help: chunks[3],
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
-            // heading + text + note(min 4 bordered) + categories(min 5 bordered) + preview + buttons + help
-            if inner.height < 9 {
+            // text + [note | categories] (horizontal split) + buttons + help
+            // Minimum: text(1) + middle(3) + buttons(1) + help(1) = 6
+            if inner.height < 6 {
                 return None;
             }
-            let constraints = vec![
-                Constraint::Length(1), // heading
-                Constraint::Length(1), // text
-                Constraint::Length(4), // note (bordered, fixed small)
-                Constraint::Min(5),    // categories (bordered, flexible, scrollable)
-                Constraint::Length(1), // preview
-                Constraint::Length(1), // buttons
-                Constraint::Length(1), // help
-            ];
-
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(constraints)
+                .constraints([
+                    Constraint::Length(1), // text (+ inline preview context)
+                    Constraint::Min(3),    // middle: note | categories side-by-side
+                    Constraint::Length(1), // buttons
+                    Constraint::Length(1), // help
+                ])
                 .split(inner);
-            let note = chunks[2];
+
+            // Split the middle row horizontally: note (left) | categories (right)
+            let middle = chunks[1];
+            let halves = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(40), // note
+                    Constraint::Percentage(60), // categories
+                ])
+                .split(middle);
+
+            let note = halves[0];
             let note_inner = Rect {
                 x: note.x.saturating_add(1),
                 y: note.y.saturating_add(1),
                 width: note.width.saturating_sub(2),
                 height: note.height.saturating_sub(2),
             };
-            let cat = chunks[3];
+            let cat = halves[1];
             let cat_inner = Rect {
                 x: cat.x.saturating_add(1),
                 y: cat.y.saturating_add(1),
@@ -929,15 +931,13 @@ pub(super) fn input_panel_popup_regions(
                 height: cat.height.saturating_sub(2),
             };
             Some(InputPanelPopupRegions {
-                heading: chunks[0],
-                text: chunks[1],
+                text: chunks[0],
                 note: Some(note),
                 note_inner: Some(note_inner),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
-                preview: Some(chunks[4]),
-                buttons: chunks[5],
-                help: chunks[6],
+                buttons: chunks[2],
+                help: chunks[3],
             })
         }
     }
