@@ -1742,29 +1742,28 @@ impl App {
             return;
         };
 
-        // Heading
-        let heading_text = match panel.kind {
-            InputPanelKind::AddItem => "Create new item",
-            InputPanelKind::EditItem => "Edit selected item",
-            InputPanelKind::NameInput => "Enter name",
-        };
-        frame.render_widget(Paragraph::new(heading_text), regions.heading);
-
-        // Text field
+        // Text field (with inline preview context for AddItem)
         let text_marker = if panel.focus == InputPanelFocus::Text {
-            ">"
+            "> "
         } else {
-            " "
+            "  "
         };
         let text_label = if panel.kind == InputPanelKind::NameInput {
             "Name"
         } else {
             "Text"
         };
-        frame.render_widget(
-            Paragraph::new(format!("{text_marker} {text_label}> {}", panel.text.text())),
-            regions.text,
-        );
+        let mut text_spans = vec![Span::raw(format!(
+            "{text_marker}{text_label}> {}",
+            panel.text.text()
+        ))];
+        if !panel.preview_context.is_empty() {
+            text_spans.push(Span::styled(
+                format!("  {}", panel.preview_context),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+        }
+        frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
 
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
@@ -1779,11 +1778,7 @@ impl App {
             } else {
                 Color::Blue
             };
-            let note_title = if note_focused {
-                "Note (> editable)"
-            } else {
-                "Note (editable)"
-            };
+            let note_title = "Note";
             let note_cursor_line = panel.note.line_col().0;
             let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
             frame.render_widget(
@@ -1814,17 +1809,16 @@ impl App {
             } else {
                 Color::Blue
             };
-            let cat_title = if cat_focused {
-                "Categories (Space: toggle)"
-            } else {
-                "Categories"
-            };
+            let cat_title = "Categories";
 
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
             let inner_width = cat_inner.width as usize;
 
             let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
-                vec![Line::from("(no categories available)")]
+                vec![Line::from(Span::styled(
+                    "(no categories)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))]
             } else {
                 self.category_rows
                     .iter()
@@ -1836,61 +1830,51 @@ impl App {
                         let is_cursor = cat_focused && i == panel.category_cursor;
 
                         let check = if is_assigned && is_numeric {
-                            "- [N] "
+                            "[N] "
                         } else if is_assigned {
-                            "- [x] "
+                            "[x] "
                         } else {
-                            "- [ ] "
+                            "[ ] "
                         };
 
-                        let cursor_prefix = if is_cursor { ">" } else { " " };
                         let indent = "  ".repeat(row.depth);
-                        let reserved = if row.is_reserved {
-                            " [reserved]"
-                        } else {
-                            ""
-                        };
 
-                        // Build the left part: cursor + check + indent + name + reserved
-                        let left = format!(
-                            "{cursor_prefix}{check}{indent}{}{reserved}",
-                            row.name
-                        );
+                        let base_style = if is_cursor {
+                            Style::default().fg(Color::Black).bg(Color::Cyan)
+                        } else if row.is_reserved {
+                            Style::default().fg(MUTED_TEXT_COLOR)
+                        } else {
+                            Style::default()
+                        };
 
                         // For assigned numeric categories, show value field on the right
                         if is_assigned && is_numeric {
                             if let Some(buf) = panel.numeric_buffers.get(&row.id) {
+                                let left = format!("{check}{indent}{}", row.name);
                                 let value_text = format!("[{}]", buf.text());
                                 let left_len = left.chars().count();
                                 let value_len = value_text.chars().count();
                                 let total_needed = left_len + 1 + value_len;
-                                let dot_leaders = if inner_width > total_needed {
+                                let padding = if inner_width > total_needed {
                                     " ".repeat(inner_width - total_needed)
-                                        .chars()
-                                        .enumerate()
-                                        .map(|(i, _)| {
-                                            if i % 2 == 0 { '\u{00B7}' } else { ' ' }
-                                        })
-                                        .collect::<String>()
                                 } else {
                                     " ".to_string()
                                 };
-                                let full = format!("{left}{dot_leaders}{value_text}");
-                                let style = if is_cursor {
-                                    Style::default().fg(Color::Yellow)
-                                } else {
-                                    Style::default()
-                                };
-                                return Line::from(Span::styled(full, style));
+                                let full = format!("{left}{padding}{value_text}");
+                                return Line::from(Span::styled(full, base_style));
                             }
                         }
 
-                        let style = if is_cursor {
-                            Style::default().fg(Color::Yellow)
+                        let reserved_suffix = if row.is_reserved {
+                            " [reserved]"
                         } else {
-                            Style::default()
+                            ""
                         };
-                        Line::from(Span::styled(left, style))
+                        let text = format!(
+                            "{check}{indent}{}{reserved_suffix}",
+                            row.name
+                        );
+                        Line::from(Span::styled(text, base_style))
                     })
                     .collect()
             };
@@ -1916,16 +1900,6 @@ impl App {
                 item_count,
                 cat_scroll as usize,
             );
-        }
-
-        if let Some(preview_rect) = regions.preview {
-            if !panel.preview_context.is_empty() {
-                frame.render_widget(
-                    Paragraph::new(panel.preview_context.as_str())
-                        .style(Style::default().fg(Color::DarkGray)),
-                    preview_rect,
-                );
-            }
         }
 
         // Buttons row
