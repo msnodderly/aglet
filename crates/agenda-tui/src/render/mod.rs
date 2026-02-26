@@ -66,6 +66,9 @@ impl App {
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
+        if self.mode == Mode::LinkWizard {
+            self.render_link_wizard(frame, centered_rect(72, 72, frame.area()));
+        }
         if self.mode == Mode::CategoryDirectEdit {
             let popup_area = centered_rect(64, 62, frame.area());
             self.render_category_direct_edit_picker(frame, popup_area);
@@ -369,6 +372,248 @@ impl App {
                 .style(Style::default().fg(MUTED_TEXT_COLOR))
                 .wrap(Wrap { trim: true }),
             chunks[5],
+        );
+    }
+
+    fn render_link_wizard(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Link Wizard")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 6 || area.height < 8 {
+            return;
+        }
+
+        let Some(state) = self.link_wizard_state() else {
+            return;
+        };
+        let action = LinkWizardAction::from_index(state.action_index);
+        let anchor = self.link_wizard_anchor_item();
+        let anchor_label = anchor
+            .map(board_item_label)
+            .unwrap_or_else(|| state.anchor_item_id.to_string());
+        let matches = self.link_wizard_target_matches();
+        let selected_target_id = self.link_wizard_selected_target_id();
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // anchor
+                Constraint::Length(7), // actions
+                Constraint::Length(2), // target query
+                Constraint::Min(5),    // target matches
+                Constraint::Length(4), // preview
+                Constraint::Length(2), // help
+            ])
+            .split(inner);
+
+        let anchor_lines = vec![
+            Line::from("Anchor item"),
+            Line::from(format!("  {}", truncate_board_cell(&anchor_label, 72))),
+        ];
+        frame.render_widget(
+            Paragraph::new(anchor_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            ),
+            rows[0],
+        );
+
+        let mut action_items = Vec::new();
+        for (idx, candidate) in LinkWizardAction::ALL.iter().enumerate() {
+            let selected = idx == state.action_index;
+            let marker = if selected { ">" } else { " " };
+            action_items.push(ListItem::new(format!(
+                "{marker} {:<18} {}",
+                candidate.label(),
+                candidate.description()
+            )));
+        }
+        let action_block = Block::default()
+            .title(if state.focus == LinkWizardFocus::ScopeAction {
+                "Relationship *"
+            } else {
+                "Relationship"
+            })
+            .borders(Borders::ALL)
+            .border_style(if state.focus == LinkWizardFocus::ScopeAction {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            });
+        frame.render_widget(
+            List::new(action_items).block(action_block),
+            rows[1],
+        );
+
+        let target_title = if state.focus == LinkWizardFocus::Target {
+            "Target *"
+        } else {
+            "Target"
+        };
+        let target_block = Block::default()
+            .title(target_title)
+            .borders(Borders::ALL)
+            .border_style(if state.focus == LinkWizardFocus::Target {
+                Style::default().fg(Color::Yellow)
+            } else if !action.requires_target() {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            });
+        let target_text = if action.requires_target() {
+            format!("Search> {}", state.target_filter.text())
+        } else {
+            "(not used for clear dependencies)".to_string()
+        };
+        frame.render_widget(Paragraph::new(target_text).block(target_block), rows[2]);
+
+        let mut target_items: Vec<ListItem> = Vec::new();
+        if action.requires_target() {
+            for (idx, item_id) in matches.iter().enumerate() {
+                let label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == *item_id)
+                    .map(|item| {
+                        let status = if item.is_done { "done" } else { "open" };
+                        format!("{status} | {}", item.text)
+                    })
+                    .unwrap_or_else(|| format!("missing | {item_id}"));
+                let marker = if idx == state.target_index { ">" } else { " " };
+                target_items.push(ListItem::new(format!("{marker} {}", truncate_board_cell(&label, 72))));
+            }
+            if target_items.is_empty() {
+                target_items.push(ListItem::new("  (no matches)"));
+            }
+        } else {
+            target_items.push(ListItem::new("  Clear dependencies removes prereqs and blocked items"));
+        }
+        frame.render_widget(
+            List::new(target_items).block(
+                Block::default()
+                    .title("Matches")
+                    .borders(Borders::ALL)
+                    .border_style(if state.focus == LinkWizardFocus::Target {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    }),
+            ),
+            rows[3],
+        );
+
+        let preview_lines = {
+            let mut lines = vec![Line::from("Preview")];
+            match action {
+                LinkWizardAction::BlockedBy => {
+                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        lines.push(Line::from(format!(
+                            "  {} blocked by {}",
+                            truncate_board_cell(&anchor_label, 28),
+                            truncate_board_cell(&target.text, 28)
+                        )));
+                        lines.push(Line::from(format!(
+                            "  (stores: {} depends-on {})",
+                            truncate_board_cell(&anchor_label, 22),
+                            truncate_board_cell(&target.text, 22)
+                        )));
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::DependsOn => {
+                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        lines.push(Line::from(format!(
+                            "  {} depends on {}",
+                            truncate_board_cell(&anchor_label, 28),
+                            truncate_board_cell(&target.text, 28)
+                        )));
+                        lines.push(Line::from(""));
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::Blocks => {
+                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        lines.push(Line::from(format!(
+                            "  {} blocks {}",
+                            truncate_board_cell(&anchor_label, 28),
+                            truncate_board_cell(&target.text, 28)
+                        )));
+                        lines.push(Line::from(format!(
+                            "  (stores: {} depends-on {})",
+                            truncate_board_cell(&target.text, 22),
+                            truncate_board_cell(&anchor_label, 22)
+                        )));
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::RelatedTo => {
+                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        lines.push(Line::from(format!(
+                            "  {} related to {}",
+                            truncate_board_cell(&anchor_label, 26),
+                            truncate_board_cell(&target.text, 26)
+                        )));
+                        lines.push(Line::from("  (symmetric)"));
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::ClearDependencies => {
+                    lines.push(Line::from("  Remove all immediate prereqs and dependents"));
+                    lines.push(Line::from("  (does not remove related links)"));
+                }
+            }
+            while lines.len() < 4 {
+                lines.push(Line::from(""));
+            }
+            lines
+        };
+        frame.render_widget(
+            Paragraph::new(preview_lines).block(
+                Block::default()
+                    .title(if state.focus == LinkWizardFocus::Confirm {
+                        "Apply *"
+                    } else {
+                        "Apply"
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(if state.focus == LinkWizardFocus::Confirm {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    }),
+            ),
+            rows[4],
+        );
+
+        frame.render_widget(
+            Paragraph::new("j/k:move  Tab:focus  Enter:next/apply  b/B:different block direction  d/r/c:action  /:target  Esc:cancel")
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            rows[5],
         );
     }
 
@@ -1665,6 +1910,22 @@ impl App {
             Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            Mode::LinkWizard => {
+                if let Some(state) = self.link_wizard_state() {
+                    let action = LinkWizardAction::from_index(state.action_index);
+                    if action.requires_target() {
+                        format!(
+                            "Link wizard ({}) target> {}",
+                            action.label(),
+                            state.target_filter.text()
+                        )
+                    } else {
+                        format!("Link wizard ({})", action.label())
+                    }
+                } else {
+                    "Link wizard".to_string()
+                }
+            }
             Mode::BoardAddColumnPicker => {
                 format!(
                     "Add column> {}",
@@ -1726,6 +1987,9 @@ impl App {
             }
             Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
+            Mode::LinkWizard => {
+                "j/k:move  Tab:cycle focus  Enter:next/apply  b/B:block relation  d:depends  r:related  c:clear deps  /:target  Esc:cancel"
+            }
             Mode::CategoryDirectEdit => {
                 "Tab/Shift-Tab:focus  Right:autocomplete (Suggestions)  +:add row  n/a:add row (Entries)  x:remove row (Entries)  Enter:resolve row/create  s/S:save draft  Esc:cancel draft"
             }
@@ -1751,7 +2015,7 @@ impl App {
                     "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Esc:cancel"
                 }
             }
-            _ => "h/l:move  H/L:reorder col  g(ga/gH/gL):prefix  +:add col  -:remove col  n:add item  e:edit  q:quit",
+            _ => "h/l:move  H/L:reorder col  b/B:link wizard  g(ga/gH/gL):prefix  +:add col  -:remove col  n:add item  e:edit  q:quit",
         }
     }
 

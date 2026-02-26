@@ -177,6 +177,7 @@ enum BucketEditTarget {
 enum Mode {
     Normal,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
+    LinkWizard,
     NoteEdit,
     ItemAssignPicker,
     ItemAssignInput,
@@ -196,6 +197,100 @@ enum Mode {
         name: String,
         parent_id: CategoryId,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LinkWizardFocus {
+    ScopeAction,
+    Target,
+    Confirm,
+}
+
+impl LinkWizardFocus {
+    fn next(self) -> Self {
+        match self {
+            Self::ScopeAction => Self::Target,
+            Self::Target => Self::Confirm,
+            Self::Confirm => Self::ScopeAction,
+        }
+    }
+
+    fn prev(self) -> Self {
+        match self {
+            Self::ScopeAction => Self::Confirm,
+            Self::Target => Self::ScopeAction,
+            Self::Confirm => Self::Target,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LinkWizardAction {
+    BlockedBy,
+    DependsOn,
+    Blocks,
+    RelatedTo,
+    ClearDependencies,
+}
+
+impl LinkWizardAction {
+    const ALL: [Self; 5] = [
+        Self::BlockedBy,
+        Self::DependsOn,
+        Self::Blocks,
+        Self::RelatedTo,
+        Self::ClearDependencies,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::BlockedBy => "blocked by",
+            Self::DependsOn => "depends on",
+            Self::Blocks => "blocks",
+            Self::RelatedTo => "related to",
+            Self::ClearDependencies => "clear dependencies",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::BlockedBy => "(X blocks selected item)",
+            Self::DependsOn => "(selected item depends on X)",
+            Self::Blocks => "(selected item blocks X)",
+            Self::RelatedTo => "(selected item related to X)",
+            Self::ClearDependencies => "(remove depends-on/blocks links for selected item)",
+        }
+    }
+
+    fn requires_target(self) -> bool {
+        !matches!(self, Self::ClearDependencies)
+    }
+
+    fn from_index(index: usize) -> Self {
+        Self::ALL
+            .get(index)
+            .copied()
+            .unwrap_or(Self::BlockedBy)
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::BlockedBy => 0,
+            Self::DependsOn => 1,
+            Self::Blocks => 2,
+            Self::RelatedTo => 3,
+            Self::ClearDependencies => 4,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LinkWizardState {
+    anchor_item_id: ItemId,
+    focus: LinkWizardFocus,
+    action_index: usize,
+    target_filter: text_buffer::TextBuffer,
+    target_index: usize,
 }
 
 /// Disambiguates which name-input operation is in flight when Mode::InputPanel
@@ -597,6 +692,7 @@ struct App {
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
     input_panel: Option<input_panel::InputPanel>,
+    link_wizard: Option<LinkWizardState>,
     name_input_context: Option<NameInputContext>,
     preview_provenance_scroll: usize,
     preview_summary_scroll: usize,
@@ -641,6 +737,7 @@ impl Default for App {
             board_add_column: None,
             item_assign_category_index: 0,
             input_panel: None,
+            link_wizard: None,
             name_input_context: None,
             preview_provenance_scroll: 0,
             preview_summary_scroll: 0,

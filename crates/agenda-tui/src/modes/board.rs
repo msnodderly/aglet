@@ -1981,6 +1981,12 @@ impl App {
             KeyCode::Char('n') => {
                 self.open_input_panel_add_item();
             }
+            KeyCode::Char('b') => {
+                self.open_link_wizard(LinkWizardAction::BlockedBy);
+            }
+            KeyCode::Char('B') => {
+                self.open_link_wizard(LinkWizardAction::Blocks);
+            }
             KeyCode::Char('e') => {
                 self.open_input_panel_edit_item();
             }
@@ -2143,6 +2149,387 @@ impl App {
             _ => {}
         }
 
+        Ok(false)
+    }
+
+    fn open_link_wizard(&mut self, default_action: LinkWizardAction) {
+        let Some(anchor_item_id) = self.selected_item_id() else {
+            self.status = "No selected item to link".to_string();
+            return;
+        };
+        self.link_wizard = Some(LinkWizardState {
+            anchor_item_id,
+            focus: LinkWizardFocus::ScopeAction,
+            action_index: default_action.index(),
+            target_filter: text_buffer::TextBuffer::empty(),
+            target_index: 0,
+        });
+        self.mode = Mode::LinkWizard;
+        let anchor_label = self
+            .selected_item()
+            .map(board_item_label)
+            .unwrap_or_else(|| anchor_item_id.to_string());
+        self.status = format!(
+            "Link wizard for '{}': choose relation, target, then Enter to apply",
+            truncate_board_cell(&anchor_label, 40)
+        );
+    }
+
+    pub(crate) fn link_wizard_state(&self) -> Option<&LinkWizardState> {
+        self.link_wizard.as_ref()
+    }
+
+    fn link_wizard_state_mut(&mut self) -> Option<&mut LinkWizardState> {
+        self.link_wizard.as_mut()
+    }
+
+    pub(crate) fn link_wizard_selected_action(&self) -> Option<LinkWizardAction> {
+        self.link_wizard_state()
+            .map(|state| LinkWizardAction::from_index(state.action_index))
+    }
+
+    pub(crate) fn link_wizard_anchor_item(&self) -> Option<&Item> {
+        let anchor_id = self.link_wizard_state()?.anchor_item_id;
+        self.all_items.iter().find(|item| item.id == anchor_id)
+    }
+
+    pub(crate) fn link_wizard_target_matches(&self) -> Vec<ItemId> {
+        let Some(state) = self.link_wizard_state() else {
+            return Vec::new();
+        };
+        let query = state.target_filter.trimmed().to_ascii_lowercase();
+        let mut rows: Vec<(String, ItemId)> = self
+            .all_items
+            .iter()
+            .filter(|item| item.id != state.anchor_item_id)
+            .filter(|item| {
+                if query.is_empty() {
+                    return true;
+                }
+                item.text.to_ascii_lowercase().contains(&query)
+                    || item.id.to_string().contains(&query)
+            })
+            .map(|item| (item.text.to_ascii_lowercase(), item.id))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.into_iter().map(|(_, id)| id).collect()
+    }
+
+    fn clamp_link_wizard_target_index(&mut self) {
+        let len = self.link_wizard_target_matches().len();
+        if let Some(state) = self.link_wizard_state_mut() {
+            state.target_index = if len == 0 {
+                0
+            } else {
+                state.target_index.min(len - 1)
+            };
+            if !LinkWizardAction::from_index(state.action_index).requires_target()
+                && state.focus == LinkWizardFocus::Target
+            {
+                state.focus = LinkWizardFocus::Confirm;
+            }
+        }
+    }
+
+    fn set_link_wizard_action(&mut self, action: LinkWizardAction) {
+        if let Some(state) = self.link_wizard_state_mut() {
+            state.action_index = action.index();
+            if !action.requires_target() && state.focus == LinkWizardFocus::Target {
+                state.focus = LinkWizardFocus::Confirm;
+            }
+        }
+        self.clamp_link_wizard_target_index();
+    }
+
+    fn move_link_wizard_action_cursor(&mut self, delta: i32) {
+        if let Some(state) = self.link_wizard_state_mut() {
+            state.action_index = next_index(state.action_index, LinkWizardAction::ALL.len(), delta);
+        }
+        self.clamp_link_wizard_target_index();
+    }
+
+    fn move_link_wizard_target_cursor(&mut self, delta: i32) {
+        let len = self.link_wizard_target_matches().len();
+        if len == 0 {
+            if let Some(state) = self.link_wizard_state_mut() {
+                state.target_index = 0;
+            }
+            return;
+        }
+        if let Some(state) = self.link_wizard_state_mut() {
+            state.target_index = next_index(state.target_index, len, delta);
+        }
+    }
+
+    pub(crate) fn link_wizard_selected_target_id(&self) -> Option<ItemId> {
+        let state = self.link_wizard_state()?;
+        let matches = self.link_wizard_target_matches();
+        matches
+            .get(state.target_index.min(matches.len().saturating_sub(1)))
+            .copied()
+    }
+
+    fn close_link_wizard(&mut self, status: &str) {
+        self.mode = Mode::Normal;
+        self.link_wizard = None;
+        self.status = status.to_string();
+    }
+
+    fn apply_link_wizard(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(state) = self.link_wizard_state().cloned() else {
+            self.mode = Mode::Normal;
+            return Ok(());
+        };
+
+        let action = LinkWizardAction::from_index(state.action_index);
+        let anchor_id = state.anchor_item_id;
+        let anchor_label = self
+            .all_items
+            .iter()
+            .find(|item| item.id == anchor_id)
+            .map(board_item_label)
+            .unwrap_or_else(|| anchor_id.to_string());
+
+        let status = match action {
+            LinkWizardAction::BlockedBy => {
+                let target_id = self
+                    .link_wizard_selected_target_id()
+                    .ok_or("No target selected".to_string())?;
+                let result = agenda
+                    .link_items_depends_on(anchor_id, target_id)
+                    .map_err(|e| e.to_string())?;
+                let target_label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == target_id)
+                    .map(board_item_label)
+                    .unwrap_or_else(|| target_id.to_string());
+                if result.created {
+                    format!(
+                        "Linked '{}' blocked by '{}'",
+                        truncate_board_cell(&anchor_label, 30),
+                        truncate_board_cell(&target_label, 30)
+                    )
+                } else {
+                    "Link already exists".to_string()
+                }
+            }
+            LinkWizardAction::DependsOn => {
+                let target_id = self
+                    .link_wizard_selected_target_id()
+                    .ok_or("No target selected".to_string())?;
+                let result = agenda
+                    .link_items_depends_on(anchor_id, target_id)
+                    .map_err(|e| e.to_string())?;
+                if result.created {
+                    "Linked depends-on".to_string()
+                } else {
+                    "Link already exists".to_string()
+                }
+            }
+            LinkWizardAction::Blocks => {
+                let target_id = self
+                    .link_wizard_selected_target_id()
+                    .ok_or("No target selected".to_string())?;
+                let result = agenda
+                    .link_items_blocks(anchor_id, target_id)
+                    .map_err(|e| e.to_string())?;
+                let target_label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == target_id)
+                    .map(board_item_label)
+                    .unwrap_or_else(|| target_id.to_string());
+                if result.created {
+                    format!(
+                        "Linked '{}' blocks '{}'",
+                        truncate_board_cell(&anchor_label, 30),
+                        truncate_board_cell(&target_label, 30)
+                    )
+                } else {
+                    "Link already exists".to_string()
+                }
+            }
+            LinkWizardAction::RelatedTo => {
+                let target_id = self
+                    .link_wizard_selected_target_id()
+                    .ok_or("No target selected".to_string())?;
+                let result = agenda
+                    .link_items_related(anchor_id, target_id)
+                    .map_err(|e| e.to_string())?;
+                if result.created {
+                    "Linked related items".to_string()
+                } else {
+                    "Link already exists".to_string()
+                }
+            }
+            LinkWizardAction::ClearDependencies => {
+                let prereqs = agenda
+                    .immediate_prereq_ids(anchor_id)
+                    .map_err(|e| e.to_string())?;
+                let dependents = agenda
+                    .immediate_dependent_ids(anchor_id)
+                    .map_err(|e| e.to_string())?;
+                for dependency_id in &prereqs {
+                    agenda
+                        .unlink_items_depends_on(anchor_id, *dependency_id)
+                        .map_err(|e| e.to_string())?;
+                }
+                for blocked_id in &dependents {
+                    agenda
+                        .unlink_items_blocks(anchor_id, *blocked_id)
+                        .map_err(|e| e.to_string())?;
+                }
+                format!(
+                    "Cleared dependencies for '{}' (prereqs={}, blocks={})",
+                    truncate_board_cell(&anchor_label, 30),
+                    prereqs.len(),
+                    dependents.len()
+                )
+            }
+        };
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(anchor_id);
+        self.close_link_wizard(&status);
+        Ok(())
+    }
+
+    pub(crate) fn handle_link_wizard_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        let Some(state) = self.link_wizard_state().cloned() else {
+            self.mode = Mode::Normal;
+            return Ok(false);
+        };
+        let in_target_focus = state.focus == LinkWizardFocus::Target;
+
+        match code {
+            KeyCode::Esc => {
+                self.close_link_wizard("Link wizard canceled");
+            }
+            KeyCode::Tab => {
+                if let Some(wizard) = self.link_wizard_state_mut() {
+                    wizard.focus = wizard.focus.next();
+                }
+                if self
+                    .link_wizard_selected_action()
+                    .is_some_and(|action| !action.requires_target())
+                    && self
+                        .link_wizard_state()
+                        .is_some_and(|wizard| wizard.focus == LinkWizardFocus::Target)
+                {
+                    if let Some(wizard) = self.link_wizard_state_mut() {
+                        wizard.focus = LinkWizardFocus::Confirm;
+                    }
+                }
+            }
+            KeyCode::BackTab => {
+                if let Some(wizard) = self.link_wizard_state_mut() {
+                    wizard.focus = wizard.focus.prev();
+                }
+                if self
+                    .link_wizard_selected_action()
+                    .is_some_and(|action| !action.requires_target())
+                    && self
+                        .link_wizard_state()
+                        .is_some_and(|wizard| wizard.focus == LinkWizardFocus::Target)
+                {
+                    if let Some(wizard) = self.link_wizard_state_mut() {
+                        wizard.focus = LinkWizardFocus::ScopeAction;
+                    }
+                }
+            }
+            KeyCode::Char('b') if !in_target_focus => {
+                self.set_link_wizard_action(LinkWizardAction::BlockedBy)
+            }
+            KeyCode::Char('B') if !in_target_focus => {
+                self.set_link_wizard_action(LinkWizardAction::Blocks)
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') if !in_target_focus => {
+                self.set_link_wizard_action(LinkWizardAction::DependsOn)
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') if !in_target_focus => {
+                self.set_link_wizard_action(LinkWizardAction::RelatedTo)
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') if !in_target_focus => {
+                self.set_link_wizard_action(LinkWizardAction::ClearDependencies)
+            }
+            KeyCode::Down | KeyCode::Char('j') => match state.focus {
+                LinkWizardFocus::ScopeAction => self.move_link_wizard_action_cursor(1),
+                LinkWizardFocus::Target => self.move_link_wizard_target_cursor(1),
+                LinkWizardFocus::Confirm => {}
+            },
+            KeyCode::Up | KeyCode::Char('k') => match state.focus {
+                LinkWizardFocus::ScopeAction => self.move_link_wizard_action_cursor(-1),
+                LinkWizardFocus::Target => self.move_link_wizard_target_cursor(-1),
+                LinkWizardFocus::Confirm => {}
+            },
+            KeyCode::Char('/') => {
+                if self
+                    .link_wizard_selected_action()
+                    .is_some_and(|action| action.requires_target())
+                {
+                    if let Some(wizard) = self.link_wizard_state_mut() {
+                        wizard.focus = LinkWizardFocus::Target;
+                    }
+                }
+            }
+            KeyCode::Enter => match state.focus {
+                LinkWizardFocus::ScopeAction => {
+                    if self
+                        .link_wizard_selected_action()
+                        .is_some_and(|action| action.requires_target())
+                    {
+                        if let Some(wizard) = self.link_wizard_state_mut() {
+                            wizard.focus = LinkWizardFocus::Target;
+                        }
+                    } else if let Some(wizard) = self.link_wizard_state_mut() {
+                        wizard.focus = LinkWizardFocus::Confirm;
+                    }
+                }
+                LinkWizardFocus::Target => {
+                    if self
+                        .link_wizard_selected_action()
+                        .is_some_and(|action| action.requires_target())
+                    {
+                        if self.link_wizard_selected_target_id().is_some() {
+                            if let Some(wizard) = self.link_wizard_state_mut() {
+                                wizard.focus = LinkWizardFocus::Confirm;
+                            }
+                        } else {
+                            self.status = "No target selected".to_string();
+                        }
+                    } else if let Some(wizard) = self.link_wizard_state_mut() {
+                        wizard.focus = LinkWizardFocus::Confirm;
+                    }
+                }
+                LinkWizardFocus::Confirm => {
+                    self.apply_link_wizard(agenda)?;
+                }
+            },
+            _ => {
+                let requires_target = self
+                    .link_wizard_selected_action()
+                    .is_some_and(|action| action.requires_target());
+                if requires_target
+                    && self
+                        .link_wizard_state()
+                        .is_some_and(|wizard| wizard.focus == LinkWizardFocus::Target)
+                {
+                    let consumed = if let Some(wizard) = self.link_wizard_state_mut() {
+                        wizard.target_filter.handle_key(code, false)
+                    } else {
+                        false
+                    };
+                    if consumed {
+                        self.clamp_link_wizard_target_index();
+                    }
+                }
+            }
+        }
         Ok(false)
     }
 
