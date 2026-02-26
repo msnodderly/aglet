@@ -1830,7 +1830,7 @@ impl App {
                         let is_cursor = cat_focused && i == panel.category_cursor;
 
                         let check = if is_assigned && is_numeric {
-                            "[N] "
+                            "[#] "
                         } else if is_assigned {
                             "[x] "
                         } else {
@@ -1847,34 +1847,67 @@ impl App {
                             Style::default()
                         };
 
+                        let suffix_style = if is_cursor {
+                            // On cursor row, suffix keeps same bg but dims fg
+                            Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                        } else {
+                            Style::default().fg(MUTED_TEXT_COLOR)
+                        };
+
+                        let type_suffix = if row.is_reserved {
+                            " [reserved]"
+                        } else if is_numeric {
+                            " [numeric]"
+                        } else {
+                            ""
+                        };
+
+                        let main_prefix = format!("{check}{indent}{}", row.name);
+
                         // For assigned numeric categories, show value field on the right
                         if is_assigned && is_numeric {
                             if let Some(buf) = panel.numeric_buffers.get(&row.id) {
-                                let left = format!("{check}{indent}{}", row.name);
-                                let value_text = format!("[{}]", buf.text());
-                                let left_len = left.chars().count();
-                                let value_len = value_text.chars().count();
-                                let total_needed = left_len + 1 + value_len;
+                                let value_display = buf.text();
+                                let value_text = if value_display.is_empty() {
+                                    "________".to_string()
+                                } else {
+                                    value_display.to_string()
+                                };
+                                let left_len = main_prefix.chars().count()
+                                    + type_suffix.chars().count();
+                                // value: space + value
+                                let value_len = 1 + value_text.chars().count();
+                                let total_needed = left_len + value_len;
                                 let padding = if inner_width > total_needed {
                                     " ".repeat(inner_width - total_needed)
                                 } else {
                                     " ".to_string()
                                 };
-                                let full = format!("{left}{padding}{value_text}");
-                                return Line::from(Span::styled(full, base_style));
+                                let value_style = if is_cursor {
+                                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                                } else {
+                                    Style::default().fg(Color::Yellow)
+                                };
+                                let mut spans = vec![
+                                    Span::styled(main_prefix, base_style),
+                                ];
+                                if !type_suffix.is_empty() {
+                                    spans.push(Span::styled(type_suffix.to_string(), suffix_style));
+                                }
+                                spans.push(Span::styled(padding, base_style));
+                                spans.push(Span::styled(value_text, value_style));
+                                return Line::from(spans);
                             }
                         }
 
-                        let reserved_suffix = if row.is_reserved {
-                            " [reserved]"
+                        if type_suffix.is_empty() {
+                            Line::from(Span::styled(main_prefix, base_style))
                         } else {
-                            ""
-                        };
-                        let text = format!(
-                            "{check}{indent}{}{reserved_suffix}",
-                            row.name
-                        );
-                        Line::from(Span::styled(text, base_style))
+                            Line::from(vec![
+                                Span::styled(main_prefix, base_style),
+                                Span::styled(type_suffix.to_string(), suffix_style),
+                            ])
+                        }
                     })
                     .collect()
             };

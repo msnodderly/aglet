@@ -2635,16 +2635,12 @@ impl App {
                         }
                         if let Some(panel) = &mut self.input_panel {
                             panel.toggle_category(row.id);
-                            // Manage numeric buffer
-                            if is_numeric {
-                                if is_adding {
-                                    panel.numeric_buffers.insert(
-                                        row.id,
-                                        crate::text_buffer::TextBuffer::empty(),
-                                    );
-                                } else {
-                                    panel.numeric_buffers.remove(&row.id);
-                                }
+                            // Manage numeric buffer — keep buffer on toggle-off
+                            // so the value is preserved if user toggles back on.
+                            if is_numeric && is_adding {
+                                panel.numeric_buffers
+                                    .entry(row.id)
+                                    .or_insert_with(crate::text_buffer::TextBuffer::empty);
                             }
                         }
                         let selected = self
