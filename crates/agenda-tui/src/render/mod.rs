@@ -1545,6 +1545,13 @@ impl App {
             lines.push(Line::from(format!("  {}", categories.join(", "))));
         }
 
+        if let Some(links) = self.item_links_by_item_id.get(&item.id) {
+            lines.push(Line::from(""));
+            Self::push_link_summary_section(&mut lines, "Prereqs", self.item_link_preview_labels(&links.depends_on));
+            Self::push_link_summary_section(&mut lines, "Blocks", self.item_link_preview_labels(&links.blocks));
+            Self::push_link_summary_section(&mut lines, "Related", self.item_link_preview_labels(&links.related));
+        }
+
         lines.push(Line::from(""));
         lines.push(Line::from("Note"));
         match &item.note {
@@ -1556,6 +1563,37 @@ impl App {
             _ => lines.push(Line::from("  (none)")),
         }
         lines
+    }
+
+    fn push_link_summary_section(lines: &mut Vec<Line<'_>>, label: &str, rows: Vec<String>) {
+        lines.push(Line::from(label.to_string()));
+        if rows.is_empty() {
+            lines.push(Line::from("  (none)"));
+            return;
+        }
+        for row in rows {
+            lines.push(Line::from(format!("  {row}")));
+        }
+    }
+
+    fn item_link_preview_labels(&self, ids: &[ItemId]) -> Vec<String> {
+        let mut rows: Vec<(String, String)> = ids
+            .iter()
+            .map(|id| {
+                if let Some(item) = self.all_items.iter().find(|item| item.id == *id) {
+                    let sort_key = item.text.to_ascii_lowercase();
+                    let status = if item.is_done { "done" } else { "open" };
+                    (sort_key, format!("{status} | {}", item.text))
+                } else {
+                    (
+                        id.to_string(),
+                        format!("missing | {}", id),
+                    )
+                }
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.into_iter().map(|(_, label)| label).collect()
     }
 
     pub(crate) fn render_preview_summary_panel(&self) -> Paragraph<'_> {
