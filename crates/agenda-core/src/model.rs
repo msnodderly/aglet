@@ -7,6 +7,33 @@ use uuid::Uuid;
 pub type CategoryId = Uuid;
 pub type ItemId = Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ItemLinkKind {
+    #[serde(rename = "depends-on")]
+    DependsOn,
+    #[serde(rename = "related")]
+    Related,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemLink {
+    /// Endpoint semantics depend on `kind`:
+    /// - DependsOn: item_id = dependent, other_item_id = dependency
+    /// - Related: normalized unordered pair (item_id < other_item_id)
+    pub item_id: ItemId,
+    pub other_item_id: ItemId,
+    pub kind: ItemLinkKind,
+    pub created_at: DateTime<Utc>,
+    pub origin: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ItemLinksForItem {
+    pub depends_on: Vec<ItemId>,
+    pub blocks: Vec<ItemId>,
+    pub related: Vec<ItemId>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
     pub id: ItemId,
@@ -386,5 +413,25 @@ impl View {
             item_column_label: None,
             board_display_mode: BoardDisplayMode::SingleLine,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ItemLinkKind;
+
+    #[test]
+    fn item_link_kind_serde_names_are_stable() {
+        let depends_on = serde_json::to_string(&ItemLinkKind::DependsOn).unwrap();
+        let related = serde_json::to_string(&ItemLinkKind::Related).unwrap();
+
+        assert_eq!(depends_on, "\"depends-on\"");
+        assert_eq!(related, "\"related\"");
+
+        let parsed_depends_on: ItemLinkKind = serde_json::from_str("\"depends-on\"").unwrap();
+        let parsed_related: ItemLinkKind = serde_json::from_str("\"related\"").unwrap();
+
+        assert_eq!(parsed_depends_on, ItemLinkKind::DependsOn);
+        assert_eq!(parsed_related, ItemLinkKind::Related);
     }
 }
