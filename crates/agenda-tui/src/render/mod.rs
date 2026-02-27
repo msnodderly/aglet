@@ -1870,13 +1870,9 @@ impl App {
             .wrap(Wrap { trim: false })
     }
 
-    pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
+    pub(crate) fn render_footer(&self, _width: u16) -> Paragraph<'_> {
         let status = self.footer_status_text();
-        let hints = if self.mode == Mode::ViewEdit && width < 100 {
-            "ViewEdit: Tab:pane  j/k:move  Enter/Space:edit  /:filter  p:preview  S:save  Esc:cancel"
-        } else {
-            self.footer_hint_text()
-        };
+        let hints = self.footer_hint_text();
         let text = ratatui::text::Text::from(vec![
             ratatui::text::Line::from(status),
             ratatui::text::Line::from(ratatui::text::Span::styled(
@@ -1908,7 +1904,7 @@ impl App {
                 }
             }
             Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
-            Mode::ItemAssignPicker => "Select category for selected item".to_string(),
+            Mode::ItemAssignPicker => "Assign categories (changes apply immediately)".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
                 if let Some(state) = self.link_wizard_state() {
@@ -1962,60 +1958,49 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                "j/k:row  Tab:switch pane  H/L:reparent  J/K:reorder  e/i/a:toggle  Enter/Space:details action  n/N:create  r:rename  p:parent-picker  x:delete  /:filter  Esc:cancel/clear/close"
+                "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
             }
-            Mode::ViewPicker => {
-                "j/k:select  Enter:switch  N:new  r:rename  x:delete  e:edit  Esc:back"
-            }
+            Mode::ViewPicker => "Enter:switch  N:new  r:rename  e:edit  x:delete  Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.pane_focus == ViewEditPaneFocus::Sections {
-                        "Sections pane: j/k:select  /:filter  Enter:expand/open-details  n/N:add+name  r:rename view(row)  x:delete(confirm)  J/K or [/]:reorder  p:preview  Tab:pane  S:save  Esc:cancel"
+                        "S:save  n:new  x:delete  Enter:details  Tab:pane  Esc:cancel"
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
-                        "Preview pane: j/k:scroll  p:hide preview  Tab:pane  S:save  Esc:cancel (Esc clears section filter first)"
+                        "S:save  p:hide  Tab:pane  Esc:cancel"
                     } else {
-                        match state.region {
-                            ViewEditRegion::Criteria => "Details pane: j/k:row  Enter/Space:cycle criterion mode (Include/Exclude/Match any)  r:rename view  n:add criterion  x:remove criterion  ]/[:when buckets  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
-                            ViewEditRegion::Sections => "Details pane: j/k:field  Enter/Space:field action  e/t/f/c/a/r/h/m/x shortcuts (optional)  Tab:pane  S:save  Esc:cancel",
-                            ViewEditRegion::Unmatched => "Details pane: j/k:row  Enter/Space:row action  r:rename view  [/]:when buckets  m:display  t/l:unmatched  /:filter  p:preview  Tab:pane  S:save  Esc:cancel",
-                        }
+                        "S:save  n:new  x:delete  Space:toggle  Tab:pane  Esc:cancel"
                     }
                 } else {
-                    "Tab:pane  S:save  Esc:cancel"
+                    "S:save  Tab:pane  Esc:cancel"
                 }
             }
-            Mode::ItemAssignPicker => "j/k:select  Space:toggle  n:new  Enter:done  Esc:cancel",
-            Mode::ItemAssignInput => "Enter:assign/create  Esc:back",
-            Mode::LinkWizard => {
-                "j/k:move  Tab:cycle focus  Enter:next/apply  b/B:block relation  d:depends  r:related  c:clear deps  /:target  Esc:cancel"
-            }
+            Mode::ItemAssignPicker => "Space:toggle  n:new  Enter:done  Esc:cancel",
+            Mode::ItemAssignInput => "Enter:assign  Esc:cancel",
+            Mode::LinkWizard => "Tab:focus  Enter:apply  Esc:cancel",
             Mode::CategoryDirectEdit => {
-                "Tab/Shift-Tab:focus  Right:autocomplete (Suggestions)  +:add row  n/a:add row (Entries)  x:remove row (Entries)  Enter:resolve row/create  s/S:save draft  Esc:cancel draft"
+                "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel"
             }
-            Mode::CategoryColumnPicker => {
-                "Type filter  j/k or Up/Down:move  Space:toggle  Enter:save  Tab:focus  Esc:cancel"
-            }
-            Mode::BoardAddColumnPicker => {
-                "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"
-            }
-            Mode::ConfirmDelete => "y:confirm  Esc:cancel",
-            Mode::BoardColumnDeleteConfirm => "y:confirm  Esc:cancel",
+            Mode::CategoryColumnPicker => "Space:toggle  Enter:save  Esc:cancel",
+            Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
+            Mode::ConfirmDelete
+            | Mode::BoardColumnDeleteConfirm
+            | Mode::CategoryCreateConfirm { .. } => "y:confirm  Esc:cancel",
             Mode::FilterInput => "Enter:apply  Esc:cancel",
-            Mode::NoteEdit => "S:save (empty=clear)  Esc:cancel",
-            Mode::InspectUnassign => "j/k:select  Enter:apply  Esc:cancel",
+            Mode::NoteEdit => "Enter:save  Esc:cancel",
+            Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
             Mode::InputPanel => {
                 if self
                     .input_panel
                     .as_ref()
                     .map_or(false, |p| p.focus == input_panel::InputPanelFocus::Categories)
                 {
-                    "S:save  Tab:cycle  Space:toggle  j/k:navigate  Esc:cancel"
+                    "S:save  Tab:next  Space:toggle  Esc:cancel"
                 } else {
-                    "S:save  Tab/Shift+Tab:cycle fields  Enter:activate button  Esc:cancel"
+                    "S:save  Tab:next  Esc:cancel"
                 }
             }
-            _ => "h/l:move  H/L:reorder col  b/B:link wizard  g(ga/gH/gL):prefix  +:add col  -:remove col  n:add item  e:edit  q:quit",
+            _ => "n:new  e:edit  d:done  a:assign  /:filter  v:views  q:quit",
         }
     }
 
