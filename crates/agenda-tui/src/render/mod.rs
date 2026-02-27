@@ -1899,15 +1899,15 @@ impl App {
                     .unwrap_or("section");
                 format!("Filter [{section_name}]> {}", self.input.text())
             }
-            Mode::ConfirmDelete => "Delete selected item? y/n".to_string(),
+            Mode::ConfirmDelete => "Delete item? y:confirm Esc:cancel".to_string(),
             Mode::BoardColumnDeleteConfirm => {
                 if let Some(name) = &self.board_pending_delete_column_label {
-                    format!("WARNING: Delete column '{name}' from this section? [Y/n]")
+                    format!("Delete column '{name}'? y:confirm Esc:cancel")
                 } else {
-                    "WARNING: Delete selected column from this section? [Y/n]".to_string()
+                    "Delete column? y:confirm Esc:cancel".to_string()
                 }
             }
-            Mode::ViewDeleteConfirm => "Delete selected view? y/n".to_string(),
+            Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
             Mode::ItemAssignPicker => "Select category for selected item".to_string(),
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
@@ -1967,7 +1967,7 @@ impl App {
             Mode::ViewPicker => {
                 "j/k:select  Enter:switch  N:new  r:rename  x:delete  e:edit  Esc:back"
             }
-            Mode::ViewDeleteConfirm => "y:confirm delete  n/Esc:cancel",
+            Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.pane_focus == ViewEditPaneFocus::Sections {
@@ -1999,8 +1999,8 @@ impl App {
             Mode::BoardAddColumnPicker => {
                 "Type filter  j/k or Up/Down:select  Tab:autocomplete  Enter:insert  Esc:cancel"
             }
-            Mode::ConfirmDelete => "y:confirm delete  n:cancel",
-            Mode::BoardColumnDeleteConfirm => "Enter/y:confirm delete  n/Esc:cancel",
+            Mode::ConfirmDelete => "y:confirm  Esc:cancel",
+            Mode::BoardColumnDeleteConfirm => "y:confirm  Esc:cancel",
             Mode::FilterInput => "Enter:apply  Esc:cancel",
             Mode::NoteEdit => "S:save (empty=clear)  Esc:cancel",
             Mode::InspectUnassign => "j/k:select  Enter:apply  Esc:cancel",
@@ -2398,7 +2398,7 @@ impl App {
                 } => {
                     if let Some(name) = confirm_name {
                         format!(
-                            "Create '{}' under {}? (Y/n)",
+                            "Create '{}' under {}? y:confirm Esc:cancel",
                             name,
                             self.category_manager_parent_label(*parent_id)
                         )
@@ -2408,7 +2408,7 @@ impl App {
                 }
                 CategoryInlineAction::Rename { buf, .. } => format!("Rename> {}", buf.text()),
                 CategoryInlineAction::DeleteConfirm { category_name, .. } => {
-                    format!("Delete '{}' ? (y/n)", category_name)
+                    format!("Delete '{}'? y:confirm Esc:cancel", category_name)
                 }
                 CategoryInlineAction::ParentPicker {
                     target_category_name,
@@ -3755,7 +3755,7 @@ impl App {
                     Line::from("Delete section?"),
                     Line::from(format!("\"{section_name}\"")),
                     Line::from(""),
-                    Line::from("y: delete section   n/Esc: cancel"),
+                    Line::from("y:confirm  Esc:cancel"),
                 ])
                 .block(
                     Block::default()

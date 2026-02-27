@@ -8,12 +8,8 @@ enum CategoryInlineConfirmKeyAction {
 
 fn category_inline_confirm_key_action(code: KeyCode) -> CategoryInlineConfirmKeyAction {
     match code {
-        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-            CategoryInlineConfirmKeyAction::Confirm
-        }
-        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-            CategoryInlineConfirmKeyAction::Cancel
-        }
+        KeyCode::Char('y') => CategoryInlineConfirmKeyAction::Confirm,
+        KeyCode::Esc => CategoryInlineConfirmKeyAction::Cancel,
         _ => CategoryInlineConfirmKeyAction::None,
     }
 }
@@ -735,7 +731,7 @@ impl App {
                                 },
                             ));
                             self.status =
-                                format!("Create category '{}' under {}? (Y/n)", name, parent_label);
+                                format!("Create category '{}' under {}? y:confirm Esc:cancel", name, parent_label);
                         }
                     }
                     _ => {
