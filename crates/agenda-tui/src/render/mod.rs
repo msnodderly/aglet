@@ -92,11 +92,28 @@ impl App {
         }
     }
 
+    fn is_category_direct_edit_dirty(&self) -> bool {
+        self.category_direct_edit
+            .as_ref()
+            .map(|state| {
+                let current: Vec<Option<CategoryId>> =
+                    state.rows.iter().map(|r| r.category_id).collect();
+                current != state.original_category_ids
+            })
+            .unwrap_or(false)
+    }
+
     fn render_category_direct_edit_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let dirty_marker = if self.is_category_direct_edit_dirty() {
+            " *"
+        } else {
+            ""
+        };
+        let title = format!("Set Category{dirty_marker}");
         frame.render_widget(Clear, area);
         frame.render_widget(
             Block::default()
-                .title("Set Category")
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
@@ -666,7 +683,7 @@ impl App {
     ) {
         frame.render_widget(
             Paragraph::new(format!(
-                "Create \"{}\" {}\nEnter/Y confirm  N/Esc cancel",
+                "Create \"{}\" {}\ny:confirm  Esc:cancel",
                 name, description_suffix
             ))
             .style(Style::default().fg(MUTED_TEXT_COLOR))
@@ -1040,11 +1057,15 @@ impl App {
         ))
     }
 
-    pub(crate) fn input_prompt_prefix(&self) -> Option<&'static str> {
+    pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
         match self.mode {
-            Mode::NoteEdit => Some("Note> "),
-            Mode::FilterInput => Some("Filter> "),
-            Mode::ItemAssignInput => Some("Category> "),
+            Mode::NoteEdit => {
+                let dirty = self.input.text() != self.note_edit_original;
+                let marker = if dirty { " *" } else { "" };
+                Some(format!("Note{marker}> "))
+            }
+            Mode::FilterInput => Some("Filter> ".to_string()),
+            Mode::ItemAssignInput => Some("Category> ".to_string()),
             _ => None,
         }
     }
@@ -1393,15 +1414,11 @@ impl App {
                         .map(|(item_index, item)| {
                             let is_selected = is_selected_slot && item_index == self.item_index;
                             let marker_cell = if is_selected { ">" } else { " " };
-                            let note_cell = if item.is_done {
-                                DONE_MARKER_SYMBOL
-                            } else if self.is_item_blocked(item.id) {
-                                BLOCKED_MARKER_SYMBOL
-                            } else if has_note_text(item.note.as_deref()) {
-                                NOTE_MARKER_SYMBOL
-                            } else {
-                                " "
-                            };
+                            let note_cell = item_indicator_glyphs(
+                                item.is_done,
+                                self.is_item_blocked(item.id),
+                                has_note_text(item.note.as_deref()),
+                            );
                             let item_cell_content =
                                 if effective_display_mode == BoardDisplayMode::MultiLine {
                                     wrap_text_for_board_cell(&board_item_label(item), item_width)
@@ -1582,6 +1599,7 @@ impl App {
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
+                        .column_spacing(0)
                         .header(
                             Row::new(header_cells)
                                 .style(Style::default().add_modifier(Modifier::BOLD)),
@@ -1629,15 +1647,11 @@ impl App {
                                 .map(|dt| dt.to_string())
                                 .unwrap_or_else(|| "-".to_string());
                             let marker_cell = if is_selected { ">" } else { " " };
-                            let note_cell = if item.is_done {
-                                DONE_MARKER_SYMBOL
-                            } else if self.is_item_blocked(item.id) {
-                                BLOCKED_MARKER_SYMBOL
-                            } else if has_note_text(item.note.as_deref()) {
-                                NOTE_MARKER_SYMBOL
-                            } else {
-                                " "
-                            };
+                            let note_cell = item_indicator_glyphs(
+                                item.is_done,
+                                self.is_item_blocked(item.id),
+                                has_note_text(item.note.as_deref()),
+                            );
                             let item_text = board_item_label(item);
                             let categories = item_assignment_labels(item, &category_names);
                             let categories_text = if categories.is_empty() {
@@ -1696,6 +1710,7 @@ impl App {
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
+                        .column_spacing(0)
                         .header(
                             Row::new(vec![
                                 Cell::from(""),
@@ -1893,7 +1908,11 @@ impl App {
 
     fn footer_status_text(&self) -> String {
         match self.mode {
-            Mode::NoteEdit => format!("Note> {}", self.input.text()),
+            Mode::NoteEdit => {
+                let dirty = self.input.text() != self.note_edit_original;
+                let marker = if dirty { " *" } else { "" };
+                format!("Note{marker}> {}", self.input.text())
+            }
             Mode::FilterInput => {
                 let target = self.filter_target_section;
                 let section_name = self
@@ -2026,10 +2045,11 @@ impl App {
 
         frame.render_widget(Clear, area);
 
+        let dirty_marker = if panel.is_dirty() { " *" } else { "" };
         let title = match panel.kind {
-            InputPanelKind::AddItem => "Add Item",
-            InputPanelKind::EditItem => "Edit Item",
-            InputPanelKind::NameInput => "Name",
+            InputPanelKind::AddItem => format!("Add Item{dirty_marker}"),
+            InputPanelKind::EditItem => format!("Edit Item{dirty_marker}"),
+            InputPanelKind::NameInput => format!("Name{dirty_marker}"),
         };
         let block = Block::default()
             .title(title)
@@ -3324,12 +3344,13 @@ impl App {
                 state.inline_input,
                 Some(ViewEditInlineInput::SectionsFilter)
             );
+            let dirty_marker = if state.dirty { " *" } else { "" };
             let sections_title = if filter_editing {
-                format!(" SECTIONS  /{}◀ ", state.sections_filter_buf.text())
+                format!(" SECTIONS{dirty_marker}  /{}◀ ", state.sections_filter_buf.text())
             } else if filter_active {
-                format!(" SECTIONS  /{} ", state.sections_filter_buf.text())
+                format!(" SECTIONS{dirty_marker}  /{} ", state.sections_filter_buf.text())
             } else {
-                " SECTIONS ".to_string()
+                format!(" SECTIONS{dirty_marker} ")
             };
             let block = Block::default()
                 .title(sections_title)

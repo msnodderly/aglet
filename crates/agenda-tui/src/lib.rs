@@ -549,6 +549,8 @@ struct CategoryDirectEditState {
     focus: CategoryDirectEditFocus,
     suggest_index: usize,
     create_confirm_name: Option<String>,
+    /// Original resolved category IDs for dirty detection.
+    original_category_ids: Vec<Option<CategoryId>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -703,6 +705,9 @@ struct App {
     column_index: usize,
     normal_mode_prefix: Option<NormalModePrefix>,
     board_pending_delete_column_label: Option<String>,
+    note_edit_original: String,
+    note_edit_discard_confirm: bool,
+    input_panel_discard_confirm: bool,
 }
 
 impl Default for App {
@@ -748,6 +753,9 @@ impl Default for App {
             column_index: 0,
             normal_mode_prefix: None,
             board_pending_delete_column_label: None,
+            note_edit_original: String::new(),
+            note_edit_discard_confirm: false,
+            input_panel_discard_confirm: false,
         }
     }
 }
@@ -972,6 +980,7 @@ mod tests {
             focus: CategoryDirectEditFocus::Input,
             suggest_index: 0,
             create_confirm_name: None,
+            original_category_ids: Vec::new(),
         };
 
         assert!(state.active_row().is_none());
@@ -1117,6 +1126,7 @@ mod tests {
             focus: CategoryDirectEditFocus::Input,
             suggest_index: 0,
             create_confirm_name: None,
+            original_category_ids: vec![None, None],
         };
 
         let mut app = App {
@@ -1274,6 +1284,7 @@ mod tests {
             focus: CategoryDirectEditFocus::Input,
             suggest_index: 0,
             create_confirm_name: None,
+            original_category_ids: vec![None, None],
         };
         let mut app = App {
             category_direct_edit: Some(state.clone()),
@@ -3518,6 +3529,8 @@ mod tests {
             let app = App {
                 mode: mode.clone(),
                 input: text_buffer::TextBuffer::new(input.to_string()),
+                // Set note_edit_original to match input so NoteEdit isn't dirty
+                note_edit_original: input.to_string(),
                 ..App::default()
             };
             let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
@@ -3570,6 +3583,7 @@ mod tests {
         let app = App {
             mode: Mode::NoteEdit,
             input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
+            note_edit_original: "abcd".to_string(),
             ..App::default()
         };
         assert_eq!(app.input_cursor_position(footer), Some((9, 1)));

@@ -1278,6 +1278,8 @@ impl App {
             .map(|row| row.input.text().to_string())
             .unwrap_or_default();
 
+        let original_category_ids: Vec<Option<CategoryId>> =
+            rows.iter().map(|r| r.category_id).collect();
         self.mode = Mode::CategoryDirectEdit;
         self.category_direct_edit = Some(CategoryDirectEditState {
             anchor: meta.anchor,
@@ -1290,6 +1292,7 @@ impl App {
             focus: CategoryDirectEditFocus::Input,
             suggest_index: 0,
             create_confirm_name: None,
+            original_category_ids,
         });
         self.set_input(input_value);
         self.category_suggest = None;
@@ -1996,6 +1999,8 @@ impl App {
             KeyCode::Char('m') => {
                 if let Some(item) = self.selected_item() {
                     let existing_note = item.note.clone().unwrap_or_default();
+                    self.note_edit_original = existing_note.clone();
+                    self.note_edit_discard_confirm = false;
                     self.mode = Mode::NoteEdit;
                     self.set_input(existing_note);
                     self.status =
@@ -2931,6 +2936,36 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        // Handle discard confirm sub-state
+        if self.input_panel_discard_confirm {
+            match code {
+                KeyCode::Char('y') => {
+                    // Save
+                    self.input_panel_discard_confirm = false;
+                    return self.handle_input_panel_key(KeyCode::Char('S'), agenda);
+                }
+                KeyCode::Esc => {
+                    // Discard
+                    self.input_panel_discard_confirm = false;
+                    let kind = self.input_panel.as_ref().map(|p| p.kind);
+                    self.input_panel = None;
+                    match kind {
+                        Some(input_panel::InputPanelKind::NameInput) => {
+                            self.mode = self.name_input_return_mode();
+                            self.name_input_context = None;
+                            self.status = "Changes discarded".to_string();
+                        }
+                        _ => {
+                            self.mode = Mode::Normal;
+                            self.status = "Changes discarded".to_string();
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         let Some(panel) = &mut self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
@@ -2958,17 +2993,28 @@ impl App {
         use input_panel::InputPanelAction;
         match action {
             InputPanelAction::Cancel => {
-                let kind = self.input_panel.as_ref().map(|p| p.kind);
-                self.input_panel = None;
-                match kind {
-                    Some(input_panel::InputPanelKind::NameInput) => {
-                        self.mode = self.name_input_return_mode();
-                        self.name_input_context = None;
-                        self.status = "Canceled".to_string();
-                    }
-                    _ => {
-                        self.mode = Mode::Normal;
-                        self.status = "Canceled".to_string();
+                let is_dirty = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.is_dirty())
+                    .unwrap_or(false);
+                if is_dirty {
+                    self.input_panel_discard_confirm = true;
+                    self.status =
+                        "Unsaved changes: y:save  Esc:discard".to_string();
+                } else {
+                    let kind = self.input_panel.as_ref().map(|p| p.kind);
+                    self.input_panel = None;
+                    match kind {
+                        Some(input_panel::InputPanelKind::NameInput) => {
+                            self.mode = self.name_input_return_mode();
+                            self.name_input_context = None;
+                            self.status = "Canceled".to_string();
+                        }
+                        _ => {
+                            self.mode = Mode::Normal;
+                            self.status = "Canceled".to_string();
+                        }
                     }
                 }
             }
@@ -3483,11 +3529,38 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        // Handle discard confirm sub-state
+        if self.note_edit_discard_confirm {
+            match code {
+                KeyCode::Char('y') => {
+                    // Save and exit
+                    self.note_edit_discard_confirm = false;
+                    return self.handle_note_edit_key(KeyCode::Enter, agenda);
+                }
+                KeyCode::Esc => {
+                    // Discard and exit
+                    self.note_edit_discard_confirm = false;
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.status = "Note changes discarded".to_string();
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
-                self.clear_input();
-                self.status = "Note edit canceled".to_string();
+                let dirty = self.input.text() != self.note_edit_original;
+                if dirty {
+                    self.note_edit_discard_confirm = true;
+                    self.status =
+                        "Unsaved changes: y:save  Esc:discard".to_string();
+                } else {
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.status = "Note edit canceled".to_string();
+                }
             }
             KeyCode::Char('S') | KeyCode::Enter => {
                 let Some(item_id) = self.selected_item_id() else {
@@ -3887,6 +3960,7 @@ mod tests {
             focus: CategoryDirectEditFocus::Input,
             suggest_index: 0,
             create_confirm_name: None,
+            original_category_ids: vec![None; count],
         }
     }
 
@@ -4107,6 +4181,7 @@ mod tests {
                 focus: CategoryDirectEditFocus::Input,
                 suggest_index: 0,
                 create_confirm_name: None,
+                original_category_ids: vec![None],
             }),
             ..App::default()
         };
@@ -4176,6 +4251,7 @@ mod tests {
                 focus: CategoryDirectEditFocus::Input,
                 suggest_index: 0,
                 create_confirm_name: None,
+                original_category_ids: vec![None],
             }),
             ..App::default()
         };
