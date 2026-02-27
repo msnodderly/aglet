@@ -474,6 +474,20 @@ impl App {
         self.selected_item().map(|item| item.id)
     }
 
+    pub(crate) fn is_item_blocked(&self, item_id: ItemId) -> bool {
+        self.item_links_by_item_id
+            .get(&item_id)
+            .map(|links| {
+                links.depends_on.iter().any(|dep_id| {
+                    !self
+                        .all_items
+                        .iter()
+                        .any(|i| i.id == *dep_id && i.is_done)
+                })
+            })
+            .unwrap_or(false)
+    }
+
     pub(crate) fn current_view(&self) -> Option<&View> {
         self.views.get(self.view_index)
     }

@@ -8939,4 +8939,33 @@ mod tests {
             input_panel::InputPanelFocus::SaveButton
         );
     }
+
+    #[test]
+    fn is_item_blocked_returns_true_when_dependency_undone() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut a = Item::new("Blocker".to_string());
+        let b = Item::new("Blocked".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+        agenda
+            .link_items_depends_on(b.id, a.id)
+            .expect("link depends_on");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+
+        // b depends on a (not done) → b is blocked
+        assert!(app.is_item_blocked(b.id));
+        // a has no deps → not blocked
+        assert!(!app.is_item_blocked(a.id));
+
+        // Mark a as done → b should no longer be blocked
+        a.is_done = true;
+        store.update_item(&a).expect("update a");
+        app.refresh(&store).expect("refresh");
+        assert!(!app.is_item_blocked(b.id));
+    }
 }
