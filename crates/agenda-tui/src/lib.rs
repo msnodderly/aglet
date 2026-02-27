@@ -1239,7 +1239,7 @@ mod tests {
 
         app.handle_category_direct_edit_key(KeyCode::Tab, &agenda)
             .expect("tab away from Input");
-        app.handle_category_direct_edit_key(KeyCode::Char('s'), &agenda)
+        app.handle_category_direct_edit_key(KeyCode::Char('S'), &agenda)
             .expect("save draft");
         let saved_after = store.get_item(item.id).expect("load item after save");
         assert!(saved_after.assignments.contains_key(&alpha.id));
@@ -1749,7 +1749,7 @@ mod tests {
         );
         assert_eq!(app.mode, Mode::CategoryDirectEdit);
 
-        app.handle_category_direct_edit_key(KeyCode::Enter, &agenda)
+        app.handle_category_direct_edit_key(KeyCode::Char('y'), &agenda)
             .expect("confirm create");
         let state = app.category_direct_edit_state().expect("still in editor");
         assert_eq!(state.create_confirm_name, None);
@@ -2246,7 +2246,7 @@ mod tests {
         assert_eq!(state.create_confirm_name.as_deref(), Some("Docs"));
         assert_eq!(app.mode, Mode::CategoryColumnPicker);
 
-        app.handle_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Char('y'), &agenda)
             .expect("confirm create");
         let created = store
             .get_hierarchy()
@@ -3203,8 +3203,8 @@ mod tests {
         app.handle_key(KeyCode::Char('-'), &agenda)
             .expect("- opens delete confirmation");
         assert_eq!(app.mode, Mode::BoardColumnDeleteConfirm);
-        app.handle_key(KeyCode::Enter, &agenda)
-            .expect("Enter confirms delete (default yes)");
+        app.handle_key(KeyCode::Char('y'), &agenda)
+            .expect("y confirms delete");
         assert_eq!(app.mode, Mode::Normal);
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -5002,7 +5002,7 @@ mod tests {
         app.set_category_selection_by_id(category.id);
         app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
             .expect("start delete");
-        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
             .expect("cancel delete");
 
         assert!(store.get_category(category.id).is_ok());
@@ -7154,7 +7154,7 @@ mod tests {
             Some(0)
         );
 
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("decline delete");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().section_delete_confirm,

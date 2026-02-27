@@ -128,7 +128,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('n') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 self.mode = Mode::ViewPicker;
                 self.status = "Delete canceled".to_string();
             }
@@ -158,7 +158,7 @@ impl App {
                 }
                 self.mode = Mode::Normal;
             }
-            KeyCode::Char('n') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.status = "Delete canceled".to_string();
             }

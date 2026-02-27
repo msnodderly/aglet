@@ -9,12 +9,8 @@ enum InlineCreateConfirmKeyAction {
 
 fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyAction {
     match code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            InlineCreateConfirmKeyAction::Confirm
-        }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            InlineCreateConfirmKeyAction::Cancel
-        }
+        KeyCode::Char('y') => InlineCreateConfirmKeyAction::Confirm,
+        KeyCode::Esc => InlineCreateConfirmKeyAction::Cancel,
         KeyCode::Char(_)
         | KeyCode::Backspace
         | KeyCode::Delete
@@ -310,7 +306,7 @@ impl App {
             return;
         }
         self.set_direct_edit_create_confirm_name(Some(typed.clone()));
-        self.status = format!("Create new category '{}' in this column? (Y/n)", typed);
+        self.status = format!("Create new category '{}' in this column? y:confirm Esc:cancel", typed);
     }
 
     fn desired_child_ids_from_category_direct_edit_draft(&self) -> Vec<CategoryId> {
@@ -1223,12 +1219,12 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         match code {
-            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+            KeyCode::Char('y') => {
                 self.board_pending_delete_column_label = None;
                 self.mode = Mode::Normal;
                 self.remove_current_board_column(agenda)?;
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 let label = self.board_pending_delete_column_label.take();
                 self.mode = Mode::Normal;
                 self.status = match label {
@@ -1465,7 +1461,7 @@ impl App {
             return;
         }
         self.set_category_column_picker_create_confirm_name(Some(typed.clone()));
-        self.status = format!("Create new category '{}' in this column? (Y/n)", typed);
+        self.status = format!("Create new category '{}' in this column? y:confirm Esc:cancel", typed);
     }
 
     fn confirm_inline_create_category_column_picker(
@@ -2691,7 +2687,7 @@ impl App {
         }
 
         match code {
-            KeyCode::Char('S') | KeyCode::Char('s')
+            KeyCode::Char('S')
                 if !matches!(
                     self.active_category_direct_edit_focus(),
                     Some(CategoryDirectEditFocus::Input)
@@ -2840,7 +2836,7 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            KeyCode::Char('y') => {
                 if let Mode::CategoryCreateConfirm { name, parent_id } = self.mode.clone() {
                     let mut category = Category::new(name.clone());
                     category.parent = Some(parent_id);
@@ -2866,7 +2862,7 @@ impl App {
                     self.refresh(agenda.store())?;
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.status = "Cancelled creation".to_string();
             }

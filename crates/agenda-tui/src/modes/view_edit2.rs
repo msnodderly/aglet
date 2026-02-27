@@ -567,10 +567,10 @@ impl App {
         code: KeyCode,
     ) -> Result<bool, String> {
         match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
+            KeyCode::Char('y') => {
                 self.confirm_view_edit_section_delete();
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.section_delete_confirm = None;
                 }
