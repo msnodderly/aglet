@@ -213,7 +213,7 @@ impl App {
         self.set_category_manager_focus(CategoryManagerFocus::Details);
         self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
         self.set_category_manager_details_note_editing(true);
-        self.status = "Edit category note: type text, Tab or Esc saves and leaves note".to_string();
+        self.status = "Edit category note: type text, S:save  Esc:discard".to_string();
     }
 
     fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
@@ -264,32 +264,6 @@ impl App {
         Ok(())
     }
 
-    fn autosave_category_manager_details_note_if_dirty(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
-        let prior_focus = self.category_manager_focus();
-        let prior_details_focus = self.category_manager_details_focus();
-        let prior_status = self.status.clone();
-        if !self.category_manager_details_note_dirty() {
-            if self.category_manager_details_note_editing() {
-                self.set_category_manager_details_note_editing(false);
-            }
-            return Ok(());
-        }
-        self.save_category_manager_details_note(agenda)?;
-        if self.status.starts_with("Saved note for ") || self.status == "Category note unchanged" {
-            self.status = prior_status;
-        }
-        if let Some(focus) = prior_focus {
-            self.set_category_manager_focus(focus);
-        }
-        if let Some(details_focus) = prior_details_focus {
-            self.set_category_manager_details_focus(details_focus);
-        }
-        Ok(())
-    }
-
     fn handle_category_manager_details_key(
         &mut self,
         code: KeyCode,
@@ -306,12 +280,25 @@ impl App {
             && self.category_manager_details_note_editing()
         {
             match code {
+                KeyCode::Char('S') => {
+                    self.save_category_manager_details_note(agenda)?;
+                    return Ok(true);
+                }
                 KeyCode::Esc => {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                    if self.category_manager_details_note_dirty() {
+                        self.reload_category_manager_details_note_from_selected();
+                        self.mark_category_manager_details_note_dirty(false);
+                        self.status = "Note changes discarded".to_string();
+                    }
+                    self.set_category_manager_details_note_editing(false);
                     return Ok(true);
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
+                    if self.category_manager_details_note_dirty() {
+                        self.status =
+                            "Note has unsaved changes (S to save)".to_string();
+                    }
+                    self.set_category_manager_details_note_editing(false);
                     return Ok(false);
                 }
                 _ => {
@@ -344,20 +331,10 @@ impl App {
 
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if details_focus == CategoryManagerDetailsFocus::Note
-                    && self.category_manager_details_note_dirty()
-                {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
                 self.cycle_category_manager_details_focus(-1);
                 return Ok(true);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if details_focus == CategoryManagerDetailsFocus::Note
-                    && self.category_manager_details_note_dirty()
-                {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
                 self.cycle_category_manager_details_focus(1);
                 return Ok(true);
             }
@@ -965,16 +942,10 @@ impl App {
         }
         match code {
             KeyCode::Tab => {
-                if self.category_manager_details_note_dirty() {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
                 self.set_category_manager_filter_editing(false);
                 self.cycle_category_manager_focus(1);
             }
             KeyCode::BackTab => {
-                if self.category_manager_details_note_dirty() {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
                 self.set_category_manager_filter_editing(false);
                 self.cycle_category_manager_focus(-1);
             }
@@ -1004,16 +975,10 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.set_category_manager_filter_editing(false);
-                if self.category_manager_details_note_dirty() {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
                 self.move_category_cursor(1)
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.set_category_manager_filter_editing(false);
-                if self.category_manager_details_note_dirty() {
-                    self.autosave_category_manager_details_note_if_dirty(agenda)?;
-                }
                 self.move_category_cursor(-1)
             }
             KeyCode::Char('K') => {

@@ -1958,7 +1958,11 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
+                if self.category_manager_details_note_editing() {
+                    "S:save  Esc:discard"
+                } else {
+                    "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
+                }
             }
             Mode::ViewPicker => "Enter:switch  N:new  r:rename  e:edit  x:delete  Esc:cancel",
             Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
