@@ -1391,13 +1391,29 @@ impl App {
                 }
 
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
+                    let has_filter = self
+                        .section_filters
+                        .get(slot_index)
+                        .map(|f| f.is_some())
+                        .unwrap_or(false);
+                    let all_slots_empty = self.slots.iter().all(|s| s.items.is_empty());
+                    let empty_msg = if all_slots_empty {
+                        "No items. n:add item  v:switch view  q:quit"
+                    } else if has_filter {
+                        "No matches. Esc:clear filter"
+                    } else {
+                        "No items in this section."
+                    };
                     let mut cells = vec![Cell::from(String::new()), Cell::from(String::new())];
                     cells.extend(
                         layout.columns[..item_board_column_index]
                             .iter()
                             .map(|_| Cell::from(String::new())),
                     );
-                    cells.push(Cell::from("(no items)"));
+                    cells.push(Cell::from(Span::styled(
+                        empty_msg,
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )));
                     cells.extend(
                         layout.columns[item_board_column_index..]
                             .iter()
@@ -1629,11 +1645,27 @@ impl App {
                     Constraint::Length(widths.categories.min(u16::MAX as usize) as u16),
                 ];
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
+                    let has_filter = self
+                        .section_filters
+                        .get(slot_index)
+                        .map(|f| f.is_some())
+                        .unwrap_or(false);
+                    let all_slots_empty = self.slots.iter().all(|s| s.items.is_empty());
+                    let empty_msg = if all_slots_empty {
+                        "No items. n:add item  v:switch view  q:quit"
+                    } else if has_filter {
+                        "No matches. Esc:clear filter"
+                    } else {
+                        "No items in this section."
+                    };
                     vec![Row::new(vec![
                         Cell::from(String::new()),
                         Cell::from(String::new()),
                         Cell::from(String::new()),
-                        Cell::from("(no items)"),
+                        Cell::from(Span::styled(
+                            empty_msg,
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
                         Cell::from(String::new()),
                     ])]
                 } else {
@@ -2347,9 +2379,21 @@ impl App {
                         format!(" [{}]", flags.join(","))
                     };
                     let assigned = if self.selected_item_has_assignment(row.id) {
-                        "[x]"
+                        if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {
+                            // Show numeric value for assigned numeric categories
+                            let val = self
+                                .selected_item()
+                                .and_then(|item| item.assignments.get(&row.id))
+                                .and_then(|a| a.numeric_value);
+                            match val {
+                                Some(v) => format!("[{}]", v),
+                                None => "[x]".to_string(),
+                            }
+                        } else {
+                            "[x]".to_string()
+                        }
                     } else {
-                        "[ ]"
+                        "[ ]".to_string()
                     };
                     let category_name = with_note_marker(row.name.clone(), row.has_note);
                     let text = format!(

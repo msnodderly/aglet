@@ -235,7 +235,7 @@ pub(super) struct BoardColumnWidths {
 }
 
 pub(super) const BOARD_ROW_MARKER_WIDTH: usize = 2;
-pub(super) const BOARD_NOTE_MARKER_WIDTH: usize = 2;
+pub(super) const BOARD_NOTE_MARKER_WIDTH: usize = 4;
 pub(super) const NOTE_MARKER_SYMBOL: &str = "♪";
 pub(super) const BOARD_WHEN_TARGET_WIDTH: usize = 19;
 pub(super) const BOARD_WHEN_MIN_WIDTH: usize = 10;
@@ -545,7 +545,21 @@ pub(super) fn with_note_marker(label: String, has_note: bool) -> String {
 }
 
 pub(super) const DONE_MARKER_SYMBOL: &str = "✓";
-pub(super) const BLOCKED_MARKER_SYMBOL: &str = "!";
+pub(super) const BLOCKED_MARKER_SYMBOL: &str = "&";
+
+pub(super) fn item_indicator_glyphs(is_done: bool, is_blocked: bool, has_note: bool) -> String {
+    let mut glyphs = String::new();
+    if is_done {
+        glyphs.push_str(DONE_MARKER_SYMBOL);
+    }
+    if is_blocked {
+        glyphs.push_str(BLOCKED_MARKER_SYMBOL);
+    }
+    if has_note {
+        glyphs.push_str(NOTE_MARKER_SYMBOL);
+    }
+    glyphs
+}
 
 pub(super) fn board_item_label(item: &Item) -> String {
     item.text.clone()
