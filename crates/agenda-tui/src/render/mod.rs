@@ -1393,7 +1393,11 @@ impl App {
                         .map(|(item_index, item)| {
                             let is_selected = is_selected_slot && item_index == self.item_index;
                             let marker_cell = if is_selected { ">" } else { " " };
-                            let note_cell = if has_note_text(item.note.as_deref()) {
+                            let note_cell = if item.is_done {
+                                DONE_MARKER_SYMBOL
+                            } else if self.is_item_blocked(item.id) {
+                                BLOCKED_MARKER_SYMBOL
+                            } else if has_note_text(item.note.as_deref()) {
                                 NOTE_MARKER_SYMBOL
                             } else {
                                 " "
@@ -1625,7 +1629,11 @@ impl App {
                                 .map(|dt| dt.to_string())
                                 .unwrap_or_else(|| "-".to_string());
                             let marker_cell = if is_selected { ">" } else { " " };
-                            let note_cell = if has_note_text(item.note.as_deref()) {
+                            let note_cell = if item.is_done {
+                                DONE_MARKER_SYMBOL
+                            } else if self.is_item_blocked(item.id) {
+                                BLOCKED_MARKER_SYMBOL
+                            } else if has_note_text(item.note.as_deref()) {
                                 NOTE_MARKER_SYMBOL
                             } else {
                                 " "

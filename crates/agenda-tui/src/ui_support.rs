@@ -544,12 +544,11 @@ pub(super) fn with_note_marker(label: String, has_note: bool) -> String {
     }
 }
 
+pub(super) const DONE_MARKER_SYMBOL: &str = "✓";
+pub(super) const BLOCKED_MARKER_SYMBOL: &str = "!";
+
 pub(super) fn board_item_label(item: &Item) -> String {
-    if item.is_done {
-        format!("[done] {}", item.text)
-    } else {
-        item.text.clone()
-    }
+    item.text.clone()
 }
 
 pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
@@ -1260,5 +1259,13 @@ mod tests {
         assert_eq!(agg.count, 2);
         assert_eq!(agg.sum, Decimal::new(350, 0));
         assert_eq!(agg.avg(), Some(Decimal::new(175, 0)));
+    }
+
+    #[test]
+    fn board_item_label_never_prepends_done() {
+        let mut item = Item::new("Buy milk".to_string());
+        assert_eq!(board_item_label(&item), "Buy milk");
+        item.is_done = true;
+        assert_eq!(board_item_label(&item), "Buy milk");
     }
 }
