@@ -76,6 +76,39 @@ Manual TUI testing against `feature-requests.ag` can create SQLite sidecar files
 `feature-requests.ag-wal` and `feature-requests.ag-shm`. Treat these as local
 runtime artifacts and do not commit them.
 
+## Aglet Features Database
+
+`aglet-features.ag` in the project root tracks feature ideas and requests for
+aglet itself (distinct from `feature-requests.ag`). Categories:
+
+- **Issue type** (non-exclusive): Bug, Idea, Feature request
+- **Priority** (exclusive): Critical, High, Normal, Low
+- **Software Project**: Aglet, NeoNV
+- **Status** (exclusive): Complete, In Progress, Next Action, Ready,
+  Waiting/Blocked
+
+Every item should have Issue type, Priority, Software Project, and Status.
+
+### Creating a feature request via CLI
+
+Use the create-then-assign pattern. `add` prints the UUID, then assign
+categories individually with the full UUID:
+
+```bash
+# 1. Create the item (capture the UUID from output)
+cargo run --bin agenda-cli -- --db aglet-features.ag add "Title here" --note "Description..." 2>&1 | tail -1
+# Output: "created <uuid>"
+
+# 2. Assign categories (use full UUID)
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> "Feature request" 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> Aglet 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> Normal 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> Ready 2>&1 | tail -1
+```
+
+Quote category names that contain spaces (e.g., `"Feature request"`,
+`"In Progress"`, `"Next Action"`, `"Waiting/Blocked"`).
+
 ## CLI Grooming Patterns
 
 **Do not use shell variable shorthand for commands.** This does NOT work:
