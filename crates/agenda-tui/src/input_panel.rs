@@ -66,6 +66,10 @@ pub(crate) struct InputPanel {
     pub(crate) numeric_buffers: HashMap<CategoryId, TextBuffer>,
     /// Original numeric values for change detection (populated when opening EditItem).
     pub(crate) numeric_originals: HashMap<CategoryId, Option<Decimal>>,
+    // --- Original values for dirty tracking ---
+    original_text: String,
+    original_note: String,
+    original_categories: HashSet<CategoryId>,
 }
 
 impl InputPanel {
@@ -84,6 +88,9 @@ impl InputPanel {
             category_cursor: 0,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
+            original_text: String::new(),
+            original_note: String::new(),
+            original_categories: HashSet::new(),
         }
     }
 
@@ -95,6 +102,9 @@ impl InputPanel {
         numeric_buffers: HashMap<CategoryId, TextBuffer>,
         numeric_originals: HashMap<CategoryId, Option<Decimal>>,
     ) -> Self {
+        let original_text = text.clone();
+        let original_note = note.clone();
+        let original_categories = categories.clone();
         Self {
             kind: InputPanelKind::EditItem,
             text: TextBuffer::new(text),
@@ -106,6 +116,9 @@ impl InputPanel {
             category_cursor: 0,
             numeric_buffers,
             numeric_originals,
+            original_text,
+            original_note,
+            original_categories,
         }
     }
 
@@ -121,7 +134,32 @@ impl InputPanel {
             category_cursor: 0,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
+            original_text: current_name.to_string(),
+            original_note: String::new(),
+            original_categories: HashSet::new(),
         }
+    }
+
+    /// Returns true if any field differs from its original value.
+    pub(crate) fn is_dirty(&self) -> bool {
+        if self.text.text() != self.original_text {
+            return true;
+        }
+        if self.note.text() != self.original_note {
+            return true;
+        }
+        if self.categories != self.original_categories {
+            return true;
+        }
+        // Check numeric buffers against originals
+        for (cat_id, buf) in &self.numeric_buffers {
+            let current: Option<Decimal> = buf.text().trim().parse().ok();
+            let original = self.numeric_originals.get(cat_id).copied().flatten();
+            if current != original {
+                return true;
+            }
+        }
+        false
     }
 
     /// Toggles `category_id` in the panel's category set.
@@ -645,5 +683,41 @@ mod tests {
         assert_eq!(p.kind, InputPanelKind::NameInput);
         assert_eq!(p.text.text(), "Old Name");
         assert_eq!(p.preview_context, "View name");
+    }
+
+    #[test]
+    fn is_dirty_detects_text_change() {
+        let mut p = InputPanel::new_name_input("Hello", "label");
+        assert!(!p.is_dirty());
+        p.text.set("Hello!".to_string());
+        assert!(p.is_dirty());
+    }
+
+    #[test]
+    fn is_dirty_detects_category_change() {
+        let cat_id = CategoryId::new_v4();
+        let mut cats = std::collections::HashSet::new();
+        cats.insert(cat_id);
+        let p = InputPanel::new_edit_item(
+            ItemId::new_v4(),
+            "text".to_string(),
+            String::new(),
+            cats,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        assert!(!p.is_dirty());
+        let mut p2 = p.clone();
+        p2.categories.remove(&cat_id);
+        assert!(p2.is_dirty());
+    }
+
+    #[test]
+    fn add_item_dirty_on_any_input() {
+        let p = InputPanel::new_add_item("Section", &std::collections::HashSet::new());
+        assert!(!p.is_dirty());
+        let mut p2 = p.clone();
+        p2.text.set("something".to_string());
+        assert!(p2.is_dirty());
     }
 }
