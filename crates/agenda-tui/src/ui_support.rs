@@ -843,8 +843,11 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
     horizontal[1]
 }
 
-pub(super) fn input_panel_popup_area(area: Rect) -> Rect {
-    centered_rect(84, 70, area)
+pub(super) fn input_panel_popup_area(area: Rect, kind: crate::input_panel::InputPanelKind) -> Rect {
+    match kind {
+        crate::input_panel::InputPanelKind::CategoryCreate => centered_rect(50, 40, area),
+        _ => centered_rect(84, 70, area),
+    }
 }
 
 pub(super) struct InputPanelPopupRegions {
@@ -855,6 +858,10 @@ pub(super) struct InputPanelPopupRegions {
     /// Bordered multi-line region for the inline category list.
     pub(super) categories: Option<Rect>,
     pub(super) categories_inner: Option<Rect>,
+    /// Parent field (CategoryCreate only).
+    pub(super) parent: Option<Rect>,
+    /// Type picker field (CategoryCreate only).
+    pub(super) type_picker: Option<Rect>,
     pub(super) buttons: Rect,
     pub(super) help: Rect,
 }
@@ -899,8 +906,38 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
+                parent: None,
+                type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
+            })
+        }
+        InputPanelKind::CategoryCreate => {
+            // name(1) + parent(1) + type(1) + spacer + buttons(1) + help(1) = 5 min
+            if inner.height < 5 {
+                return None;
+            }
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // name
+                    Constraint::Length(1), // parent
+                    Constraint::Length(1), // type picker
+                    Constraint::Min(0),    // spacer
+                    Constraint::Length(1), // buttons
+                    Constraint::Length(1), // help
+                ])
+                .split(inner);
+            Some(InputPanelPopupRegions {
+                text: chunks[0],
+                note: None,
+                note_inner: None,
+                categories: None,
+                categories_inner: None,
+                parent: Some(chunks[1]),
+                type_picker: Some(chunks[2]),
+                buttons: chunks[4],
+                help: chunks[5],
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
@@ -949,6 +986,8 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: Some(note_inner),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
+                parent: None,
+                type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
             })

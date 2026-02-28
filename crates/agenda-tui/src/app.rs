@@ -61,6 +61,10 @@ impl App {
         self.category_index = self
             .category_index
             .min(self.category_rows.len().saturating_sub(1));
+        if self.category_manager.is_some() {
+            // Keep visible-row projection in sync with rebuilt category_rows.
+            self.rebuild_category_manager_visible_rows();
+        }
         self.sync_category_manager_state_from_selection();
         let items = store.list_items().map_err(|e| e.to_string())?;
         self.all_items = items.clone();
@@ -478,12 +482,10 @@ impl App {
         self.item_links_by_item_id
             .get(&item_id)
             .map(|links| {
-                links.depends_on.iter().any(|dep_id| {
-                    !self
-                        .all_items
-                        .iter()
-                        .any(|i| i.id == *dep_id && i.is_done)
-                })
+                links
+                    .depends_on
+                    .iter()
+                    .any(|dep_id| !self.all_items.iter().any(|i| i.id == *dep_id && i.is_done))
             })
             .unwrap_or(false)
     }
@@ -662,10 +664,14 @@ impl App {
     }
 
     pub(crate) fn cycle_category_manager_details_focus(&mut self, delta: i32) {
+        let is_numeric = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
         if let Some(state) = &mut self.category_manager {
             state.details_focus = match delta.signum() {
-                d if d > 0 => state.details_focus.next(),
-                d if d < 0 => state.details_focus.prev(),
+                d if d > 0 => state.details_focus.next(is_numeric),
+                d if d < 0 => state.details_focus.prev(is_numeric),
                 _ => state.details_focus,
             };
             state.details_note_editing = false;
