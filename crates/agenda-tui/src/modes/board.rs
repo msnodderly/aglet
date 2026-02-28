@@ -3087,10 +3087,9 @@ impl App {
                 self.category_manager_inline_action(),
                 Some(CategoryInlineAction::ParentPicker { .. })
             )
+            && self.handle_category_manager_inline_action_key(code, agenda)?
         {
-            if self.handle_category_manager_inline_action_key(code, agenda)? {
-                return Ok(false);
-            }
+            return Ok(false);
         }
 
         let Some(panel) = &mut self.input_panel else {
@@ -4157,12 +4156,12 @@ fn exclusive_siblings_to_clear(rows: &[CategoryListRow], row_idx: usize) -> Vec<
 
     // Collect all direct children of the parent (depth == target_depth) within its subtree.
     let mut siblings = vec![];
-    for i in (parent_idx + 1)..rows.len() {
-        if rows[i].depth <= parent_depth {
+    for (i, row) in rows.iter().enumerate().skip(parent_idx + 1) {
+        if row.depth <= parent_depth {
             break; // Exited the parent's subtree
         }
-        if rows[i].depth == target_depth && i != row_idx {
-            siblings.push(rows[i].id);
+        if row.depth == target_depth && i != row_idx {
+            siblings.push(row.id);
         }
     }
     siblings

@@ -289,8 +289,8 @@ impl InputPanel {
             KeyCode::Esc => Some(InputPanelAction::Cancel),
             // Capital S saves only when not editing text fields or numeric value buffers
             KeyCode::Char('S')
-                if !matches!(self.focus, InputPanelFocus::Text | InputPanelFocus::Note)
-                    && !(self.focus == InputPanelFocus::Categories
+                if !(matches!(self.focus, InputPanelFocus::Text | InputPanelFocus::Note)
+                    || self.focus == InputPanelFocus::Categories
                         && current_row_is_assigned_numeric) =>
             {
                 Some(InputPanelAction::Save)
