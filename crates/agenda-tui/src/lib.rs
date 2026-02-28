@@ -153,9 +153,9 @@ struct InspectAssignmentRow {
 }
 
 #[derive(Clone)]
-struct ReparentOptionRow {
-    parent_id: Option<CategoryId>,
-    label: String,
+pub(crate) struct ReparentOptionRow {
+    pub(crate) parent_id: Option<CategoryId>,
+    pub(crate) label: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -370,7 +370,7 @@ enum CategoryManagerFocus {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CategoryParentPickerFocus {
+pub(crate) enum CategoryParentPickerFocus {
     Filter,
     List,
 }
@@ -4791,12 +4791,10 @@ mod tests {
             .expect("tab to parent");
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("open parent picker from create panel");
-        assert!(matches!(
-            app.category_manager
-                .as_ref()
-                .and_then(|state| state.inline_action.as_ref()),
-            Some(CategoryInlineAction::ParentPicker { .. })
-        ));
+        assert!(
+            app.input_panel.as_ref().unwrap().parent_picker.is_some(),
+            "parent picker overlay should be open on the InputPanel"
+        );
 
         app.handle_input_panel_key(KeyCode::Char('/'), &agenda)
             .expect("focus picker filter");
@@ -4809,10 +4807,7 @@ mod tests {
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("apply picker selection");
         assert!(
-            app.category_manager
-                .as_ref()
-                .and_then(|state| state.inline_action.as_ref())
-                .is_none(),
+            app.input_panel.as_ref().unwrap().parent_picker.is_none(),
             "parent picker should close after selecting a parent"
         );
         assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(beta.id));
@@ -4821,13 +4816,6 @@ mod tests {
             .expect("save category create");
         assert_eq!(app.mode, Mode::CategoryManager);
         assert!(app.input_panel.is_none());
-        assert!(
-            app.category_manager
-                .as_ref()
-                .and_then(|state| state.inline_action.as_ref())
-                .is_none(),
-            "inline action should be cleared when create panel closes"
-        );
 
         let child = app
             .categories

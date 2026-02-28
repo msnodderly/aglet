@@ -2457,111 +2457,101 @@ impl App {
         };
         frame.render_widget(Paragraph::new(help_text), regions.help);
 
-        if panel.kind == InputPanelKind::CategoryCreate
-            && self.name_input_context == Some(NameInputContext::CategoryCreate)
-        {
-            if let Some(CategoryInlineAction::ParentPicker {
-                filter,
-                filter_editing,
-                options,
-                visible_option_indices,
-                list_index,
-                focus,
-                ..
-            }) = self.category_manager_inline_action()
-            {
-                let picker_area = centered_rect(94, 68, area);
-                if picker_area.width >= 8 && picker_area.height >= 6 {
-                    frame.render_widget(Clear, picker_area);
+        if let Some(ref picker) = panel.parent_picker {
+            let picker_area = centered_rect(94, 68, area);
+            if picker_area.width >= 8 && picker_area.height >= 6 {
+                frame.render_widget(Clear, picker_area);
+                frame.render_widget(
+                    Block::default()
+                        .title("Pick Parent")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                    picker_area,
+                );
+
+                let inner = Rect {
+                    x: picker_area.x.saturating_add(1),
+                    y: picker_area.y.saturating_add(1),
+                    width: picker_area.width.saturating_sub(2),
+                    height: picker_area.height.saturating_sub(2),
+                };
+                if inner.width > 0 && inner.height > 0 {
+                    let picker_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(1),
+                            Constraint::Min(1),
+                            Constraint::Length(1),
+                        ])
+                        .split(inner);
+
+                    let filter_label = if picker.focus == CategoryParentPickerFocus::Filter {
+                        if picker.filter_editing {
+                            "> Filter> "
+                        } else {
+                            "> Filter: "
+                        }
+                    } else {
+                        "  Filter: "
+                    };
                     frame.render_widget(
-                        Block::default()
-                            .title("Pick Parent")
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(Color::Cyan)),
-                        picker_area,
+                        Paragraph::new(format!("{filter_label}{}", picker.filter.text())),
+                        picker_chunks[0],
                     );
 
-                    let inner = Rect {
-                        x: picker_area.x.saturating_add(1),
-                        y: picker_area.y.saturating_add(1),
-                        width: picker_area.width.saturating_sub(2),
-                        height: picker_area.height.saturating_sub(2),
-                    };
-                    if inner.width > 0 && inner.height > 0 {
-                        let picker_chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([
-                                Constraint::Length(1),
-                                Constraint::Min(1),
-                                Constraint::Length(1),
-                            ])
-                            .split(inner);
-
-                        let filter_label = if *focus == CategoryParentPickerFocus::Filter {
-                            if *filter_editing {
-                                "> Filter> "
-                            } else {
-                                "> Filter: "
-                            }
-                        } else {
-                            "  Filter: "
-                        };
-                        frame.render_widget(
-                            Paragraph::new(format!("{filter_label}{}", filter.text())),
-                            picker_chunks[0],
-                        );
-
-                        let parent_items: Vec<ListItem<'_>> = if visible_option_indices.is_empty() {
+                    let parent_items: Vec<ListItem<'_>> =
+                        if picker.visible_option_indices.is_empty() {
                             vec![ListItem::new(Line::from("(no matching parent options)"))]
                         } else {
-                            visible_option_indices
+                            picker
+                                .visible_option_indices
                                 .iter()
-                                .filter_map(|idx| options.get(*idx))
+                                .filter_map(|idx| picker.options.get(*idx))
                                 .map(|option| ListItem::new(Line::from(option.label.clone())))
                                 .collect()
                         };
-                        let mut parent_state = Self::list_state_for(
-                            picker_chunks[1],
-                            if visible_option_indices.is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    (*list_index)
-                                        .min(visible_option_indices.len().saturating_sub(1)),
-                                )
-                            },
-                        );
-                        let item_count = parent_items.len();
-                        let list_border = if *focus == CategoryParentPickerFocus::List {
-                            Color::Yellow
+                    let mut parent_state = Self::list_state_for(
+                        picker_chunks[1],
+                        if picker.visible_option_indices.is_empty() {
+                            None
                         } else {
-                            Color::Blue
-                        };
-                        frame.render_stateful_widget(
-                            List::new(parent_items)
-                                .highlight_symbol("> ")
-                                .highlight_style(selected_row_style())
-                                .block(
-                                    Block::default()
-                                        .title("Options")
-                                        .borders(Borders::ALL)
-                                        .border_style(Style::default().fg(list_border)),
-                                ),
-                            picker_chunks[1],
-                            &mut parent_state,
-                        );
-                        Self::render_vertical_scrollbar(
-                            frame,
-                            picker_chunks[1],
-                            item_count,
-                            parent_state.offset(),
-                        );
+                            Some(
+                                picker
+                                    .list_index
+                                    .min(picker.visible_option_indices.len().saturating_sub(1)),
+                            )
+                        },
+                    );
+                    let item_count = parent_items.len();
+                    let list_border = if picker.focus == CategoryParentPickerFocus::List {
+                        Color::Yellow
+                    } else {
+                        Color::Blue
+                    };
+                    frame.render_stateful_widget(
+                        List::new(parent_items)
+                            .highlight_symbol("> ")
+                            .highlight_style(selected_row_style())
+                            .block(
+                                Block::default()
+                                    .title("Options")
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(list_border)),
+                            ),
+                        picker_chunks[1],
+                        &mut parent_state,
+                    );
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        picker_chunks[1],
+                        item_count,
+                        parent_state.offset(),
+                    );
 
-                        frame.render_widget(
-                            Paragraph::new("Enter:apply  /:filter  Tab:focus  Esc:cancel"),
-                            picker_chunks[2],
-                        );
-                    }
+                    frame.render_widget(
+                        Paragraph::new("Enter:apply  /:filter  Tab:focus  Esc:cancel"),
+                        picker_chunks[2],
+                    );
                 }
             }
         }

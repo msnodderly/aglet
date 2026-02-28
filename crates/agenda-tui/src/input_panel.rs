@@ -5,6 +5,18 @@ use crossterm::event::KeyCode;
 use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
+use crate::{CategoryParentPickerFocus, ReparentOptionRow};
+
+/// Overlay state for picking a parent category within the CategoryCreate panel.
+#[derive(Clone)]
+pub(crate) struct ParentPickerOverlay {
+    pub(crate) filter: TextBuffer,
+    pub(crate) filter_editing: bool,
+    pub(crate) options: Vec<ReparentOptionRow>,
+    pub(crate) visible_option_indices: Vec<usize>,
+    pub(crate) list_index: usize,
+    pub(crate) focus: CategoryParentPickerFocus,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InputPanelKind {
@@ -84,6 +96,8 @@ pub(crate) struct InputPanel {
     pub(crate) parent_label: String,
     /// Value kind selection for CategoryCreate.
     pub(crate) value_kind: CategoryValueKind,
+    /// Parent picker overlay (CategoryCreate only). When `Some`, keys are routed here.
+    pub(crate) parent_picker: Option<ParentPickerOverlay>,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -109,6 +123,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            parent_picker: None,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -140,6 +155,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            parent_picker: None,
             original_text,
             original_note,
             original_categories,
@@ -161,6 +177,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            parent_picker: None,
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -182,6 +199,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            parent_picker: None,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -203,6 +221,7 @@ impl InputPanel {
             parent_id,
             parent_label: parent_label.to_string(),
             value_kind: CategoryValueKind::Tag,
+            parent_picker: None,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
