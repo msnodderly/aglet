@@ -16,6 +16,7 @@ impl App {
                     self.view_index = self.picker_index.min(self.views.len() - 1);
                     self.slot_index = 0;
                     self.item_index = 0;
+                    self.slot_sort_keys.clear();
                     self.refresh(agenda.store())?;
                     self.reset_section_filters();
                     let view_name = self

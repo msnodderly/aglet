@@ -668,11 +668,33 @@ enum NormalFocus {
     Preview,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SlotSortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SlotSortColumn {
+    ItemText,
+    SectionColumn {
+        heading: CategoryId,
+        kind: ColumnKind,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct SlotSortKey {
+    column: SlotSortColumn,
+    direction: SlotSortDirection,
+}
+
 struct App {
     mode: Mode,
     status: String,
     input: text_buffer::TextBuffer,
     section_filters: Vec<Option<String>>,
+    slot_sort_keys: Vec<Vec<SlotSortKey>>,
     filter_target_section: usize,
     show_preview: bool,
     preview_mode: PreviewMode,
@@ -723,6 +745,7 @@ impl Default for App {
                     .to_string(),
             input: text_buffer::TextBuffer::empty(),
             section_filters: Vec::new(),
+            slot_sort_keys: Vec::new(),
             filter_target_section: 0,
             show_preview: false,
             preview_mode: PreviewMode::Summary,
@@ -778,7 +801,7 @@ mod tests {
         AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
         CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
         CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus,
-        Mode, NameInputContext, ViewEditPaneFocus, ViewEditRegion,
+        Mode, NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -8892,6 +8915,179 @@ mod tests {
         assert!(
             app.section_filters.iter().all(|f| f.is_none()),
             "all filters should be cleared after view switch"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_sorting_new_column_becomes_primary_and_previous_becomes_secondary() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-sort-secondary-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut priority = Category::new("Priority".to_string());
+        priority.is_exclusive = true;
+        store.create_category(&priority).expect("create priority");
+
+        let mut high = Category::new("High".to_string());
+        high.parent = Some(priority.id);
+        store.create_category(&high).expect("create high");
+
+        let mut low = Category::new("Low".to_string());
+        low.parent = Some(priority.id);
+        store.create_category(&low).expect("create low");
+
+        let bravo = Item::new("Bravo".to_string());
+        let alpha = Item::new("Alpha".to_string());
+        let charlie = Item::new("Charlie".to_string());
+        store.create_item(&bravo).expect("create bravo");
+        store.create_item(&alpha).expect("create alpha");
+        store.create_item(&charlie).expect("create charlie");
+
+        agenda
+            .assign_item_manual(bravo.id, high.id, Some("test:assign".to_string()))
+            .expect("assign bravo high");
+        agenda
+            .assign_item_manual(alpha.id, high.id, Some("test:assign".to_string()))
+            .expect("assign alpha high");
+        agenda
+            .assign_item_manual(charlie.id, low.id, Some("test:assign".to_string()))
+            .expect("assign charlie low");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: priority.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 0;
+        app.handle_key(KeyCode::Char('s'), &agenda)
+            .expect("sort item asc");
+        app.column_index = 1;
+        app.handle_key(KeyCode::Char('s'), &agenda)
+            .expect("sort priority asc");
+
+        let order: Vec<String> = app.slots[0].items.iter().map(|item| item.text.clone()).collect();
+        assert_eq!(
+            order,
+            vec![
+                "Alpha".to_string(),
+                "Bravo".to_string(),
+                "Charlie".to_string()
+            ]
+        );
+        assert_eq!(app.slot_sort_keys[0].len(), 2);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-sort-missing-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let ten = Item::new("Ten".to_string());
+        let missing = Item::new("Missing".to_string());
+        let five = Item::new("Five".to_string());
+        store.create_item(&ten).expect("create ten");
+        store.create_item(&missing).expect("create missing");
+        store.create_item(&five).expect("create five");
+
+        agenda
+            .assign_item_numeric_manual(
+                ten.id,
+                cost.id,
+                rust_decimal::Decimal::new(10, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign ten");
+        agenda
+            .assign_item_numeric_manual(
+                five.id,
+                cost.id,
+                rust_decimal::Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign five");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 1;
+        app.handle_key(KeyCode::Char('s'), &agenda)
+            .expect("sort cost asc");
+        assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Asc);
+        let asc_order: Vec<String> = app.slots[0].items.iter().map(|item| item.text.clone()).collect();
+        assert_eq!(
+            asc_order,
+            vec!["Five".to_string(), "Ten".to_string(), "Missing".to_string()]
+        );
+
+        app.handle_key(KeyCode::Char('s'), &agenda)
+            .expect("sort cost desc");
+        assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Desc);
+        let desc_order: Vec<String> = app.slots[0].items.iter().map(|item| item.text.clone()).collect();
+        assert_eq!(
+            desc_order,
+            vec!["Ten".to_string(), "Five".to_string(), "Missing".to_string()]
+        );
+
+        app.handle_key(KeyCode::Char('s'), &agenda)
+            .expect("clear sort");
+        assert!(
+            app.slot_sort_keys[0].is_empty(),
+            "third sort press on primary should clear that key"
         );
 
         let _ = std::fs::remove_file(&db_path);
