@@ -1148,6 +1148,7 @@ impl App {
                 let prefix_str = match panel.kind {
                     input_panel::InputPanelKind::NameInput
                     | input_panel::InputPanelKind::CategoryCreate => "  Name> ",
+                    input_panel::InputPanelKind::NumericValue => "  Value> ",
                     _ => "  Text> ",
                 };
                 let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
@@ -2073,6 +2074,7 @@ impl App {
                             input_panel::InputPanelKind::AddItem => "Add item",
                             input_panel::InputPanelKind::EditItem => "Edit item",
                             input_panel::InputPanelKind::NameInput => "Name input",
+                            input_panel::InputPanelKind::NumericValue => "Set value",
                             input_panel::InputPanelKind::CategoryCreate => "Create category",
                         },
                         match panel.focus {
@@ -2144,7 +2146,14 @@ impl App {
                         self.category_manager_inline_action(),
                         Some(CategoryInlineAction::ParentPicker { .. })
                     );
-                if category_create_parent_picker_open {
+                if self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.kind == input_panel::InputPanelKind::NumericValue)
+                    .unwrap_or(false)
+                {
+                    "Enter:save  S:save  Tab:buttons  Esc:cancel"
+                } else if category_create_parent_picker_open {
                     "Enter:apply  /:filter  Tab:focus  Esc:cancel"
                 } else if self.input_panel.as_ref().map_or(false, |p| {
                     p.focus == input_panel::InputPanelFocus::Categories
@@ -2173,6 +2182,7 @@ impl App {
             InputPanelKind::AddItem => format!("Add Item{dirty_marker}"),
             InputPanelKind::EditItem => format!("Edit Item{dirty_marker}"),
             InputPanelKind::NameInput => format!("Name{dirty_marker}"),
+            InputPanelKind::NumericValue => format!("Set Value{dirty_marker}"),
             InputPanelKind::CategoryCreate => format!("Create Category{dirty_marker}"),
         };
         let block = Block::default()
@@ -2193,19 +2203,32 @@ impl App {
         };
         let text_label = match panel.kind {
             InputPanelKind::NameInput | InputPanelKind::CategoryCreate => "Name",
+            InputPanelKind::NumericValue => "Value",
             _ => "Text",
         };
         let mut text_spans = vec![Span::raw(format!(
             "{text_marker}{text_label}> {}",
             panel.text.text()
         ))];
-        if !panel.preview_context.is_empty() {
+        if panel.kind == InputPanelKind::NumericValue {
+            // Render numeric edit context on its own line for cleaner value input.
+        } else if !panel.preview_context.is_empty() {
             text_spans.push(Span::styled(
                 format!("  {}", panel.preview_context),
                 Style::default().fg(MUTED_TEXT_COLOR),
             ));
         }
         frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
+
+        if panel.kind == InputPanelKind::NumericValue {
+            if let Some(context_rect) = regions.context {
+                frame.render_widget(
+                    Paragraph::new(format!("  {}", panel.preview_context))
+                        .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                    context_rect,
+                );
+            }
+        }
 
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
@@ -2438,6 +2461,7 @@ impl App {
         // Help row
         let help_text = match panel.kind {
             InputPanelKind::CategoryCreate => "S:save  Tab:cycle  Enter:select  Esc:cancel",
+            InputPanelKind::NumericValue => "Enter:save  S:save  Esc:cancel",
             _ => "S:save  Tab:cycle  Space:toggle  j/k:move  Esc:cancel",
         };
         frame.render_widget(Paragraph::new(help_text), regions.help);
@@ -2730,7 +2754,7 @@ impl App {
             });
         frame.render_widget(
             Paragraph::new(
-                "Categories are global. Tree editor: popup create, inline move, and details-pane note editing.",
+                "Categories are shared across all views. Press n to add, H/J/K/L to reorder, and use Details to edit flags and notes.",
             ),
             layout[0],
         );
@@ -2764,7 +2788,7 @@ impl App {
             Paragraph::new(if let Some(prompt) = action_prompt {
                 prompt
             } else if filter_text.trim().is_empty() {
-                "Filter: (type / then text to narrow list)".to_string()
+                "Press / to filter categories by name.".to_string()
             } else {
                 format!("Filter: {}", filter_text)
             })

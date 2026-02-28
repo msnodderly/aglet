@@ -290,8 +290,8 @@ struct LinkWizardState {
     target_index: usize,
 }
 
-/// Disambiguates which name-input operation is in flight when Mode::InputPanel
-/// is open with InputPanelKind::NameInput or InputPanelKind::CategoryCreate.
+/// Disambiguates which name/value operation is in flight when Mode::InputPanel
+/// is open.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameInputContext {
     ViewCreate,
@@ -8893,6 +8893,10 @@ mod tests {
             app.name_input_context,
             Some(NameInputContext::NumericValueEdit)
         );
+        assert_eq!(
+            app.input_panel.as_ref().map(|panel| panel.kind),
+            Some(input_panel::InputPanelKind::NumericValue)
+        );
         assert!(
             app.category_column_picker.is_none(),
             "should not open category picker for numeric columns"
@@ -8923,8 +8927,7 @@ mod tests {
                 .expect("type digit");
         }
 
-        // Tab to Save button, then Enter
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
+        // Enter in value field saves directly.
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("save numeric value");
 
@@ -8966,8 +8969,7 @@ mod tests {
                 .expect("type invalid");
         }
 
-        // Tab to Save button, then Enter
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
+        // Enter in value field attempts save and should fail validation.
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("attempt save");
 
