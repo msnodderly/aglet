@@ -6743,7 +6743,7 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_criteria_rows_render_in_draft_order_and_toggle_selected_row() {
+    fn view_edit_criteria_rows_render_in_draft_order_and_space_toggles_selected_row() {
         let (store, db_path) = make_test_store_with_view("criteria-order-render");
 
         let critical = Category::new("Critical".to_string());
@@ -6789,11 +6789,51 @@ mod tests {
             "criteria rows should preserve draft order in details pane"
         );
 
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("toggle first criteria row");
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("space toggles first criteria row");
         let state = app.view_edit_state.as_ref().expect("view edit state");
         assert_eq!(state.draft.criteria.criteria[0].category_id, medium.id);
         assert_eq!(state.draft.criteria.criteria[0].mode, CriterionMode::Not);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_existing_criteria_enter_opens_category_picker() {
+        let (store, db_path) = make_test_store_with_view("criteria-enter-opens-picker");
+
+        let medium = Category::new("Medium".to_string());
+        store.create_category(&medium).expect("medium");
+
+        let mut view = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|v| v.name == "TestView")
+            .expect("TestView");
+        view.criteria.set_criterion(CriterionMode::And, medium.id);
+        store.update_view(&view).expect("update view");
+
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("refreshed TestView");
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter opens category picker from criteria row");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::ViewCriteria
+            })
+        ));
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -7240,6 +7280,42 @@ mod tests {
                 .board_display_mode,
             before
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_empty_criteria_enter_opens_category_picker() {
+        let (store, db_path) = make_test_store_with_view("view-empty-criteria-enter");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().region,
+            ViewEditRegion::Criteria
+        );
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .criteria
+            .criteria
+            .is_empty());
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("enter on empty criteria opens picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::ViewCriteria
+            })
+        ));
 
         let _ = std::fs::remove_file(&db_path);
     }
