@@ -3058,9 +3058,6 @@ impl App {
                     self.input_panel_discard_confirm = false;
                     let kind = self.input_panel.as_ref().map(|p| p.kind);
                     self.input_panel = None;
-                    if kind == Some(input_panel::InputPanelKind::CategoryCreate) {
-                        self.set_category_manager_inline_action(None);
-                    }
                     match kind {
                         Some(input_panel::InputPanelKind::NameInput)
                         | Some(input_panel::InputPanelKind::NumericValue)
@@ -3080,16 +3077,11 @@ impl App {
             return Ok(false);
         }
 
-        // While creating a category from CategoryManager, reuse inline parent-picker
-        // key handling so Enter/Tab/filter work inside the InputPanel flow.
-        if self.name_input_context == Some(NameInputContext::CategoryCreate)
-            && matches!(
-                self.category_manager_inline_action(),
-                Some(CategoryInlineAction::ParentPicker { .. })
-            )
-            && self.handle_category_manager_inline_action_key(code, agenda)?
-        {
-            return Ok(false);
+        // Handle parent picker overlay within CategoryCreate panel.
+        if let Some(panel) = &mut self.input_panel {
+            if panel.parent_picker.is_some() {
+                return self.handle_category_create_parent_picker_key(code);
+            }
         }
 
         let Some(panel) = &mut self.input_panel else {
@@ -3129,9 +3121,6 @@ impl App {
                 } else {
                     let kind = self.input_panel.as_ref().map(|p| p.kind);
                     self.input_panel = None;
-                    if kind == Some(input_panel::InputPanelKind::CategoryCreate) {
-                        self.set_category_manager_inline_action(None);
-                    }
                     match kind {
                         Some(input_panel::InputPanelKind::NameInput)
                         | Some(input_panel::InputPanelKind::NumericValue)
@@ -3761,17 +3750,109 @@ impl App {
             .position(|idx| *idx == selected_option_index)
             .unwrap_or(0)
             .min(visible_option_indices.len().saturating_sub(1));
-        self.set_category_manager_inline_action(Some(CategoryInlineAction::ParentPicker {
-            target_category_id: CategoryId::nil(),
-            target_category_name: "(new category)".to_string(),
-            filter: crate::text_buffer::TextBuffer::empty(),
-            filter_editing: false,
-            options,
-            visible_option_indices,
-            list_index,
-            focus: CategoryParentPickerFocus::List,
-        }));
+        if let Some(panel) = &mut self.input_panel {
+            panel.parent_picker = Some(input_panel::ParentPickerOverlay {
+                filter: crate::text_buffer::TextBuffer::empty(),
+                filter_editing: false,
+                options,
+                visible_option_indices,
+                list_index,
+                focus: CategoryParentPickerFocus::List,
+            });
+        }
         self.status = "Select parent: Enter to apply, / to filter, Esc to cancel".to_string();
+    }
+
+    /// Handle keys when the parent picker overlay is open within a CategoryCreate panel.
+    fn handle_category_create_parent_picker_key(
+        &mut self,
+        code: KeyCode,
+    ) -> Result<bool, String> {
+        let panel = self.input_panel.as_mut().unwrap();
+        let picker = panel.parent_picker.as_mut().unwrap();
+
+        match code {
+            KeyCode::Esc => {
+                panel.parent_picker = None;
+                self.status = "Parent selection canceled".to_string();
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                picker.focus = match picker.focus {
+                    CategoryParentPickerFocus::Filter => CategoryParentPickerFocus::List,
+                    CategoryParentPickerFocus::List => CategoryParentPickerFocus::Filter,
+                };
+                picker.filter_editing = false;
+            }
+            KeyCode::Char('/') => {
+                picker.focus = CategoryParentPickerFocus::Filter;
+                picker.filter_editing = true;
+                self.status =
+                    "Type to filter parents, Enter to apply, Esc to cancel".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if picker.focus == CategoryParentPickerFocus::List =>
+            {
+                if !picker.visible_option_indices.is_empty() {
+                    picker.list_index =
+                        next_index(picker.list_index, picker.visible_option_indices.len(), 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k')
+                if picker.focus == CategoryParentPickerFocus::List =>
+            {
+                if !picker.visible_option_indices.is_empty() {
+                    picker.list_index =
+                        next_index(picker.list_index, picker.visible_option_indices.len(), -1);
+                }
+            }
+            KeyCode::Enter => {
+                let selected_parent = picker
+                    .visible_option_indices
+                    .get(picker.list_index)
+                    .and_then(|&idx| picker.options.get(idx));
+                if let Some(option) = selected_parent {
+                    let parent_id = option.parent_id;
+                    let parent_label = self.category_manager_parent_label(parent_id);
+                    let panel = self.input_panel.as_mut().unwrap();
+                    panel.parent_id = parent_id;
+                    panel.parent_label = parent_label.clone();
+                    panel.parent_picker = None;
+                    self.status = format!("Parent set to {parent_label}");
+                } else {
+                    self.status = "No parent option selected".to_string();
+                }
+            }
+            _ => {
+                if picker.filter_editing
+                    && picker.focus == CategoryParentPickerFocus::Filter
+                    && picker.filter.handle_key(code, false)
+                {
+                    let query = picker.filter.text().trim().to_ascii_lowercase();
+                    if query.is_empty() {
+                        picker.visible_option_indices =
+                            (0..picker.options.len()).collect();
+                    } else {
+                        picker.visible_option_indices = picker
+                            .options
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, opt)| {
+                                opt.label.to_ascii_lowercase().contains(&query)
+                            })
+                            .map(|(idx, _)| idx)
+                            .collect();
+                    }
+                    picker.list_index = if picker.visible_option_indices.is_empty() {
+                        0
+                    } else {
+                        picker
+                            .list_index
+                            .min(picker.visible_option_indices.len() - 1)
+                    };
+                }
+            }
+        }
+        Ok(false)
     }
 
     pub(crate) fn handle_note_edit_key(

@@ -719,16 +719,10 @@ impl App {
                 mut list_index,
                 mut focus,
             } => {
-                let is_category_create =
-                    self.name_input_context == Some(NameInputContext::CategoryCreate);
                 match code {
                     KeyCode::Esc => {
                         self.set_category_manager_inline_action(None);
-                        if is_category_create {
-                            self.status = "Parent selection canceled".to_string();
-                        } else {
-                            self.status = "Category reparent canceled".to_string();
-                        }
+                        self.status = "Category reparent canceled".to_string();
                         return Ok(true);
                     }
                     KeyCode::Tab | KeyCode::BackTab => {
@@ -759,24 +753,6 @@ impl App {
                         if !visible_option_indices.is_empty() {
                             list_index = next_index(list_index, visible_option_indices.len(), -1);
                         }
-                    }
-                    KeyCode::Enter if is_category_create => {
-                        // Apply parent selection to the CategoryCreate panel
-                        let selected_parent = visible_option_indices
-                            .get(list_index)
-                            .and_then(|&idx| options.get(idx));
-                        if let Some(option) = selected_parent {
-                            let parent_label = self.category_manager_parent_label(option.parent_id);
-                            if let Some(panel) = &mut self.input_panel {
-                                panel.parent_id = option.parent_id;
-                                panel.parent_label = parent_label.clone();
-                            }
-                            self.set_category_manager_inline_action(None);
-                            self.status = format!("Parent set to {parent_label}");
-                        } else {
-                            self.status = "No parent option selected".to_string();
-                        }
-                        return Ok(true);
                     }
                     KeyCode::Enter => {
                         self.apply_category_parent_picker_reparent(
