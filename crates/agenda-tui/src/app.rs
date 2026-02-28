@@ -155,6 +155,7 @@ impl App {
         // Resize per-slot state to match slot count (resets if structure changed)
         if self.section_filters.len() != slots.len() {
             self.section_filters = vec![None; slots.len()];
+            self.search_buffer.clear();
         }
         if self.slot_sort_keys.len() != slots.len() {
             self.slot_sort_keys = vec![Vec::new(); slots.len()];
@@ -894,6 +895,7 @@ impl App {
 
     pub(crate) fn reset_section_filters(&mut self) {
         self.section_filters = vec![None; self.slots.len()];
+        self.search_buffer.clear();
     }
 
     pub(crate) fn set_view_selection_by_name(&mut self, view_name: &str) {

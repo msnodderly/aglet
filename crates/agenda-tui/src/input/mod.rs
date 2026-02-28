@@ -28,7 +28,7 @@ impl App {
             Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),
             Mode::ItemAssignInput => self.handle_item_assign_category_input_key(code, agenda),
             Mode::InspectUnassign => self.handle_inspect_unassign_key(code, agenda),
-            Mode::FilterInput => self.handle_filter_key(code, agenda),
+            Mode::SearchBarFocused => self.handle_search_bar_key(code, agenda),
             Mode::ViewPicker => self.handle_view_picker_key(code, agenda),
             Mode::ViewEdit => self.handle_view_edit_key(code, agenda),
             Mode::ViewDeleteConfirm => self.handle_view_delete_key(code, agenda),

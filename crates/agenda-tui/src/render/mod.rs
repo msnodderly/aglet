@@ -31,21 +31,45 @@ impl App {
     }
 
     pub(crate) fn draw(&self, frame: &mut ratatui::Frame<'_>) {
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(1),
-                Constraint::Length(4),
-            ])
-            .split(frame.area());
+        let show_search_bar = !(matches!(
+            self.mode,
+            Mode::ViewEdit | Mode::CategoryManager
+        ) || self.mode == Mode::InputPanel
+            && self.name_input_context == Some(NameInputContext::CategoryCreate));
+
+        let layout = if show_search_bar {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(4),
+                ])
+                .split(frame.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(4),
+                ])
+                .split(frame.area())
+        };
 
         let header = self.render_header();
         frame.render_widget(header, layout[0]);
 
-        self.render_main(frame, layout[1]);
+        let (main_area, footer_area) = if show_search_bar {
+            self.render_search_bar(frame, layout[1]);
+            (layout[2], layout[3])
+        } else {
+            (layout[1], layout[2])
+        };
 
-        let footer_area = layout[2];
+        self.render_main(frame, main_area);
+
         let footer = self.render_footer(footer_area.width);
         frame.render_widget(footer, footer_area);
         if let Some((x, y)) = self.input_cursor_position(footer_area) {
@@ -1070,7 +1094,7 @@ impl App {
                 let marker = if dirty { " *" } else { "" };
                 Some(format!("Note{marker}> "))
             }
-            Mode::FilterInput => Some("Filter> ".to_string()),
+            Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
             Mode::ItemAssignInput => Some("Category> ".to_string()),
             _ => None,
         }
@@ -1263,6 +1287,55 @@ impl App {
             ),
             Span::raw(format!("  view:{view_name}  mode:{mode}{filter}")),
         ]))
+    }
+
+    fn render_search_bar(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let section_name = self
+            .current_slot()
+            .map(|s| s.title.as_str())
+            .unwrap_or("section");
+        let label = format!("[{section_name}] ");
+        let is_focused = self.mode == Mode::SearchBarFocused;
+
+        let label_style = Style::default().fg(Color::Cyan);
+        let (text_content, text_style) = if is_focused {
+            let text = self.search_buffer.text();
+            if text.is_empty() {
+                ("Search or create...".to_string(), Style::default().fg(Color::DarkGray))
+            } else {
+                (text.to_string(), Style::default().fg(Color::White))
+            }
+        } else {
+            let filter = self
+                .section_filters
+                .get(self.slot_index)
+                .and_then(|f| f.as_deref());
+            if let Some(text) = filter {
+                (text.to_string(), Style::default().fg(Color::Yellow))
+            } else {
+                ("Search or create...".to_string(), Style::default().fg(Color::DarkGray))
+            }
+        };
+
+        let line = Line::from(vec![
+            Span::styled(label.clone(), label_style),
+            Span::styled(text_content, text_style),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+
+        // Position cursor when focused
+        if is_focused && !self.search_buffer.text().is_empty() {
+            let label_len = label.chars().count() as u16;
+            let cursor_offset = self.search_buffer.cursor().min(u16::MAX as usize) as u16;
+            let x = area.x.saturating_add(label_len).saturating_add(cursor_offset);
+            let x = x.min(area.x.saturating_add(area.width.saturating_sub(1)));
+            frame.set_cursor_position((x, area.y));
+        } else if is_focused {
+            // Empty buffer but focused: cursor at start of text area
+            let label_len = label.chars().count() as u16;
+            let x = area.x.saturating_add(label_len);
+            frame.set_cursor_position((x, area.y));
+        }
     }
 
     pub(crate) fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2013,14 +2086,17 @@ impl App {
                 let marker = if dirty { " *" } else { "" };
                 format!("Note{marker}> {}", self.input.text())
             }
-            Mode::FilterInput => {
-                let target = self.filter_target_section;
+            Mode::SearchBarFocused => {
                 let section_name = self
                     .slots
-                    .get(target)
+                    .get(self.slot_index)
                     .map(|s| s.title.as_str())
                     .unwrap_or("section");
-                format!("Filter [{section_name}]> {}", self.input.text())
+                let match_count = self
+                    .current_slot()
+                    .map(|s| s.items.len())
+                    .unwrap_or(0);
+                format!("[{section_name}] {match_count} matches")
             }
             Mode::ConfirmDelete => "Delete item? y:confirm Esc:cancel".to_string(),
             Mode::BoardColumnDeleteConfirm => {
@@ -2127,7 +2203,7 @@ impl App {
             Mode::ConfirmDelete
             | Mode::BoardColumnDeleteConfirm
             | Mode::CategoryCreateConfirm { .. } => "y:confirm  Esc:cancel",
-            Mode::FilterInput => "Enter:apply  Esc:cancel",
+            Mode::SearchBarFocused => "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear",
             Mode::NoteEdit => "Enter:save  Esc:cancel",
             Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
             Mode::InputPanel => {
@@ -2154,7 +2230,13 @@ impl App {
                     "S:save  Tab:next  Esc:cancel"
                 }
             }
-            _ => "n:new  e:edit  s:sort  d:done  a:assign  /:filter  v:views  q:quit",
+            _ => {
+                if self.section_filters.iter().any(|f| f.is_some()) {
+                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Esc:clear search  q:quit"
+                } else {
+                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  q:quit"
+                }
+            }
         }
     }
 

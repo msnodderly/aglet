@@ -2025,19 +2025,20 @@ impl App {
                 }
             }
             KeyCode::Char('/') => {
-                let target = self.slot_index;
-                self.filter_target_section = target;
-                self.mode = Mode::FilterInput;
-                let existing = self
-                    .section_filters
-                    .get(target)
-                    .and_then(|f| f.clone())
-                    .unwrap_or_default();
-                self.set_input(existing);
-                self.status =
-                    "Filter section: type query and Enter to apply, Esc to cancel".to_string();
+                self.mode = Mode::SearchBarFocused;
+                // Load existing filter text if search_buffer is empty
+                if self.search_buffer.is_empty() {
+                    if let Some(existing) = self
+                        .section_filters
+                        .get(self.slot_index)
+                        .and_then(|f| f.clone())
+                    {
+                        self.search_buffer.set(existing);
+                    }
+                }
             }
             KeyCode::Esc => {
+                self.search_buffer.clear();
                 let target = self.slot_index;
                 if target < self.section_filters.len()
                     && self.section_filters[target].take().is_some()
@@ -4170,42 +4171,95 @@ impl App {
         Ok(false)
     }
 
-    pub(crate) fn handle_filter_key(
+    pub(crate) fn handle_search_bar_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                // Cancel — preserve existing filter for this section
+                self.search_buffer.clear();
+                if self.slot_index < self.section_filters.len() {
+                    self.section_filters[self.slot_index] = None;
+                }
                 self.mode = Mode::Normal;
-                self.clear_input();
-                self.status = "Filter cancelled".to_string();
+                self.refresh(agenda.store())?;
+                self.status = "Search cleared".to_string();
             }
             KeyCode::Enter => {
-                self.mode = Mode::Normal;
-                let value = self.input.trimmed().to_string();
-                let target = self.filter_target_section;
-                if target < self.section_filters.len() {
-                    self.section_filters[target] =
-                        if value.is_empty() { None } else { Some(value) };
-                }
-                self.clear_input();
-                self.refresh(agenda.store())?;
-                self.status = if self
-                    .section_filters
-                    .get(target)
-                    .is_some_and(|f| f.is_some())
-                {
-                    "Filter applied".to_string()
+                let query = self.search_buffer.trimmed().to_string();
+                if query.is_empty() {
+                    self.mode = Mode::Normal;
+                } else if let Some(idx) = self.find_exact_match_in_slot(&query) {
+                    self.item_index = idx;
+                    self.mode = Mode::Normal;
+                    self.status = format!("Jumped to '{}'", query);
                 } else {
-                    "Filter cleared".to_string()
-                };
+                    self.open_add_item_with_title(query);
+                }
             }
-            _ if self.handle_text_input_key(code) => {}
-            _ => {}
+            KeyCode::Down | KeyCode::Tab => {
+                self.mode = Mode::Normal; // keep filter active
+            }
+            _ => {
+                if self.search_buffer.handle_key(code, false) {
+                    self.apply_search_filter();
+                    self.refresh(agenda.store())?;
+                }
+            }
         }
         Ok(false)
+    }
+
+    fn apply_search_filter(&mut self) {
+        let slot = self.slot_index;
+        if slot < self.section_filters.len() {
+            let text = self.search_buffer.trimmed().to_string();
+            self.section_filters[slot] = if text.is_empty() { None } else { Some(text) };
+        }
+    }
+
+    fn find_exact_match_in_slot(&self, query: &str) -> Option<usize> {
+        let needle = query.to_ascii_lowercase();
+        self.current_slot()?
+            .items
+            .iter()
+            .position(|item| item.text.to_ascii_lowercase() == needle)
+    }
+
+    fn open_add_item_with_title(&mut self, title: String) {
+        let (section_title, on_insert_assign) = self
+            .current_slot()
+            .map(|slot| {
+                let stitle = slot.title.clone();
+                let on_insert = match &slot.context {
+                    SlotContext::GeneratedSection {
+                        on_insert_assign, ..
+                    } => on_insert_assign.clone(),
+                    SlotContext::Section { section_index } => {
+                        let idx = *section_index;
+                        self.current_view()
+                            .and_then(|v| v.sections.get(idx))
+                            .map(|s| s.on_insert_assign.clone())
+                            .unwrap_or_default()
+                    }
+                    SlotContext::Unmatched => HashSet::new(),
+                };
+                (stitle, on_insert)
+            })
+            .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
+
+        let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
+        panel.text.set(title);
+        self.input_panel = Some(panel);
+        self.mode = Mode::InputPanel;
+        self.status =
+            "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
+        // Clear search state
+        self.search_buffer.clear();
+        if self.slot_index < self.section_filters.len() {
+            self.section_filters[self.slot_index] = None;
+        }
     }
 }
 

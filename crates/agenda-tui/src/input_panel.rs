@@ -113,7 +113,7 @@ impl InputPanel {
             kind: InputPanelKind::AddItem,
             text: TextBuffer::empty(),
             note: TextBuffer::empty(),
-            categories: HashSet::new(),
+            categories: on_insert_assign.clone(),
             focus: InputPanelFocus::Text,
             item_id: None,
             preview_context: format_section_context(section_title, on_insert_assign),
@@ -126,7 +126,7 @@ impl InputPanel {
             parent_picker: None,
             original_text: String::new(),
             original_note: String::new(),
-            original_categories: HashSet::new(),
+            original_categories: on_insert_assign.clone(),
         }
     }
 
