@@ -304,10 +304,9 @@ impl App {
             return Ok(false);
         }
 
-        if (details_focus == CategoryManagerDetailsFocus::Note
-            && matches!(code, KeyCode::Char(c) if c != ' '))
-            || (details_focus == CategoryManagerDetailsFocus::Note
-                && matches!(code, KeyCode::Backspace | KeyCode::Delete))
+        if details_focus == CategoryManagerDetailsFocus::Note
+            && (matches!(code, KeyCode::Char(c) if c != ' ')
+                || matches!(code, KeyCode::Backspace | KeyCode::Delete))
         {
             self.start_category_manager_details_note_edit();
             if self.category_manager_details_note_editing() {
@@ -898,7 +897,7 @@ impl App {
                 self.set_category_manager_filter_editing(false);
                 if self
                     .category_manager_filter_text()
-                    .map_or(false, |t| !t.trim().is_empty())
+                    .is_some_and(|t| !t.trim().is_empty())
                 {
                     if let Some(filter) = self.category_manager_filter_mut() {
                         filter.clear();

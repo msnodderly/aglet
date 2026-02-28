@@ -1581,16 +1581,14 @@ impl App {
                                 let categories = item_assignment_labels(item, &category_names);
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
+                                } else if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    format_category_values_multi_line(
+                                        &categories,
+                                        BOARD_MULTI_CATEGORY_LINE_CAP,
+                                    )
+                                    .join("\n")
                                 } else {
-                                    if effective_display_mode == BoardDisplayMode::MultiLine {
-                                        format_category_values_multi_line(
-                                            &categories,
-                                            BOARD_MULTI_CATEGORY_LINE_CAP,
-                                        )
-                                        .join("\n")
-                                    } else {
-                                        categories.join(", ")
-                                    }
+                                    categories.join(", ")
                                 };
                                 let content =
                                     if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -1756,23 +1754,16 @@ impl App {
                             let categories = item_assignment_labels(item, &category_names);
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
+                            } else if effective_display_mode == BoardDisplayMode::MultiLine {
+                                format_category_values_multi_line(
+                                    &categories,
+                                    BOARD_MULTI_CATEGORY_LINE_CAP,
+                                )
+                                .join("\n")
                             } else {
-                                if effective_display_mode == BoardDisplayMode::MultiLine {
-                                    format_category_values_multi_line(
-                                        &categories,
-                                        BOARD_MULTI_CATEGORY_LINE_CAP,
-                                    )
-                                    .join("\n")
-                                } else {
-                                    categories.join(", ")
-                                }
+                                categories.join(", ")
                             };
-                            let when_text = if effective_display_mode == BoardDisplayMode::MultiLine
-                            {
-                                truncate_board_cell(&when, widths.when)
-                            } else {
-                                truncate_board_cell(&when, widths.when)
-                            };
+                            let when_text = truncate_board_cell(&when, widths.when);
                             let item_cell_text =
                                 if effective_display_mode == BoardDisplayMode::MultiLine {
                                     wrap_text_for_board_cell(&item_text, widths.item).join("\n")
@@ -2155,7 +2146,7 @@ impl App {
                     "Enter:save  S:save  Tab:buttons  Esc:cancel"
                 } else if category_create_parent_picker_open {
                     "Enter:apply  /:filter  Tab:focus  Esc:cancel"
-                } else if self.input_panel.as_ref().map_or(false, |p| {
+                } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories
                 }) {
                     "S:save  Tab:next  Space:toggle  Esc:cancel"
@@ -2796,12 +2787,10 @@ impl App {
                 Block::default()
                     .title(if self.category_manager_inline_action().is_some() {
                         "> Action"
+                    } else if manager_focus == CategoryManagerFocus::Filter {
+                        "> Filter"
                     } else {
-                        if manager_focus == CategoryManagerFocus::Filter {
-                            "> Filter"
-                        } else {
-                            "Filter"
-                        }
+                        "Filter"
                     })
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(filter_border).add_modifier(
@@ -2984,11 +2973,10 @@ impl App {
                     .categories
                     .iter()
                     .find(|c| c.id == row.id)
-                    .map(|c| {
+                    .and_then(|c| {
                         child_count = c.children.len();
                         c.parent
                     })
-                    .flatten()
                 {
                     if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
                         parent_name = parent.name.clone();

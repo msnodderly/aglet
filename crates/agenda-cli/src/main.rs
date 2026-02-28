@@ -1297,6 +1297,86 @@ fn print_items_for_view(
     }
 }
 
+fn print_item_table(items: &[Item], category_names: &HashMap<CategoryId, String>) {
+    if items.is_empty() {
+        println!("(no items)");
+        return;
+    }
+
+    for item in items {
+        let when = item
+            .when_date
+            .map(|dt| dt.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let done = if item.is_done { "done" } else { "open" };
+        println!("{} | {} | {} | {}", item.id, done, when, item.text);
+
+        if !item.assignments.is_empty() {
+            let mut names: Vec<String> = item
+                .assignments
+                .keys()
+                .filter_map(|id| category_names.get(id))
+                .cloned()
+                .collect();
+            names.sort_by_key(|name| name.to_ascii_lowercase());
+            println!("  categories: {}", names.join(", "));
+        }
+
+        if let Some(note) = &item.note {
+            println!("  note: {}", note.replace('\n', " "));
+        }
+    }
+}
+
+fn print_category_tree(categories: &[Category]) {
+    let by_id: HashMap<CategoryId, &Category> = categories.iter().map(|c| (c.id, c)).collect();
+
+    let mut roots: Vec<&Category> = categories.iter().filter(|c| c.parent.is_none()).collect();
+    roots.sort_by_key(|c| c.name.to_ascii_lowercase());
+
+    for root in roots {
+        print_category_subtree(root, 0, &by_id);
+    }
+}
+
+fn print_category_subtree(
+    category: &Category,
+    depth: usize,
+    by_id: &HashMap<CategoryId, &Category>,
+) {
+    let indent = "  ".repeat(depth);
+    let flags = format!(
+        "{}{}{}{}",
+        if category.is_exclusive {
+            " [exclusive]"
+        } else {
+            ""
+        },
+        if !category.enable_implicit_string {
+            " [no-implicit-string]"
+        } else {
+            ""
+        },
+        if !category.is_actionable {
+            " [non-actionable]"
+        } else {
+            ""
+        },
+        if category.value_kind == CategoryValueKind::Numeric {
+            " [numeric]"
+        } else {
+            ""
+        }
+    );
+    println!("{}- {}{}", indent, category.name, flags);
+
+    for child_id in &category.children {
+        if let Some(child) = by_id.get(child_id) {
+            print_category_subtree(child, depth + 1, by_id);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1442,85 +1522,5 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("Task B")));
         assert!(lines.iter().any(|line| line.contains("Task C")));
         assert!(lines.iter().any(|line| line.contains("Task D")));
-    }
-}
-
-fn print_item_table(items: &[Item], category_names: &HashMap<CategoryId, String>) {
-    if items.is_empty() {
-        println!("(no items)");
-        return;
-    }
-
-    for item in items {
-        let when = item
-            .when_date
-            .map(|dt| dt.to_string())
-            .unwrap_or_else(|| "-".to_string());
-        let done = if item.is_done { "done" } else { "open" };
-        println!("{} | {} | {} | {}", item.id, done, when, item.text);
-
-        if !item.assignments.is_empty() {
-            let mut names: Vec<String> = item
-                .assignments
-                .keys()
-                .filter_map(|id| category_names.get(id))
-                .cloned()
-                .collect();
-            names.sort_by_key(|name| name.to_ascii_lowercase());
-            println!("  categories: {}", names.join(", "));
-        }
-
-        if let Some(note) = &item.note {
-            println!("  note: {}", note.replace('\n', " "));
-        }
-    }
-}
-
-fn print_category_tree(categories: &[Category]) {
-    let by_id: HashMap<CategoryId, &Category> = categories.iter().map(|c| (c.id, c)).collect();
-
-    let mut roots: Vec<&Category> = categories.iter().filter(|c| c.parent.is_none()).collect();
-    roots.sort_by_key(|c| c.name.to_ascii_lowercase());
-
-    for root in roots {
-        print_category_subtree(root, 0, &by_id);
-    }
-}
-
-fn print_category_subtree(
-    category: &Category,
-    depth: usize,
-    by_id: &HashMap<CategoryId, &Category>,
-) {
-    let indent = "  ".repeat(depth);
-    let flags = format!(
-        "{}{}{}{}",
-        if category.is_exclusive {
-            " [exclusive]"
-        } else {
-            ""
-        },
-        if !category.enable_implicit_string {
-            " [no-implicit-string]"
-        } else {
-            ""
-        },
-        if !category.is_actionable {
-            " [non-actionable]"
-        } else {
-            ""
-        },
-        if category.value_kind == CategoryValueKind::Numeric {
-            " [numeric]"
-        } else {
-            ""
-        }
-    );
-    println!("{}- {}{}", indent, category.name, flags);
-
-    for child_id in &category.children {
-        if let Some(child) = by_id.get(child_id) {
-            print_category_subtree(child, depth + 1, by_id);
-        }
     }
 }

@@ -1317,7 +1317,7 @@ mod tests {
             category_direct_edit: Some(state.clone()),
             ..App::default()
         };
-        let store = Store::open(&std::env::temp_dir().join(format!(
+        let store = Store::open(std::env::temp_dir().join(format!(
             "agenda-tui-direct-edit-empty-enter-{}.ag",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -4931,7 +4931,7 @@ mod tests {
             "without an active filter, visible rows should include all categories"
         );
         assert!(
-            visible_rows.len() >= before_visible_len + 1,
+            visible_rows.len() > before_visible_len,
             "saving a new category should grow visible rows"
         );
 
