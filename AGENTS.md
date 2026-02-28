@@ -44,6 +44,11 @@ Running `agenda-cli list` without arguments shows a default view, which may be
 empty if not configured correctly. Use `agenda-cli view show "All Items"` to
 see all items, or create views that match your data.
 
+`agenda-cli list --category` accepts only one category flag. Repeating
+`--category` errors (`cannot be used multiple times`). For multi-category
+matching, create a temporary view with multiple `view create --include` flags
+(`--include` is AND-based), then `view show` that view.
+
 ## Category Assignment in Items
 
 When viewing items, the categories list includes both the assigned category and

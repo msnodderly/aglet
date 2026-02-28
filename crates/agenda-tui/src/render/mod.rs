@@ -3527,7 +3527,7 @@ impl App {
                 );
 
                 items.push(ListItem::new(Line::from(
-                    "  View keys: n:add  x:remove  Enter/Space:cycle criterion mode  ]/[:when  m:display  t/l:unmatched",
+                    "  View keys: n:add  x:remove  Enter:pick criteria  Space:cycle criterion mode  ]/[:when  m:display  t/l:unmatched",
                 )));
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(

@@ -950,14 +950,7 @@ impl App {
                 self.set_view_details_focus_index(current.saturating_sub(1));
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                let first = first_non_reserved_category_index(&self.category_rows);
-                if let Some(state) = &mut self.view_edit_state {
-                    state.overlay = Some(ViewEditOverlay::CategoryPicker {
-                        target: CategoryEditTarget::ViewCriteria,
-                    });
-                    state.picker_index = first;
-                }
-                self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done".to_string();
+                self.open_view_edit_view_criteria_picker();
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 self.begin_view_edit_name_input();
@@ -995,25 +988,12 @@ impl App {
                 if changed {
                     self.set_view_edit_dirty();
                     self.refresh_view_edit_preview();
+                } else {
+                    self.open_view_edit_view_criteria_picker();
                 }
             }
             KeyCode::Enter => {
-                // Match details-pane interaction semantics: Enter acts like Space on criteria rows.
-                let mut changed = false;
-                if let Some(state) = &mut self.view_edit_state {
-                    if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx) {
-                        criterion.mode = match criterion.mode {
-                            CriterionMode::And => CriterionMode::Not,
-                            CriterionMode::Not => CriterionMode::Or,
-                            CriterionMode::Or => CriterionMode::And,
-                        };
-                        changed = true;
-                    }
-                }
-                if changed {
-                    self.set_view_edit_dirty();
-                    self.refresh_view_edit_preview();
-                }
+                self.open_view_edit_view_criteria_picker();
             }
             KeyCode::Char(']') => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -1042,6 +1022,17 @@ impl App {
             _ => {}
         }
         Ok(true)
+    }
+
+    fn open_view_edit_view_criteria_picker(&mut self) {
+        let first = first_non_reserved_category_index(&self.category_rows);
+        if let Some(state) = &mut self.view_edit_state {
+            state.overlay = Some(ViewEditOverlay::CategoryPicker {
+                target: CategoryEditTarget::ViewCriteria,
+            });
+            state.picker_index = first;
+        }
+        self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done".to_string();
     }
 
     // -------------------------------------------------------------------------
