@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use agenda_core::model::{CategoryId, ItemId};
+use agenda_core::model::{CategoryId, CategoryValueKind, ItemId};
 use crossterm::event::KeyCode;
 use rust_decimal::Decimal;
 
@@ -14,6 +14,8 @@ pub(crate) enum InputPanelKind {
     EditItem,
     /// Single text field for naming (views, categories).
     NameInput,
+    /// Category creation: Name + Parent + Type picker.
+    CategoryCreate,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -21,6 +23,10 @@ pub(crate) enum InputPanelFocus {
     Text,
     Note,
     Categories,
+    /// Parent selector field (CategoryCreate only).
+    Parent,
+    /// Tag/Numeric toggle (CategoryCreate only).
+    TypePicker,
     SaveButton,
     CancelButton,
 }
@@ -40,6 +46,10 @@ pub(crate) enum InputPanelAction {
     Save,
     /// Cancel / discard.
     Cancel,
+    /// Open the parent picker overlay (CategoryCreate).
+    OpenParentPicker,
+    /// Toggle the value kind between Tag/Numeric (CategoryCreate).
+    ToggleType,
     /// A text key was consumed internally.
     Handled,
     /// The key was not consumed.
@@ -66,6 +76,12 @@ pub(crate) struct InputPanel {
     pub(crate) numeric_buffers: HashMap<CategoryId, TextBuffer>,
     /// Original numeric values for change detection (populated when opening EditItem).
     pub(crate) numeric_originals: HashMap<CategoryId, Option<Decimal>>,
+    /// Parent category for CategoryCreate (None = root).
+    pub(crate) parent_id: Option<CategoryId>,
+    /// Display name for the parent (cached for rendering).
+    pub(crate) parent_label: String,
+    /// Value kind selection for CategoryCreate.
+    pub(crate) value_kind: CategoryValueKind,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -88,6 +104,9 @@ impl InputPanel {
             category_cursor: 0,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
+            parent_id: None,
+            parent_label: String::new(),
+            value_kind: CategoryValueKind::Tag,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -116,6 +135,9 @@ impl InputPanel {
             category_cursor: 0,
             numeric_buffers,
             numeric_originals,
+            parent_id: None,
+            parent_label: String::new(),
+            value_kind: CategoryValueKind::Tag,
             original_text,
             original_note,
             original_categories,
@@ -134,7 +156,31 @@ impl InputPanel {
             category_cursor: 0,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
+            parent_id: None,
+            parent_label: String::new(),
+            value_kind: CategoryValueKind::Tag,
             original_text: current_name.to_string(),
+            original_note: String::new(),
+            original_categories: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn new_category_create(parent_id: Option<CategoryId>, parent_label: &str) -> Self {
+        Self {
+            kind: InputPanelKind::CategoryCreate,
+            text: TextBuffer::empty(),
+            note: TextBuffer::empty(),
+            categories: HashSet::new(),
+            focus: InputPanelFocus::Text,
+            item_id: None,
+            preview_context: String::new(),
+            category_cursor: 0,
+            numeric_buffers: HashMap::new(),
+            numeric_originals: HashMap::new(),
+            parent_id,
+            parent_label: parent_label.to_string(),
+            value_kind: CategoryValueKind::Tag,
+            original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
         }
@@ -196,6 +242,8 @@ impl InputPanel {
             InputPanelFocus::Categories => {
                 self.handle_categories_focus(code, current_row_is_assigned_numeric)
             }
+            InputPanelFocus::Parent => self.handle_parent_focus(code),
+            InputPanelFocus::TypePicker => self.handle_type_picker_focus(code),
             InputPanelFocus::SaveButton => self.handle_save_button(code),
             InputPanelFocus::CancelButton => self.handle_cancel_button(code),
         }
@@ -218,8 +266,7 @@ impl InputPanel {
             KeyCode::Esc => Some(InputPanelAction::Cancel),
             // Capital S saves only when not editing text fields or numeric value buffers
             KeyCode::Char('S')
-                if self.focus != InputPanelFocus::Text
-                    && self.focus != InputPanelFocus::Note
+                if !matches!(self.focus, InputPanelFocus::Text | InputPanelFocus::Note)
                     && !(self.focus == InputPanelFocus::Categories
                         && current_row_is_assigned_numeric) =>
             {
@@ -270,6 +317,22 @@ impl InputPanel {
         }
     }
 
+    fn handle_parent_focus(&self, code: KeyCode) -> InputPanelAction {
+        match code {
+            KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::OpenParentPicker,
+            _ => InputPanelAction::Unhandled,
+        }
+    }
+
+    fn handle_type_picker_focus(&mut self, code: KeyCode) -> InputPanelAction {
+        match code {
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
+                InputPanelAction::ToggleType
+            }
+            _ => InputPanelAction::Unhandled,
+        }
+    }
+
     fn handle_save_button(&self, code: KeyCode) -> InputPanelAction {
         match code {
             KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::Save,
@@ -293,15 +356,15 @@ impl InputPanel {
 
     fn cycle_focus_forward(&mut self) {
         self.focus = match self.focus {
-            InputPanelFocus::Text => {
-                if self.kind == InputPanelKind::NameInput {
-                    InputPanelFocus::SaveButton
-                } else {
-                    InputPanelFocus::Note
-                }
-            }
+            InputPanelFocus::Text => match self.kind {
+                InputPanelKind::NameInput => InputPanelFocus::SaveButton,
+                InputPanelKind::CategoryCreate => InputPanelFocus::Parent,
+                _ => InputPanelFocus::Note,
+            },
             InputPanelFocus::Note => InputPanelFocus::Categories,
             InputPanelFocus::Categories => InputPanelFocus::SaveButton,
+            InputPanelFocus::Parent => InputPanelFocus::TypePicker,
+            InputPanelFocus::TypePicker => InputPanelFocus::SaveButton,
             InputPanelFocus::SaveButton => InputPanelFocus::CancelButton,
             InputPanelFocus::CancelButton => InputPanelFocus::Text,
         };
@@ -312,13 +375,13 @@ impl InputPanel {
             InputPanelFocus::Text => InputPanelFocus::CancelButton,
             InputPanelFocus::Note => InputPanelFocus::Text,
             InputPanelFocus::Categories => InputPanelFocus::Note,
-            InputPanelFocus::SaveButton => {
-                if self.kind == InputPanelKind::NameInput {
-                    InputPanelFocus::Text
-                } else {
-                    InputPanelFocus::Categories
-                }
-            }
+            InputPanelFocus::Parent => InputPanelFocus::Text,
+            InputPanelFocus::TypePicker => InputPanelFocus::Parent,
+            InputPanelFocus::SaveButton => match self.kind {
+                InputPanelKind::NameInput => InputPanelFocus::Text,
+                InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
+                _ => InputPanelFocus::Categories,
+            },
             InputPanelFocus::CancelButton => InputPanelFocus::SaveButton,
         };
     }
@@ -614,8 +677,7 @@ mod tests {
         let mut p = add_panel();
         let cat_id = CategoryId::new_v4();
         p.categories.insert(cat_id);
-        p.numeric_buffers
-            .insert(cat_id, TextBuffer::empty());
+        p.numeric_buffers.insert(cat_id, TextBuffer::empty());
         assert!(p.numeric_buffers.contains_key(&cat_id));
     }
 
@@ -624,8 +686,7 @@ mod tests {
         let mut p = add_panel();
         let cat_id = CategoryId::new_v4();
         p.categories.insert(cat_id);
-        p.numeric_buffers
-            .insert(cat_id, TextBuffer::empty());
+        p.numeric_buffers.insert(cat_id, TextBuffer::empty());
         p.categories.remove(&cat_id);
         p.numeric_buffers.remove(&cat_id);
         assert!(!p.numeric_buffers.contains_key(&cat_id));
@@ -719,5 +780,85 @@ mod tests {
         let mut p2 = p.clone();
         p2.text.set("something".to_string());
         assert!(p2.is_dirty());
+    }
+
+    // --- CategoryCreate focus cycling ---
+
+    fn cat_create_panel() -> InputPanel {
+        InputPanel::new_category_create(None, "top level")
+    }
+
+    #[test]
+    fn category_create_tab_cycles_forward() {
+        let mut p = cat_create_panel();
+        assert_eq!(p.focus, InputPanelFocus::Text);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::Parent);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::TypePicker);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::SaveButton);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::CancelButton);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::Text);
+    }
+
+    #[test]
+    fn category_create_backtab_cycles_backward() {
+        let mut p = cat_create_panel();
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::CancelButton);
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::SaveButton);
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::TypePicker);
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::Parent);
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::Text);
+    }
+
+    #[test]
+    fn category_create_enter_on_parent_opens_picker() {
+        let mut p = cat_create_panel();
+        p.focus = InputPanelFocus::Parent;
+        assert_eq!(
+            p.handle_key(KeyCode::Enter, false),
+            InputPanelAction::OpenParentPicker
+        );
+    }
+
+    #[test]
+    fn category_create_space_on_type_picker_toggles() {
+        let mut p = cat_create_panel();
+        p.focus = InputPanelFocus::TypePicker;
+        assert_eq!(
+            p.handle_key(KeyCode::Char(' '), false),
+            InputPanelAction::ToggleType
+        );
+    }
+
+    #[test]
+    fn category_create_arrows_on_type_picker_toggle() {
+        let mut p = cat_create_panel();
+        p.focus = InputPanelFocus::TypePicker;
+        assert_eq!(
+            p.handle_key(KeyCode::Left, false),
+            InputPanelAction::ToggleType
+        );
+        assert_eq!(
+            p.handle_key(KeyCode::Right, false),
+            InputPanelAction::ToggleType
+        );
+    }
+
+    #[test]
+    fn new_category_create_defaults() {
+        let p = InputPanel::new_category_create(Some(CategoryId::new_v4()), "Parent");
+        assert_eq!(p.kind, InputPanelKind::CategoryCreate);
+        assert!(p.text.is_empty());
+        assert_eq!(p.parent_label, "Parent");
+        assert_eq!(p.value_kind, CategoryValueKind::Tag);
     }
 }

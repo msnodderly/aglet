@@ -216,3 +216,18 @@ Current implementation behavior (intentional):
 - Use `Up/Down` to move away from the Note field without typing.
 - `H/J/K/L` structural move/reorder keys are disabled while the Details pane is
   focused, and only work when the Tree pane is focused.
+
+## Category Create Parent Picker Ownership (Surprising)
+
+The CategoryCreate popup (`Mode::InputPanel` with
+`NameInputContext::CategoryCreate`) reuses `CategoryInlineAction::ParentPicker`
+state from Category Manager instead of a dedicated panel-local picker state.
+
+Practical implications:
+- Parent-picker keys while creating a category are handled through
+  `handle_category_manager_inline_action_key`, even though mode is
+  `Mode::InputPanel`.
+- Rendering must treat this as an InputPanel overlay flow; otherwise the picker
+  may appear embedded in Category Manager or persist as stale inline action.
+- When closing CategoryCreate (save/cancel/discard), clear
+  `category_manager.inline_action` to avoid orphaned parent-picker UI.

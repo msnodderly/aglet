@@ -306,7 +306,10 @@ impl App {
             return;
         }
         self.set_direct_edit_create_confirm_name(Some(typed.clone()));
-        self.status = format!("Create new category '{}' in this column? y:confirm Esc:cancel", typed);
+        self.status = format!(
+            "Create new category '{}' in this column? y:confirm Esc:cancel",
+            typed
+        );
     }
 
     fn desired_child_ids_from_category_direct_edit_draft(&self) -> Vec<CategoryId> {
@@ -479,8 +482,7 @@ impl App {
             }
             self.category_suggest = None;
             self.status = if typed.is_empty() {
-                "Add column: type to filter categories with children (or When)"
-                    .to_string()
+                "Add column: type to filter categories with children (or When)".to_string()
             } else {
                 "No valid column heading match. Enter explains why (leaf headings are invalid)."
                     .to_string()
@@ -1464,7 +1466,10 @@ impl App {
             return;
         }
         self.set_category_column_picker_create_confirm_name(Some(typed.clone()));
-        self.status = format!("Create new category '{}' in this column? y:confirm Esc:cancel", typed);
+        self.status = format!(
+            "Create new category '{}' in this column? y:confirm Esc:cancel",
+            typed
+        );
     }
 
     fn confirm_inline_create_category_column_picker(
@@ -2949,8 +2954,12 @@ impl App {
                     self.input_panel_discard_confirm = false;
                     let kind = self.input_panel.as_ref().map(|p| p.kind);
                     self.input_panel = None;
+                    if kind == Some(input_panel::InputPanelKind::CategoryCreate) {
+                        self.set_category_manager_inline_action(None);
+                    }
                     match kind {
-                        Some(input_panel::InputPanelKind::NameInput) => {
+                        Some(input_panel::InputPanelKind::NameInput)
+                        | Some(input_panel::InputPanelKind::CategoryCreate) => {
                             self.mode = self.name_input_return_mode();
                             self.name_input_context = None;
                             self.status = "Changes discarded".to_string();
@@ -2966,6 +2975,19 @@ impl App {
             return Ok(false);
         }
 
+        // While creating a category from CategoryManager, reuse inline parent-picker
+        // key handling so Enter/Tab/filter work inside the InputPanel flow.
+        if self.name_input_context == Some(NameInputContext::CategoryCreate)
+            && matches!(
+                self.category_manager_inline_action(),
+                Some(CategoryInlineAction::ParentPicker { .. })
+            )
+        {
+            if self.handle_category_manager_inline_action_key(code, agenda)? {
+                return Ok(false);
+            }
+        }
+
         let Some(panel) = &mut self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
@@ -2974,19 +2996,18 @@ impl App {
 
         // Determine if the current category row is an assigned numeric category
         // (needed for key routing decisions in handle_key).
-        let current_row_is_assigned_numeric = if panel.focus
-            == input_panel::InputPanelFocus::Categories
-        {
-            self.category_rows
-                .get(panel.category_cursor)
-                .map(|row| {
-                    panel.categories.contains(&row.id)
-                        && row.value_kind == agenda_core::model::CategoryValueKind::Numeric
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        };
+        let current_row_is_assigned_numeric =
+            if panel.focus == input_panel::InputPanelFocus::Categories {
+                self.category_rows
+                    .get(panel.category_cursor)
+                    .map(|row| {
+                        panel.categories.contains(&row.id)
+                            && row.value_kind == agenda_core::model::CategoryValueKind::Numeric
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
 
         let action = panel.handle_key(code, current_row_is_assigned_numeric);
 
@@ -3000,13 +3021,16 @@ impl App {
                     .unwrap_or(false);
                 if is_dirty {
                     self.input_panel_discard_confirm = true;
-                    self.status =
-                        "Unsaved changes: y:save  Esc:discard".to_string();
+                    self.status = "Unsaved changes: y:save  Esc:discard".to_string();
                 } else {
                     let kind = self.input_panel.as_ref().map(|p| p.kind);
                     self.input_panel = None;
+                    if kind == Some(input_panel::InputPanelKind::CategoryCreate) {
+                        self.set_category_manager_inline_action(None);
+                    }
                     match kind {
-                        Some(input_panel::InputPanelKind::NameInput) => {
+                        Some(input_panel::InputPanelKind::NameInput)
+                        | Some(input_panel::InputPanelKind::CategoryCreate) => {
                             self.mode = self.name_input_return_mode();
                             self.name_input_context = None;
                             self.status = "Canceled".to_string();
@@ -3033,6 +3057,9 @@ impl App {
                     }
                     input_panel::InputPanelKind::NameInput => {
                         self.save_input_panel_name(agenda)?;
+                    }
+                    input_panel::InputPanelKind::CategoryCreate => {
+                        self.save_input_panel_category_create(agenda)?;
                     }
                 }
             }
@@ -3067,7 +3094,8 @@ impl App {
                             // Manage numeric buffer — keep buffer on toggle-off
                             // so the value is preserved if user toggles back on.
                             if is_numeric && is_adding {
-                                panel.numeric_buffers
+                                panel
+                                    .numeric_buffers
                                     .entry(row.id)
                                     .or_insert_with(crate::text_buffer::TextBuffer::empty);
                             }
@@ -3117,7 +3145,25 @@ impl App {
                     }
                 }
             }
-            InputPanelAction::FocusNext | InputPanelAction::FocusPrev | InputPanelAction::Unhandled => {}
+            InputPanelAction::OpenParentPicker => {
+                self.open_category_create_parent_picker();
+            }
+            InputPanelAction::ToggleType => {
+                if let Some(panel) = &mut self.input_panel {
+                    panel.value_kind = match panel.value_kind {
+                        CategoryValueKind::Tag => CategoryValueKind::Numeric,
+                        CategoryValueKind::Numeric => CategoryValueKind::Tag,
+                    };
+                    let label = match panel.value_kind {
+                        CategoryValueKind::Tag => "Tag",
+                        CategoryValueKind::Numeric => "Numeric",
+                    };
+                    self.status = format!("Type set to {label}");
+                }
+            }
+            InputPanelAction::FocusNext
+            | InputPanelAction::FocusPrev
+            | InputPanelAction::Unhandled => {}
         }
         Ok(false)
     }
@@ -3300,10 +3346,7 @@ impl App {
                     .find(|c| c.id == *cat_id)
                     .map(|c| c.name.as_str())
                     .unwrap_or("?");
-                self.status = format!(
-                    "Invalid numeric value for '{}': '{}'",
-                    cat_name, trimmed
-                );
+                self.status = format!("Invalid numeric value for '{}': '{}'", cat_name, trimmed);
                 return Ok(());
             }
         }
@@ -3363,6 +3406,7 @@ impl App {
                 Mode::ViewPicker
             }
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
+            Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
             None => Mode::Normal,
         }
     }
@@ -3494,8 +3538,7 @@ impl App {
                                 self.input_panel = None;
                                 self.name_input_context = None;
                                 self.mode = Mode::Normal;
-                                self.status =
-                                    format!("Set value to {}", decimal_value.normalize());
+                                self.status = format!("Set value to {}", decimal_value.normalize());
                             }
                             Err(err) => {
                                 self.input_panel = None;
@@ -3508,11 +3551,20 @@ impl App {
                     Err(_) => {
                         // Keep the panel open so the user can fix the input.
                         self.numeric_edit_target = Some(target);
-                        self.status =
-                            format!("Invalid number: '{}'. Edit the value or Esc to cancel.", name);
+                        self.status = format!(
+                            "Invalid number: '{}'. Edit the value or Esc to cancel.",
+                            name
+                        );
                         return Ok(());
                     }
                 }
+            }
+            Some(NameInputContext::CategoryCreate) => {
+                // Should not be reached — CategoryCreate has its own save function
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::CategoryManager;
+                self.status = "Unexpected save dispatch for CategoryCreate".to_string();
             }
             None => {
                 self.input_panel = None;
@@ -3522,6 +3574,94 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Save an InputPanel(CategoryCreate) — creates a new category.
+    fn save_input_panel_category_create(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(panel) = &self.input_panel else {
+            self.mode = self.name_input_return_mode();
+            self.name_input_context = None;
+            return Ok(());
+        };
+        let name = panel.text.trimmed().to_string();
+        if name.is_empty() {
+            self.status = "Name cannot be empty".to_string();
+            return Ok(());
+        }
+        if is_reserved_category_name(&name) {
+            self.status = format!(
+                "Cannot create reserved category '{}'. Use a different name.",
+                name
+            );
+            return Ok(());
+        }
+        if self.category_name_exists_elsewhere(&name, None) {
+            self.status = format!(
+                "Category '{}' already exists. Cannot create duplicate.",
+                name
+            );
+            return Ok(());
+        }
+
+        let parent_id = panel.parent_id;
+        let value_kind = panel.value_kind;
+        let parent_label = panel.parent_label.clone();
+        let kind_label = match value_kind {
+            CategoryValueKind::Tag => "tag",
+            CategoryValueKind::Numeric => "numeric",
+        };
+
+        let mut category = Category::new(name.clone());
+        category.enable_implicit_string = true;
+        category.parent = parent_id;
+        category.value_kind = value_kind;
+
+        match agenda.create_category(&category).map_err(|e| e.to_string()) {
+            Ok(result) => {
+                self.refresh(agenda.store())?;
+                self.set_category_selection_by_id(category.id);
+                self.input_panel = None;
+                self.set_category_manager_inline_action(None);
+                self.name_input_context = None;
+                self.mode = Mode::CategoryManager;
+                self.status = format!(
+                    "Created {kind_label} category {name} under {parent_label} (processed_items={}, affected_items={})",
+                    result.processed_items, result.affected_items
+                );
+            }
+            Err(err) => {
+                self.status = format!("Create failed: {err}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Open the parent picker overlay for CategoryCreate panel.
+    fn open_category_create_parent_picker(&mut self) {
+        let current_parent_id = self.input_panel.as_ref().and_then(|panel| panel.parent_id);
+        let options =
+            build_reparent_options(&self.category_rows, &self.categories, CategoryId::nil());
+        let visible_option_indices: Vec<usize> = (0..options.len()).collect();
+        let selected_option_index = options
+            .iter()
+            .position(|option| option.parent_id == current_parent_id)
+            .unwrap_or(0);
+        let list_index = visible_option_indices
+            .iter()
+            .position(|idx| *idx == selected_option_index)
+            .unwrap_or(0)
+            .min(visible_option_indices.len().saturating_sub(1));
+        self.set_category_manager_inline_action(Some(CategoryInlineAction::ParentPicker {
+            target_category_id: CategoryId::nil(),
+            target_category_name: "(new category)".to_string(),
+            filter: crate::text_buffer::TextBuffer::empty(),
+            filter_editing: false,
+            options,
+            visible_option_indices,
+            list_index,
+            focus: CategoryParentPickerFocus::List,
+        }));
+        self.status = "Select parent: Enter to apply, / to filter, Esc to cancel".to_string();
     }
 
     pub(crate) fn handle_note_edit_key(
@@ -3554,8 +3694,7 @@ impl App {
                 let dirty = self.input.text() != self.note_edit_original;
                 if dirty {
                     self.note_edit_discard_confirm = true;
-                    self.status =
-                        "Unsaved changes: y:save  Esc:discard".to_string();
+                    self.status = "Unsaved changes: y:save  Esc:discard".to_string();
                 } else {
                     self.mode = Mode::Normal;
                     self.clear_input();

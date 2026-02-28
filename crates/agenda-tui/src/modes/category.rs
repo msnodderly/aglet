@@ -26,7 +26,7 @@ impl App {
             .unwrap_or_else(|| "top level".to_string())
     }
 
-    fn category_name_exists_elsewhere(
+    pub(crate) fn category_name_exists_elsewhere(
         &self,
         candidate: &str,
         excluding_id: Option<CategoryId>,
@@ -36,15 +36,17 @@ impl App {
         })
     }
 
-    fn start_category_inline_create(&mut self, parent_id: Option<CategoryId>) {
-        self.set_category_manager_inline_action(Some(CategoryInlineAction::Create {
+    fn open_category_create_panel(&mut self, parent_id: Option<CategoryId>) {
+        let parent_label = self.category_manager_parent_label(parent_id);
+        self.input_panel = Some(input_panel::InputPanel::new_category_create(
             parent_id,
-            buf: text_buffer::TextBuffer::empty(),
-            confirm_name: None,
-        }));
-        let parent = self.category_manager_parent_label(parent_id);
-        self.status =
-            format!("Create category under {parent}: type name, Enter confirm, Esc cancel");
+            &parent_label,
+        ));
+        // CategoryCreate uses InputPanel; clear any stale inline action first.
+        self.set_category_manager_inline_action(None);
+        self.name_input_context = Some(NameInputContext::CategoryCreate);
+        self.mode = Mode::InputPanel;
+        self.status = format!("Create category under {parent_label}");
     }
 
     fn start_category_inline_rename(&mut self) {
@@ -80,33 +82,6 @@ impl App {
             category_name: row_name.clone(),
         }));
         self.status = format!("Delete category \"{}\"? y/n", row_name);
-    }
-
-    fn apply_category_inline_create_confirm(
-        &mut self,
-        agenda: &Agenda<'_>,
-        parent_id: Option<CategoryId>,
-        name: String,
-    ) -> Result<(), String> {
-        let mut category = Category::new(name.clone());
-        category.enable_implicit_string = true;
-        category.parent = parent_id;
-        let parent_label = self.category_manager_parent_label(parent_id);
-        match agenda.create_category(&category).map_err(|e| e.to_string()) {
-            Ok(result) => {
-                self.refresh(agenda.store())?;
-                self.set_category_selection_by_id(category.id);
-                self.set_category_manager_inline_action(None);
-                self.status = format!(
-                    "Created category {name} under {parent_label} (processed_items={}, affected_items={})",
-                    result.processed_items, result.affected_items
-                );
-            }
-            Err(err) => {
-                self.status = format!("Create failed: {err}");
-            }
-        }
-        Ok(())
     }
 
     fn apply_category_inline_rename(
@@ -272,9 +247,26 @@ impl App {
         if self.category_manager_focus() != Some(CategoryManagerFocus::Details) {
             return Ok(false);
         }
-        let Some(details_focus) = self.category_manager_details_focus() else {
+        let Some(mut details_focus) = self.category_manager_details_focus() else {
             return Ok(false);
         };
+
+        // Snap focus to Note when viewing a numeric category (flags don't apply)
+        let is_numeric = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if is_numeric
+            && matches!(
+                details_focus,
+                CategoryManagerDetailsFocus::Exclusive
+                    | CategoryManagerDetailsFocus::MatchName
+                    | CategoryManagerDetailsFocus::Actionable
+            )
+        {
+            details_focus = CategoryManagerDetailsFocus::Note;
+            self.set_category_manager_details_focus(details_focus);
+        }
 
         if details_focus == CategoryManagerDetailsFocus::Note
             && self.category_manager_details_note_editing()
@@ -295,8 +287,7 @@ impl App {
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
                     if self.category_manager_details_note_dirty() {
-                        self.status =
-                            "Note has unsaved changes (S to save)".to_string();
+                        self.status = "Note has unsaved changes (S to save)".to_string();
                     }
                     self.set_category_manager_details_note_editing(false);
                     return Ok(false);
@@ -640,7 +631,7 @@ impl App {
         Ok(())
     }
 
-    fn handle_category_manager_inline_action_key(
+    pub(crate) fn handle_category_manager_inline_action_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
@@ -650,81 +641,6 @@ impl App {
         };
 
         match action {
-            CategoryInlineAction::Create {
-                parent_id,
-                mut buf,
-                confirm_name,
-            } => {
-                if let Some(confirm_name) = confirm_name {
-                    match category_inline_confirm_key_action(code) {
-                        CategoryInlineConfirmKeyAction::Confirm => {
-                            self.apply_category_inline_create_confirm(
-                                agenda,
-                                parent_id,
-                                confirm_name,
-                            )?;
-                        }
-                        CategoryInlineConfirmKeyAction::Cancel => {
-                            self.set_category_manager_inline_action(Some(
-                                CategoryInlineAction::Create {
-                                    parent_id,
-                                    buf,
-                                    confirm_name: None,
-                                },
-                            ));
-                            self.status = "Create canceled. Continue editing name.".to_string();
-                        }
-                        CategoryInlineConfirmKeyAction::None => {}
-                    }
-                    return Ok(true);
-                }
-
-                match code {
-                    KeyCode::Esc => {
-                        self.set_category_manager_inline_action(None);
-                        self.status = "Create canceled".to_string();
-                    }
-                    KeyCode::Enter => {
-                        let name = buf.trimmed().to_string();
-                        if name.is_empty() {
-                            self.status = "Name cannot be empty".to_string();
-                        } else if is_reserved_category_name(&name) {
-                            self.status = format!(
-                                "Cannot create reserved category '{}'. Use a different name.",
-                                name
-                            );
-                        } else if self.category_name_exists_elsewhere(&name, None) {
-                            self.status = format!(
-                                "Category '{}' already exists. Cannot create duplicate.",
-                                name
-                            );
-                        } else {
-                            let parent_label = self.category_manager_parent_label(parent_id);
-                            self.set_category_manager_inline_action(Some(
-                                CategoryInlineAction::Create {
-                                    parent_id,
-                                    buf,
-                                    confirm_name: Some(name.clone()),
-                                },
-                            ));
-                            self.status =
-                                format!("Create category '{}' under {}? y:confirm Esc:cancel", name, parent_label);
-                        }
-                    }
-                    _ => {
-                        if buf.handle_key(code, false) {
-                            self.set_category_manager_inline_action(Some(
-                                CategoryInlineAction::Create {
-                                    parent_id,
-                                    buf,
-                                    confirm_name: None,
-                                },
-                            ));
-                        }
-                    }
-                }
-                Ok(true)
-            }
             CategoryInlineAction::Rename {
                 category_id,
                 original_name,
@@ -804,10 +720,16 @@ impl App {
                 mut list_index,
                 mut focus,
             } => {
+                let is_category_create =
+                    self.name_input_context == Some(NameInputContext::CategoryCreate);
                 match code {
                     KeyCode::Esc => {
                         self.set_category_manager_inline_action(None);
-                        self.status = "Category reparent canceled".to_string();
+                        if is_category_create {
+                            self.status = "Parent selection canceled".to_string();
+                        } else {
+                            self.status = "Category reparent canceled".to_string();
+                        }
                         return Ok(true);
                     }
                     KeyCode::Tab | KeyCode::BackTab => {
@@ -838,6 +760,24 @@ impl App {
                         if !visible_option_indices.is_empty() {
                             list_index = next_index(list_index, visible_option_indices.len(), -1);
                         }
+                    }
+                    KeyCode::Enter if is_category_create => {
+                        // Apply parent selection to the CategoryCreate panel
+                        let selected_parent = visible_option_indices
+                            .get(list_index)
+                            .and_then(|&idx| options.get(idx));
+                        if let Some(option) = selected_parent {
+                            let parent_label = self.category_manager_parent_label(option.parent_id);
+                            if let Some(panel) = &mut self.input_panel {
+                                panel.parent_id = option.parent_id;
+                                panel.parent_label = parent_label.clone();
+                            }
+                            self.set_category_manager_inline_action(None);
+                            self.status = format!("Parent set to {parent_label}");
+                        } else {
+                            self.status = "No parent option selected".to_string();
+                        }
+                        return Ok(true);
                     }
                     KeyCode::Enter => {
                         self.apply_category_parent_picker_reparent(
@@ -1006,10 +946,14 @@ impl App {
                 self.indent_selected_category_under_previous_sibling(agenda)?;
             }
             KeyCode::Char('n') => {
-                self.start_category_inline_create(self.selected_category_id());
-            }
-            KeyCode::Char('N') => {
-                self.start_category_inline_create(None);
+                let parent_id = if self.selected_category_is_numeric()
+                    || self.selected_category_is_reserved()
+                {
+                    None
+                } else {
+                    self.selected_category_id()
+                };
+                self.open_category_create_panel(parent_id);
             }
             KeyCode::Char('r') => {
                 self.start_category_inline_rename();
@@ -1018,13 +962,25 @@ impl App {
                 self.start_category_parent_picker();
             }
             KeyCode::Char('e') => {
-                self.toggle_selected_category_exclusive(agenda)?;
+                if self.selected_category_is_numeric() {
+                    self.status = "Exclusive not applicable to numeric categories".to_string();
+                } else {
+                    self.toggle_selected_category_exclusive(agenda)?;
+                }
             }
             KeyCode::Char('i') => {
-                self.toggle_selected_category_implicit(agenda)?;
+                if self.selected_category_is_numeric() {
+                    self.status = "Match not applicable to numeric categories".to_string();
+                } else {
+                    self.toggle_selected_category_implicit(agenda)?;
+                }
             }
             KeyCode::Char('a') => {
-                self.toggle_selected_category_actionable(agenda)?;
+                if self.selected_category_is_numeric() {
+                    self.status = "Actionable not applicable to numeric categories".to_string();
+                } else {
+                    self.toggle_selected_category_actionable(agenda)?;
+                }
             }
             KeyCode::Enter => {
                 self.set_category_manager_focus(CategoryManagerFocus::Details);

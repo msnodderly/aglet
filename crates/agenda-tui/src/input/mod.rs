@@ -67,4 +67,10 @@ impl App {
             .map(|row| row.is_reserved)
             .unwrap_or(false)
     }
+
+    pub(crate) fn selected_category_is_numeric(&self) -> bool {
+        self.selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false)
+    }
 }

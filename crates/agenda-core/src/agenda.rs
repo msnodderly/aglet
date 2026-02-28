@@ -8,8 +8,8 @@ use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, Pr
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Item, ItemId, Section,
-    ItemLink, ItemLinkKind, ItemLinksForItem, View,
+    Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Item, ItemId, ItemLink,
+    ItemLinkKind, ItemLinksForItem, Section, View,
 };
 use crate::store::Store;
 
@@ -335,7 +335,11 @@ impl<'a> Agenda<'a> {
         Ok(LinkItemsResult { created: true })
     }
 
-    pub fn unlink_items_depends_on(&self, dependent_id: ItemId, dependency_id: ItemId) -> Result<()> {
+    pub fn unlink_items_depends_on(
+        &self,
+        dependent_id: ItemId,
+        dependency_id: ItemId,
+    ) -> Result<()> {
         self.store
             .delete_item_link(dependent_id, dependency_id, ItemLinkKind::DependsOn)
     }
@@ -545,7 +549,11 @@ impl<'a> Agenda<'a> {
         Ok(())
     }
 
-    fn ensure_depends_on_no_cycle(&self, dependent_id: ItemId, dependency_id: ItemId) -> Result<()> {
+    fn ensure_depends_on_no_cycle(
+        &self,
+        dependent_id: ItemId,
+        dependency_id: ItemId,
+    ) -> Result<()> {
         let mut stack = vec![dependency_id];
         let mut visited = HashSet::new();
 
@@ -1896,7 +1904,10 @@ mod tests {
         assert!(store
             .item_link_exists(blocked, blocker, ItemLinkKind::DependsOn)
             .unwrap());
-        assert_eq!(agenda.immediate_dependent_ids(blocker).unwrap(), vec![blocked]);
+        assert_eq!(
+            agenda.immediate_dependent_ids(blocker).unwrap(),
+            vec![blocked]
+        );
         assert_eq!(agenda.immediate_prereq_ids(blocked).unwrap(), vec![blocker]);
     }
 
@@ -1907,7 +1918,11 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
         let a = make_item(&store, "A");
         let b = make_item(&store, "B");
-        let (low, high) = if a.to_string() < b.to_string() { (a, b) } else { (b, a) };
+        let (low, high) = if a.to_string() < b.to_string() {
+            (a, b)
+        } else {
+            (b, a)
+        };
 
         let first = agenda.link_items_related(high, low).unwrap();
         let second = agenda.link_items_related(low, high).unwrap();
@@ -1920,9 +1935,11 @@ mod tests {
 
         let count: i64 = store
             .conn()
-            .query_row("SELECT COUNT(*) FROM item_links WHERE kind = 'related'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM item_links WHERE kind = 'related'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
     }

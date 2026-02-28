@@ -267,10 +267,7 @@ impl LinkWizardAction {
     }
 
     fn from_index(index: usize) -> Self {
-        Self::ALL
-            .get(index)
-            .copied()
-            .unwrap_or(Self::BlockedBy)
+        Self::ALL.get(index).copied().unwrap_or(Self::BlockedBy)
     }
 
     fn index(self) -> usize {
@@ -294,13 +291,15 @@ struct LinkWizardState {
 }
 
 /// Disambiguates which name-input operation is in flight when Mode::InputPanel
-/// is open with InputPanelKind::NameInput.
+/// is open with InputPanelKind::NameInput or InputPanelKind::CategoryCreate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameInputContext {
     ViewCreate,
     ViewRename,
     /// Editing a numeric cell value in the board.
     NumericValueEdit,
+    /// Creating a new category via InputPanel.
+    CategoryCreate,
 }
 
 /// Pending state for an in-flight numeric cell edit.
@@ -385,32 +384,37 @@ enum CategoryManagerDetailsFocus {
 }
 
 impl CategoryManagerDetailsFocus {
-    fn next(self) -> Self {
-        match self {
-            Self::Exclusive => Self::MatchName,
-            Self::MatchName => Self::Actionable,
-            Self::Actionable => Self::Note,
-            Self::Note => Self::Exclusive,
+    /// Cycle forward. When the category is numeric, only Note is relevant.
+    fn next(self, is_numeric: bool) -> Self {
+        if is_numeric {
+            Self::Note
+        } else {
+            match self {
+                Self::Exclusive => Self::MatchName,
+                Self::MatchName => Self::Actionable,
+                Self::Actionable => Self::Note,
+                Self::Note => Self::Exclusive,
+            }
         }
     }
 
-    fn prev(self) -> Self {
-        match self {
-            Self::Exclusive => Self::Note,
-            Self::MatchName => Self::Exclusive,
-            Self::Actionable => Self::MatchName,
-            Self::Note => Self::Actionable,
+    /// Cycle backward. When the category is numeric, only Note is relevant.
+    fn prev(self, is_numeric: bool) -> Self {
+        if is_numeric {
+            Self::Note
+        } else {
+            match self {
+                Self::Exclusive => Self::Note,
+                Self::MatchName => Self::Exclusive,
+                Self::Actionable => Self::MatchName,
+                Self::Note => Self::Actionable,
+            }
         }
     }
 }
 
 #[derive(Clone)]
 enum CategoryInlineAction {
-    Create {
-        parent_id: Option<CategoryId>,
-        buf: text_buffer::TextBuffer,
-        confirm_name: Option<String>,
-    },
     Rename {
         category_id: CategoryId,
         original_name: String,
@@ -3592,7 +3596,7 @@ mod tests {
     #[test]
     fn input_panel_cursor_position_uses_popup_area() {
         let screen = Rect::new(0, 0, 120, 40);
-        let popup = input_panel_popup_area(screen);
+        let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
         let panel = input_panel::InputPanel::new_edit_item(
             agenda_core::model::ItemId::new_v4(),
             "abcd".to_string(),
@@ -4363,12 +4367,8 @@ mod tests {
         agenda
             .link_items_depends_on(a.id, b.id)
             .expect("A depends-on B");
-        agenda
-            .link_items_blocks(c.id, a.id)
-            .expect("C blocks A");
-        agenda
-            .link_items_related(a.id, d.id)
-            .expect("A related D");
+        agenda.link_items_blocks(c.id, a.id).expect("C blocks A");
+        agenda.link_items_related(a.id, d.id).expect("A related D");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
@@ -4632,13 +4632,13 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_inline_create_root_avoids_input_panel_and_creates_category() {
+    fn category_create_panel_opens_and_creates_root_category() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-category-inline-create-root-{nanos}.ag"));
+            std::env::temp_dir().join(format!("agenda-tui-category-create-panel-root-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4647,52 +4647,52 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
-        app.handle_category_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("start inline create");
-        assert_eq!(app.mode, Mode::CategoryManager);
-        assert!(
-            app.input_panel.is_none(),
-            "category create should stay inline"
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.input_panel.is_some(), "panel should be open");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().kind,
+            input_panel::InputPanelKind::CategoryCreate
         );
-        assert!(matches!(
-            app.category_manager
-                .as_ref()
-                .and_then(|s| s.inline_action.as_ref()),
-            Some(CategoryInlineAction::Create { .. })
-        ));
+        assert_eq!(
+            app.name_input_context,
+            Some(NameInputContext::CategoryCreate)
+        );
 
+        // Type category name in the panel
         for c in "Projects".chars() {
-            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type create name");
         }
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("open create confirm");
-        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
-            .expect("confirm create");
+        // Save (S from text focus won't work, Tab to Save button + Enter)
+        // Use capital S from a non-text focus
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to parent");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category");
 
-        assert!(app
-            .categories
-            .iter()
-            .any(|category| category.name == "Projects"));
-        assert!(app
-            .category_manager
-            .as_ref()
-            .and_then(|s| s.inline_action.as_ref())
-            .is_none());
+        assert!(
+            app.categories
+                .iter()
+                .any(|category| category.name == "Projects"),
+            "Projects category should exist"
+        );
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(app.input_panel.is_none());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_inline_create_child_creates_under_selected_parent() {
+    fn category_create_panel_child_creates_under_selected_parent() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-inline-create-child-{nanos}.ag"
-        ));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-create-panel-child-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4707,17 +4707,20 @@ mod tests {
         app.set_category_selection_by_id(parent.id);
 
         app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
-            .expect("start inline child create");
-        assert!(app.input_panel.is_none());
+            .expect("open create panel");
+        assert_eq!(app.mode, Mode::InputPanel);
+        // Panel should have parent pre-filled
+        assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(parent.id));
 
         for c in "Child".chars() {
-            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type child name");
         }
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("open create confirm");
-        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
-            .expect("confirm create");
+        // Tab to Parent, then Tab to TypePicker, then S to save
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to parent");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category");
 
         let child = app
             .categories
@@ -4732,13 +4735,298 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_inline_create_rejects_duplicate_name_and_stays_inline() {
+    fn category_create_panel_parent_picker_enter_sets_parent_and_save_clears_inline_action() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-parent-picker-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(alpha.id);
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+        for c in "Child".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type child name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to parent");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("open parent picker from create panel");
+        assert!(matches!(
+            app.category_manager
+                .as_ref()
+                .and_then(|state| state.inline_action.as_ref()),
+            Some(CategoryInlineAction::ParentPicker { .. })
+        ));
+
+        app.handle_input_panel_key(KeyCode::Char('/'), &agenda)
+            .expect("focus picker filter");
+        for c in "Beta".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type picker filter");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("focus picker list");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("apply picker selection");
+        assert!(
+            app.category_manager
+                .as_ref()
+                .and_then(|state| state.inline_action.as_ref())
+                .is_none(),
+            "parent picker should close after selecting a parent"
+        );
+        assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(beta.id));
+
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category create");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(app.input_panel.is_none());
+        assert!(
+            app.category_manager
+                .as_ref()
+                .and_then(|state| state.inline_action.as_ref())
+                .is_none(),
+            "inline action should be cleared when create panel closes"
+        );
+
+        let child = app
+            .categories
+            .iter()
+            .find(|category| category.name == "Child")
+            .expect("child should be created");
+        assert_eq!(child.parent, Some(beta.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_render_uses_category_manager_backdrop() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-backdrop-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render category create panel");
+        let text = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            text.contains("Create Category"),
+            "create panel title should be rendered"
+        );
+        assert!(
+            text.contains("Category Manager"),
+            "category manager should remain visible behind the create panel"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_save_updates_visible_rows_without_reopening_manager() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-visible-rows-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        let before_visible_len = app
+            .category_manager_visible_row_indices()
+            .map(|rows| rows.len())
+            .unwrap_or(0);
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+        for c in "ShowsImmediately".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type category name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab off text focus");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category");
+
+        assert_eq!(app.mode, Mode::CategoryManager);
+        let new_row_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name == "ShowsImmediately")
+            .expect("new category row should exist");
+        let visible_rows = app
+            .category_manager_visible_row_indices()
+            .expect("category manager visible rows");
+        assert!(
+            visible_rows.contains(&new_row_index),
+            "new category should be visible immediately in current manager session"
+        );
+        assert_eq!(
+            visible_rows.len(),
+            app.category_rows.len(),
+            "without an active filter, visible rows should include all categories"
+        );
+        assert!(
+            visible_rows.len() >= before_visible_len + 1,
+            "saving a new category should grow visible rows"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_numeric_via_type_toggle() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-numeric-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+
+        for c in "Cost".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type create name");
+        }
+
+        // Verify default is Tag
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().value_kind,
+            CategoryValueKind::Tag
+        );
+
+        // Tab to Parent, Tab to TypePicker, toggle to Numeric
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to parent");
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to type picker");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::TypePicker
+        );
+        app.handle_input_panel_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle to numeric");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().value_kind,
+            CategoryValueKind::Numeric
+        );
+
+        // Save
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category");
+
+        let cost = app
+            .categories
+            .iter()
+            .find(|c| c.name == "Cost")
+            .expect("Cost category created");
+        assert_eq!(cost.value_kind, CategoryValueKind::Numeric);
+        assert!(app.status.contains("numeric"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_esc_cancels_without_creating() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-category-inline-create-dup-{nanos}.ag"));
+            std::env::temp_dir().join(format!("agenda-tui-category-create-panel-esc-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+
+        for c in "Score".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type create name");
+        }
+
+        // Press Esc to cancel (panel is dirty, so we need Esc twice)
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("start cancel");
+        // Dirty confirmation — Esc again to discard
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("confirm discard");
+
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(app.input_panel.is_none());
+        // Category should not have been created
+        assert!(!app.categories.iter().any(|c| c.name == "Score"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_rejects_duplicate_name() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-create-panel-dup-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4751,25 +5039,22 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
-        app.handle_category_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("start inline create");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
         for c in "Work".chars() {
-            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type duplicate name");
         }
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("attempt duplicate create");
+        // Tab to save button and press enter to save
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("attempt save");
 
         assert!(app.status.contains("already exists"));
-        assert!(matches!(
-            app.category_manager
-                .as_ref()
-                .and_then(|s| s.inline_action.as_ref()),
-            Some(CategoryInlineAction::Create {
-                confirm_name: None,
-                ..
-            })
-        ));
+        // Panel should still be open
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.input_panel.is_some());
         let count = app.categories.iter().filter(|c| c.name == "Work").count();
         assert_eq!(count, 1);
 
@@ -4778,13 +5063,13 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_inline_create_rejects_reserved_name_and_stays_inline() {
+    fn category_create_panel_rejects_reserved_name() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-inline-create-reserved-{nanos}.ag"
+            "agenda-tui-category-create-panel-reserved-{nanos}.ag"
         ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
@@ -4794,25 +5079,22 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
-        app.handle_category_manager_key(KeyCode::Char('N'), &agenda)
-            .expect("start inline create");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
         for c in "Done".chars() {
-            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type reserved name");
         }
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("attempt reserved create");
+        // Tab and S to attempt save
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("attempt save");
 
         assert!(app.status.contains("reserved category"));
-        assert!(matches!(
-            app.category_manager
-                .as_ref()
-                .and_then(|s| s.inline_action.as_ref()),
-            Some(CategoryInlineAction::Create {
-                confirm_name: None,
-                ..
-            })
-        ));
+        // Panel should still be open
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.input_panel.is_some());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -8037,16 +8319,27 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .unwrap();
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .unwrap();
         app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
-        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
+            .unwrap();
 
         // Attempt to toggle the leaf category via its raw index.
-        let leaf_idx = app.category_rows.iter().position(|r| r.name == "OrphanTag").unwrap();
+        let leaf_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "OrphanTag")
+            .unwrap();
         if let Some(state) = &mut app.view_edit_state {
             state.picker_index = leaf_idx;
         }
@@ -8055,7 +8348,9 @@ mod tests {
         // OrphanTag should NOT have been added (filtered out).
         assert!(
             !app.view_edit_state.as_ref().unwrap().draft.sections[0]
-                .columns.iter().any(|c| c.heading == leaf.id),
+                .columns
+                .iter()
+                .any(|c| c.heading == leaf.id),
             "leaf tag category should be excluded from column picker"
         );
 
@@ -8076,15 +8371,26 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .unwrap();
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .unwrap();
         app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
-        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
+            .unwrap();
 
-        let status_idx = app.category_rows.iter().position(|r| r.name == "Status").unwrap();
+        let status_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Status")
+            .unwrap();
         if let Some(state) = &mut app.view_edit_state {
             state.picker_index = status_idx;
         }
@@ -8092,7 +8398,9 @@ mod tests {
 
         assert!(
             app.view_edit_state.as_ref().unwrap().draft.sections[0]
-                .columns.iter().any(|c| c.heading == parent.id),
+                .columns
+                .iter()
+                .any(|c| c.heading == parent.id),
             "non-leaf tag category should be selectable as column heading"
         );
 
@@ -8111,15 +8419,26 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views.iter().find(|v| v.name == "TestView").cloned().unwrap();
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .unwrap();
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .unwrap();
         app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
-        app.handle_view_edit_key(KeyCode::Char('c'), &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
+            .unwrap();
 
-        let cost_idx = app.category_rows.iter().position(|r| r.name == "Cost").unwrap();
+        let cost_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Cost")
+            .unwrap();
         if let Some(state) = &mut app.view_edit_state {
             state.picker_index = cost_idx;
         }
@@ -8127,7 +8446,9 @@ mod tests {
 
         assert!(
             app.view_edit_state.as_ref().unwrap().draft.sections[0]
-                .columns.iter().any(|c| c.heading == cost.id),
+                .columns
+                .iter()
+                .any(|c| c.heading == cost.id),
             "numeric leaf category should be selectable as column heading"
         );
 
@@ -8504,7 +8825,9 @@ mod tests {
 
     /// Helper: create a store with a numeric "Cost" category, a view with the Cost column,
     /// and one item. Returns (store, classifier, cost_category_id, item_id, db_path).
-    fn setup_numeric_column_board(suffix: &str) -> (
+    fn setup_numeric_column_board(
+        suffix: &str,
+    ) -> (
         Store,
         SubstringClassifier,
         CategoryId,
@@ -8601,8 +8924,7 @@ mod tests {
         }
 
         // Tab to Save button, then Enter
-        app.handle_key(KeyCode::Tab, &agenda)
-            .expect("tab to save");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("save numeric value");
 
@@ -8610,7 +8932,9 @@ mod tests {
         assert!(app.status.contains("245.96"));
 
         // Verify persisted
-        let assignments = store.get_assignments_for_item(item_id).expect("assignments");
+        let assignments = store
+            .get_assignments_for_item(item_id)
+            .expect("assignments");
         let value = assignments
             .get(&cost_id)
             .and_then(|a| a.numeric_value)
@@ -8622,7 +8946,8 @@ mod tests {
 
     #[test]
     fn numeric_column_edit_invalid_input_shows_error_and_keeps_panel_open() {
-        let (store, classifier, _cost_id, _item_id, db_path) = setup_numeric_column_board("invalid");
+        let (store, classifier, _cost_id, _item_id, db_path) =
+            setup_numeric_column_board("invalid");
         let agenda = Agenda::new(&store, &classifier);
 
         let mut app = App::default();
@@ -8642,8 +8967,7 @@ mod tests {
         }
 
         // Tab to Save button, then Enter
-        app.handle_key(KeyCode::Tab, &agenda)
-            .expect("tab to save");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("attempt save");
 
@@ -8698,7 +9022,9 @@ mod tests {
 
     /// Helper: create a store with a numeric "Cost" category, assign an item to it
     /// with a numeric value, and return the pieces needed for edit-panel tests.
-    fn setup_edit_panel_numeric(suffix: &str) -> (
+    fn setup_edit_panel_numeric(
+        suffix: &str,
+    ) -> (
         Store,
         SubstringClassifier,
         CategoryId,
@@ -8757,8 +9083,7 @@ mod tests {
 
     #[test]
     fn edit_panel_shows_numeric_buffers_for_assigned_numeric_categories() {
-        let (store, classifier, cost_id, _item_id, db_path) =
-            setup_edit_panel_numeric("shows");
+        let (store, classifier, cost_id, _item_id, db_path) = setup_edit_panel_numeric("shows");
         let agenda = Agenda::new(&store, &classifier);
 
         let mut app = App::default();
@@ -8784,8 +9109,7 @@ mod tests {
 
     #[test]
     fn edit_panel_numeric_value_edit_and_save_persists() {
-        let (store, classifier, cost_id, item_id, db_path) =
-            setup_edit_panel_numeric("save");
+        let (store, classifier, cost_id, item_id, db_path) = setup_edit_panel_numeric("save");
         let agenda = Agenda::new(&store, &classifier);
 
         let mut app = App::default();
@@ -8850,8 +9174,7 @@ mod tests {
 
     #[test]
     fn edit_panel_invalid_numeric_shows_error_keeps_panel_open() {
-        let (store, classifier, cost_id, _item_id, db_path) =
-            setup_edit_panel_numeric("invalid");
+        let (store, classifier, cost_id, _item_id, db_path) = setup_edit_panel_numeric("invalid");
         let agenda = Agenda::new(&store, &classifier);
 
         let mut app = App::default();
@@ -8885,7 +9208,8 @@ mod tests {
 
         // Tab to save button and press Enter
         app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
-        app.handle_key(KeyCode::Enter, &agenda).expect("attempt save");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt save");
 
         // Panel should still be open with error
         assert_eq!(app.mode, Mode::InputPanel);

@@ -53,7 +53,7 @@ impl App {
         }
         if self.mode == Mode::InputPanel {
             if let Some(ref panel) = self.input_panel {
-                let popup_area = input_panel_popup_area(frame.area());
+                let popup_area = input_panel_popup_area(frame.area(), panel.kind);
                 self.render_input_panel(frame, popup_area, panel);
                 if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
                     frame.set_cursor_position((x, y));
@@ -469,10 +469,7 @@ impl App {
             } else {
                 Style::default()
             });
-        frame.render_widget(
-            List::new(action_items).block(action_block),
-            rows[1],
-        );
+        frame.render_widget(List::new(action_items).block(action_block), rows[1]);
 
         let target_title = if state.focus == LinkWizardFocus::Target {
             "Target *"
@@ -509,13 +506,18 @@ impl App {
                     })
                     .unwrap_or_else(|| format!("missing | {item_id}"));
                 let marker = if idx == state.target_index { ">" } else { " " };
-                target_items.push(ListItem::new(format!("{marker} {}", truncate_board_cell(&label, 72))));
+                target_items.push(ListItem::new(format!(
+                    "{marker} {}",
+                    truncate_board_cell(&label, 72)
+                )));
             }
             if target_items.is_empty() {
                 target_items.push(ListItem::new("  (no matches)"));
             }
         } else {
-            target_items.push(ListItem::new("  Clear dependencies removes prereqs and blocked items"));
+            target_items.push(ListItem::new(
+                "  Clear dependencies removes prereqs and blocked items",
+            ));
         }
         frame.render_widget(
             List::new(target_items).block(
@@ -535,7 +537,8 @@ impl App {
             let mut lines = vec![Line::from("Preview")];
             match action {
                 LinkWizardAction::BlockedBy => {
-                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
                         lines.push(Line::from(format!(
                             "  {} blocked by {}",
@@ -553,7 +556,8 @@ impl App {
                     }
                 }
                 LinkWizardAction::DependsOn => {
-                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
                         lines.push(Line::from(format!(
                             "  {} depends on {}",
@@ -567,7 +571,8 @@ impl App {
                     }
                 }
                 LinkWizardAction::Blocks => {
-                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
                         lines.push(Line::from(format!(
                             "  {} blocks {}",
@@ -585,7 +590,8 @@ impl App {
                     }
                 }
                 LinkWizardAction::RelatedTo => {
-                    let target = selected_target_id.and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
                         lines.push(Line::from(format!(
                             "  {} related to {}",
@@ -1103,9 +1109,48 @@ impl App {
             return None;
         }
         let regions = input_panel_popup_regions(popup_area, panel.kind)?;
+        if panel.kind == input_panel::InputPanelKind::CategoryCreate
+            && self.name_input_context == Some(NameInputContext::CategoryCreate)
+        {
+            if let Some(CategoryInlineAction::ParentPicker {
+                filter,
+                filter_editing,
+                focus,
+                ..
+            }) = self.category_manager_inline_action()
+            {
+                if *focus == CategoryParentPickerFocus::Filter && *filter_editing {
+                    let picker_area = centered_rect(94, 68, popup_area);
+                    if picker_area.width >= 8 && picker_area.height >= 3 {
+                        let inner = Rect {
+                            x: picker_area.x.saturating_add(1),
+                            y: picker_area.y.saturating_add(1),
+                            width: picker_area.width.saturating_sub(2),
+                            height: picker_area.height.saturating_sub(2),
+                        };
+                        if inner.width > 0 && inner.height > 0 {
+                            let filter_prefix = "> Filter> ";
+                            let cursor_x = inner
+                                .x
+                                .saturating_add(
+                                    filter_prefix.chars().count().min(u16::MAX as usize) as u16,
+                                )
+                                .saturating_add(filter.cursor().min(u16::MAX as usize) as u16)
+                                .min(inner.x.saturating_add(inner.width.saturating_sub(1)));
+                            return Some((cursor_x, inner.y));
+                        }
+                    }
+                }
+            }
+        }
         match panel.focus {
             InputPanelFocus::Text => {
-                let prefix_len = "  Text> ".chars().count().min(u16::MAX as usize) as u16;
+                let prefix_str = match panel.kind {
+                    input_panel::InputPanelKind::NameInput
+                    | input_panel::InputPanelKind::CategoryCreate => "  Name> ",
+                    _ => "  Text> ",
+                };
+                let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
                 let input_chars = panel.text.cursor().min(u16::MAX as usize) as u16;
                 let max_x = regions
                     .text
@@ -1153,8 +1198,7 @@ impl App {
                 }
                 let row = self.category_rows.get(panel.category_cursor)?;
                 let is_assigned = panel.categories.contains(&row.id);
-                let is_numeric =
-                    row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
+                let is_numeric = row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
                 if is_assigned && is_numeric {
                     if let Some(buf) = panel.numeric_buffers.get(&row.id) {
                         // Value field is right-aligned: "[value_]"
@@ -1169,7 +1213,11 @@ impl App {
                         let cursor_x = field_start_x
                             .saturating_add(1) // skip "["
                             .saturating_add(buf_cursor.min(u16::MAX as usize) as u16)
-                            .min(cat_inner.x.saturating_add(cat_inner.width.saturating_sub(1)));
+                            .min(
+                                cat_inner
+                                    .x
+                                    .saturating_add(cat_inner.width.saturating_sub(1)),
+                            );
                         let scroll =
                             list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor))
                                 as usize;
@@ -1177,13 +1225,20 @@ impl App {
                         let cursor_y = cat_inner
                             .y
                             .saturating_add(visible_row.min(u16::MAX as usize) as u16)
-                            .min(cat_inner.y.saturating_add(cat_inner.height.saturating_sub(1)));
+                            .min(
+                                cat_inner
+                                    .y
+                                    .saturating_add(cat_inner.height.saturating_sub(1)),
+                            );
                         return Some((cursor_x, cursor_y));
                     }
                 }
                 None
             }
-            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton => None,
+            InputPanelFocus::Parent
+            | InputPanelFocus::TypePicker
+            | InputPanelFocus::SaveButton
+            | InputPanelFocus::CancelButton => None,
         }
     }
 
@@ -1214,7 +1269,14 @@ impl App {
             self.render_view_edit_screen(frame, area);
             return;
         }
-        if matches!(self.mode, Mode::CategoryManager) {
+        let category_create_panel_open = self.mode == Mode::InputPanel
+            && self.name_input_context == Some(NameInputContext::CategoryCreate)
+            && self
+                .input_panel
+                .as_ref()
+                .map(|panel| panel.kind == input_panel::InputPanelKind::CategoryCreate)
+                .unwrap_or(false);
+        if matches!(self.mode, Mode::CategoryManager) || category_create_panel_open {
             self.render_category_manager(frame, area);
             return;
         }
@@ -1455,8 +1517,8 @@ impl App {
                                 .iter()
                                 .enumerate()
                                 .map(|(col_idx, column)| {
-                                    let is_numeric_column = column.heading_value_kind
-                                        == CategoryValueKind::Numeric;
+                                    let is_numeric_column =
+                                        column.heading_value_kind == CategoryValueKind::Numeric;
                                     let value = match column.kind {
                                         ColumnKind::When => item
                                             .when_date
@@ -1567,13 +1629,19 @@ impl App {
                         .add_modifier(Modifier::BOLD);
 
                     for (label, extract_value) in [
-                        ("SUM", Box::new(|agg: &NumericAggregate| Some(agg.sum)) as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>),
-                        ("AVG", Box::new(|agg: &NumericAggregate| agg.avg()) as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>),
+                        (
+                            "SUM",
+                            Box::new(|agg: &NumericAggregate| Some(agg.sum))
+                                as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>,
+                        ),
+                        (
+                            "AVG",
+                            Box::new(|agg: &NumericAggregate| agg.avg())
+                                as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>,
+                        ),
                     ] {
-                        let mut footer_cells = vec![
-                            Cell::from(String::new()),
-                            Cell::from(String::new()),
-                        ];
+                        let mut footer_cells =
+                            vec![Cell::from(String::new()), Cell::from(String::new())];
                         let category_footer_cells: Vec<Cell<'_>> = aggregates
                             .iter()
                             .enumerate()
@@ -1602,8 +1670,7 @@ impl App {
                         let right_cats: Vec<Cell<'_>> =
                             category_footer_cells[item_board_column_index..].to_vec();
                         footer_cells.append(&mut left_cats);
-                        footer_cells
-                            .push(Cell::from(format!("  {label}")).style(footer_style));
+                        footer_cells.push(Cell::from(format!("  {label}")).style(footer_style));
                         footer_cells.extend(right_cats);
                         if synthetic_categories_width > 0 {
                             footer_cells.push(Cell::from(String::new()));
@@ -1847,9 +1914,21 @@ impl App {
 
         if let Some(links) = self.item_links_by_item_id.get(&item.id) {
             lines.push(Line::from(""));
-            Self::push_link_summary_section(&mut lines, "Prereqs", self.item_link_preview_labels(&links.depends_on));
-            Self::push_link_summary_section(&mut lines, "Blocks", self.item_link_preview_labels(&links.blocks));
-            Self::push_link_summary_section(&mut lines, "Related", self.item_link_preview_labels(&links.related));
+            Self::push_link_summary_section(
+                &mut lines,
+                "Prereqs",
+                self.item_link_preview_labels(&links.depends_on),
+            );
+            Self::push_link_summary_section(
+                &mut lines,
+                "Blocks",
+                self.item_link_preview_labels(&links.blocks),
+            );
+            Self::push_link_summary_section(
+                &mut lines,
+                "Related",
+                self.item_link_preview_labels(&links.related),
+            );
         }
 
         lines.push(Line::from(""));
@@ -1885,10 +1964,7 @@ impl App {
                     let status = if item.is_done { "done" } else { "open" };
                     (sort_key, format!("{status} | {}", item.text))
                 } else {
-                    (
-                        id.to_string(),
-                        format!("missing | {}", id),
-                    )
+                    (id.to_string(), format!("missing | {}", id))
                 }
             })
             .collect();
@@ -1997,11 +2073,14 @@ impl App {
                             input_panel::InputPanelKind::AddItem => "Add item",
                             input_panel::InputPanelKind::EditItem => "Edit item",
                             input_panel::InputPanelKind::NameInput => "Name input",
+                            input_panel::InputPanelKind::CategoryCreate => "Create category",
                         },
                         match panel.focus {
                             InputPanelFocus::Text => "Text",
                             InputPanelFocus::Note => "Note",
                             InputPanelFocus::Categories => "Categories",
+                            InputPanelFocus::Parent => "Parent",
+                            InputPanelFocus::TypePicker => "Type",
                             InputPanelFocus::SaveButton => "Save",
                             InputPanelFocus::CancelButton => "Cancel",
                         }
@@ -2019,6 +2098,14 @@ impl App {
             Mode::CategoryManager => {
                 if self.category_manager_details_note_editing() {
                     "S:save  Esc:discard"
+                } else if let Some(action) = self.category_manager_inline_action() {
+                    match action {
+                        CategoryInlineAction::Rename { .. } => "Enter:apply  Esc:cancel",
+                        CategoryInlineAction::DeleteConfirm { .. } => "y:confirm  Esc:cancel",
+                        CategoryInlineAction::ParentPicker { .. } => {
+                            "Enter:select  /:filter  Esc:cancel"
+                        }
+                    }
                 } else {
                     "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
                 }
@@ -2041,9 +2128,7 @@ impl App {
             Mode::ItemAssignPicker => "Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign  Esc:cancel",
             Mode::LinkWizard => "Tab:focus  Enter:apply  Esc:cancel",
-            Mode::CategoryDirectEdit => {
-                "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel"
-            }
+            Mode::CategoryDirectEdit => "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel",
             Mode::CategoryColumnPicker => "Space:toggle  Enter:save  Esc:cancel",
             Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
             Mode::ConfirmDelete
@@ -2053,11 +2138,17 @@ impl App {
             Mode::NoteEdit => "Enter:save  Esc:cancel",
             Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
             Mode::InputPanel => {
-                if self
-                    .input_panel
-                    .as_ref()
-                    .map_or(false, |p| p.focus == input_panel::InputPanelFocus::Categories)
-                {
+                let category_create_parent_picker_open = self.name_input_context
+                    == Some(NameInputContext::CategoryCreate)
+                    && matches!(
+                        self.category_manager_inline_action(),
+                        Some(CategoryInlineAction::ParentPicker { .. })
+                    );
+                if category_create_parent_picker_open {
+                    "Enter:apply  /:filter  Tab:focus  Esc:cancel"
+                } else if self.input_panel.as_ref().map_or(false, |p| {
+                    p.focus == input_panel::InputPanelFocus::Categories
+                }) {
                     "S:save  Tab:next  Space:toggle  Esc:cancel"
                 } else {
                     "S:save  Tab:next  Esc:cancel"
@@ -2082,6 +2173,7 @@ impl App {
             InputPanelKind::AddItem => format!("Add Item{dirty_marker}"),
             InputPanelKind::EditItem => format!("Edit Item{dirty_marker}"),
             InputPanelKind::NameInput => format!("Name{dirty_marker}"),
+            InputPanelKind::CategoryCreate => format!("Create Category{dirty_marker}"),
         };
         let block = Block::default()
             .title(title)
@@ -2099,10 +2191,9 @@ impl App {
         } else {
             "  "
         };
-        let text_label = if panel.kind == InputPanelKind::NameInput {
-            "Name"
-        } else {
-            "Text"
+        let text_label = match panel.kind {
+            InputPanelKind::NameInput | InputPanelKind::CategoryCreate => "Name",
+            _ => "Text",
         };
         let mut text_spans = vec![Span::raw(format!(
             "{text_marker}{text_label}> {}",
@@ -2176,8 +2267,8 @@ impl App {
                     .enumerate()
                     .map(|(i, row)| {
                         let is_assigned = panel.categories.contains(&row.id);
-                        let is_numeric = row.value_kind
-                            == agenda_core::model::CategoryValueKind::Numeric;
+                        let is_numeric =
+                            row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
                         let is_cursor = cat_focused && i == panel.category_cursor;
 
                         let check = if is_assigned && is_numeric {
@@ -2224,8 +2315,8 @@ impl App {
                                 } else {
                                     value_display.to_string()
                                 };
-                                let left_len = main_prefix.chars().count()
-                                    + type_suffix.chars().count();
+                                let left_len =
+                                    main_prefix.chars().count() + type_suffix.chars().count();
                                 // value: space + value
                                 let value_len = 1 + value_text.chars().count();
                                 let total_needed = left_len + value_len;
@@ -2239,9 +2330,7 @@ impl App {
                                 } else {
                                     Style::default().fg(Color::Yellow)
                                 };
-                                let mut spans = vec![
-                                    Span::styled(main_prefix, base_style),
-                                ];
+                                let mut spans = vec![Span::styled(main_prefix, base_style)];
                                 if !type_suffix.is_empty() {
                                     spans.push(Span::styled(type_suffix.to_string(), suffix_style));
                                 }
@@ -2263,26 +2352,70 @@ impl App {
                     .collect()
             };
 
-            let cat_scroll =
-                list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor));
+            let cat_scroll = list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor));
             let item_count = lines.len();
 
             frame.render_widget(
-                Paragraph::new(lines)
-                    .scroll((cat_scroll, 0))
-                    .block(
-                        Block::default()
-                            .title(cat_title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(cat_border_color)),
-                    ),
+                Paragraph::new(lines).scroll((cat_scroll, 0)).block(
+                    Block::default()
+                        .title(cat_title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(cat_border_color)),
+                ),
                 cat_rect,
             );
-            Self::render_vertical_scrollbar(
-                frame,
-                cat_rect,
-                item_count,
-                cat_scroll as usize,
+            Self::render_vertical_scrollbar(frame, cat_rect, item_count, cat_scroll as usize);
+        }
+
+        // Parent field (CategoryCreate only)
+        if let Some(parent_rect) = regions.parent {
+            let parent_marker = if panel.focus == InputPanelFocus::Parent {
+                "> "
+            } else {
+                "  "
+            };
+            let parent_style = if panel.focus == InputPanelFocus::Parent {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!("{parent_marker}Parent: "), parent_style),
+                    Span::styled(
+                        panel.parent_label.clone(),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled("  [Enter: change]", Style::default().fg(MUTED_TEXT_COLOR)),
+                ])),
+                parent_rect,
+            );
+        }
+
+        // Type picker (CategoryCreate only)
+        if let Some(type_rect) = regions.type_picker {
+            let type_marker = if panel.focus == InputPanelFocus::TypePicker {
+                "> "
+            } else {
+                "  "
+            };
+            let (tag_label, num_label) = match panel.value_kind {
+                agenda_core::model::CategoryValueKind::Tag => ("[Tag]", " Numeric "),
+                agenda_core::model::CategoryValueKind::Numeric => (" Tag ", "[Numeric]"),
+            };
+            let type_style = if panel.focus == InputPanelFocus::TypePicker {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!("{type_marker}Type:   "), type_style),
+                    Span::raw(tag_label),
+                    Span::raw("  "),
+                    Span::raw(num_label),
+                ])),
+                type_rect,
             );
         }
 
@@ -2303,10 +2436,120 @@ impl App {
         );
 
         // Help row
-        frame.render_widget(
-            Paragraph::new("S:save  Tab:cycle  Space:toggle  j/k:move  Esc:cancel"),
-            regions.help,
-        );
+        let help_text = match panel.kind {
+            InputPanelKind::CategoryCreate => "S:save  Tab:cycle  Enter:select  Esc:cancel",
+            _ => "S:save  Tab:cycle  Space:toggle  j/k:move  Esc:cancel",
+        };
+        frame.render_widget(Paragraph::new(help_text), regions.help);
+
+        if panel.kind == InputPanelKind::CategoryCreate
+            && self.name_input_context == Some(NameInputContext::CategoryCreate)
+        {
+            if let Some(CategoryInlineAction::ParentPicker {
+                filter,
+                filter_editing,
+                options,
+                visible_option_indices,
+                list_index,
+                focus,
+                ..
+            }) = self.category_manager_inline_action()
+            {
+                let picker_area = centered_rect(94, 68, area);
+                if picker_area.width >= 8 && picker_area.height >= 6 {
+                    frame.render_widget(Clear, picker_area);
+                    frame.render_widget(
+                        Block::default()
+                            .title("Pick Parent")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Cyan)),
+                        picker_area,
+                    );
+
+                    let inner = Rect {
+                        x: picker_area.x.saturating_add(1),
+                        y: picker_area.y.saturating_add(1),
+                        width: picker_area.width.saturating_sub(2),
+                        height: picker_area.height.saturating_sub(2),
+                    };
+                    if inner.width > 0 && inner.height > 0 {
+                        let picker_chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(1),
+                                Constraint::Min(1),
+                                Constraint::Length(1),
+                            ])
+                            .split(inner);
+
+                        let filter_label = if *focus == CategoryParentPickerFocus::Filter {
+                            if *filter_editing {
+                                "> Filter> "
+                            } else {
+                                "> Filter: "
+                            }
+                        } else {
+                            "  Filter: "
+                        };
+                        frame.render_widget(
+                            Paragraph::new(format!("{filter_label}{}", filter.text())),
+                            picker_chunks[0],
+                        );
+
+                        let parent_items: Vec<ListItem<'_>> = if visible_option_indices.is_empty() {
+                            vec![ListItem::new(Line::from("(no matching parent options)"))]
+                        } else {
+                            visible_option_indices
+                                .iter()
+                                .filter_map(|idx| options.get(*idx))
+                                .map(|option| ListItem::new(Line::from(option.label.clone())))
+                                .collect()
+                        };
+                        let mut parent_state = Self::list_state_for(
+                            picker_chunks[1],
+                            if visible_option_indices.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    (*list_index)
+                                        .min(visible_option_indices.len().saturating_sub(1)),
+                                )
+                            },
+                        );
+                        let item_count = parent_items.len();
+                        let list_border = if *focus == CategoryParentPickerFocus::List {
+                            Color::Yellow
+                        } else {
+                            Color::Blue
+                        };
+                        frame.render_stateful_widget(
+                            List::new(parent_items)
+                                .highlight_symbol("> ")
+                                .highlight_style(selected_row_style())
+                                .block(
+                                    Block::default()
+                                        .title("Options")
+                                        .borders(Borders::ALL)
+                                        .border_style(Style::default().fg(list_border)),
+                                ),
+                            picker_chunks[1],
+                            &mut parent_state,
+                        );
+                        Self::render_vertical_scrollbar(
+                            frame,
+                            picker_chunks[1],
+                            item_count,
+                            parent_state.offset(),
+                        );
+
+                        frame.render_widget(
+                            Paragraph::new("Enter:apply  /:filter  Tab:focus  Esc:cancel"),
+                            picker_chunks[2],
+                        );
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2452,21 +2695,6 @@ impl App {
         let action_prompt = self
             .category_manager_inline_action()
             .map(|action| match action {
-                CategoryInlineAction::Create {
-                    parent_id,
-                    buf,
-                    confirm_name,
-                } => {
-                    if let Some(name) = confirm_name {
-                        format!(
-                            "Create '{}' under {}? y:confirm Esc:cancel",
-                            name,
-                            self.category_manager_parent_label(*parent_id)
-                        )
-                    } else {
-                        format!("Create> {}", buf.text())
-                    }
-                }
                 CategoryInlineAction::Rename { buf, .. } => format!("Rename> {}", buf.text()),
                 CategoryInlineAction::DeleteConfirm { category_name, .. } => {
                     format!("Delete '{}'? y:confirm Esc:cancel", category_name)
@@ -2502,7 +2730,7 @@ impl App {
             });
         frame.render_widget(
             Paragraph::new(
-                "Categories are global. Tree editor: inline create/move plus details-pane note editing.",
+                "Categories are global. Tree editor: popup create, inline move, and details-pane note editing.",
             ),
             layout[0],
         );
@@ -2563,10 +2791,16 @@ impl App {
             left[0],
         );
 
+        let category_create_parent_picker_open = self.mode == Mode::InputPanel
+            && self.name_input_context == Some(NameInputContext::CategoryCreate)
+            && matches!(
+                self.category_manager_inline_action(),
+                Some(CategoryInlineAction::ParentPicker { .. })
+            );
         let show_inline_parent_picker = matches!(
             self.category_manager_inline_action(),
             Some(CategoryInlineAction::ParentPicker { .. })
-        );
+        ) && !category_create_parent_picker_open;
         let table_area = if show_inline_parent_picker {
             let left_body = Layout::default()
                 .direction(Direction::Vertical)
@@ -2600,15 +2834,34 @@ impl App {
                     if row.is_reserved {
                         label.push_str(" [reserved]");
                     }
+                    let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                     Row::new(vec![
-                        Cell::from(label),
-                        Cell::from(if row.is_exclusive { "[x]" } else { "[ ]" }),
-                        Cell::from(if row.enable_implicit_string {
+                        Cell::from(if is_numeric {
+                            format!("{} [numeric]", label)
+                        } else {
+                            label
+                        }),
+                        Cell::from(if is_numeric {
+                            " - "
+                        } else if row.is_exclusive {
                             "[x]"
                         } else {
                             "[ ]"
                         }),
-                        Cell::from(if row.is_actionable { "[x]" } else { "[ ]" }),
+                        Cell::from(if is_numeric {
+                            " - "
+                        } else if row.enable_implicit_string {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        }),
+                        Cell::from(if is_numeric {
+                            " - "
+                        } else if row.is_actionable {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        }),
                     ])
                 })
                 .collect()
@@ -2718,27 +2971,22 @@ impl App {
                     }
                 }
 
+                let is_numeric_category = row.value_kind == CategoryValueKind::Numeric;
+                let flags_height = if is_numeric_category { 3 } else { 6 };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(5),
-                        Constraint::Length(6),
+                        Constraint::Length(flags_height),
                         Constraint::Min(5),
                         Constraint::Length(2),
                     ])
                     .split(details_inner);
 
-                let type_label = match row.value_kind {
-                    CategoryValueKind::Tag => "Tag",
-                    CategoryValueKind::Numeric => "Numeric",
-                };
                 frame.render_widget(
                     Paragraph::new(vec![
                         Line::from(format!("Selected: {}", row.name)),
-                        Line::from(format!(
-                            "Type: {}    Depth: {}    Children: {}",
-                            type_label, row.depth, child_count
-                        )),
+                        Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
                         Line::from(format!("Parent: {}", parent_name)),
                         Line::from(if row.is_reserved {
                             "Reserved: yes (read-only config)".to_string()
@@ -2767,16 +3015,22 @@ impl App {
                         style,
                     ))
                 };
-                frame.render_widget(
-                    Paragraph::new(vec![
+                let is_numeric = row.value_kind == CategoryValueKind::Numeric;
+                let flag_lines = if is_numeric {
+                    vec![Line::from(Span::styled(
+                        "  Type: Numeric",
+                        Style::default().fg(Color::DarkGray),
+                    ))]
+                } else {
+                    vec![
                         flag_line(
                             details_focus == CategoryManagerDetailsFocus::Exclusive,
-                            "Exclusive Children",
+                            "Exclusive",
                             row.is_exclusive,
                         ),
                         flag_line(
                             details_focus == CategoryManagerDetailsFocus::MatchName,
-                            "Match category name",
+                            "Auto-match",
                             row.enable_implicit_string,
                         ),
                         flag_line(
@@ -2784,8 +3038,10 @@ impl App {
                             "Actionable",
                             row.is_actionable,
                         ),
-                    ])
-                    .block(
+                    ]
+                };
+                frame.render_widget(
+                    Paragraph::new(flag_lines).block(
                         Block::default()
                             .title("Flags")
                             .borders(Borders::ALL)
@@ -2855,14 +3111,27 @@ impl App {
                     note_scroll as usize,
                 );
 
-                frame.render_widget(
-                    Paragraph::new(if note_editing {
-                        "Type to edit  Tab/Esc: save and leave note"
-                    } else {
-                        "j/k or arrows: focus field  Enter/Space: toggle/edit"
-                    }),
-                    details_chunks[3],
-                );
+                let details_hint = if note_editing {
+                    "Type to edit  Tab/Esc: save and leave note"
+                } else if is_numeric {
+                    "Numeric: values are set per item, not toggled"
+                } else {
+                    match details_focus {
+                        CategoryManagerDetailsFocus::Exclusive => {
+                            "Only one child can be assigned to an item at a time"
+                        }
+                        CategoryManagerDetailsFocus::MatchName => {
+                            "Auto-assign when category name appears in item text"
+                        }
+                        CategoryManagerDetailsFocus::Actionable => {
+                            "Items need an actionable category to be marked done"
+                        }
+                        CategoryManagerDetailsFocus::Note => {
+                            "j/k: focus field  Enter/Space: toggle/edit"
+                        }
+                    }
+                };
+                frame.render_widget(Paragraph::new(details_hint), details_chunks[3]);
 
                 if note_editing && note_inner.width > 0 && note_inner.height > 0 {
                     let (line, col) = self
@@ -3390,9 +3659,15 @@ impl App {
             );
             let dirty_marker = if state.dirty { " *" } else { "" };
             let sections_title = if filter_editing {
-                format!(" SECTIONS{dirty_marker}  /{}◀ ", state.sections_filter_buf.text())
+                format!(
+                    " SECTIONS{dirty_marker}  /{}◀ ",
+                    state.sections_filter_buf.text()
+                )
             } else if filter_active {
-                format!(" SECTIONS{dirty_marker}  /{} ", state.sections_filter_buf.text())
+                format!(
+                    " SECTIONS{dirty_marker}  /{} ",
+                    state.sections_filter_buf.text()
+                )
             } else {
                 format!(" SECTIONS{dirty_marker} ")
             };

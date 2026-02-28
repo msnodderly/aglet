@@ -594,7 +594,10 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             if result.created {
                 println!("linked {} depends-on {}", item_id, depends_on_item_id);
             } else {
-                println!("link already exists: {} depends-on {}", item_id, depends_on_item_id);
+                println!(
+                    "link already exists: {} depends-on {}",
+                    item_id, depends_on_item_id
+                );
             }
             Ok(())
         }
@@ -617,7 +620,10 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             }
             Ok(())
         }
-        LinkCommand::Related { item_a_id, item_b_id } => {
+        LinkCommand::Related {
+            item_a_id,
+            item_b_id,
+        } => {
             let item_a_id = parse_item_id(&item_a_id)?;
             let item_b_id = parse_item_id(&item_b_id)?;
             let result = agenda
@@ -654,7 +660,10 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             println!("unlinked {} blocks {}", blocker_item_id, blocked_item_id);
             Ok(())
         }
-        LinkCommand::UnlinkRelated { item_a_id, item_b_id } => {
+        LinkCommand::UnlinkRelated {
+            item_a_id,
+            item_b_id,
+        } => {
             let item_a_id = parse_item_id(&item_a_id)?;
             let item_b_id = parse_item_id(&item_b_id)?;
             agenda
@@ -693,13 +702,21 @@ fn item_link_section_lines(store: &Store, item_id: ItemId) -> Result<Vec<String>
     Ok(lines)
 }
 
-fn resolve_link_neighbors(store: &Store, ids: Vec<ItemId>) -> Result<Vec<(String, String)>, String> {
+fn resolve_link_neighbors(
+    store: &Store,
+    ids: Vec<ItemId>,
+) -> Result<Vec<(String, String)>, String> {
     let mut rows = Vec::new();
     for id in ids {
         match store.get_item(id) {
             Ok(item) => rows.push((
                 item.text.to_ascii_lowercase(),
-                format!("  {} | {} | {}", id, if item.is_done { "done" } else { "open" }, item.text),
+                format!(
+                    "  {} | {} | {}",
+                    id,
+                    if item.is_done { "done" } else { "open" },
+                    item.text
+                ),
             )),
             Err(_) => rows.push((
                 id.to_string(),
@@ -1284,7 +1301,7 @@ fn print_items_for_view(
 mod tests {
     use super::{
         duplicate_category_create_error, item_link_section_lines, parse_decimal_value,
-        parsed_when_feedback_line, Cli, Command, LinkCommand, unknown_hashtag_feedback_line,
+        parsed_when_feedback_line, unknown_hashtag_feedback_line, Cli, Command, LinkCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -1377,18 +1394,16 @@ mod tests {
 
     #[test]
     fn clap_parses_link_unlink_related_subcommand() {
-        let cli = Cli::try_parse_from([
-            "agenda",
-            "link",
-            "unlink-related",
-            "a",
-            "b",
-        ])
-        .expect("parse CLI");
+        let cli =
+            Cli::try_parse_from(["agenda", "link", "unlink-related", "a", "b"]).expect("parse CLI");
 
         match cli.command {
             Some(Command::Link {
-                command: LinkCommand::UnlinkRelated { item_a_id, item_b_id },
+                command:
+                    LinkCommand::UnlinkRelated {
+                        item_a_id,
+                        item_b_id,
+                    },
             }) => {
                 assert_eq!(item_a_id, "a");
                 assert_eq!(item_b_id, "b");

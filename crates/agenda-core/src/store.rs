@@ -1046,15 +1046,17 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(item_id_str, other_item_id_str, kind_str, created_at_str, origin)| {
-                Self::item_link_from_db_row(
-                    &item_id_str,
-                    &other_item_id_str,
-                    &kind_str,
-                    &created_at_str,
-                    origin,
-                )
-            })
+            .map(
+                |(item_id_str, other_item_id_str, kind_str, created_at_str, origin)| {
+                    Self::item_link_from_db_row(
+                        &item_id_str,
+                        &other_item_id_str,
+                        &kind_str,
+                        &created_at_str,
+                        origin,
+                    )
+                },
+            )
             .collect()
     }
 
@@ -1104,14 +1106,16 @@ impl Store {
     }
 
     fn parse_uuid_from_db_text(raw: &str, field: &'static str) -> Result<Uuid> {
-        Uuid::parse_str(raw).map_err(|e| {
-            Self::storage_data_error(format!("invalid UUID in {field}: {raw} ({e})"))
-        })
+        Uuid::parse_str(raw)
+            .map_err(|e| Self::storage_data_error(format!("invalid UUID in {field}: {raw} ({e})")))
     }
 
     fn storage_data_error(message: String) -> AgendaError {
         AgendaError::StorageError {
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, message)),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                message,
+            )),
         }
     }
 
@@ -2282,9 +2286,15 @@ mod tests {
 
         let links = store.list_item_links_for_item(a).unwrap();
         assert_eq!(links.len(), 3);
-        assert!(links.iter().any(|l| l.kind == ItemLinkKind::DependsOn && l.item_id == a && l.other_item_id == b));
-        assert!(links.iter().any(|l| l.kind == ItemLinkKind::DependsOn && l.item_id == c && l.other_item_id == a));
-        assert!(links.iter().any(|l| l.kind == ItemLinkKind::Related && ((l.item_id == a && l.other_item_id == d) || (l.item_id == d && l.other_item_id == a))));
+        assert!(links
+            .iter()
+            .any(|l| l.kind == ItemLinkKind::DependsOn && l.item_id == a && l.other_item_id == b));
+        assert!(links
+            .iter()
+            .any(|l| l.kind == ItemLinkKind::DependsOn && l.item_id == c && l.other_item_id == a));
+        assert!(links.iter().any(|l| l.kind == ItemLinkKind::Related
+            && ((l.item_id == a && l.other_item_id == d)
+                || (l.item_id == d && l.other_item_id == a))));
     }
 
     #[test]
@@ -2351,8 +2361,10 @@ mod tests {
             .create_item_link(&new_item_link(a, b, ItemLinkKind::DependsOn))
             .unwrap();
         assert_eq!(
-            store.conn
-                .query_row("SELECT COUNT(*) FROM item_links", [], |row| row.get::<_, i64>(0))
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM item_links", [], |row| row
+                    .get::<_, i64>(0))
                 .unwrap(),
             1
         );
@@ -2360,8 +2372,10 @@ mod tests {
         store.delete_item(a, "test").unwrap();
 
         assert_eq!(
-            store.conn
-                .query_row("SELECT COUNT(*) FROM item_links", [], |row| row.get::<_, i64>(0))
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM item_links", [], |row| row
+                    .get::<_, i64>(0))
                 .unwrap(),
             0
         );
