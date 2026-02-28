@@ -1,4 +1,5 @@
 use crate::*;
+use std::cmp::Ordering;
 
 impl App {
     pub(crate) fn run(
@@ -151,16 +152,36 @@ impl App {
             }
         }
 
-        // Resize section_filters to match slot count (resets if structure changed)
+        // Resize per-slot state to match slot count (resets if structure changed)
         if self.section_filters.len() != slots.len() {
             self.section_filters = vec![None; slots.len()];
         }
+        if self.slot_sort_keys.len() != slots.len() {
+            self.slot_sort_keys = vec![Vec::new(); slots.len()];
+        }
 
-        // Apply per-section filters
-        for (slot, filter) in slots.iter_mut().zip(self.section_filters.iter()) {
+        let active_view = self.current_view().cloned();
+
+        // Apply per-slot filters and sorting.
+        for (slot_index, (slot, filter)) in slots
+            .iter_mut()
+            .zip(self.section_filters.iter())
+            .enumerate()
+        {
             if let Some(needle) = filter {
                 let needle = needle.to_ascii_lowercase();
                 slot.items.retain(|item| item_text_matches(item, &needle));
+            }
+
+            let mut sort_keys = self.slot_sort_keys[slot_index].clone();
+            sort_keys.retain(|key| {
+                self.slot_sort_key_is_valid_for_slot(active_view.as_ref(), slot, key)
+            });
+            if sort_keys != self.slot_sort_keys[slot_index] {
+                self.slot_sort_keys[slot_index] = sort_keys.clone();
+            }
+            if !sort_keys.is_empty() {
+                self.sort_slot_items(slot, &sort_keys);
             }
         }
 
@@ -352,6 +373,37 @@ impl App {
 
     pub(crate) fn current_slot(&self) -> Option<&Slot> {
         self.slots.get(self.slot_index)
+    }
+
+    pub(crate) fn current_slot_sort_column(&self) -> Option<SlotSortColumn> {
+        let slot = self.current_slot()?;
+        self.slot_sort_column_for_board_index(slot, self.column_index)
+    }
+
+    pub(crate) fn slot_sort_column_for_board_index(
+        &self,
+        slot: &Slot,
+        board_column_index: usize,
+    ) -> Option<SlotSortColumn> {
+        let item_column_index = self.slot_item_column_index(slot);
+        if board_column_index == item_column_index {
+            return Some(SlotSortColumn::ItemText);
+        }
+
+        let view = self.current_view()?;
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => return None,
+        };
+        let section = view.sections.get(section_index)?;
+        let section_column_index =
+            Self::board_column_to_section_column_index(section, board_column_index)?;
+        let column = section.columns.get(section_column_index)?;
+        Some(SlotSortColumn::SectionColumn {
+            heading: column.heading,
+            kind: column.kind,
+        })
     }
 
     pub(crate) fn section_item_column_index(section: &Section) -> usize {
@@ -864,6 +916,7 @@ impl App {
         self.picker_index = self.view_index;
         self.slot_index = 0;
         self.item_index = 0;
+        self.slot_sort_keys.clear();
         self.refresh(agenda.store())?;
         self.reset_section_filters();
         let view_name = self
@@ -887,9 +940,150 @@ impl App {
         self.picker_index = index;
         self.slot_index = 0;
         self.item_index = 0;
+        self.slot_sort_keys.clear();
         self.refresh(agenda.store())?;
         self.reset_section_filters();
         self.status = "Jumped to view: All Items".to_string();
         Ok(())
+    }
+
+    pub(crate) fn slot_sort_key_is_valid_for_slot(
+        &self,
+        view: Option<&View>,
+        slot: &Slot,
+        key: &SlotSortKey,
+    ) -> bool {
+        match key.column {
+            SlotSortColumn::ItemText => true,
+            SlotSortColumn::SectionColumn { heading, kind } => {
+                let Some(view) = view else {
+                    return false;
+                };
+                let section_index = match slot.context {
+                    SlotContext::Section { section_index }
+                    | SlotContext::GeneratedSection { section_index, .. } => section_index,
+                    SlotContext::Unmatched => return false,
+                };
+                view.sections
+                    .get(section_index)
+                    .map(|section| {
+                        section
+                            .columns
+                            .iter()
+                            .any(|column| column.heading == heading && column.kind == kind)
+                    })
+                    .unwrap_or(false)
+            }
+        }
+    }
+
+    fn sort_slot_items(&self, slot: &mut Slot, sort_keys: &[SlotSortKey]) {
+        if sort_keys.is_empty() || slot.items.len() < 2 {
+            return;
+        }
+        slot.items.sort_by(|left, right| {
+            self.compare_items_for_sort_keys(left, right, sort_keys)
+        });
+    }
+
+    fn compare_items_for_sort_keys(
+        &self,
+        left: &Item,
+        right: &Item,
+        sort_keys: &[SlotSortKey],
+    ) -> Ordering {
+        for key in sort_keys {
+            let ord = self.compare_items_for_sort_key(left, right, key);
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        }
+        Ordering::Equal
+    }
+
+    fn compare_items_for_sort_key(&self, left: &Item, right: &Item, key: &SlotSortKey) -> Ordering {
+        match key.column {
+            SlotSortColumn::ItemText => {
+                let left_text = left.text.to_ascii_lowercase();
+                let right_text = right.text.to_ascii_lowercase();
+                self.compare_some_values(left_text, right_text, key.direction)
+            }
+            SlotSortColumn::SectionColumn { heading, kind } => match kind {
+                ColumnKind::When => {
+                    self.compare_optional_values(left.when_date, right.when_date, key.direction)
+                }
+                ColumnKind::Standard => {
+                    let heading_category = self.categories.iter().find(|category| category.id == heading);
+                    if heading_category
+                        .map(|category| category.value_kind == CategoryValueKind::Numeric)
+                        .unwrap_or(false)
+                    {
+                        let left_value = left
+                            .assignments
+                            .get(&heading)
+                            .and_then(|assignment| assignment.numeric_value);
+                        let right_value = right
+                            .assignments
+                            .get(&heading)
+                            .and_then(|assignment| assignment.numeric_value);
+                        self.compare_optional_values(left_value, right_value, key.direction)
+                    } else if let Some(category) = heading_category {
+                        let left_value =
+                            self.standard_sort_value_for_heading(left, category);
+                        let right_value =
+                            self.standard_sort_value_for_heading(right, category);
+                        self.compare_optional_values(left_value, right_value, key.direction)
+                    } else {
+                        Ordering::Equal
+                    }
+                }
+            },
+        }
+    }
+
+    fn standard_sort_value_for_heading(&self, item: &Item, heading: &Category) -> Option<String> {
+        let mut values: Vec<String> = heading
+            .children
+            .iter()
+            .filter(|child_id| item.assignments.contains_key(child_id))
+            .map(|child_id| {
+                self.categories
+                    .iter()
+                    .find(|category| category.id == *child_id)
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| child_id.to_string())
+            })
+            .collect();
+        if values.is_empty() {
+            return None;
+        }
+        values.sort_by_key(|value| value.to_ascii_lowercase());
+        Some(values.join(", ").to_ascii_lowercase())
+    }
+
+    fn compare_some_values<T: Ord>(
+        &self,
+        left: T,
+        right: T,
+        direction: SlotSortDirection,
+    ) -> Ordering {
+        match direction {
+            SlotSortDirection::Asc => left.cmp(&right),
+            SlotSortDirection::Desc => right.cmp(&left),
+        }
+    }
+
+    fn compare_optional_values<T: Ord>(
+        &self,
+        left: Option<T>,
+        right: Option<T>,
+        direction: SlotSortDirection,
+    ) -> Ordering {
+        match (left, right) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(left), Some(right)) => self.compare_some_values(left, right, direction),
+        }
     }
 }

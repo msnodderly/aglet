@@ -1989,6 +1989,12 @@ impl App {
             KeyCode::Char('n') => {
                 self.open_input_panel_add_item();
             }
+            KeyCode::Char('s') => {
+                self.sort_current_slot_by_active_column(None, agenda)?;
+            }
+            KeyCode::Char('S') => {
+                self.sort_current_slot_by_active_column(Some(SlotSortDirection::Desc), agenda)?;
+            }
             KeyCode::Char('b') => {
                 self.open_link_wizard(LinkWizardAction::BlockedBy);
             }
@@ -2160,6 +2166,100 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    fn sort_current_slot_by_active_column(
+        &mut self,
+        preferred_direction: Option<SlotSortDirection>,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(column) = self.current_slot_sort_column() else {
+            self.status = "Cannot sort current lane by this column".to_string();
+            return Ok(());
+        };
+        let selected_item_id = self.selected_item_id();
+        if self.slot_sort_keys.len() != self.slots.len() {
+            self.slot_sort_keys = vec![Vec::new(); self.slots.len()];
+        }
+        let slot_index = self.slot_index.min(self.slot_sort_keys.len().saturating_sub(1));
+        {
+            let sort_keys = self
+                .slot_sort_keys
+                .get_mut(slot_index)
+                .ok_or("Sort state unavailable".to_string())?;
+
+            if sort_keys.is_empty() {
+                sort_keys.push(SlotSortKey {
+                    column,
+                    direction: preferred_direction.unwrap_or(SlotSortDirection::Asc),
+                });
+            } else if sort_keys[0].column == column {
+                let current_direction = sort_keys[0].direction;
+                if let Some(direction) = preferred_direction {
+                    if current_direction == direction {
+                        sort_keys.remove(0);
+                    } else {
+                        sort_keys[0].direction = direction;
+                    }
+                } else {
+                    match current_direction {
+                        SlotSortDirection::Asc => sort_keys[0].direction = SlotSortDirection::Desc,
+                        SlotSortDirection::Desc => {
+                            sort_keys.remove(0);
+                        }
+                    }
+                }
+            } else if let Some(existing_index) =
+                sort_keys.iter().position(|key| key.column == column)
+            {
+                let mut key = sort_keys.remove(existing_index);
+                key.direction = preferred_direction.unwrap_or(SlotSortDirection::Asc);
+                sort_keys.insert(0, key);
+            } else {
+                sort_keys.insert(0, SlotSortKey {
+                    column,
+                    direction: preferred_direction.unwrap_or(SlotSortDirection::Asc),
+                });
+            }
+        }
+
+        self.refresh(agenda.store())?;
+        if let Some(item_id) = selected_item_id {
+            self.set_item_selection_by_id(item_id);
+        }
+        self.status = self.describe_current_slot_sort("Sorted current lane");
+        Ok(())
+    }
+
+    fn describe_current_slot_sort(&self, prefix: &str) -> String {
+        let Some(sort_keys) = self.slot_sort_keys.get(self.slot_index) else {
+            return prefix.to_string();
+        };
+        if sort_keys.is_empty() {
+            return format!("{prefix}: none");
+        }
+        let mut labels = Vec::with_capacity(sort_keys.len());
+        for key in sort_keys {
+            labels.push(self.sort_key_label(key));
+        }
+        format!("{prefix}: {}", labels.join(" then "))
+    }
+
+    fn sort_key_label(&self, key: &SlotSortKey) -> String {
+        let direction_label = match key.direction {
+            SlotSortDirection::Asc => "asc",
+            SlotSortDirection::Desc => "desc",
+        };
+        let column_label = match key.column {
+            SlotSortColumn::ItemText => "Item".to_string(),
+            SlotSortColumn::SectionColumn { heading, .. } => self
+                .categories
+                .iter()
+                .find(|category| category.id == heading)
+                .map(|category| category.name.clone())
+                .unwrap_or_else(|| heading.to_string()),
+        };
+        format!("{column_label} {direction_label}")
     }
 
     fn open_link_wizard(&mut self, default_action: LinkWizardAction) {

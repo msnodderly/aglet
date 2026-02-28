@@ -2163,7 +2163,7 @@ impl App {
                     "S:save  Tab:next  Esc:cancel"
                 }
             }
-            _ => "n:new  e:edit  d:done  a:assign  /:filter  v:views  q:quit",
+            _ => "n:new  e:edit  s:sort  d:done  a:assign  /:filter  v:views  q:quit",
         }
     }
 
