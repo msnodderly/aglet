@@ -182,7 +182,7 @@ enum Mode {
     ItemAssignPicker,
     ItemAssignInput,
     InspectUnassign,
-    FilterInput,
+    SearchBarFocused,
     ViewPicker,
     ViewEdit,
     ViewDeleteConfirm,
@@ -695,7 +695,7 @@ struct App {
     input: text_buffer::TextBuffer,
     section_filters: Vec<Option<String>>,
     slot_sort_keys: Vec<Vec<SlotSortKey>>,
-    filter_target_section: usize,
+    search_buffer: text_buffer::TextBuffer,
     show_preview: bool,
     preview_mode: PreviewMode,
     normal_focus: NormalFocus,
@@ -746,7 +746,7 @@ impl Default for App {
             input: text_buffer::TextBuffer::empty(),
             section_filters: Vec::new(),
             slot_sort_keys: Vec::new(),
-            filter_target_section: 0,
+            search_buffer: text_buffer::TextBuffer::empty(),
             show_preview: false,
             preview_mode: PreviewMode::Summary,
             normal_focus: NormalFocus::Board,
@@ -3548,7 +3548,6 @@ mod tests {
         // Footer cursor applies to the remaining text-in-footer modes.
         let cases = [
             (Mode::NoteEdit, "Note> "),
-            (Mode::FilterInput, "Filter> "),
             (Mode::ItemAssignInput, "Category> "),
         ];
 
@@ -3576,6 +3575,7 @@ mod tests {
         for mode in [
             Mode::Normal,
             Mode::InputPanel, // popup mode — footer cursor hidden
+            Mode::SearchBarFocused, // cursor rendered by search bar, not footer
             Mode::ConfirmDelete,
             Mode::ViewPicker,
             Mode::ViewDeleteConfirm,
@@ -8782,19 +8782,20 @@ mod tests {
         assert_eq!(app.slots[0].items.len(), 2, "Work has 2 items");
         assert_eq!(app.slots[1].items.len(), 2, "Personal has 2 items");
 
-        // Filter slot 0 for "timeout"
+        // Filter slot 0 for "timeout" via search bar
         app.slot_index = 0;
         app.handle_normal_key(KeyCode::Char('/'), &agenda)
-            .expect("open filter");
-        assert_eq!(app.mode, Mode::FilterInput);
-        assert_eq!(app.filter_target_section, 0);
+            .expect("open search bar");
+        assert_eq!(app.mode, Mode::SearchBarFocused);
 
-        // Type "timeout"
+        // Type "timeout" — live-filters as we type
         for ch in "timeout".chars() {
-            app.handle_text_input_key(KeyCode::Char(ch));
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
         }
-        app.handle_filter_key(KeyCode::Enter, &agenda)
-            .expect("apply filter");
+        // Unfocus to keep filter active
+        app.handle_search_bar_key(KeyCode::Down, &agenda)
+            .expect("unfocus search bar");
 
         // slot 0 now shows only 1 item, slot 1 is unaffected
         assert_eq!(app.slots[0].items.len(), 1, "Work filtered to 1 item");
@@ -8840,8 +8841,8 @@ mod tests {
     }
 
     #[test]
-    fn filter_esc_in_filter_input_cancels_without_clearing() {
-        let (store, db_path) = make_two_section_store("esc-cancel");
+    fn search_bar_esc_clears_filter_and_buffer() {
+        let (store, db_path) = make_two_section_store("esc-clears");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -8850,27 +8851,22 @@ mod tests {
         app.set_view_selection_by_name("TestView");
         app.refresh(&store).expect("refresh TestView");
 
-        // Pre-set a filter
-        app.section_filters[0] = Some("fix".to_string());
-        app.refresh(&store).expect("refresh after pre-filter");
-        assert_eq!(app.slots[0].items.len(), 1);
-
-        // Open FilterInput and cancel without entering anything new
+        // Type something in search bar
         app.slot_index = 0;
         app.handle_normal_key(KeyCode::Char('/'), &agenda)
-            .expect("open filter");
-        assert_eq!(app.mode, Mode::FilterInput);
+            .expect("open search bar");
+        for ch in "fix".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+        assert_eq!(app.section_filters[0], Some("fix".to_string()));
 
-        app.handle_filter_key(KeyCode::Esc, &agenda)
-            .expect("esc cancels");
-
-        // Filter should be preserved (cancel doesn't clear)
+        // Esc should clear both buffer and filter
+        app.handle_search_bar_key(KeyCode::Esc, &agenda)
+            .expect("esc clears");
         assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(
-            app.section_filters[0],
-            Some("fix".to_string()),
-            "existing filter should be preserved after cancel"
-        );
+        assert!(app.search_buffer.is_empty(), "search buffer should be empty");
+        assert_eq!(app.section_filters[0], None, "filter should be cleared");
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -8904,6 +8900,165 @@ mod tests {
             app.section_filters.iter().all(|f| f.is_none()),
             "all filters should be cleared after view switch"
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_bar_live_filtering() {
+        let (store, db_path) = make_two_section_store("live-filter");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+
+        // Type 'f' — should filter live
+        app.handle_search_bar_key(KeyCode::Char('f'), &agenda)
+            .expect("type f");
+        assert_eq!(
+            app.section_filters[0],
+            Some("f".to_string()),
+            "filter updates on each keystroke"
+        );
+        // "Fix timeout bug" matches "f"
+        assert_eq!(app.slots[0].items.len(), 1, "one item matches 'f'");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_bar_enter_exact_match_jumps() {
+        let (store, db_path) = make_two_section_store("exact-match");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+
+        for ch in "fix timeout bug".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+        app.handle_search_bar_key(KeyCode::Enter, &agenda)
+            .expect("enter");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.item_index, 0, "jumped to exact match");
+        assert!(
+            app.status.contains("Jumped to"),
+            "status confirms jump"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_bar_enter_creates_item_when_no_match() {
+        let (store, db_path) = make_two_section_store("create");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+
+        for ch in "Brand new task".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+        app.handle_search_bar_key(KeyCode::Enter, &agenda)
+            .expect("enter creates");
+
+        assert_eq!(app.mode, Mode::InputPanel, "opens InputPanel");
+        assert!(app.input_panel.is_some(), "panel exists");
+        let panel = app.input_panel.as_ref().unwrap();
+        assert_eq!(panel.text.text(), "Brand new task", "title pre-filled");
+        assert!(app.search_buffer.is_empty(), "search buffer cleared");
+        assert_eq!(app.section_filters[0], None, "filter cleared");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_bar_down_unfocuses_keeps_filter() {
+        let (store, db_path) = make_two_section_store("down-unfocus");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+
+        for ch in "fix".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+
+        app.handle_search_bar_key(KeyCode::Down, &agenda)
+            .expect("down unfocuses");
+        assert_eq!(app.mode, Mode::Normal, "back to normal");
+        assert_eq!(
+            app.section_filters[0],
+            Some("fix".to_string()),
+            "filter stays active"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_bar_slash_resumes_with_text() {
+        let (store, db_path) = make_two_section_store("resume");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+
+        for ch in "fix".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+
+        // Unfocus
+        app.handle_search_bar_key(KeyCode::Down, &agenda)
+            .expect("down");
+        assert_eq!(app.mode, Mode::Normal);
+
+        // Re-focus with /
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("reopen search bar");
+        assert_eq!(app.mode, Mode::SearchBarFocused);
+        assert_eq!(app.search_buffer.text(), "fix", "buffer retains text");
 
         let _ = std::fs::remove_file(&db_path);
     }
