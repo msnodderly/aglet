@@ -846,11 +846,14 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
 pub(super) fn input_panel_popup_area(area: Rect, kind: crate::input_panel::InputPanelKind) -> Rect {
     match kind {
         crate::input_panel::InputPanelKind::CategoryCreate => centered_rect(50, 40, area),
+        crate::input_panel::InputPanelKind::NumericValue => centered_rect(48, 22, area),
         _ => centered_rect(84, 70, area),
     }
 }
 
 pub(super) struct InputPanelPopupRegions {
+    /// Optional context line above text input (NumericValue only).
+    pub(super) context: Option<Rect>,
     pub(super) text: Rect,
     /// Present for AddItem / EditItem; absent for NameInput.
     pub(super) note: Option<Rect>,
@@ -901,7 +904,36 @@ pub(super) fn input_panel_popup_regions(
                 ])
                 .split(inner);
             Some(InputPanelPopupRegions {
+                context: None,
                 text: chunks[0],
+                note: None,
+                note_inner: None,
+                categories: None,
+                categories_inner: None,
+                parent: None,
+                type_picker: None,
+                buttons: chunks[2],
+                help: chunks[3],
+            })
+        }
+        InputPanelKind::NumericValue => {
+            // context + value text + buttons + help = 4 lines minimum
+            if inner.height < 4 {
+                return None;
+            }
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // context
+                    Constraint::Length(1), // value input
+                    Constraint::Length(1), // buttons
+                    Constraint::Length(1), // help
+                    Constraint::Min(0),    // spacer
+                ])
+                .split(inner);
+            Some(InputPanelPopupRegions {
+                context: Some(chunks[0]),
+                text: chunks[1],
                 note: None,
                 note_inner: None,
                 categories: None,
@@ -929,6 +961,7 @@ pub(super) fn input_panel_popup_regions(
                 ])
                 .split(inner);
             Some(InputPanelPopupRegions {
+                context: None,
                 text: chunks[0],
                 note: None,
                 note_inner: None,
@@ -981,6 +1014,7 @@ pub(super) fn input_panel_popup_regions(
                 height: cat.height.saturating_sub(2),
             };
             Some(InputPanelPopupRegions {
+                context: None,
                 text: chunks[0],
                 note: Some(note),
                 note_inner: Some(note_inner),

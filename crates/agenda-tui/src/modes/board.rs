@@ -1373,14 +1373,18 @@ impl App {
             item_id: meta.item_id,
             category_id: meta.parent_id,
         });
-        self.input_panel = Some(input_panel::InputPanel::new_name_input(
+        self.input_panel = Some(input_panel::InputPanel::new_numeric_value_input(
             &current_value,
-            &format!("Set {} value", meta.parent_name),
+            &format!(
+                "Category: {}    Item: {}",
+                meta.parent_name,
+                truncate_board_cell(&meta.item_label, 32)
+            ),
         ));
         self.name_input_context = Some(NameInputContext::NumericValueEdit);
         self.mode = Mode::InputPanel;
         self.status = format!(
-            "Enter numeric value for {}, Save to confirm, Esc to cancel",
+            "Set {} value: type a number, Enter saves, Esc cancels",
             meta.parent_name
         );
     }
@@ -2959,6 +2963,7 @@ impl App {
                     }
                     match kind {
                         Some(input_panel::InputPanelKind::NameInput)
+                        | Some(input_panel::InputPanelKind::NumericValue)
                         | Some(input_panel::InputPanelKind::CategoryCreate) => {
                             self.mode = self.name_input_return_mode();
                             self.name_input_context = None;
@@ -3030,6 +3035,7 @@ impl App {
                     }
                     match kind {
                         Some(input_panel::InputPanelKind::NameInput)
+                        | Some(input_panel::InputPanelKind::NumericValue)
                         | Some(input_panel::InputPanelKind::CategoryCreate) => {
                             self.mode = self.name_input_return_mode();
                             self.name_input_context = None;
@@ -3056,6 +3062,9 @@ impl App {
                         self.save_input_panel_edit(agenda)?;
                     }
                     input_panel::InputPanelKind::NameInput => {
+                        self.save_input_panel_name(agenda)?;
+                    }
+                    input_panel::InputPanelKind::NumericValue => {
                         self.save_input_panel_name(agenda)?;
                     }
                     input_panel::InputPanelKind::CategoryCreate => {
@@ -3413,19 +3422,19 @@ impl App {
 
     /// Save an InputPanel(NameInput) — dispatches on name_input_context.
     fn save_input_panel_name(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        let name = self
+        let input_text = self
             .input_panel
             .as_ref()
             .map(|p| p.text.trimmed().to_string())
             .unwrap_or_default();
 
-        if name.is_empty() {
-            self.status = "Name cannot be empty".to_string();
-            return Ok(());
-        }
-
         match self.name_input_context {
             Some(NameInputContext::ViewCreate) => {
+                if input_text.is_empty() {
+                    self.status = "Name cannot be empty".to_string();
+                    return Ok(());
+                }
+                let name = input_text.clone();
                 let mut view = View::new(name.clone());
                 if view.sections.is_empty() {
                     view.sections.push(Self::view_edit_default_section(
@@ -3457,6 +3466,11 @@ impl App {
                 }
             }
             Some(NameInputContext::ViewRename) => {
+                if input_text.is_empty() {
+                    self.status = "Name cannot be empty".to_string();
+                    return Ok(());
+                }
+                let name = input_text.clone();
                 let Some(old_name) = self.view_pending_edit_name.clone() else {
                     self.input_panel = None;
                     self.name_input_context = None;
@@ -3506,6 +3520,7 @@ impl App {
                 }
             }
             Some(NameInputContext::NumericValueEdit) => {
+                let name = input_text;
                 let Some(target) = self.numeric_edit_target.take() else {
                     self.input_panel = None;
                     self.name_input_context = None;
@@ -3515,12 +3530,8 @@ impl App {
                 };
 
                 if name.is_empty() {
-                    // Treat empty as "clear value" — unassign the category.
-                    // For MVP, just close without changes.
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.mode = Mode::Normal;
-                    self.status = "Numeric value cleared (no change saved)".to_string();
+                    self.status =
+                        "Value cannot be empty. Enter a number (for example 12.50).".to_string();
                     return Ok(());
                 }
 
