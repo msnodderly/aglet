@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -74,6 +75,10 @@ enum Command {
         view: Option<String>,
         #[arg(long)]
         category: Option<String>,
+        /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
+        /// Optional suffix `:asc` or `:desc` (default: asc).
+        #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
+        sort: Vec<String>,
         #[arg(long)]
         include_done: bool,
     },
@@ -195,7 +200,13 @@ enum ViewCommand {
     List,
 
     /// Show the contents of a view
-    Show { name: String },
+    Show {
+        name: String,
+        /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
+        /// Optional suffix `:asc` or `:desc` (default: asc).
+        #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
+        sort: Vec<String>,
+    },
 
     /// Create a basic view from include/exclude categories
     Create {
@@ -271,6 +282,7 @@ fn run() -> Result<(), String> {
     let command = cli.command.unwrap_or(Command::List {
         view: None,
         category: None,
+        sort: Vec::new(),
         include_done: false,
     });
 
@@ -295,8 +307,9 @@ fn run() -> Result<(), String> {
         Command::List {
             view,
             category,
+            sort,
             include_done,
-        } => cmd_list(&store, view, category, include_done),
+        } => cmd_list(&store, view, category, sort, include_done),
         Command::Search {
             query,
             include_done,
@@ -488,6 +501,7 @@ fn cmd_list(
     store: &Store,
     view_name: Option<String>,
     category_name: Option<String>,
+    sort_args: Vec<String>,
     include_done: bool,
 ) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
@@ -497,6 +511,7 @@ fn cmd_list(
 
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let category_names = category_name_map(&categories);
+    let sort_keys = parse_sort_specs(&sort_args, &categories)?;
 
     if let Some(category_name) = category_name {
         let category_id = category_id_by_name(&categories, &category_name)?;
@@ -514,9 +529,9 @@ fn cmd_list(
     };
 
     if let Some(view) = resolved_view {
-        print_items_for_view(&view, &items, &categories, &category_names);
+        print_items_for_view(&view, &items, &categories, &category_names, &sort_keys);
     } else {
-        print_item_table(&items, &category_names);
+        print_item_table(&items, &category_names, &sort_keys, &categories);
     }
     Ok(())
 }
@@ -538,7 +553,7 @@ fn cmd_search(store: &Store, query: String, include_done: bool) -> Result<(), St
     let matches = evaluate_query(&q, &items, reference_date);
 
     let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
-    print_item_table(&matched_items, &category_names);
+    print_item_table(&matched_items, &category_names, &[], &categories);
     Ok(())
 }
 
@@ -1119,12 +1134,13 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
             Ok(())
         }
-        ViewCommand::Show { name } => {
+        ViewCommand::Show { name, sort } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
             let items = store.list_items().map_err(|e| e.to_string())?;
             let view = view_by_name(store, &name)?;
-            print_items_for_view(&view, &items, &categories, &category_names);
+            let sort_keys = parse_sort_specs(&sort, &categories)?;
+            print_items_for_view(&view, &items, &categories, &category_names, &sort_keys);
             Ok(())
         }
         ViewCommand::Create {
@@ -1251,11 +1267,74 @@ fn parse_decimal_value(input: &str) -> Result<Decimal, String> {
         .map_err(|e| format!("invalid decimal value '{input}': {e}"))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CliSortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CliSortField {
+    ItemText,
+    WhenDate,
+    Category(CategoryId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CliSortKey {
+    field: CliSortField,
+    direction: CliSortDirection,
+}
+
+fn parse_sort_specs(args: &[String], categories: &[Category]) -> Result<Vec<CliSortKey>, String> {
+    args.iter()
+        .map(|arg| parse_sort_spec(arg, categories))
+        .collect()
+}
+
+fn parse_sort_spec(arg: &str, categories: &[Category]) -> Result<CliSortKey, String> {
+    let (raw_field, direction) = parse_sort_field_and_direction(arg)?;
+    let field = if raw_field.eq_ignore_ascii_case("item") {
+        CliSortField::ItemText
+    } else if raw_field.eq_ignore_ascii_case("when") {
+        CliSortField::WhenDate
+    } else {
+        CliSortField::Category(category_id_by_name(categories, raw_field)?)
+    };
+
+    Ok(CliSortKey { field, direction })
+}
+
+fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, CliSortDirection), String> {
+    let trimmed = arg.trim();
+    if trimmed.is_empty() {
+        return Err("sort key cannot be empty".to_string());
+    }
+
+    if let Some((field, direction_suffix)) = trimmed.rsplit_once(':') {
+        let direction = if direction_suffix.eq_ignore_ascii_case("asc") {
+            CliSortDirection::Asc
+        } else if direction_suffix.eq_ignore_ascii_case("desc") {
+            CliSortDirection::Desc
+        } else {
+            return Ok((trimmed, CliSortDirection::Asc));
+        };
+        let field = field.trim();
+        if field.is_empty() {
+            return Err(format!("invalid sort key '{arg}': missing column name"));
+        }
+        Ok((field, direction))
+    } else {
+        Ok((trimmed, CliSortDirection::Asc))
+    }
+}
+
 fn print_items_for_view(
     view: &View,
     items: &[Item],
     categories: &[Category],
     category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
 ) {
     let reference_date = Local::now().date_naive();
     let result = resolve_view(view, items, categories, reference_date);
@@ -1266,20 +1345,20 @@ fn print_items_for_view(
     for section in result.sections {
         println!("\n## {}", section.title);
         if section.subsections.is_empty() {
-            print_item_table(&section.items, category_names);
+            print_item_table(&section.items, category_names, sort_keys, categories);
             continue;
         }
 
         for subsection in section.subsections {
             println!("\n### {}", subsection.title);
-            print_item_table(&subsection.items, category_names);
+            print_item_table(&subsection.items, category_names, sort_keys, categories);
         }
     }
 
     if let Some(unmatched) = result.unmatched {
         if !unmatched.is_empty() {
             if !has_sections {
-                print_item_table(&unmatched, category_names);
+                print_item_table(&unmatched, category_names, sort_keys, categories);
                 return;
             }
 
@@ -1292,18 +1371,28 @@ fn print_items_for_view(
                 heading
             };
             println!("\n## {}", heading);
-            print_item_table(&unmatched, category_names);
+            print_item_table(&unmatched, category_names, sort_keys, categories);
         }
     }
 }
 
-fn print_item_table(items: &[Item], category_names: &HashMap<CategoryId, String>) {
+fn print_item_table(
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) {
     if items.is_empty() {
         println!("(no items)");
         return;
     }
 
-    for item in items {
+    let mut rows: Vec<&Item> = items.iter().collect();
+    if !sort_keys.is_empty() {
+        rows.sort_by(|left, right| compare_items_by_sort_keys(left, right, sort_keys, categories));
+    }
+
+    for item in rows {
         let when = item
             .when_date
             .map(|dt| dt.to_string())
@@ -1325,6 +1414,115 @@ fn print_item_table(items: &[Item], category_names: &HashMap<CategoryId, String>
         if let Some(note) = &item.note {
             println!("  note: {}", note.replace('\n', " "));
         }
+    }
+}
+
+fn compare_items_by_sort_keys(
+    left: &Item,
+    right: &Item,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> Ordering {
+    for key in sort_keys {
+        let order = compare_items_by_sort_key(left, right, *key, categories);
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    Ordering::Equal
+}
+
+fn compare_items_by_sort_key(
+    left: &Item,
+    right: &Item,
+    key: CliSortKey,
+    categories: &[Category],
+) -> Ordering {
+    match key.field {
+        CliSortField::ItemText => compare_required_values(
+            left.text.to_ascii_lowercase(),
+            right.text.to_ascii_lowercase(),
+            key.direction,
+        ),
+        CliSortField::WhenDate => {
+            compare_optional_values(left.when_date, right.when_date, key.direction)
+        }
+        CliSortField::Category(category_id) => {
+            let Some(category) = categories
+                .iter()
+                .find(|category| category.id == category_id)
+            else {
+                return Ordering::Equal;
+            };
+            if category.value_kind == CategoryValueKind::Numeric {
+                let left_value = left
+                    .assignments
+                    .get(&category_id)
+                    .and_then(|assignment| assignment.numeric_value);
+                let right_value = right
+                    .assignments
+                    .get(&category_id)
+                    .and_then(|assignment| assignment.numeric_value);
+                compare_optional_values(left_value, right_value, key.direction)
+            } else {
+                let left_value = category_sort_display_value(left, category, categories);
+                let right_value = category_sort_display_value(right, category, categories);
+                compare_optional_values(left_value, right_value, key.direction)
+            }
+        }
+    }
+}
+
+fn category_sort_display_value(
+    item: &Item,
+    category: &Category,
+    categories: &[Category],
+) -> Option<String> {
+    if category.children.is_empty() {
+        return item
+            .assignments
+            .contains_key(&category.id)
+            .then(|| category.name.to_ascii_lowercase());
+    }
+
+    let mut values: Vec<String> = category
+        .children
+        .iter()
+        .filter(|child_id| item.assignments.contains_key(child_id))
+        .map(|child_id| {
+            categories
+                .iter()
+                .find(|candidate| candidate.id == *child_id)
+                .map(|candidate| candidate.name.clone())
+                .unwrap_or_else(|| child_id.to_string())
+        })
+        .collect();
+
+    if values.is_empty() {
+        return None;
+    }
+
+    values.sort_by_key(|value| value.to_ascii_lowercase());
+    Some(values.join(", ").to_ascii_lowercase())
+}
+
+fn compare_optional_values<T: Ord>(
+    left: Option<T>,
+    right: Option<T>,
+    direction: CliSortDirection,
+) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(left), Some(right)) => compare_required_values(left, right, direction),
+    }
+}
+
+fn compare_required_values<T: Ord>(left: T, right: T, direction: CliSortDirection) -> Ordering {
+    match direction {
+        CliSortDirection::Asc => left.cmp(&right),
+        CliSortDirection::Desc => right.cmp(&left),
     }
 }
 
@@ -1380,12 +1578,14 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        duplicate_category_create_error, item_link_section_lines, parse_decimal_value,
-        parsed_when_feedback_line, unknown_hashtag_feedback_line, Cli, Command, LinkCommand,
+        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
+        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
+        unknown_hashtag_feedback_line, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
+        LinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
-    use agenda_core::model::Item;
+    use agenda_core::model::{Category, CategoryValueKind, Item};
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use clap::Parser;
@@ -1490,6 +1690,130 @@ mod tests {
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn clap_parses_list_with_repeated_sort_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--sort",
+            "item:desc",
+            "--sort",
+            "Priority:asc",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { sort, .. }) => {
+                assert_eq!(
+                    sort,
+                    vec!["item:desc".to_string(), "Priority:asc".to_string()]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_show_with_sort_flag() {
+        let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--sort", "when"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command: ViewCommand::Show { name, sort },
+            }) => {
+                assert_eq!(name, "All Items");
+                assert_eq!(sort, vec!["when".to_string()]);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_sort_spec_supports_when_and_direction_suffix() {
+        let categories = vec![Category::new("Priority".to_string())];
+        let when_key = parse_sort_spec("when:desc", &categories).expect("parse when desc");
+        assert_eq!(
+            when_key,
+            CliSortKey {
+                field: CliSortField::WhenDate,
+                direction: CliSortDirection::Desc
+            }
+        );
+        let item_key = parse_sort_spec("item", &categories).expect("parse item default");
+        assert_eq!(
+            item_key,
+            CliSortKey {
+                field: CliSortField::ItemText,
+                direction: CliSortDirection::Asc
+            }
+        );
+    }
+
+    #[test]
+    fn compare_items_by_sort_keys_numeric_missing_values_are_last() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let ten = Item::new("Ten".to_string());
+        let missing = Item::new("Missing".to_string());
+        let five = Item::new("Five".to_string());
+        store.create_item(&ten).expect("create ten");
+        store.create_item(&missing).expect("create missing");
+        store.create_item(&five).expect("create five");
+
+        agenda
+            .assign_item_numeric_manual(
+                ten.id,
+                cost.id,
+                Decimal::new(10, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign ten");
+        agenda
+            .assign_item_numeric_manual(
+                five.id,
+                cost.id,
+                Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign five");
+
+        let categories = store.get_hierarchy().expect("hierarchy");
+        let key_asc = CliSortKey {
+            field: CliSortField::Category(cost.id),
+            direction: CliSortDirection::Asc,
+        };
+        let key_desc = CliSortKey {
+            field: CliSortField::Category(cost.id),
+            direction: CliSortDirection::Desc,
+        };
+
+        let mut rows = store.list_items().expect("list items");
+        rows.sort_by(|left, right| {
+            compare_items_by_sort_keys(left, right, &[key_asc], &categories)
+        });
+        let asc_texts: Vec<String> = rows.iter().map(|item| item.text.clone()).collect();
+        assert_eq!(
+            asc_texts,
+            vec!["Five".to_string(), "Ten".to_string(), "Missing".to_string()]
+        );
+
+        rows.sort_by(|left, right| {
+            compare_items_by_sort_keys(left, right, &[key_desc], &categories)
+        });
+        let desc_texts: Vec<String> = rows.iter().map(|item| item.text.clone()).collect();
+        assert_eq!(
+            desc_texts,
+            vec!["Ten".to_string(), "Five".to_string(), "Missing".to_string()]
+        );
     }
 
     #[test]
