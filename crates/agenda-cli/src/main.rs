@@ -73,8 +73,9 @@ enum Command {
     List {
         #[arg(long)]
         view: Option<String>,
+        /// Category filter (repeat for AND). Item must have ALL specified categories.
         #[arg(long)]
-        category: Option<String>,
+        category: Vec<String>,
         /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
         /// Optional suffix `:asc` or `:desc` (default: asc).
         #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
@@ -281,7 +282,7 @@ fn run() -> Result<(), String> {
     let db_path = resolve_db_path(cli.db)?;
     let command = cli.command.unwrap_or(Command::List {
         view: None,
-        category: None,
+        category: Vec::new(),
         sort: Vec::new(),
         include_done: false,
     });
@@ -500,7 +501,7 @@ fn unknown_hashtag_feedback_line(unknown_hashtags: &[String]) -> Option<String> 
 fn cmd_list(
     store: &Store,
     view_name: Option<String>,
-    category_name: Option<String>,
+    category_filters: Vec<String>,
     sort_args: Vec<String>,
     include_done: bool,
 ) -> Result<(), String> {
@@ -513,9 +514,12 @@ fn cmd_list(
     let category_names = category_name_map(&categories);
     let sort_keys = parse_sort_specs(&sort_args, &categories)?;
 
-    if let Some(category_name) = category_name {
-        let category_id = category_id_by_name(&categories, &category_name)?;
-        items.retain(|item| item.assignments.contains_key(&category_id));
+    if !category_filters.is_empty() {
+        let category_ids: Vec<CategoryId> = category_filters
+            .into_iter()
+            .map(|name| category_id_by_name(&categories, &name))
+            .collect::<Result<Vec<_>, _>>()?;
+        retain_items_with_all_categories(&mut items, &category_ids);
     }
 
     let resolved_view = if let Some(view_name) = view_name {
@@ -534,6 +538,14 @@ fn cmd_list(
         print_item_table(&items, &category_names, &sort_keys, &categories);
     }
     Ok(())
+}
+
+fn retain_items_with_all_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
+    items.retain(|item| {
+        category_ids
+            .iter()
+            .all(|id| item.assignments.contains_key(id))
+    });
 }
 
 fn cmd_search(store: &Store, query: String, include_done: bool) -> Result<(), String> {
@@ -1580,8 +1592,8 @@ mod tests {
     use super::{
         compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
         parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        unknown_hashtag_feedback_line, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
-        LinkCommand, ViewCommand,
+        retain_items_with_all_categories, unknown_hashtag_feedback_line, Cli, CliSortDirection,
+        CliSortField, CliSortKey, Command, LinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -1716,6 +1728,29 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_repeated_category_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--category",
+            "Feature request",
+            "--category",
+            "Ready",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { category, .. }) => {
+                assert_eq!(
+                    category,
+                    vec!["Feature request".to_string(), "Ready".to_string()]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_view_show_with_sort_flag() {
         let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--sort", "when"])
             .expect("parse CLI");
@@ -1814,6 +1849,43 @@ mod tests {
             desc_texts,
             vec!["Ten".to_string(), "Five".to_string(), "Missing".to_string()]
         );
+    }
+
+    #[test]
+    fn retain_items_with_all_categories_enforces_and_semantics() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let issue_type = Category::new("Issue type".to_string());
+        let status = Category::new("Status".to_string());
+        store
+            .create_category(&issue_type)
+            .expect("create issue_type");
+        store.create_category(&status).expect("create status");
+
+        let both = Item::new("Both".to_string());
+        let one = Item::new("One".to_string());
+        let none = Item::new("None".to_string());
+        store.create_item(&both).expect("create both");
+        store.create_item(&one).expect("create one");
+        store.create_item(&none).expect("create none");
+
+        agenda
+            .assign_item_manual(both.id, issue_type.id, Some("test:assign".to_string()))
+            .expect("assign both issue_type");
+        agenda
+            .assign_item_manual(both.id, status.id, Some("test:assign".to_string()))
+            .expect("assign both status");
+        agenda
+            .assign_item_manual(one.id, issue_type.id, Some("test:assign".to_string()))
+            .expect("assign one issue_type");
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_with_all_categories(&mut rows, &[issue_type.id, status.id]);
+
+        let remaining_texts: Vec<String> = rows.into_iter().map(|item| item.text).collect();
+        assert_eq!(remaining_texts, vec!["Both".to_string()]);
     }
 
     #[test]
