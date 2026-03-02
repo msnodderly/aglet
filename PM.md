@@ -1,128 +1,271 @@
-# PM & Grooming Process
+# PM & Grooming Process (Aglet)
 
-Break down tasks into items suitable for execution by parallel coding agents.
+## Overview
 
-## Aglet CLI Reference
+This document describes issue grooming and project management for aglet.
+
+Goal: break down work into items suitable for parallel coding agents, with clear dependencies, acceptance criteria, and unambiguous execution order.
+
+---
+
+## Issue Tracking System
+
+This project tracks work in `aglet-features.ag` using `agenda-cli`.
+
+Use full UUIDs for item commands.
+
+### Core Commands
 
 ```bash
-agenda-cli list                          # All open items
-agenda-cli list --view "High Priority"   # Items matching a view
-agenda-cli list --category CLI           # Items in a category
-agenda-cli list --include-done           # Include completed items
-agenda-cli show <id>                     # Item detail with categories
-agenda-cli search <keyword>             # Search text and notes
+# Aglet-only backlog views
+./scripts/list-open-project-items.sh aglet
+cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --view "All Items" --sort Priority
+cargo run --bin agenda-cli -- --db aglet-features.ag show <ITEM_ID>
 
-agenda-cli add "Title" --note "Details"  # Create item
-agenda-cli edit <id> "New title"         # Edit item text
-agenda-cli edit <id> --note "..."        # Edit item note
-agenda-cli edit <id> --done true         # Mark complete
-agenda-cli delete <id>                   # Delete item
+# Create/edit
+cargo run --bin agenda-cli -- --db aglet-features.ag add "<TITLE>" --note "<NOTE>"
+cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> "<NEW_TITLE>"
+cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> --note "<NOTE>"
 
-agenda-cli category list                 # Show category tree
-agenda-cli category assign <id> <name>   # Assign category to item
-agenda-cli category unassign <id> <name> # Remove category from item
+# Categories
+cargo run --bin agenda-cli -- --db aglet-features.ag category list
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "<CATEGORY>"
+cargo run --bin agenda-cli -- --db aglet-features.ag category unassign <ITEM_ID> "<CATEGORY>"
 
-agenda-cli view list                     # List saved views
-agenda-cli view show "View Name"         # Show view contents
-agenda-cli view create "Name" --include Cat1 --include Cat2
+# Dependency links
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag link depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag link unlink-blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag link unlink-depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
 ```
 
-Categories are used for priority, status, area, etc. Views are saved filters. Use `--include` filters (AND-based) to create views.
+### Aglet-Only Query Patterns
+
+```bash
+# Ready candidates (open, not blocked, not currently being worked)
+./scripts/list-open-project-items.sh aglet
+
+# All open Aglet work (includes In Progress and Waiting/Blocked; excludes completed)
+cargo run --bin agenda-cli -- --db aglet-features.ag list \
+  --any-category Aglet \
+  --exclude-category Done \
+  --exclude-category Complete \
+  --view "All Items" \
+  --sort Priority
+
+# Aglet items flagged for PM grooming/refinement
+cargo run --bin agenda-cli -- --db aglet-features.ag list \
+  --any-category Aglet \
+  --category "Needs Refinement" \
+  --view "All Items" \
+  --sort Priority
+
+# Aglet items currently in progress
+cargo run --bin agenda-cli -- --db aglet-features.ag list \
+  --any-category Aglet \
+  --category "In Progress" \
+  --view "All Items" \
+  --sort Priority
+
+# Aglet items currently blocked
+cargo run --bin agenda-cli -- --db aglet-features.ag list \
+  --any-category Aglet \
+  --category "Waiting/Blocked" \
+  --view "All Items" \
+  --sort Priority
+```
+
+### Helper Script (Preferred for New Items)
+
+```bash
+./scripts/add-aglet-issue.sh "<TITLE>" "<NOTE>" "<PRIORITY>" "<STATUS>" "<ISSUE_TYPE>" "Aglet" aglet-features.ag
+```
+
+---
+
+## Required Category Model (`aglet-features.ag`)
+
+Every item should include all of these:
+
+- `Issue type`: `Bug`, `Idea`, or `Feature request`
+- `Priority`: `Critical`, `High`, `Normal`, or `Low`
+- `Software Project(s)`: `Aglet` (plus `NeoNV` only if truly cross-project)
+- `Status`: `Needs Refinement`, `Ready`, `In Progress`, `Waiting/Blocked`, or `Complete`
+
+Status guidance:
+
+- Use `Ready` as the default actionable queue status.
+- Use `Needs Refinement` to explicitly flag items requiring PM grooming before implementation.
+- Use `Next Action` only for legacy continuity while it still exists in the taxonomy.
+
+---
 
 ## Grooming Process
 
-### 1. Assess Current State
+### 1. Preparation
 
 ```bash
-agenda-cli list                          # Review all items
-agenda-cli view show "Pending"           # What needs work
-agenda-cli view show "High Priority"     # Critical items
-agenda-cli search "keyword"              # Find related items
+cd /Users/mds/src/aglet
+git switch main
+git pull --ff-only
+git switch -c codex/pm-grooming-$(date +%Y-%m-%d)
+
+./scripts/list-open-project-items.sh aglet
+cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
+cargo run --bin agenda-cli -- --db aglet-features.ag category list
 ```
 
-### 2. Review Each Item
+### 2. Review Criteria
 
-**Checklist:**
-- Clear, specific title (imperative mood: "Add X", "Fix Y")
-- Note explaining WHAT, WHY, and acceptance criteria
-- Correct categories assigned (Priority, Status, Area)
-- Small enough to implement in ~10-15 minutes, or broken into subtasks
+For each item, verify:
 
-**Priority (exclusive):** High, Medium, Low
-**Status (exclusive):** Pending, In Progress, Completed, Deferred
-**Area (non-exclusive):** CLI, UX, Validation, Display, Automation
+- Clear, specific title
+- Note explains WHAT and WHY
+- Acceptance criteria present in note
+- Correct issue type, priority, project, and status categories
+- Work is implementable in one focused session, or decomposed
+- Dependencies are correctly linked and directionally correct
 
-### 3. Common Actions
+If an item is missing acceptance criteria, required categories, or has unclear scope, assign `Needs Refinement` until groomed.
 
-**Add description to an item:**
+### 3. Common Grooming Actions
+
+#### Improve an Item Note
+
 ```bash
-agenda-cli edit <id> --note "What: Clear description of work.
-Why: Reason this matters.
+cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> --note "What: ...
+Why: ...
+
 Acceptance Criteria:
-- Criterion 1
-- Criterion 2"
+- [ ] ...
+- [ ] ...
+
+Notes:
+- ..."
 ```
 
-**Break down a large task:**
-Create smaller items and mark the parent done or update its note to reference them.
+#### Break Down a Large Item
+
+1. Create subtasks.
+2. Link them so subtasks block parent.
+3. Optionally sequence subtasks.
 
 ```bash
-agenda-cli add "Feature: Step 1 - Foundation" --note "..."
-agenda-cli category assign <id> High
-agenda-cli category assign <id> Pending
+./scripts/add-aglet-issue.sh "<PREFIX>: Foundation" "..." "Normal" "Ready" "Feature request" "Aglet" aglet-features.ag
+./scripts/add-aglet-issue.sh "<PREFIX>: Core logic" "..." "Normal" "Ready" "Feature request" "Aglet" aglet-features.ag
+./scripts/add-aglet-issue.sh "<PREFIX>: Integration" "..." "Normal" "Ready" "Feature request" "Aglet" aglet-features.ag
 
-agenda-cli add "Feature: Step 2 - Core logic" --note "..."
-agenda-cli add "Feature: Step 3 - Integration" --note "..."
+# Parent depends on each subtask
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK1_ID> <PARENT_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK2_ID> <PARENT_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK3_ID> <PARENT_ID>
+
+# Optional sequence
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK1_ID> <SUBTASK2_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK2_ID> <SUBTASK3_ID>
 ```
 
-**Mark complete:**
-```bash
-agenda-cli edit <id> --done true
-```
-
-### 4. Task Sizing
-
-- **Good:** 5-15 minutes, single focus, clear when done
-- **Too large:** >5 acceptance criteria, touches >5 files, has "and also" in description → break it down
-- **Too small:** Consider combining with related work
-
-### 5. Subtask Naming
-
-Use a common prefix to group related subtasks:
-
-```
-/edit: Parse command and extract buffer
-/edit: Open buffer in external editor
-/edit: Validate edited buffer
-/edit: Merge buffer back into conversation
-```
-
-### 6. Questions & Decisions
-
-For items needing architectural decisions, add a note documenting the question and options. Consider creating a separate "Design: ..." item assigned High priority to resolve it before implementation items.
-
-Track open questions in `docs/questions.md`:
-
-```markdown
-## Feature Name
-**Related Items:** <ids>
-**Question:** How should we handle X?
-Options:
-1. Option A - pros/cons
-2. Option B - pros/cons
-```
-
-### 7. After Grooming
+#### Mark an Item as Blocked
 
 ```bash
-agenda-cli view show "Pending"    # Should show well-defined items
-agenda-cli list                   # Scan titles for clarity
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Waiting/Blocked"
 ```
 
-Commit and push your changes.
+Then update the note with explicit blocker details and required decision/input.
+
+#### Mark an Item as Needs Refinement
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Needs Refinement"
+```
+
+After grooming is complete, move it back to actionable:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Ready"
+```
+
+### 4. Dependency Direction (Critical)
+
+Canonical blocker syntax:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+```
+
+Meaning: `BLOCKER_ITEM_ID` must be completed before `BLOCKED_ITEM_ID`.
+
+Equivalent form:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag link depends-on <BLOCKED_ITEM_ID> <BLOCKER_ITEM_ID>
+```
+
+Always verify direction with:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag show <BLOCKER_ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag show <BLOCKED_ITEM_ID>
+```
+
+### 5. Questions and Design Decisions
+
+Track unresolved architectural questions in `docs/questions.md`.
+
+When a decision blocks multiple items, create a dedicated design item and block implementation items on it.
+
+### 6. Final Steps After Grooming
+
+```bash
+./scripts/list-open-project-items.sh aglet
+cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
+cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --category "Needs Refinement" --view "All Items" --sort Priority
+
+git add PM.md docs/questions.md aglet-features.ag
+git commit -m "PM grooming: <summary>"
+git push -u origin HEAD
+gh pr create --title "PM Grooming: <date>" --body "<summary>"
+```
+
+> [!WARNING]
+> PM work is not complete until it is pushed. Local-only changes in abandoned worktrees/branches are incomplete and at risk of loss.
+
+---
 
 ## Quality Indicators
 
-**Healthy backlog:** Most items have notes, tasks are small, pending items are actionable.
+### Healthy Backlog
 
-**Needs grooming:** Items without descriptions, large undivided tasks, unclear priorities.
+- Items include clear intent and acceptance criteria
+- Required categories are consistently assigned
+- Dependencies clearly encode execution order
+- `Ready` items are actionable
+- `Needs Refinement` queue is small and actively burned down
+- Blocked items explicitly state blockers
+
+### Needs Grooming
+
+- Missing required categories
+- Vague titles/notes
+- Overly large tasks without decomposition
+- Confusing dependency graphs
+- `Ready` items that are not actually implementable
+- Many stale `Needs Refinement` items with no grooming progress
+
+---
+
+## Session Checklist
+
+Before opening a grooming PR:
+
+- [ ] Open Aglet backlog reviewed
+- [ ] Groomed items have clear title/note/acceptance criteria
+- [ ] Required categories assigned (Issue type, Priority, Project, Status)
+- [ ] Items needing PM work explicitly marked `Needs Refinement`
+- [ ] Refined items moved to `Ready` when implementation-ready
+- [ ] Large items split into subtasks where needed
+- [ ] Dependency direction verified (`blocks <BLOCKER> <BLOCKED>`)
+- [ ] Blocked items marked `Waiting/Blocked` with explicit reason
+- [ ] `docs/questions.md` updated where needed
+- [ ] `aglet-features.ag` + docs committed
+- [ ] Branch pushed and PR opened
