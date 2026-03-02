@@ -236,6 +236,7 @@ pub(super) struct BoardColumnWidths {
 
 pub(super) const BOARD_ROW_MARKER_WIDTH: usize = 2;
 pub(super) const BOARD_NOTE_MARKER_WIDTH: usize = 4;
+pub(super) const BOARD_TABLE_COLUMN_SPACING: u16 = 1;
 pub(super) const NOTE_MARKER_SYMBOL: &str = "♪";
 pub(super) const BOARD_WHEN_TARGET_WIDTH: usize = 19;
 pub(super) const BOARD_WHEN_MIN_WIDTH: usize = 10;
@@ -293,6 +294,10 @@ pub(super) struct BoardColumnSpec {
     pub(super) heading_value_kind: CategoryValueKind,
 }
 
+pub(super) fn board_table_spacing_budget(column_count: usize) -> usize {
+    (column_count.saturating_sub(1)) * BOARD_TABLE_COLUMN_SPACING as usize
+}
+
 pub(super) fn compute_board_layout(
     view_columns: &[Column],
     categories: &[Category],
@@ -300,7 +305,8 @@ pub(super) fn compute_board_layout(
     item_label: &str,
     slot_width: u16,
 ) -> BoardColumnLayout {
-    let total = slot_width as usize;
+    let base_column_count = 2 + view_columns.len() + 1; // marker + note + configured + item
+    let total = (slot_width as usize).saturating_sub(board_table_spacing_budget(base_column_count));
     let marker = BOARD_ROW_MARKER_WIDTH.min(total);
     let note = BOARD_NOTE_MARKER_WIDTH.min(total.saturating_sub(marker));
     let available = total.saturating_sub(marker + note);
@@ -566,7 +572,7 @@ pub(super) fn board_item_label(item: &Item) -> String {
 }
 
 pub(super) fn board_column_widths(slot_width: u16) -> BoardColumnWidths {
-    let total = slot_width as usize;
+    let total = (slot_width as usize).saturating_sub(board_table_spacing_budget(5));
     let marker = BOARD_ROW_MARKER_WIDTH.min(total);
     let note = BOARD_NOTE_MARKER_WIDTH.min(total.saturating_sub(marker));
     let available = total.saturating_sub(marker + note);
