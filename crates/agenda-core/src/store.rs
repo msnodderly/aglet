@@ -645,6 +645,16 @@ impl Store {
     // ── View CRUD ───────────────────────────────────────────────
 
     pub fn create_view(&self, view: &View) -> Result<()> {
+        if Self::is_system_view_name(&view.name) {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("cannot create system view: {DEFAULT_VIEW_NAME}"),
+            });
+        }
+
+        self.insert_view(view)
+    }
+
+    fn insert_view(&self, view: &View) -> Result<()> {
         let criteria_json =
             serde_json::to_string(&view.criteria).map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
@@ -701,6 +711,21 @@ impl Store {
     }
 
     pub fn update_view(&self, view: &View) -> Result<()> {
+        let existing = self.get_view(view.id)?;
+        if Self::is_system_view_name(&existing.name) {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("cannot modify system view: {}", existing.name),
+            });
+        }
+        if Self::is_system_view_name(&view.name) {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "cannot rename view {} to reserved system view name: {DEFAULT_VIEW_NAME}",
+                    existing.name
+                ),
+            });
+        }
+
         let criteria_json =
             serde_json::to_string(&view.criteria).map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
@@ -767,6 +792,13 @@ impl Store {
     }
 
     pub fn delete_view(&self, id: Uuid) -> Result<()> {
+        let existing = self.get_view(id)?;
+        if Self::is_system_view_name(&existing.name) {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("cannot modify system view: {}", existing.name),
+            });
+        }
+
         let rows = self
             .conn
             .execute("DELETE FROM views WHERE id = ?1", params![id.to_string()])?;
@@ -1592,7 +1624,7 @@ impl Store {
         }
 
         let view = View::new(DEFAULT_VIEW_NAME.to_string());
-        self.create_view(&view)?;
+        self.insert_view(&view)?;
         Ok(())
     }
 
@@ -1600,6 +1632,10 @@ impl Store {
         RESERVED_CATEGORY_NAMES
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    }
+
+    fn is_system_view_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME)
     }
 
     fn init(&self) -> Result<()> {
@@ -2990,6 +3026,17 @@ mod tests {
     }
 
     #[test]
+    fn test_create_view_reserved_system_name_rejected() {
+        let store = Store::open_memory().unwrap();
+        let result = store.create_view(&new_view("all items"));
+        assert!(matches!(
+            result,
+            Err(AgendaError::InvalidOperation { message })
+            if message.contains("cannot create system view")
+        ));
+    }
+
+    #[test]
     fn test_update_view() {
         let store = Store::open_memory().unwrap();
         let mut view = new_view("Daily");
@@ -3040,6 +3087,40 @@ mod tests {
                 entity: "View",
                 id
             }) if id == missing.id
+        ));
+    }
+
+    #[test]
+    fn test_update_default_view_rejected() {
+        let store = Store::open_memory().unwrap();
+        let mut default_view = store
+            .list_views()
+            .unwrap()
+            .into_iter()
+            .find(|view| view.name.eq_ignore_ascii_case("All Items"))
+            .expect("default view exists");
+        default_view.unmatched_label = "Custom".to_string();
+
+        let result = store.update_view(&default_view);
+        assert!(matches!(
+            result,
+            Err(AgendaError::InvalidOperation { message })
+            if message.contains("cannot modify system view")
+        ));
+    }
+
+    #[test]
+    fn test_update_view_rename_to_system_name_rejected() {
+        let store = Store::open_memory().unwrap();
+        let mut view = new_view("Daily");
+        store.create_view(&view).unwrap();
+        view.name = "all items".to_string();
+
+        let result = store.update_view(&view);
+        assert!(matches!(
+            result,
+            Err(AgendaError::InvalidOperation { message })
+            if message.contains("reserved system view name")
         ));
     }
 
@@ -3114,6 +3195,25 @@ mod tests {
         assert!(matches!(
             result,
             Err(AgendaError::NotFound { entity: "View", .. })
+        ));
+    }
+
+    #[test]
+    fn test_delete_default_view_rejected() {
+        let store = Store::open_memory().unwrap();
+        let default_id = store
+            .list_views()
+            .unwrap()
+            .into_iter()
+            .find(|view| view.name.eq_ignore_ascii_case("All Items"))
+            .expect("default view exists")
+            .id;
+
+        let result = store.delete_view(default_id);
+        assert!(matches!(
+            result,
+            Err(AgendaError::InvalidOperation { message })
+            if message.contains("cannot modify system view")
         ));
     }
 
