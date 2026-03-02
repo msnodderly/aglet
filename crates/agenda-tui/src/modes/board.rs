@@ -2182,7 +2182,9 @@ impl App {
         if self.slot_sort_keys.len() != self.slots.len() {
             self.slot_sort_keys = vec![Vec::new(); self.slots.len()];
         }
-        let slot_index = self.slot_index.min(self.slot_sort_keys.len().saturating_sub(1));
+        let slot_index = self
+            .slot_index
+            .min(self.slot_sort_keys.len().saturating_sub(1));
         {
             let sort_keys = self
                 .slot_sort_keys
@@ -2217,10 +2219,13 @@ impl App {
                 key.direction = preferred_direction.unwrap_or(SlotSortDirection::Asc);
                 sort_keys.insert(0, key);
             } else {
-                sort_keys.insert(0, SlotSortKey {
-                    column,
-                    direction: preferred_direction.unwrap_or(SlotSortDirection::Asc),
-                });
+                sort_keys.insert(
+                    0,
+                    SlotSortKey {
+                        column,
+                        direction: preferred_direction.unwrap_or(SlotSortDirection::Asc),
+                    },
+                );
             }
         }
 
@@ -3765,10 +3770,7 @@ impl App {
     }
 
     /// Handle keys when the parent picker overlay is open within a CategoryCreate panel.
-    fn handle_category_create_parent_picker_key(
-        &mut self,
-        code: KeyCode,
-    ) -> Result<bool, String> {
+    fn handle_category_create_parent_picker_key(&mut self, code: KeyCode) -> Result<bool, String> {
         let panel = self.input_panel.as_mut().unwrap();
         let picker = panel.parent_picker.as_mut().unwrap();
 
@@ -3787,8 +3789,7 @@ impl App {
             KeyCode::Char('/') => {
                 picker.focus = CategoryParentPickerFocus::Filter;
                 picker.filter_editing = true;
-                self.status =
-                    "Type to filter parents, Enter to apply, Esc to cancel".to_string();
+                self.status = "Type to filter parents, Enter to apply, Esc to cancel".to_string();
             }
             KeyCode::Down | KeyCode::Char('j')
                 if picker.focus == CategoryParentPickerFocus::List =>
@@ -3798,9 +3799,7 @@ impl App {
                         next_index(picker.list_index, picker.visible_option_indices.len(), 1);
                 }
             }
-            KeyCode::Up | KeyCode::Char('k')
-                if picker.focus == CategoryParentPickerFocus::List =>
-            {
+            KeyCode::Up | KeyCode::Char('k') if picker.focus == CategoryParentPickerFocus::List => {
                 if !picker.visible_option_indices.is_empty() {
                     picker.list_index =
                         next_index(picker.list_index, picker.visible_option_indices.len(), -1);
@@ -3830,16 +3829,13 @@ impl App {
                 {
                     let query = picker.filter.text().trim().to_ascii_lowercase();
                     if query.is_empty() {
-                        picker.visible_option_indices =
-                            (0..picker.options.len()).collect();
+                        picker.visible_option_indices = (0..picker.options.len()).collect();
                     } else {
                         picker.visible_option_indices = picker
                             .options
                             .iter()
                             .enumerate()
-                            .filter(|(_, opt)| {
-                                opt.label.to_ascii_lowercase().contains(&query)
-                            })
+                            .filter(|(_, opt)| opt.label.to_ascii_lowercase().contains(&query))
                             .map(|(idx, _)| idx)
                             .collect();
                     }

@@ -3574,7 +3574,7 @@ mod tests {
         let footer = Rect::new(10, 5, 40, 3);
         for mode in [
             Mode::Normal,
-            Mode::InputPanel, // popup mode — footer cursor hidden
+            Mode::InputPanel,       // popup mode — footer cursor hidden
             Mode::SearchBarFocused, // cursor rendered by search bar, not footer
             Mode::ConfirmDelete,
             Mode::ViewPicker,
@@ -8865,7 +8865,10 @@ mod tests {
         app.handle_search_bar_key(KeyCode::Esc, &agenda)
             .expect("esc clears");
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.search_buffer.is_empty(), "search buffer should be empty");
+        assert!(
+            app.search_buffer.is_empty(),
+            "search buffer should be empty"
+        );
         assert_eq!(app.section_filters[0], None, "filter should be cleared");
 
         let _ = std::fs::remove_file(&db_path);
@@ -8957,10 +8960,7 @@ mod tests {
 
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.item_index, 0, "jumped to exact match");
-        assert!(
-            app.status.contains("Jumped to"),
-            "status confirms jump"
-        );
+        assert!(app.status.contains("Jumped to"), "status confirms jump");
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -9132,7 +9132,11 @@ mod tests {
         app.handle_key(KeyCode::Char('s'), &agenda)
             .expect("sort priority asc");
 
-        let order: Vec<String> = app.slots[0].items.iter().map(|item| item.text.clone()).collect();
+        let order: Vec<String> = app.slots[0]
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect();
         assert_eq!(
             order,
             vec![
@@ -9211,7 +9215,11 @@ mod tests {
         app.handle_key(KeyCode::Char('s'), &agenda)
             .expect("sort cost asc");
         assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Asc);
-        let asc_order: Vec<String> = app.slots[0].items.iter().map(|item| item.text.clone()).collect();
+        let asc_order: Vec<String> = app.slots[0]
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect();
         assert_eq!(
             asc_order,
             vec!["Five".to_string(), "Ten".to_string(), "Missing".to_string()]
@@ -9220,7 +9228,11 @@ mod tests {
         app.handle_key(KeyCode::Char('s'), &agenda)
             .expect("sort cost desc");
         assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Desc);
-        let desc_order: Vec<String> = app.slots[0].items.iter().map(|item| item.text.clone()).collect();
+        let desc_order: Vec<String> = app.slots[0]
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect();
         assert_eq!(
             desc_order,
             vec!["Ten".to_string(), "Five".to_string(), "Missing".to_string()]

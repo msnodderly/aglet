@@ -31,11 +31,9 @@ impl App {
     }
 
     pub(crate) fn draw(&self, frame: &mut ratatui::Frame<'_>) {
-        let show_search_bar = !(matches!(
-            self.mode,
-            Mode::ViewEdit | Mode::CategoryManager
-        ) || self.mode == Mode::InputPanel
-            && self.name_input_context == Some(NameInputContext::CategoryCreate));
+        let show_search_bar = !(matches!(self.mode, Mode::ViewEdit | Mode::CategoryManager)
+            || self.mode == Mode::InputPanel
+                && self.name_input_context == Some(NameInputContext::CategoryCreate));
 
         let layout = if show_search_bar {
             Layout::default()
@@ -1301,7 +1299,10 @@ impl App {
         let (text_content, text_style) = if is_focused {
             let text = self.search_buffer.text();
             if text.is_empty() {
-                ("Search or create...".to_string(), Style::default().fg(Color::DarkGray))
+                (
+                    "Search or create...".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )
             } else {
                 (text.to_string(), Style::default().fg(Color::White))
             }
@@ -1313,7 +1314,10 @@ impl App {
             if let Some(text) = filter {
                 (text.to_string(), Style::default().fg(Color::Yellow))
             } else {
-                ("Search or create...".to_string(), Style::default().fg(Color::DarkGray))
+                (
+                    "Search or create...".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )
             }
         };
 
@@ -1327,7 +1331,10 @@ impl App {
         if is_focused && !self.search_buffer.text().is_empty() {
             let label_len = label.chars().count() as u16;
             let cursor_offset = self.search_buffer.cursor().min(u16::MAX as usize) as u16;
-            let x = area.x.saturating_add(label_len).saturating_add(cursor_offset);
+            let x = area
+                .x
+                .saturating_add(label_len)
+                .saturating_add(cursor_offset);
             let x = x.min(area.x.saturating_add(area.width.saturating_sub(1)));
             frame.set_cursor_position((x, area.y));
         } else if is_focused {
@@ -2092,10 +2099,7 @@ impl App {
                     .get(self.slot_index)
                     .map(|s| s.title.as_str())
                     .unwrap_or("section");
-                let match_count = self
-                    .current_slot()
-                    .map(|s| s.items.len())
-                    .unwrap_or(0);
+                let match_count = self.current_slot().map(|s| s.items.len()).unwrap_or(0);
                 format!("[{section_name}] {match_count} matches")
             }
             Mode::ConfirmDelete => "Delete item? y:confirm Esc:cancel".to_string(),
@@ -2222,9 +2226,11 @@ impl App {
                     "Enter:save  S:save  Tab:buttons  Esc:cancel"
                 } else if category_create_parent_picker_open {
                     "Enter:apply  /:filter  Tab:focus  Esc:cancel"
-                } else if self.input_panel.as_ref().is_some_and(|p| {
-                    p.focus == input_panel::InputPanelFocus::Categories
-                }) {
+                } else if self
+                    .input_panel
+                    .as_ref()
+                    .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
+                {
                     "S:save  Tab:next  Space:toggle  Esc:cancel"
                 } else {
                     "S:save  Tab:next  Esc:cancel"
@@ -3041,14 +3047,14 @@ impl App {
 
                 let mut parent_name = "(root)".to_string();
                 let mut child_count = 0usize;
-                if let Some(parent_id) = self
-                    .categories
-                    .iter()
-                    .find(|c| c.id == row.id)
-                    .and_then(|c| {
-                        child_count = c.children.len();
-                        c.parent
-                    })
+                if let Some(parent_id) =
+                    self.categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .and_then(|c| {
+                            child_count = c.children.len();
+                            c.parent
+                        })
                 {
                     if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
                         parent_name = parent.name.clone();
