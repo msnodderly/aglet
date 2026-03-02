@@ -48,6 +48,14 @@ see all items, or create views that match your data.
 For example, `agenda-cli list --category High --category Pending` returns items
 that have both categories.
 
+`agenda-cli list --any-category` supports repeated flags with OR semantics.
+For example, `agenda-cli list --any-category Aglet --any-category NeoNV` returns
+items that have either category.
+
+`agenda-cli list --exclude-category` supports repeated flags with NOT semantics.
+For example, `agenda-cli list --exclude-category Complete` removes completed
+status/category matches from results.
+
 ## Category Assignment in Items
 
 When viewing items, the categories list includes both the assigned category and
@@ -87,11 +95,16 @@ aglet itself (distinct from `feature-requests.ag`). Categories:
 
 - **Issue type** (non-exclusive): Bug, Idea, Feature request
 - **Priority** (exclusive): Critical, High, Normal, Low
-- **Software Project**: Aglet, NeoNV
+- **Software Project / Software Projects**: Aglet, NeoNV
 - **Status** (exclusive): Complete, In Progress, Next Action, Ready,
   Waiting/Blocked
 
-Every item should have Issue type, Priority, Software Project, and Status.
+Every item should have Issue type, Priority, Software Project(s), and Status.
+
+Surprising gotcha: the parent category name in `aglet-features.ag` may be
+`Software Projects` (plural) instead of `Software Project` (singular). If a
+command errors with `category not found`, run `category list` and use the exact
+name from that DB.
 
 ### Creating a feature request via CLI
 
