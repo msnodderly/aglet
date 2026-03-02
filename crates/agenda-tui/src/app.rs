@@ -983,9 +983,8 @@ impl App {
         if sort_keys.is_empty() || slot.items.len() < 2 {
             return;
         }
-        slot.items.sort_by(|left, right| {
-            self.compare_items_for_sort_keys(left, right, sort_keys)
-        });
+        slot.items
+            .sort_by(|left, right| self.compare_items_for_sort_keys(left, right, sort_keys));
     }
 
     fn compare_items_for_sort_keys(
@@ -1015,7 +1014,10 @@ impl App {
                     self.compare_optional_values(left.when_date, right.when_date, key.direction)
                 }
                 ColumnKind::Standard => {
-                    let heading_category = self.categories.iter().find(|category| category.id == heading);
+                    let heading_category = self
+                        .categories
+                        .iter()
+                        .find(|category| category.id == heading);
                     if heading_category
                         .map(|category| category.value_kind == CategoryValueKind::Numeric)
                         .unwrap_or(false)
@@ -1030,10 +1032,8 @@ impl App {
                             .and_then(|assignment| assignment.numeric_value);
                         self.compare_optional_values(left_value, right_value, key.direction)
                     } else if let Some(category) = heading_category {
-                        let left_value =
-                            self.standard_sort_value_for_heading(left, category);
-                        let right_value =
-                            self.standard_sort_value_for_heading(right, category);
+                        let left_value = self.standard_sort_value_for_heading(left, category);
+                        let right_value = self.standard_sort_value_for_heading(right, category);
                         self.compare_optional_values(left_value, right_value, key.direction)
                     } else {
                         Ordering::Equal
