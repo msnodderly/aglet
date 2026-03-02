@@ -793,8 +793,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        add_capture_status_message, board_column_widths, board_item_label, bucket_target_set_mut,
-        build_category_rows, build_reparent_options, category_name_map, compute_board_layout,
+        add_capture_status_message, board_column_widths, board_item_label,
+        board_table_spacing_budget, bucket_target_set_mut, build_category_rows,
+        build_reparent_options, category_name_map, compute_board_layout,
         first_non_reserved_category_index, input_panel, input_panel_popup_area,
         item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
         should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
@@ -6683,13 +6684,21 @@ mod tests {
                 .iter()
                 .map(|column| column.width)
                 .sum::<usize>();
-        assert!(dynamic_used <= slot_width as usize);
+        assert!(
+            dynamic_used + board_table_spacing_budget(2 + dynamic.columns.len() + 1)
+                <= slot_width as usize
+        );
         assert!(dynamic.item >= 1);
         assert!(dynamic.columns.iter().all(|column| column.width >= 8));
 
         let legacy = board_column_widths(slot_width);
         assert!(
-            legacy.marker + legacy.note + legacy.when + legacy.item + legacy.categories
+            legacy.marker
+                + legacy.note
+                + legacy.when
+                + legacy.item
+                + legacy.categories
+                + board_table_spacing_budget(5)
                 <= slot_width as usize
         );
         assert!(legacy.item >= 1);
@@ -6707,6 +6716,158 @@ mod tests {
         let mut item = Item::new("alignment check".to_string());
         item.note = Some("detail".to_string());
         assert_eq!(board_item_label(&item), "alignment check");
+    }
+
+    #[test]
+    fn board_legacy_rows_keep_item_and_categories_visually_separated_when_truncated() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-legacy-spacing-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let tag = Category::new("GapLeg".to_string());
+        store.create_category(&tag).expect("create category");
+
+        let item = Item::new("LEGACY-SEPARATOR-LONG-TEXT".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, tag.id, Some("test:assign".to_string()))
+            .expect("assign category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(44, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let row_line = lines
+            .iter()
+            .find(|line| line.contains("GapLeg"))
+            .expect("row line should include category token");
+        assert!(
+            row_line.contains("..."),
+            "expected truncated row content in narrow terminal"
+        );
+        let token_index = row_line
+            .find("GapLeg")
+            .expect("row includes category token");
+        let separator = row_line[..token_index]
+            .chars()
+            .last()
+            .expect("token should not be first character");
+        assert!(
+            separator.is_whitespace(),
+            "expected at least one visible separator before category token: {row_line:?}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_dynamic_rows_keep_adjacent_columns_separated_when_truncated() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-dynamic-spacing-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+        let mut gap_value = Category::new("GapDyn".to_string());
+        gap_value.parent = Some(status.id);
+        store
+            .create_category(&gap_value)
+            .expect("create status child");
+
+        let item = Item::new("DYNAMIC-SEPARATOR-LONG-TEXT".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, gap_value.id, Some("test:assign".to_string()))
+            .expect("assign category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: status.id,
+                width: 8,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(34, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let row_line = lines
+            .iter()
+            .find(|line| line.contains("GapDyn"))
+            .expect("row line should include dynamic category token");
+        assert!(
+            row_line.contains("..."),
+            "expected truncated item text in narrow dynamic layout"
+        );
+        let token_index = row_line
+            .find("GapDyn")
+            .expect("row includes dynamic category token");
+        let separator = row_line[..token_index]
+            .chars()
+            .last()
+            .expect("token should not be first character");
+        assert!(
+            separator.is_whitespace(),
+            "expected at least one visible separator before dynamic token: {row_line:?}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
     }
 
     // -------------------------------------------------------------------------
