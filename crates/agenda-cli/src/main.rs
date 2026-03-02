@@ -1907,7 +1907,7 @@ mod tests {
     use agenda_core::model::{Category, CategoryValueKind, Item};
     use agenda_core::store::Store;
     use chrono::NaiveDate;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
     use uuid::Uuid;
 
@@ -2055,6 +2055,25 @@ mod tests {
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn list_help_documents_repeated_category_and_semantics() {
+        let mut cmd = Cli::command();
+        let list_cmd = cmd
+            .find_subcommand_mut("list")
+            .expect("list subcommand should exist");
+        let category_arg = list_cmd
+            .get_arguments()
+            .find(|arg| arg.get_id().as_str() == "category")
+            .expect("list --category argument should exist");
+        let help = category_arg
+            .get_help()
+            .expect("list --category should have help text")
+            .to_string();
+
+        assert!(help.contains("repeat for AND"));
+        assert!(help.contains("ALL specified categories"));
     }
 
     #[test]
