@@ -7057,6 +7057,126 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_picker_space_cycles_criterion_mode() {
+        let (store, db_path) = make_test_store_with_view("picker-mode-cycle");
+
+        let complete = Category::new("Complete".to_string());
+        store.create_category(&complete).expect("complete");
+
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("refreshed TestView");
+        app.open_view_edit(view);
+
+        // No criteria yet — Space opens the picker
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("space opens picker when criteria empty");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::ViewCriteria
+            })
+        ));
+
+        // Find the picker index for "Complete"
+        let complete_picker_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.id == complete.id)
+            .expect("Complete in category_rows");
+        app.view_edit_state.as_mut().unwrap().picker_index = complete_picker_idx;
+
+        // First Space in picker: off → Include
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("picker space 1");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::And),
+            "first press should set Include"
+        );
+
+        // Second Space in picker: Include → Exclude
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("picker space 2");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Not),
+            "second press should set Exclude"
+        );
+
+        // Third Space in picker: Exclude → Match any
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("picker space 3");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Or),
+            "third press should set Match any"
+        );
+
+        // Fourth Space in picker: Match any → off (removed)
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("picker space 4");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            None,
+            "fourth press should remove criterion"
+        );
+
+        // Set it to Exclude and close the picker
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("set include");
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("set exclude");
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .draft
+                .criteria
+                .mode_for(complete.id),
+            Some(CriterionMode::Not)
+        );
+
+        // Close picker with Esc
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("close picker");
+        assert!(app
+            .view_edit_state
+            .as_ref()
+            .unwrap()
+            .overlay
+            .is_none());
+
+        // Back in criteria region, Space should cycle the criterion mode
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("space cycles in criteria region");
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .draft
+                .criteria
+                .criteria[0]
+                .mode,
+            CriterionMode::Or,
+            "space in criteria region should cycle Not → Or"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_tab_cycles_panes() {
         let (store, db_path) = make_test_store_with_view("tab-cycle");
         let classifier = SubstringClassifier;

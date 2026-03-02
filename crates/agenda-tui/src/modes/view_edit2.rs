@@ -418,6 +418,16 @@ impl App {
         self.status = Self::view_edit_default_status();
     }
 
+    /// Cycle a criterion through: off → Include → Exclude → Match any → off.
+    fn cycle_criterion_mode(query: &mut Query, cat_id: CategoryId) {
+        match query.mode_for(cat_id) {
+            None => query.set_criterion(CriterionMode::And, cat_id),
+            Some(CriterionMode::And) => query.set_criterion(CriterionMode::Not, cat_id),
+            Some(CriterionMode::Not) => query.set_criterion(CriterionMode::Or, cat_id),
+            Some(CriterionMode::Or) => query.remove_criterion(cat_id),
+        }
+    }
+
     fn toggle_category_picker_selection(
         &mut self,
         target: CategoryEditTarget,
@@ -427,22 +437,11 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             match target {
                 CategoryEditTarget::ViewCriteria => {
-                    if state.draft.criteria.mode_for(cat_id).is_some() {
-                        state.draft.criteria.remove_criterion(cat_id);
-                    } else {
-                        state
-                            .draft
-                            .criteria
-                            .set_criterion(CriterionMode::And, cat_id);
-                    }
+                    Self::cycle_criterion_mode(&mut state.draft.criteria, cat_id);
                 }
                 CategoryEditTarget::SectionCriteria => {
                     if let Some(section) = state.draft.sections.get_mut(section_expanded) {
-                        if section.criteria.mode_for(cat_id).is_some() {
-                            section.criteria.remove_criterion(cat_id);
-                        } else {
-                            section.criteria.set_criterion(CriterionMode::And, cat_id);
-                        }
+                        Self::cycle_criterion_mode(&mut section.criteria, cat_id);
                     }
                 }
                 CategoryEditTarget::SectionColumns => {
@@ -1032,7 +1031,8 @@ impl App {
             });
             state.picker_index = first;
         }
-        self.status = "Add criteria: j/k select  Space/Enter:toggle  Esc:done".to_string();
+        self.status =
+            "Criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done".to_string();
     }
 
     // -------------------------------------------------------------------------
@@ -1248,7 +1248,7 @@ impl App {
                         state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
-                    self.status = "Edit section criteria: j/k select  Space/Enter:toggle  Esc:done"
+                    self.status = "Section criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done"
                         .to_string();
                 }
             }
