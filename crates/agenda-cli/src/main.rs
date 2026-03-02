@@ -1896,8 +1896,8 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
-        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
+        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
+        item_link_section_lines, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
         reject_items_with_any_categories, retain_items_with_all_categories,
         retain_items_with_any_categories, unknown_hashtag_feedback_line, Cli, CliSortDirection,
         CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, ViewCommand,
@@ -2157,6 +2157,41 @@ mod tests {
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn cmd_view_rename_rejects_all_items() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let err = cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Rename {
+                name: "All Items".to_string(),
+                new_name: "Renamed".to_string(),
+            },
+        )
+        .expect_err("rename should fail");
+        assert!(err.contains("cannot modify system view"));
+    }
+
+    #[test]
+    fn cmd_view_delete_rejects_all_items() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let err = cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Delete {
+                name: "All Items".to_string(),
+            },
+        )
+        .expect_err("delete should fail");
+        assert!(err.contains("cannot modify system view"));
     }
 
     #[test]

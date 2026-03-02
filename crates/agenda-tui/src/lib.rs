@@ -3875,13 +3875,59 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::ViewPicker;
-        app.picker_index = 0;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "Work Board")
+            .expect("work board view should exist");
 
         app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
             .expect("open view edit");
 
         assert_eq!(app.mode, Mode::ViewEdit);
         assert!(app.view_edit_state.is_some());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_blocks_edit_delete_and_rename_for_all_items() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-view-immutable-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        store
+            .create_view(&View::new("Work Board".to_string()))
+            .expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "All Items")
+            .expect("All Items view should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('e'), &agenda)
+            .expect("edit key");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("immutable"));
+
+        app.handle_view_picker_key(KeyCode::Char('x'), &agenda)
+            .expect("delete key");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("immutable"));
+
+        app.handle_view_picker_key(KeyCode::Char('r'), &agenda)
+            .expect("rename key");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("immutable"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

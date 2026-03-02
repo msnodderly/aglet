@@ -1,5 +1,9 @@
 use crate::*;
 
+fn is_immutable_view(view: &View) -> bool {
+    view.name.eq_ignore_ascii_case("All Items")
+}
+
 impl App {
     pub(crate) fn handle_view_picker_key(
         &mut self,
@@ -41,6 +45,10 @@ impl App {
             }
             KeyCode::Char('r') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    if is_immutable_view(&view) {
+                        self.status = "All Items view is immutable".to_string();
+                        return Ok(false);
+                    }
                     self.view_pending_edit_name = Some(view.name.clone());
                     self.input_panel = Some(input_panel::InputPanel::new_name_input(
                         &view.name,
@@ -58,6 +66,10 @@ impl App {
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    if is_immutable_view(&view) {
+                        self.status = "All Items view is immutable".to_string();
+                        return Ok(false);
+                    }
                     self.open_view_edit(view);
                 } else {
                     self.status = "No selected view to edit".to_string();
@@ -65,6 +77,10 @@ impl App {
             }
             KeyCode::Char('V') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    if is_immutable_view(&view) {
+                        self.status = "All Items view is immutable".to_string();
+                        return Ok(false);
+                    }
                     self.open_view_edit(view);
                 } else {
                     self.status = "No views available".to_string();
@@ -72,6 +88,10 @@ impl App {
             }
             KeyCode::Char('x') => {
                 if let Some(view) = self.views.get(self.picker_index) {
+                    if is_immutable_view(view) {
+                        self.status = "All Items view is immutable".to_string();
+                        return Ok(false);
+                    }
                     self.mode = Mode::ViewDeleteConfirm;
                     self.status = format!("Delete view '{}' ? y/n", view.name);
                 } else {
@@ -105,6 +125,11 @@ impl App {
                     self.status = "Delete failed: no selected view".to_string();
                     return Ok(false);
                 };
+                if is_immutable_view(&view) {
+                    self.mode = Mode::ViewPicker;
+                    self.status = "Delete failed: All Items view is immutable".to_string();
+                    return Ok(false);
+                }
                 let deleted_index = self.picker_index.min(self.views.len().saturating_sub(1));
                 match agenda.store().delete_view(view.id) {
                     Ok(()) => {
