@@ -139,6 +139,12 @@ enum Command {
         #[command(subcommand)]
         command: LinkCommand,
     },
+
+    /// Remove item-to-item links (canonical unlink entrypoint)
+    Unlink {
+        #[command(subcommand)]
+        command: UnlinkCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -269,24 +275,25 @@ enum LinkCommand {
         item_a_id: String,
         item_b_id: String,
     },
+}
 
-    /// Remove a dependency link: ITEM no longer depends on DEPENDS_ON_ITEM
-    #[command(name = "unlink-depends-on")]
-    UnlinkDependsOn {
-        item_id: String,
-        depends_on_item_id: String,
-    },
-
+#[derive(Subcommand, Debug)]
+enum UnlinkCommand {
     /// Remove inverse dependency vocabulary: BLOCKER no longer blocks BLOCKED
-    #[command(name = "unlink-blocks")]
-    UnlinkBlocks {
+    Blocks {
         blocker_item_id: String,
         blocked_item_id: String,
     },
 
+    /// Remove a dependency link: ITEM no longer depends on DEPENDS_ON_ITEM
+    #[command(name = "depends-on")]
+    DependsOn {
+        item_id: String,
+        depends_on_item_id: String,
+    },
+
     /// Remove a related link
-    #[command(name = "unlink-related")]
-    UnlinkRelated {
+    Related {
         item_a_id: String,
         item_b_id: String,
     },
@@ -361,6 +368,7 @@ fn run() -> Result<(), String> {
         Command::Category { command } => cmd_category(&agenda, &store, command),
         Command::View { command } => cmd_view(&agenda, &store, command),
         Command::Link { command } => cmd_link(&agenda, command),
+        Command::Unlink { command } => cmd_unlink(&agenda, command),
         Command::Tui => Ok(()),
     }
 }
@@ -761,43 +769,62 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             }
             Ok(())
         }
-        LinkCommand::UnlinkDependsOn {
-            item_id,
-            depends_on_item_id,
-        } => {
-            let item_id = parse_item_id(&item_id)?;
-            let depends_on_item_id = parse_item_id(&depends_on_item_id)?;
-            agenda
-                .unlink_items_depends_on(item_id, depends_on_item_id)
-                .map_err(|e| e.to_string())?;
-            println!("unlinked {} depends-on {}", item_id, depends_on_item_id);
-            Ok(())
-        }
-        LinkCommand::UnlinkBlocks {
+    }
+}
+
+fn cmd_unlink(agenda: &Agenda<'_>, command: UnlinkCommand) -> Result<(), String> {
+    match command {
+        UnlinkCommand::Blocks {
             blocker_item_id,
             blocked_item_id,
-        } => {
-            let blocker_item_id = parse_item_id(&blocker_item_id)?;
-            let blocked_item_id = parse_item_id(&blocked_item_id)?;
-            agenda
-                .unlink_items_blocks(blocker_item_id, blocked_item_id)
-                .map_err(|e| e.to_string())?;
-            println!("unlinked {} blocks {}", blocker_item_id, blocked_item_id);
-            Ok(())
-        }
-        LinkCommand::UnlinkRelated {
+        } => unlink_blocks(agenda, blocker_item_id, blocked_item_id),
+        UnlinkCommand::DependsOn {
+            item_id,
+            depends_on_item_id,
+        } => unlink_depends_on(agenda, item_id, depends_on_item_id),
+        UnlinkCommand::Related {
             item_a_id,
             item_b_id,
-        } => {
-            let item_a_id = parse_item_id(&item_a_id)?;
-            let item_b_id = parse_item_id(&item_b_id)?;
-            agenda
-                .unlink_items_related(item_a_id, item_b_id)
-                .map_err(|e| e.to_string())?;
-            println!("unlinked {} related {}", item_a_id, item_b_id);
-            Ok(())
-        }
+        } => unlink_related(agenda, item_a_id, item_b_id),
     }
+}
+
+fn unlink_depends_on(
+    agenda: &Agenda<'_>,
+    item_id: String,
+    depends_on_item_id: String,
+) -> Result<(), String> {
+    let item_id = parse_item_id(&item_id)?;
+    let depends_on_item_id = parse_item_id(&depends_on_item_id)?;
+    agenda
+        .unlink_items_depends_on(item_id, depends_on_item_id)
+        .map_err(|e| e.to_string())?;
+    println!("unlinked {} depends-on {}", item_id, depends_on_item_id);
+    Ok(())
+}
+
+fn unlink_blocks(
+    agenda: &Agenda<'_>,
+    blocker_item_id: String,
+    blocked_item_id: String,
+) -> Result<(), String> {
+    let blocker_item_id = parse_item_id(&blocker_item_id)?;
+    let blocked_item_id = parse_item_id(&blocked_item_id)?;
+    agenda
+        .unlink_items_blocks(blocker_item_id, blocked_item_id)
+        .map_err(|e| e.to_string())?;
+    println!("unlinked {} blocks {}", blocker_item_id, blocked_item_id);
+    Ok(())
+}
+
+fn unlink_related(agenda: &Agenda<'_>, item_a_id: String, item_b_id: String) -> Result<(), String> {
+    let item_a_id = parse_item_id(&item_a_id)?;
+    let item_b_id = parse_item_id(&item_b_id)?;
+    agenda
+        .unlink_items_related(item_a_id, item_b_id)
+        .map_err(|e| e.to_string())?;
+    println!("unlinked {} related {}", item_a_id, item_b_id);
+    Ok(())
 }
 
 fn item_link_section_lines(store: &Store, item_id: ItemId) -> Result<Vec<String>, String> {
@@ -1896,11 +1923,12 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
+        cmd_unlink, cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
         item_link_section_lines, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
         reject_items_with_any_categories, retain_items_with_all_categories,
         retain_items_with_any_categories, unknown_hashtag_feedback_line, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, ViewCommand,
+        CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, UnlinkCommand,
+        ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -1992,20 +2020,20 @@ mod tests {
     }
 
     #[test]
-    fn clap_parses_link_unlink_related_subcommand() {
+    fn clap_parses_top_level_unlink_depends_on_subcommand() {
         let cli =
-            Cli::try_parse_from(["agenda", "link", "unlink-related", "a", "b"]).expect("parse CLI");
+            Cli::try_parse_from(["agenda", "unlink", "depends-on", "a", "b"]).expect("parse CLI");
 
         match cli.command {
-            Some(Command::Link {
+            Some(Command::Unlink {
                 command:
-                    LinkCommand::UnlinkRelated {
-                        item_a_id,
-                        item_b_id,
+                    UnlinkCommand::DependsOn {
+                        item_id,
+                        depends_on_item_id,
                     },
             }) => {
-                assert_eq!(item_a_id, "a");
-                assert_eq!(item_b_id, "b");
+                assert_eq!(item_id, "a");
+                assert_eq!(depends_on_item_id, "b");
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -2425,5 +2453,34 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("Task B")));
         assert!(lines.iter().any(|line| line.contains("Task C")));
         assert!(lines.iter().any(|line| line.contains("Task D")));
+    }
+
+    #[test]
+    fn cmd_unlink_removes_dependency_link() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        agenda
+            .link_items_depends_on(a.id, b.id)
+            .expect("link depends-on");
+
+        cmd_unlink(
+            &agenda,
+            UnlinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("unlink via canonical command");
+        assert!(store
+            .list_dependency_ids_for_item(a.id)
+            .expect("list dependencies")
+            .is_empty());
     }
 }
