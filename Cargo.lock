@@ -11,6 +11,8 @@ dependencies = [
  "chrono",
  "clap",
  "rust_decimal",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 

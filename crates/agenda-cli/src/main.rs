@@ -15,6 +15,7 @@ use agenda_core::store::Store;
 use chrono::{Local, NaiveDateTime};
 use clap::{Parser, Subcommand, ValueEnum};
 use rust_decimal::Decimal;
+use serde::Serialize;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -42,6 +43,12 @@ impl CategoryTypeArg {
             Self::Numeric => CategoryValueKind::Numeric,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+enum OutputFormatArg {
+    Table,
+    Json,
 }
 
 #[derive(Subcommand, Debug)]
@@ -76,10 +83,19 @@ enum Command {
         /// Category filter (repeat for AND). Item must have ALL specified categories.
         #[arg(long)]
         category: Vec<String>,
+        /// OR-category filter (repeat for OR). Item must have AT LEAST ONE specified category.
+        #[arg(long = "any-category")]
+        any_category: Vec<String>,
+        /// Exclude-category filter (repeat for OR). Item must have NONE of the specified categories.
+        #[arg(long = "exclude-category")]
+        exclude_category: Vec<String>,
         /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
         /// Optional suffix `:asc` or `:desc` (default: asc).
         #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
         sort: Vec<String>,
+        /// Output format.
+        #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
+        format: OutputFormatArg,
         #[arg(long)]
         include_done: bool,
     },
@@ -87,6 +103,9 @@ enum Command {
     /// Search item text and note
     Search {
         query: String,
+        /// Output format.
+        #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
+        format: OutputFormatArg,
         #[arg(long)]
         include_done: bool,
     },
@@ -207,6 +226,9 @@ enum ViewCommand {
         /// Optional suffix `:asc` or `:desc` (default: asc).
         #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
         sort: Vec<String>,
+        /// Output format.
+        #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
+        format: OutputFormatArg,
     },
 
     /// Create a basic view from include/exclude categories
@@ -283,7 +305,10 @@ fn run() -> Result<(), String> {
     let command = cli.command.unwrap_or(Command::List {
         view: None,
         category: Vec::new(),
+        any_category: Vec::new(),
+        exclude_category: Vec::new(),
         sort: Vec::new(),
+        format: OutputFormatArg::Table,
         include_done: false,
     });
 
@@ -308,13 +333,28 @@ fn run() -> Result<(), String> {
         Command::List {
             view,
             category,
+            any_category,
+            exclude_category,
             sort,
+            format,
             include_done,
-        } => cmd_list(&store, view, category, sort, include_done),
+        } => cmd_list(
+            &store,
+            view,
+            ListFilters {
+                all_categories: category,
+                any_categories: any_category,
+                exclude_categories: exclude_category,
+                include_done,
+            },
+            sort,
+            format,
+        ),
         Command::Search {
             query,
+            format,
             include_done,
-        } => cmd_search(&store, query, include_done),
+        } => cmd_search(&store, query, format, include_done),
         Command::Delete { item_id } => cmd_delete(&agenda, item_id),
         Command::Deleted => cmd_deleted(&store),
         Command::Restore { log_id } => cmd_restore(&store, log_id),
@@ -498,15 +538,22 @@ fn unknown_hashtag_feedback_line(unknown_hashtags: &[String]) -> Option<String> 
     ))
 }
 
+struct ListFilters {
+    all_categories: Vec<String>,
+    any_categories: Vec<String>,
+    exclude_categories: Vec<String>,
+    include_done: bool,
+}
+
 fn cmd_list(
     store: &Store,
     view_name: Option<String>,
-    category_filters: Vec<String>,
+    filters: ListFilters,
     sort_args: Vec<String>,
-    include_done: bool,
+    output_format: OutputFormatArg,
 ) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
-    if !include_done {
+    if !filters.include_done {
         items.retain(|item| !item.is_done);
     }
 
@@ -514,12 +561,29 @@ fn cmd_list(
     let category_names = category_name_map(&categories);
     let sort_keys = parse_sort_specs(&sort_args, &categories)?;
 
-    if !category_filters.is_empty() {
-        let category_ids: Vec<CategoryId> = category_filters
+    if !filters.all_categories.is_empty() {
+        let category_ids: Vec<CategoryId> = filters
+            .all_categories
             .into_iter()
             .map(|name| category_id_by_name(&categories, &name))
             .collect::<Result<Vec<_>, _>>()?;
         retain_items_with_all_categories(&mut items, &category_ids);
+    }
+    if !filters.any_categories.is_empty() {
+        let category_ids: Vec<CategoryId> = filters
+            .any_categories
+            .into_iter()
+            .map(|name| category_id_by_name(&categories, &name))
+            .collect::<Result<Vec<_>, _>>()?;
+        retain_items_with_any_categories(&mut items, &category_ids);
+    }
+    if !filters.exclude_categories.is_empty() {
+        let category_ids: Vec<CategoryId> = filters
+            .exclude_categories
+            .into_iter()
+            .map(|name| category_id_by_name(&categories, &name))
+            .collect::<Result<Vec<_>, _>>()?;
+        reject_items_with_any_categories(&mut items, &category_ids);
     }
 
     let resolved_view = if let Some(view_name) = view_name {
@@ -533,7 +597,16 @@ fn cmd_list(
     };
 
     if let Some(view) = resolved_view {
-        print_items_for_view(&view, &items, &categories, &category_names, &sort_keys);
+        print_items_for_view(
+            &view,
+            &items,
+            &categories,
+            &category_names,
+            &sort_keys,
+            output_format,
+        )?;
+    } else if output_format == OutputFormatArg::Json {
+        print_items_json(&items, &category_names, &sort_keys, &categories)?;
     } else {
         print_item_table(&items, &category_names, &sort_keys, &categories);
     }
@@ -548,7 +621,28 @@ fn retain_items_with_all_categories(items: &mut Vec<Item>, category_ids: &[Categ
     });
 }
 
-fn cmd_search(store: &Store, query: String, include_done: bool) -> Result<(), String> {
+fn retain_items_with_any_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
+    items.retain(|item| {
+        category_ids
+            .iter()
+            .any(|id| item.assignments.contains_key(id))
+    });
+}
+
+fn reject_items_with_any_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
+    items.retain(|item| {
+        category_ids
+            .iter()
+            .all(|id| !item.assignments.contains_key(id))
+    });
+}
+
+fn cmd_search(
+    store: &Store,
+    query: String,
+    output_format: OutputFormatArg,
+    include_done: bool,
+) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
     if !include_done {
         items.retain(|item| !item.is_done);
@@ -565,7 +659,11 @@ fn cmd_search(store: &Store, query: String, include_done: bool) -> Result<(), St
     let matches = evaluate_query(&q, &items, reference_date);
 
     let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
-    print_item_table(&matched_items, &category_names, &[], &categories);
+    if output_format == OutputFormatArg::Json {
+        print_items_json(&matched_items, &category_names, &[], &categories)?;
+    } else {
+        print_item_table(&matched_items, &category_names, &[], &categories);
+    }
     Ok(())
 }
 
@@ -1146,13 +1244,20 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
             Ok(())
         }
-        ViewCommand::Show { name, sort } => {
+        ViewCommand::Show { name, sort, format } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
             let items = store.list_items().map_err(|e| e.to_string())?;
             let view = view_by_name(store, &name)?;
             let sort_keys = parse_sort_specs(&sort, &categories)?;
-            print_items_for_view(&view, &items, &categories, &category_names, &sort_keys);
+            print_items_for_view(
+                &view,
+                &items,
+                &categories,
+                &category_names,
+                &sort_keys,
+                format,
+            )?;
             Ok(())
         }
         ViewCommand::Create {
@@ -1341,16 +1446,174 @@ fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, CliSortDirection),
     }
 }
 
+#[derive(Serialize)]
+struct JsonItemRow {
+    id: String,
+    text: String,
+    status: String,
+    is_done: bool,
+    when: Option<String>,
+    categories: Vec<String>,
+    note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct JsonItemsOutput {
+    items: Vec<JsonItemRow>,
+}
+
+#[derive(Serialize)]
+struct JsonViewSubsectionOutput {
+    title: String,
+    items: Vec<JsonItemRow>,
+}
+
+#[derive(Serialize)]
+struct JsonViewSectionOutput {
+    title: String,
+    items: Vec<JsonItemRow>,
+    subsections: Vec<JsonViewSubsectionOutput>,
+}
+
+#[derive(Serialize)]
+struct JsonViewOutput {
+    view: String,
+    sections: Vec<JsonViewSectionOutput>,
+    unmatched_label: Option<String>,
+    unmatched: Option<Vec<JsonItemRow>>,
+}
+
+fn sorted_rows<'a>(
+    items: &'a [Item],
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> Vec<&'a Item> {
+    let mut rows: Vec<&Item> = items.iter().collect();
+    if !sort_keys.is_empty() {
+        rows.sort_by(|left, right| compare_items_by_sort_keys(left, right, sort_keys, categories));
+    }
+    rows
+}
+
+fn item_categories(item: &Item, category_names: &HashMap<CategoryId, String>) -> Vec<String> {
+    let mut names: Vec<String> = item
+        .assignments
+        .keys()
+        .filter_map(|id| category_names.get(id))
+        .cloned()
+        .collect();
+    names.sort_by_key(|name| name.to_ascii_lowercase());
+    names
+}
+
+fn item_row(item: &Item, category_names: &HashMap<CategoryId, String>) -> JsonItemRow {
+    JsonItemRow {
+        id: item.id.to_string(),
+        text: item.text.clone(),
+        status: if item.is_done {
+            "done".to_string()
+        } else {
+            "open".to_string()
+        },
+        is_done: item.is_done,
+        when: item.when_date.map(|dt| dt.to_string()),
+        categories: item_categories(item, category_names),
+        note: item.note.clone(),
+    }
+}
+
+fn rows_to_json(
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> Vec<JsonItemRow> {
+    sorted_rows(items, sort_keys, categories)
+        .into_iter()
+        .map(|item| item_row(item, category_names))
+        .collect()
+}
+
+fn print_items_json(
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> Result<(), String> {
+    let payload = JsonItemsOutput {
+        items: rows_to_json(items, category_names, sort_keys, categories),
+    };
+    let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    println!("{body}");
+    Ok(())
+}
+
 fn print_items_for_view(
     view: &View,
     items: &[Item],
     categories: &[Category],
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
-) {
+    output_format: OutputFormatArg,
+) -> Result<(), String> {
     let reference_date = Local::now().date_naive();
     let result = resolve_view(view, items, categories, reference_date);
     let has_sections = !result.sections.is_empty();
+
+    if output_format == OutputFormatArg::Json {
+        let mut sections = Vec::new();
+        for section in result.sections {
+            if section.subsections.is_empty() {
+                sections.push(JsonViewSectionOutput {
+                    title: section.title,
+                    items: rows_to_json(&section.items, category_names, sort_keys, categories),
+                    subsections: Vec::new(),
+                });
+                continue;
+            }
+
+            let mut subsections = Vec::new();
+            for subsection in section.subsections {
+                subsections.push(JsonViewSubsectionOutput {
+                    title: subsection.title,
+                    items: rows_to_json(&subsection.items, category_names, sort_keys, categories),
+                });
+            }
+
+            sections.push(JsonViewSectionOutput {
+                title: section.title,
+                items: Vec::new(),
+                subsections,
+            });
+        }
+
+        let unmatched = result.unmatched.and_then(|rows| {
+            if rows.is_empty() {
+                None
+            } else {
+                Some(rows_to_json(&rows, category_names, sort_keys, categories))
+            }
+        });
+        let unmatched_label = if unmatched.is_some() {
+            Some(
+                result
+                    .unmatched_label
+                    .unwrap_or_else(|| "Unassigned".to_string()),
+            )
+        } else {
+            None
+        };
+
+        let payload = JsonViewOutput {
+            view: view.name.clone(),
+            sections,
+            unmatched_label,
+            unmatched,
+        };
+        let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+        println!("{body}");
+        return Ok(());
+    }
 
     println!("# {}", view.name);
 
@@ -1371,7 +1634,7 @@ fn print_items_for_view(
         if !unmatched.is_empty() {
             if !has_sections {
                 print_item_table(&unmatched, category_names, sort_keys, categories);
-                return;
+                return Ok(());
             }
 
             let heading = result
@@ -1386,6 +1649,7 @@ fn print_items_for_view(
             print_item_table(&unmatched, category_names, sort_keys, categories);
         }
     }
+    Ok(())
 }
 
 fn print_item_table(
@@ -1399,32 +1663,74 @@ fn print_item_table(
         return;
     }
 
-    let mut rows: Vec<&Item> = items.iter().collect();
-    if !sort_keys.is_empty() {
-        rows.sort_by(|left, right| compare_items_by_sort_keys(left, right, sort_keys, categories));
-    }
+    let rows = sorted_rows(items, sort_keys, categories);
+    let id_width = rows
+        .iter()
+        .map(|item| item.id.to_string().len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    let status_width = 6usize;
+    let when_width = 19usize;
+
+    println!(
+        "{:<id_width$}  {:<status_width$}  {:<when_width$}  TITLE",
+        "ID",
+        "STATUS",
+        "WHEN",
+        id_width = id_width,
+        status_width = status_width,
+        when_width = when_width
+    );
+    println!(
+        "{}  {}  {}  -----",
+        "-".repeat(id_width),
+        "-".repeat(status_width),
+        "-".repeat(when_width)
+    );
 
     for item in rows {
         let when = item
             .when_date
             .map(|dt| dt.to_string())
             .unwrap_or_else(|| "-".to_string());
-        let done = if item.is_done { "done" } else { "open" };
-        println!("{} | {} | {} | {}", item.id, done, when, item.text);
+        let status = if item.is_done { "done" } else { "open" };
+        println!(
+            "{:<id_width$}  {:<status_width$}  {:<when_width$}  {}",
+            item.id,
+            status,
+            when,
+            item.text,
+            id_width = id_width,
+            status_width = status_width,
+            when_width = when_width
+        );
 
-        if !item.assignments.is_empty() {
-            let mut names: Vec<String> = item
-                .assignments
-                .keys()
-                .filter_map(|id| category_names.get(id))
-                .cloned()
-                .collect();
-            names.sort_by_key(|name| name.to_ascii_lowercase());
-            println!("  categories: {}", names.join(", "));
+        let categories = item_categories(item, category_names);
+        if !categories.is_empty() {
+            println!(
+                "{:<id_width$}  {:<status_width$}  {:<when_width$}  categories: {}",
+                "",
+                "",
+                "",
+                categories.join(", "),
+                id_width = id_width,
+                status_width = status_width,
+                when_width = when_width
+            );
         }
 
         if let Some(note) = &item.note {
-            println!("  note: {}", note.replace('\n', " "));
+            println!(
+                "{:<id_width$}  {:<status_width$}  {:<when_width$}  note: {}",
+                "",
+                "",
+                "",
+                note.replace('\n', " "),
+                id_width = id_width,
+                status_width = status_width,
+                when_width = when_width
+            );
         }
     }
 }
@@ -1592,8 +1898,9 @@ mod tests {
     use super::{
         compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
         parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        retain_items_with_all_categories, unknown_hashtag_feedback_line, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, ViewCommand,
+        reject_items_with_any_categories, retain_items_with_all_categories,
+        retain_items_with_any_categories, unknown_hashtag_feedback_line, Cli, CliSortDirection,
+        CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -1751,16 +2058,102 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_repeated_any_category_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--any-category",
+            "Aglet",
+            "--any-category",
+            "NeoNV",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { any_category, .. }) => {
+                assert_eq!(any_category, vec!["Aglet".to_string(), "NeoNV".to_string()]);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_repeated_exclude_category_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--exclude-category",
+            "Complete",
+            "--exclude-category",
+            "Deferred",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List {
+                exclude_category, ..
+            }) => {
+                assert_eq!(
+                    exclude_category,
+                    vec!["Complete".to_string(), "Deferred".to_string()]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_view_show_with_sort_flag() {
         let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--sort", "when"])
             .expect("parse CLI");
 
         match cli.command {
             Some(Command::View {
-                command: ViewCommand::Show { name, sort },
+                command: ViewCommand::Show { name, sort, format },
             }) => {
                 assert_eq!(name, "All Items");
                 assert_eq!(sort, vec!["when".to_string()]);
+                assert_eq!(format, OutputFormatArg::Table);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_json_format() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--format", "json"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { format, .. }) => {
+                assert_eq!(format, OutputFormatArg::Json);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_search_with_json_format() {
+        let cli = Cli::try_parse_from(["agenda", "search", "foo", "--format", "json"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Search { format, .. }) => {
+                assert_eq!(format, OutputFormatArg::Json);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_show_with_json_format() {
+        let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--format", "json"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command: ViewCommand::Show { format, .. },
+            }) => {
+                assert_eq!(format, OutputFormatArg::Json);
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -1886,6 +2279,85 @@ mod tests {
 
         let remaining_texts: Vec<String> = rows.into_iter().map(|item| item.text).collect();
         assert_eq!(remaining_texts, vec!["Both".to_string()]);
+    }
+
+    #[test]
+    fn retain_items_with_any_categories_enforces_or_semantics() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let aglet = Category::new("Aglet".to_string());
+        let neonv = Category::new("NeoNV".to_string());
+        let other = Category::new("Project3".to_string());
+        store.create_category(&aglet).expect("create aglet");
+        store.create_category(&neonv).expect("create neonv");
+        store.create_category(&other).expect("create project3");
+
+        let aglet_item = Item::new("Aglet item".to_string());
+        let neonv_item = Item::new("NeoNV item".to_string());
+        let other_item = Item::new("Project3 item".to_string());
+        store.create_item(&aglet_item).expect("create aglet item");
+        store.create_item(&neonv_item).expect("create neonv item");
+        store
+            .create_item(&other_item)
+            .expect("create project3 item");
+
+        agenda
+            .assign_item_manual(aglet_item.id, aglet.id, Some("test:assign".to_string()))
+            .expect("assign aglet");
+        agenda
+            .assign_item_manual(neonv_item.id, neonv.id, Some("test:assign".to_string()))
+            .expect("assign neonv");
+        agenda
+            .assign_item_manual(other_item.id, other.id, Some("test:assign".to_string()))
+            .expect("assign project3");
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_with_any_categories(&mut rows, &[aglet.id, neonv.id]);
+
+        let mut remaining_texts: Vec<String> = rows.into_iter().map(|item| item.text).collect();
+        remaining_texts.sort();
+        assert_eq!(
+            remaining_texts,
+            vec!["Aglet item".to_string(), "NeoNV item".to_string()]
+        );
+    }
+
+    #[test]
+    fn reject_items_with_any_categories_enforces_not_semantics() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let complete = Category::new("Complete".to_string());
+        let in_progress = Category::new("In Progress".to_string());
+        store.create_category(&complete).expect("create complete");
+        store
+            .create_category(&in_progress)
+            .expect("create in-progress");
+
+        let done_item = Item::new("Done item".to_string());
+        let active_item = Item::new("Active item".to_string());
+        store.create_item(&done_item).expect("create done item");
+        store.create_item(&active_item).expect("create active item");
+
+        agenda
+            .assign_item_manual(done_item.id, complete.id, Some("test:assign".to_string()))
+            .expect("assign complete");
+        agenda
+            .assign_item_manual(
+                active_item.id,
+                in_progress.id,
+                Some("test:assign".to_string()),
+            )
+            .expect("assign in-progress");
+
+        let mut rows = store.list_items().expect("list items");
+        reject_items_with_any_categories(&mut rows, &[complete.id]);
+
+        let remaining_texts: Vec<String> = rows.into_iter().map(|item| item.text).collect();
+        assert_eq!(remaining_texts, vec!["Active item".to_string()]);
     }
 
     #[test]
