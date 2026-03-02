@@ -4025,9 +4025,18 @@ impl App {
                         .iter()
                         .position(|&i| i == state.picker_index)
                         .unwrap_or(0);
+                    let is_criteria_picker = matches!(
+                        target,
+                        CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                    );
+                    let toggle_hint = if is_criteria_picker {
+                        "Space/Enter cycle mode"
+                    } else {
+                        "Space/Enter toggle"
+                    };
                     let title = if overlay_filter.trim().is_empty() {
                         format!(
-                            " Pick categories  {}/{}  (type filter, Space/Enter toggle, Esc done) ",
+                            " Pick categories  {}/{}  (type filter, {toggle_hint}, Esc done) ",
                             (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
                             filtered_indices.len()
                         )
@@ -4047,42 +4056,69 @@ impl App {
                         .filter(|(i, _)| filtered_indices.contains(i))
                         .map(|(i, row)| {
                             let indent = "  ".repeat(row.depth);
-                            let checked = match target {
-                                CategoryEditTarget::ViewCriteria => {
-                                    state.draft.criteria.mode_for(row.id).is_some()
-                                }
-                                CategoryEditTarget::SectionCriteria => state
-                                    .draft
-                                    .sections
-                                    .get(section_expanded)
-                                    .map(|section| section.criteria.mode_for(row.id).is_some())
-                                    .unwrap_or(false),
-                                CategoryEditTarget::SectionColumns => state
-                                    .draft
-                                    .sections
-                                    .get(section_expanded)
-                                    .map(|section| {
-                                        section.columns.iter().any(|col| col.heading == row.id)
-                                    })
-                                    .unwrap_or(false),
-                                CategoryEditTarget::SectionOnInsertAssign => state
-                                    .draft
-                                    .sections
-                                    .get(section_expanded)
-                                    .map(|section| section.on_insert_assign.contains(&row.id))
-                                    .unwrap_or(false),
-                                CategoryEditTarget::SectionOnRemoveUnassign => state
-                                    .draft
-                                    .sections
-                                    .get(section_expanded)
-                                    .map(|section| section.on_remove_unassign.contains(&row.id))
-                                    .unwrap_or(false),
-                            };
-                            let label = format!(
-                                "{indent}[{}] {}",
-                                if checked { "x" } else { " " },
-                                row.name
+                            let is_criteria_target = matches!(
+                                target,
+                                CategoryEditTarget::ViewCriteria
+                                    | CategoryEditTarget::SectionCriteria
                             );
+                            let criterion_mode = if is_criteria_target {
+                                let query = match target {
+                                    CategoryEditTarget::ViewCriteria => {
+                                        Some(&state.draft.criteria)
+                                    }
+                                    CategoryEditTarget::SectionCriteria => state
+                                        .draft
+                                        .sections
+                                        .get(section_expanded)
+                                        .map(|s| &s.criteria),
+                                    _ => None,
+                                };
+                                query.and_then(|q| q.mode_for(row.id))
+                            } else {
+                                None
+                            };
+                            let label = if is_criteria_target {
+                                let tag = match criterion_mode {
+                                    None => "   ",
+                                    Some(CriterionMode::And) => "Inc",
+                                    Some(CriterionMode::Not) => "Exc",
+                                    Some(CriterionMode::Or) => "Any",
+                                };
+                                format!("{indent}[{tag}] {}", row.name)
+                            } else {
+                                let checked = match target {
+                                    CategoryEditTarget::SectionColumns => state
+                                        .draft
+                                        .sections
+                                        .get(section_expanded)
+                                        .map(|section| {
+                                            section.columns.iter().any(|col| col.heading == row.id)
+                                        })
+                                        .unwrap_or(false),
+                                    CategoryEditTarget::SectionOnInsertAssign => state
+                                        .draft
+                                        .sections
+                                        .get(section_expanded)
+                                        .map(|section| {
+                                            section.on_insert_assign.contains(&row.id)
+                                        })
+                                        .unwrap_or(false),
+                                    CategoryEditTarget::SectionOnRemoveUnassign => state
+                                        .draft
+                                        .sections
+                                        .get(section_expanded)
+                                        .map(|section| {
+                                            section.on_remove_unassign.contains(&row.id)
+                                        })
+                                        .unwrap_or(false),
+                                    _ => false,
+                                };
+                                format!(
+                                    "{indent}[{}] {}",
+                                    if checked { "x" } else { " " },
+                                    row.name
+                                )
+                            };
                             let style = if i == state.picker_index {
                                 Style::default().add_modifier(Modifier::REVERSED)
                             } else {
