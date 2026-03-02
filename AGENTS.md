@@ -261,3 +261,16 @@ Related gotcha: dynamic board rendering can append a synthetic "All Categories"
 column. If that synthetic column is enabled, reserve one additional spacing
 slot; otherwise the synthetic column can consume the separator budget and defeat
 the minimum visible gap guarantee.
+
+## Full `cargo test` currently has known `agenda-tui` failures
+
+As of 2026-03-02, running full `cargo test` in this repo can fail in
+`agenda-tui` on view-edit tests (for example `store_section_roundtrip_smoke`,
+`view_edit_esc_on_dirty_prompts_before_cancel`,
+`view_edit_navigation_keys_do_not_request_app_quit`,
+`view_picker_e_opens_view_edit`) due to current behavior around immutable
+system view handling (`All Items`), not CLI list filtering changes.
+
+For CLI-only tasks, run targeted checks like `cargo test -p agenda-cli` after
+`cargo fmt` and `cargo clippy --all-targets --all-features`, and report the
+known unrelated full-suite failures explicitly.
