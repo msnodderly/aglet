@@ -1,7 +1,6 @@
 # Aglet Codebase Walkthrough
 
-*2026-02-25T01:28:52Z by Showboat 0.6.1*
-<!-- showboat-id: 3e04c8a4-3e4c-4bcf-8273-6036d0a3ba4c -->
+*2026-03-01 — updated to reflect current codebase*
 
 Aglet is a personal agenda and task-management system built in Rust. It is a workspace of three crates:
 
@@ -31,18 +30,55 @@ members = [
 ]```
 ```
 
-Each crate has a focused purpose. `agenda-core` depends only on rusqlite, uuid, chrono, serde. The CLI adds clap. The TUI adds ratatui and crossterm. Both frontends depend on `agenda-core`.
+Each crate has a focused purpose. `agenda-core` depends on rusqlite, uuid, chrono, serde, and rust_decimal. The CLI adds clap. The TUI adds ratatui and crossterm. Both frontends depend on `agenda-core`.
 
 ## 2. The Data Model (`agenda-core/src/model.rs`)
 
 Everything starts with four core entities: **Items**, **Categories**, **Views**, and **Assignments**. Let us look at each.
+
+### Item Links
+
+Before the core entities, the model defines **item-to-item links**. Links come in two kinds: `DependsOn` (directed dependency) and `Related` (bidirectional). The `ItemLinksForItem` struct provides a convenience view of all links for a single item.
+
+```bash
+sed -n "10,35p" crates/agenda-core/src/model.rs
+```
+
+```output
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ItemLinkKind {
+    #[serde(rename = "depends-on")]
+    DependsOn,
+    #[serde(rename = "related")]
+    Related,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemLink {
+    /// Endpoint semantics depend on `kind`:
+    /// - DependsOn: item_id = dependent, other_item_id = dependency
+    /// - Related: normalized unordered pair (item_id < other_item_id)
+    pub item_id: ItemId,
+    pub other_item_id: ItemId,
+    pub kind: ItemLinkKind,
+    pub created_at: DateTime<Utc>,
+    pub origin: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ItemLinksForItem {
+    pub depends_on: Vec<ItemId>,
+    pub blocks: Vec<ItemId>,
+    pub related: Vec<ItemId>,
+}
+```
 
 ### Items
 
 An Item is a task or note. It has text, an optional note, timestamps, an optional `when_date` (parsed from natural language), and a `done` state. Its `assignments` map holds all the categories it belongs to.
 
 ```bash
-sed -n "9,21p" crates/agenda-core/src/model.rs
+sed -n "37,49p" crates/agenda-core/src/model.rs
 ```
 
 ```output
@@ -63,10 +99,10 @@ pub struct Item {
 
 ### Assignments
 
-Each assignment records *how* an item came to be in a category. The `AssignmentSource` enum distinguishes manual assignments from engine-driven ones: `Manual` (user did it), `AutoMatch` (implicit string matching), `Action` (a rule fired), or `Subsumption` (inherited from a child category up to its parent).
+Each assignment records *how* an item came to be in a category. The `AssignmentSource` enum distinguishes manual assignments from engine-driven ones: `Manual` (user did it), `AutoMatch` (implicit string matching), `Action` (a rule fired), or `Subsumption` (inherited from a child category up to its parent). Numeric categories can carry a `numeric_value` on their assignment.
 
 ```bash
-sed -n "23,37p" crates/agenda-core/src/model.rs
+sed -n "51,67p" crates/agenda-core/src/model.rs
 ```
 
 ```output
@@ -76,6 +112,8 @@ pub struct Assignment {
     pub assigned_at: DateTime<Utc>,
     pub sticky: bool,
     pub origin: Option<String>,
+    #[serde(default)]
+    pub numeric_value: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,10 +127,10 @@ pub enum AssignmentSource {
 
 ### Categories
 
-Categories form a tree. A parent can be marked `is_exclusive`, meaning only one of its children can be assigned to an item at a time (e.g., a "Priority" parent with children "High" / "Medium" / "Low"). Categories can carry **conditions** (rules that auto-match items) and **actions** (side-effects that fire when the category is assigned).
+Categories form a tree. A parent can be marked `is_exclusive`, meaning only one of its children can be assigned to an item at a time (e.g., a "Priority" parent with children "High" / "Medium" / "Low"). Categories can carry **conditions** (rules that auto-match items) and **actions** (side-effects that fire when the category is assigned). Categories also have a `value_kind` (Tag or Numeric) and an optional `numeric_format` for display formatting.
 
 ```bash
-sed -n "39,65p" crates/agenda-core/src/model.rs
+sed -n "69,130p" crates/agenda-core/src/model.rs
 ```
 
 ```output
@@ -110,8 +148,29 @@ pub struct Category {
     pub modified_at: DateTime<Utc>,
     pub conditions: Vec<Condition>,
     pub actions: Vec<Action>,
+    #[serde(default)]
+    pub value_kind: CategoryValueKind,
+    #[serde(default)]
+    pub numeric_format: Option<NumericFormat>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CategoryValueKind {
+    #[default]
+    Tag,
+    Numeric,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NumericFormat {
+    #[serde(default = "default_numeric_decimal_places")]
+    pub decimal_places: u8,
+    #[serde(default)]
+    pub currency_symbol: Option<String>,
+    #[serde(default)]
+    pub use_thousands_separator: bool,
+}
+...
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
     ImplicitString,
@@ -130,6 +189,7 @@ Key flags on `Category`:
 - **`is_exclusive`** — on a parent, enforces mutual exclusion among its children.
 - **`is_actionable`** — items must have at least one actionable category to be marked "done".
 - **`enable_implicit_string`** — controls whether the substring classifier auto-matches the category name in item text. Reserved categories (When, Entry, Done) have this disabled so words like "done" in normal text do not trigger assignment.
+- **`value_kind`** — `Tag` (default, boolean presence) or `Numeric` (carries a decimal value on its assignment).
 
 The two `Condition` variants:
 - `ImplicitString` — matches if the category name appears as a whole word in item text.
@@ -151,7 +211,7 @@ Both views and sections use **Query**, which combines:
 - **Text search**: optional free-text filter.
 
 ```bash
-sed -n "67,102p" crates/agenda-core/src/model.rs
+sed -n "132,167p" crates/agenda-core/src/model.rs
 ```
 
 ```output
@@ -224,10 +284,10 @@ pub enum AgendaError {
 
 ## 4. The Storage Layer (`agenda-core/src/store.rs`)
 
-`Store` wraps a `rusqlite::Connection` and owns the SQLite schema. On first open it creates five tables and their indices:
+`Store` wraps a `rusqlite::Connection` and owns the SQLite schema. On first open it creates six tables and their indices:
 
 ```bash
-sed -n "19,90p" crates/agenda-core/src/store.rs
+sed -n "21,109p" crates/agenda-core/src/store.rs
 ```
 
 ```output
@@ -256,7 +316,9 @@ CREATE TABLE IF NOT EXISTS categories (
     modified_at            TEXT NOT NULL,
     sort_order             INTEGER NOT NULL DEFAULT 0,
     conditions_json        TEXT NOT NULL DEFAULT '[]',
-    actions_json           TEXT NOT NULL DEFAULT '[]'
+    actions_json           TEXT NOT NULL DEFAULT '[]',
+    value_kind             TEXT NOT NULL DEFAULT 'Tag',
+    numeric_format_json    TEXT NOT NULL DEFAULT 'null'
 );
 
 CREATE TABLE IF NOT EXISTS assignments (
@@ -266,6 +328,7 @@ CREATE TABLE IF NOT EXISTS assignments (
     assigned_at TEXT NOT NULL,
     sticky      INTEGER NOT NULL DEFAULT 1,
     origin      TEXT,
+    numeric_value TEXT,
     PRIMARY KEY (item_id, category_id)
 );
 
@@ -296,12 +359,24 @@ CREATE TABLE IF NOT EXISTS deletion_log (
     deleted_by       TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS item_links (
+    item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    origin        TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (item_id, other_item_id, kind),
+    CHECK (item_id <> other_item_id),
+    CHECK (kind IN ('depends-on', 'related')),
+    CHECK (kind <> 'related' OR item_id < other_item_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_assignments_item ON assignments(item_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_category ON assignments(category_id);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_items_when_date ON items(when_date);
-CREATE INDEX IF NOT EXISTS idx_items_is_done ON items(is_done);
-CREATE INDEX IF NOT EXISTS idx_deletion_log_item ON deletion_log(item_id);
+...
 ";
 ```
 
@@ -309,9 +384,10 @@ Key design points in the schema:
 
 - **UUIDs as TEXT** primary keys (generated client-side via `uuid::Uuid::new_v4()`).
 - **Category names are UNIQUE COLLATE NOCASE** — no two categories can share the same name regardless of casing.
-- **Assignments** use a composite primary key `(item_id, category_id)` and CASCADE deletes.
+- **Assignments** use a composite primary key `(item_id, category_id)` and CASCADE deletes. Numeric categories store their value in the `numeric_value` column.
 - **Views** store their criteria and sections as JSON blobs (`criteria_json`, `sections_json`).
 - **Deletion log** — deleted items are not lost. They are moved to `deletion_log` with a snapshot of their assignments, enabling restore.
+- **Item links** — directed dependency (`depends-on`) and bidirectional (`related`) links between items, with CHECK constraints ensuring self-links are forbidden and related pairs are normalized.
 
 On first launch, the store also creates three **reserved categories** (`When`, `Entry`, `Done`) and a default "All Items" view. Reserved categories have `enable_implicit_string = false` and `is_actionable = false` so they do not interfere with normal text matching.
 
@@ -521,7 +597,7 @@ fn process_item_inner(
 The engine also handles **mutual exclusion** during the cascade. When assigning a category whose parent is exclusive, `enforce_mutual_exclusion()` removes any siblings that are already assigned:
 
 ```bash
-sed -n "350,381p" crates/agenda-core/src/engine.rs
+sed -n "351,382p" crates/agenda-core/src/engine.rs
 ```
 
 ```output
@@ -564,7 +640,7 @@ fn enforce_mutual_exclusion(
 `Agenda` is the synchronous API surface that wires together the Store, Classifier, and Engine. Every mutating operation goes through `Agenda` — it is the single entry point that ensures the engine runs after each change. Here is how item creation flows:
 
 ```bash
-sed -n "14,56p" crates/agenda-core/src/agenda.rs
+sed -n "16,60p" crates/agenda-core/src/agenda.rs
 ```
 
 ```output
@@ -573,6 +649,11 @@ pub struct Agenda<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct LinkItemsResult {
+    pub created: bool,
 }
 
 impl<'a> Agenda<'a> {
@@ -620,7 +701,7 @@ The flow for `create_item` is:
 3. If a date was parsed, assign the reserved "When" category (provenance tracking).
 4. Run the rule engine via `process_item()` → auto-assigns categories, fires actions, builds subsumption chain.
 
-The Agenda layer also handles **manual assignment** with exclusive sibling enforcement, **mark done/not-done** (toggles the "Done" reserved category), **view/section insert/remove** (translates drag-and-drop semantics into category mutations), and **category CRUD** (creating a category triggers `evaluate_all_items` to retroactively match existing items).
+The Agenda layer also handles **manual assignment** with exclusive sibling enforcement, **mark done/not-done** (toggles the "Done" reserved category), **view/section insert/remove** (translates drag-and-drop semantics into category mutations), **category CRUD** (creating a category triggers `evaluate_all_items` to retroactively match existing items), and **item linking** (creating/removing dependency and related links between items).
 
 ## 9. Query & View Resolution (`agenda-core/src/query.rs`)
 
@@ -767,7 +848,7 @@ pub fn resolve_when_bucket(
 The CLI is a single-file binary using Clap's derive API. It parses a `--db` path (or `AGENDA_DB` env var, defaulting to `~/.agenda/default.ag`), opens a Store, creates an Agenda, and dispatches commands.
 
 ```bash
-sed -n "28,93p" crates/agenda-cli/src/main.rs
+sed -n "47,123p" crates/agenda-cli/src/main.rs
 ```
 
 ```output
@@ -800,8 +881,13 @@ enum Command {
     List {
         #[arg(long)]
         view: Option<String>,
+        /// Category filter (repeat for AND). Item must have ALL specified categories.
         #[arg(long)]
-        category: Option<String>,
+        category: Vec<String>,
+        /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
+        /// Optional suffix `:asc` or `:desc` (default: asc).
+        #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
+        sort: Vec<String>,
         #[arg(long)]
         include_done: bool,
     },
@@ -836,6 +922,12 @@ enum Command {
         #[command(subcommand)]
         command: ViewCommand,
     },
+
+    /// Item-to-item link commands
+    Link {
+        #[command(subcommand)]
+        command: LinkCommand,
+    },
 }
 ```
 
@@ -844,57 +936,58 @@ The CLI provides:
 - **`add`** — creates an item, runs the engine, reports parsed dates and new assignments, warns about unknown hashtags.
 - **`edit`** — updates text/note/done state, re-runs the engine.
 - **`show`** — detailed single-item view with assignment provenance.
-- **`list`** — shows items through a named view (or the default view), optionally filtered by category.
+- **`list`** — shows items through a named view (or the default view), optionally filtered by category. Supports repeatable `--category` for AND filtering and `--sort COLUMN[:asc|desc]` for multi-key sorting.
 - **`search`** — free-text search across item text and notes.
 - **`delete`** / **`deleted`** / **`restore`** — soft-delete lifecycle.
-- **`category`** subcommands — list, create, delete, rename, reparent, assign, unassign.
-- **`view`** subcommands — list, create, rename, delete, show.
+- **`category`** subcommands — list, show, create, delete, rename, reparent, update, assign, set-value, unassign. Categories can be created with `--type numeric` for numeric value support.
+- **`view`** subcommands — list, create, rename, delete, show (with `--sort`).
+- **`link`** subcommands — depends-on, blocks, related, unlink-depends-on, unlink-blocks, unlink-related.
 - **`tui`** — launches the interactive terminal UI.
 
 A key detail: running `agenda-cli` with no subcommand defaults to `list`. The `tui` command is special — it delegates to `agenda_tui::run()` before the normal Store/Agenda setup, since the TUI manages its own lifecycle.
 
-Let us see the CLI in action against the project's own dogfooding database (`feature-requests.ag`):
+Let us see the CLI in action against the project's own dogfooding database (`aglet-features.ag`):
 
 ```bash
-cargo run --bin agenda-cli -- --db feature-requests.ag category list 2>/dev/null
+cargo run --bin agenda-cli -- --db aglet-features.ag category list 2>/dev/null
 ```
 
 ```output
-- Area [no-implicit-string]
-  - CLI [exclusive] [no-implicit-string] [non-actionable]
-  - UX
-  - Validation
-  - Display
-  - Automation
 - Done [no-implicit-string] [non-actionable]
 - Entry [no-implicit-string] [non-actionable]
-- Priority [exclusive] [no-implicit-string]
-  - High
-  - Medium
-  - Low
-  - Critical
+- Expenses
+  - Cost [numeric]
+  - DRZ [numeric]
+- Issue type
+  - Bug
+  - Idea
+  - Feature request
+- Priority [exclusive] [no-implicit-string] [non-actionable]
+  - Critical [exclusive]
+  - High [exclusive]
+  - Normal [exclusive]
+  - Low [exclusive]
+- Software Project
+  - Aglet
+  - NeoNV
 - Status [exclusive]
+  - Complete
   - In Progress
-  - Completed
-  - Deferred
-  - Not Started
-  - Pending
+  - Next Action
+  - Ready
+  - Waiting/Blocked
 - When [no-implicit-string] [non-actionable]
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db feature-requests.ag view list 2>/dev/null
+cargo run --bin agenda-cli -- --db aglet-features.ag view list 2>/dev/null
 ```
 
 ```output
-All Items (sections=3, and=0, not=0, or=0)
-Backlog (sections=1, and=0, not=1, or=0)
-CLI (sections=0, and=1, not=0, or=0)
-Deferred (sections=0, and=1, not=0, or=0)
-High Priority (sections=1, and=1, not=0, or=0)
-Pending (sections=1, and=0, not=0, or=0)
-test view (sections=2, and=1, not=0, or=0)
-UX (sections=2, and=1, not=0, or=0)
+Aglet (sections=2, and=1, not=0, or=0)
+All Items (sections=0, and=0, not=0, or=0)
+Expenses (sections=1, and=0, not=0, or=0)
+Software Projects (sections=2, and=1, not=0, or=0)
 hint: use `agenda view show "<name>"` to see view contents
 ```
 
@@ -935,21 +1028,22 @@ The TUI is organized as:
 
 ### The Mode System
 
-The TUI uses a modal architecture. The `Mode` enum has 15+ variants:
+The TUI uses a modal architecture. The `Mode` enum has 17+ variants:
 
 ```bash
-sed -n "176,203p" crates/agenda-tui/src/lib.rs
+sed -n "177,200p" crates/agenda-tui/src/lib.rs
 ```
 
 ```output
 enum Mode {
     Normal,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
+    LinkWizard,
     NoteEdit,
     ItemAssignPicker,
     ItemAssignInput,
     InspectUnassign,
-    FilterInput,
+    SearchBarFocused,
     ViewPicker,
     ViewEdit,
     ViewDeleteConfirm,
@@ -960,15 +1054,10 @@ enum Mode {
     CategoryColumnPicker,
     BoardAddColumnPicker,
     #[allow(dead_code)]
-    CategoryCreateConfirm { name: String, parent_id: CategoryId },
-}
-
-/// Disambiguates which name-input operation is in flight when Mode::InputPanel
-/// is open with InputPanelKind::NameInput.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum NameInputContext {
-    ViewCreate,
-    ViewRename,
+    CategoryCreateConfirm {
+        name: String,
+        parent_id: CategoryId,
+    },
 }
 ```
 
@@ -977,7 +1066,7 @@ enum NameInputContext {
 The `App::run()` method in `app.rs` is straightforward: draw, poll for key events (200ms timeout), dispatch via `handle_key_event()`. Errors during key handling are caught and displayed in the status bar rather than crashing:
 
 ```bash
-sed -n "3,42p" crates/agenda-tui/src/app.rs
+sed -n "4,43p" crates/agenda-tui/src/app.rs
 ```
 
 ```output
@@ -1069,9 +1158,9 @@ cargo test --workspace 2>&1 | tail -20
 ```
 
 ```output
-test result: ok. 215 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 278 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
 
-     Running unittests src/main.rs (target/debug/deps/agenda_tui-f3e97fcd7e81f1b5)
+     Running unittests src/main.rs (target/debug/deps/agenda_tui-...)
 
 running 0 tests
 
@@ -1091,7 +1180,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ```
 
-215 tests across the workspace, all passing. The test suite covers:
+278 tests across the workspace, all passing. The test suite covers:
 
 - **`store.rs`** — CRUD for all entities, schema migrations, reserved category creation, deletion log, restore, hierarchy building.
 - **`engine.rs`** — fixed-point convergence, cycle detection (cap at 10 passes with savepoint rollback), action cascading, mutual exclusion, deferred removals, idempotent re-runs.
@@ -1107,14 +1196,14 @@ Aglet is a carefully layered system:
 
 | Layer | File(s) | Responsibility |
 |-------|---------|---------------|
-| **Data model** | `model.rs` | Items, Categories, Assignments, Views, Queries |
-| **Storage** | `store.rs` | SQLite CRUD, schema, hierarchy, reserved categories |
+| **Data model** | `model.rs` | Items, Categories, Assignments, Views, Queries, Item Links |
+| **Storage** | `store.rs` | SQLite CRUD, schema, hierarchy, reserved categories, item links |
 | **Classifier** | `matcher.rs` | Word-boundary substring matching, hashtag extraction |
 | **Date parser** | `dates.rs` | Natural language → NaiveDateTime |
 | **Rule engine** | `engine.rs` | Fixed-point auto-assignment, actions, mutual exclusion |
-| **Integration** | `agenda.rs` | Wires Store + Engine + Classifier, transaction boundary |
+| **Integration** | `agenda.rs` | Wires Store + Engine + Classifier, transaction boundary, linking |
 | **Query resolution** | `query.rs` | WhenBuckets, view/section evaluation, show_children |
-| **CLI** | `main.rs` (cli) | Clap commands, text output |
-| **TUI** | `lib.rs` + modules | Ratatui modal interface, board views, category manager |
+| **CLI** | `main.rs` (cli) | Clap commands, text output, link management |
+| **TUI** | `lib.rs` + modules | Ratatui modal interface, board views, category manager, link wizard |
 
 The architecture makes the right tradeoffs for a personal productivity tool: single-user SQLite for simplicity, deterministic rules instead of ML, and a clean separation between the engine (which is purely functional over the store) and the UI frontends that consume it.
