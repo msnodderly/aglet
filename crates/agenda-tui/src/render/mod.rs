@@ -1484,12 +1484,16 @@ impl App {
                 let mut item_width = layout.item;
                 let mut synthetic_categories_width = 0usize;
                 if include_all_categories_in_dynamic {
+                    let extra_spacing_budget = BOARD_TABLE_COLUMN_SPACING as usize;
                     let min_item_width = BOARD_ITEM_MIN_WIDTH.min(item_width);
                     let available_for_categories = item_width.saturating_sub(min_item_width);
-                    if available_for_categories > 0 {
-                        synthetic_categories_width =
-                            BOARD_CATEGORY_TARGET_WIDTH.min(available_for_categories);
-                        item_width = item_width.saturating_sub(synthetic_categories_width);
+                    if available_for_categories > extra_spacing_budget {
+                        synthetic_categories_width = BOARD_CATEGORY_TARGET_WIDTH
+                            .min(available_for_categories - extra_spacing_budget);
+                        if synthetic_categories_width > 0 {
+                            item_width = item_width
+                                .saturating_sub(synthetic_categories_width + extra_spacing_budget);
+                        }
                     }
                 }
                 let item_board_column_index = slot_item_column_index.min(layout.columns.len());
@@ -1761,7 +1765,7 @@ impl App {
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
-                        .column_spacing(0)
+                        .column_spacing(BOARD_TABLE_COLUMN_SPACING)
                         .header(
                             Row::new(header_cells)
                                 .style(Style::default().add_modifier(Modifier::BOLD)),
@@ -1881,7 +1885,7 @@ impl App {
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
-                        .column_spacing(0)
+                        .column_spacing(BOARD_TABLE_COLUMN_SPACING)
                         .header(
                             Row::new(vec![
                                 Cell::from(""),

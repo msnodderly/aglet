@@ -248,3 +248,16 @@ Practical implications:
   may appear embedded in Category Manager or persist as stale inline action.
 - When closing CategoryCreate (save/cancel/discard), clear
   `category_manager.inline_action` to avoid orphaned parent-picker UI.
+
+## Board Table Column Spacing Budget (Surprising)
+
+Board rendering uses ratatui `Table::column_spacing` for inter-column gaps. If
+you increase spacing above zero (for readability), you must subtract spacing
+budget from width calculations (`compute_board_layout` and
+`board_column_widths`) or total column widths can exceed slot width and visually
+collapse adjacent values.
+
+Related gotcha: dynamic board rendering can append a synthetic "All Categories"
+column. If that synthetic column is enabled, reserve one additional spacing
+slot; otherwise the synthetic column can consume the separator budget and defeat
+the minimum visible gap guarantee.
