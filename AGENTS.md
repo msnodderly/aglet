@@ -201,6 +201,18 @@ cargo run ... show <id2> 2>/dev/null | head -5
 cargo run ... show <id1> 2>&1 | head -5 && cargo run ... show <id2> 2>&1 | head -5
 ```
 
+## `agenda-cli edit --note-stdin` Semantics (Surprising)
+
+`agenda-cli edit <ITEM_ID> --note-stdin` replaces the entire note with stdin
+content and is mutually exclusive with `--note`, `--append-note`, and
+`--clear-note`.
+
+Practical implications:
+- Passing `--note-stdin` with any other note-operation flag returns a validation
+  error.
+- Empty stdin payload is a no-op (note content is preserved).
+- Useful shell form: `printf "line one\nline two\n" | cargo run --bin agenda-cli -- --db <db> edit <ITEM_ID> --note-stdin`
+
 ## TUI Spec vs. Implementation
 
 `spec/tui-ux-redesign.md` is the design target. The Phase 2a implementation

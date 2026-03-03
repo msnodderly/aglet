@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::io::{self, Read};
 use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
@@ -62,7 +63,7 @@ enum Command {
 
     /// Edit an existing item's text, note, and/or done state
     #[command(
-        after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --clear-note           Remove the note entirely\n\nExamples:\n  agenda edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  agenda edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\""
+        after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --note-stdin           Replace the entire note with stdin content\n  --clear-note           Remove the note entirely\n\nExamples:\n  agenda edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  agenda edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin"
     )]
     Edit {
         item_id: String,
@@ -73,6 +74,9 @@ enum Command {
         /// Append text to the existing note (separated by newline)
         #[arg(long = "append-note")]
         append_note: Option<String>,
+        /// Replace the note with stdin content
+        #[arg(long = "note-stdin")]
+        note_stdin: bool,
         #[arg(long = "clear-note")]
         clear_note: bool,
         #[arg(long)]
@@ -384,9 +388,27 @@ fn run() -> Result<(), String> {
             text,
             note,
             append_note,
+            note_stdin: note_stdin_flag,
             clear_note,
             done,
-        } => cmd_edit(&agenda, item_id, text, note, append_note, clear_note, done),
+        } => {
+            let note_stdin = if note_stdin_flag {
+                let mut stdin = io::stdin().lock();
+                Some(read_note_from_stdin(&mut stdin)?)
+            } else {
+                None
+            };
+            cmd_edit(
+                &agenda,
+                item_id,
+                text,
+                note,
+                append_note,
+                note_stdin,
+                clear_note,
+                done,
+            )
+        }
         Command::Show { item_id } => cmd_show(&store, item_id),
         Command::Claim {
             item_id,
@@ -470,27 +492,49 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
     Ok(())
 }
 
+fn read_note_from_stdin(reader: &mut impl Read) -> Result<String, String> {
+    let mut input = String::new();
+    reader
+        .read_to_string(&mut input)
+        .map_err(|e| format!("failed to read --note-stdin input: {e}"))?;
+    Ok(input)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn cmd_edit(
     agenda: &Agenda<'_>,
     item_id_str: String,
     text: Option<String>,
     note: Option<String>,
     append_note: Option<String>,
+    note_stdin: Option<String>,
     clear_note: bool,
     done: Option<bool>,
 ) -> Result<(), String> {
     let item_id = parse_item_id(&item_id_str)?;
 
-    if text.is_none() && note.is_none() && append_note.is_none() && !clear_note && done.is_none() {
+    if text.is_none()
+        && note.is_none()
+        && append_note.is_none()
+        && note_stdin.is_none()
+        && !clear_note
+        && done.is_none()
+    {
         return Err(
-            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--clear-note] [--done <true|false>]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false".to_string()
+            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false".to_string()
         );
     }
 
     // Validate mutually exclusive note flags
-    let note_flag_count = note.is_some() as u8 + append_note.is_some() as u8 + clear_note as u8;
+    let note_flag_count = note.is_some() as u8
+        + append_note.is_some() as u8
+        + note_stdin.is_some() as u8
+        + clear_note as u8;
     if note_flag_count > 1 {
-        return Err("--note, --append-note, and --clear-note are mutually exclusive".to_string());
+        return Err(
+            "--note, --append-note, --note-stdin, and --clear-note are mutually exclusive"
+                .to_string(),
+        );
     }
 
     if let Some(done_value) = done {
@@ -510,7 +554,9 @@ fn cmd_edit(
         .get_item(item_id)
         .map_err(|e| e.to_string())?;
 
-    if text.is_some() || note.is_some() || append_note.is_some() || clear_note {
+    let note_stdin_has_content = note_stdin.as_ref().is_some_and(|value| !value.is_empty());
+    if text.is_some() || note.is_some() || append_note.is_some() || note_stdin_has_content || clear_note
+    {
         if let Some(new_text) = text {
             if new_text.is_empty() {
                 return Err("text cannot be empty".to_string());
@@ -525,6 +571,10 @@ fn cmd_edit(
             } else {
                 Some(new_note)
             };
+        } else if let Some(new_note_from_stdin) = note_stdin {
+            if !new_note_from_stdin.is_empty() {
+                item.note = Some(new_note_from_stdin);
+            }
         } else if let Some(extra) = append_note {
             if !extra.is_empty() {
                 item.note = Some(match item.note {
@@ -2243,11 +2293,11 @@ mod tests {
         build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
         compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
         parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        reject_items_with_any_categories, retain_items_matching_numeric_filters,
-        retain_items_with_all_categories, retain_items_with_any_categories,
-        unknown_hashtag_feedback_line, view_category_alias_rows, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        read_note_from_stdin, reject_items_with_any_categories,
+        retain_items_matching_numeric_filters, retain_items_with_all_categories,
+        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
+        Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, ListFilters,
+        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2257,6 +2307,7 @@ mod tests {
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
+    use std::io::Cursor;
     use uuid::Uuid;
 
     #[test]
@@ -3414,6 +3465,7 @@ mod tests {
             None,
             None,
             Some("first note".to_string()),
+            None,
             false,
             None,
         )
@@ -3439,6 +3491,7 @@ mod tests {
             None,
             None,
             Some("appended text".to_string()),
+            None,
             false,
             None,
         )
@@ -3467,6 +3520,7 @@ mod tests {
             None,
             None,
             Some("line two\nline three".to_string()),
+            None,
             false,
             None,
         )
@@ -3491,6 +3545,7 @@ mod tests {
             None,
             Some("replace".to_string()),
             Some("append".to_string()),
+            None,
             false,
             None,
         );
@@ -3510,11 +3565,93 @@ mod tests {
             None,
             None,
             Some("append".to_string()),
+            None,
             true,
             None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn read_note_from_stdin_reads_multiline_payload() {
+        let mut reader = Cursor::new("line one\nline two\n");
+        let note = read_note_from_stdin(&mut reader).expect("read note");
+        assert_eq!(note, "line one\nline two\n");
+    }
+
+    #[test]
+    fn cmd_edit_note_stdin_replaces_existing_note() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("Test item".to_string());
+        item.note = Some("old note".to_string());
+        store.create_item(&item).expect("create");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            None,
+            Some("stdin note\nnext line".to_string()),
+            false,
+            None,
+        )
+        .expect("replace from stdin");
+
+        let updated = store.get_item(item.id).expect("get item");
+        assert_eq!(updated.note.as_deref(), Some("stdin note\nnext line"));
+    }
+
+    #[test]
+    fn cmd_edit_note_stdin_rejects_with_note_flag() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let result = cmd_edit(
+            &agenda,
+            "123e4567-e89b-12d3-a456-426614174000".to_string(),
+            None,
+            Some("replace".to_string()),
+            None,
+            Some("stdin".to_string()),
+            false,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn cmd_edit_note_stdin_empty_is_noop() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("Test item".to_string());
+        item.note = Some("existing".to_string());
+        let previous_modified_at = item.modified_at;
+        store.create_item(&item).expect("create");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            None,
+            Some(String::new()),
+            false,
+            None,
+        )
+        .expect("empty stdin no-op");
+
+        let updated = store.get_item(item.id).expect("get item");
+        assert_eq!(updated.note.as_deref(), Some("existing"));
+        assert_eq!(updated.modified_at, previous_modified_at);
     }
 
     #[test]
