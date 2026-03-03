@@ -31,12 +31,13 @@ cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> --note "<NOT
 cargo run --bin agenda-cli -- --db aglet-features.ag category list
 cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "<CATEGORY>"
 cargo run --bin agenda-cli -- --db aglet-features.ag category unassign <ITEM_ID> "<CATEGORY>"
+cargo run --bin agenda-cli -- --db aglet-features.ag category set-value <ITEM_ID> Complexity <1|2|3|5|7>
 
 # Dependency links
 cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
 cargo run --bin agenda-cli -- --db aglet-features.ag link depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag link unlink-blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag link unlink-depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag unlink blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag unlink depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
 ```
 
 ### Aglet-Only Query Patterns
@@ -73,6 +74,15 @@ cargo run --bin agenda-cli -- --db aglet-features.ag list \
   --category "Waiting/Blocked" \
   --view "All Items" \
   --sort Priority
+
+# Aglet open items missing complexity score (targeted PM cleanup batch)
+cargo run --bin agenda-cli -- --db aglet-features.ag list \
+  --any-category Aglet \
+  --exclude-category Done \
+  --exclude-category Complete \
+  --exclude-category Complexity \
+  --view "All Items" \
+  --sort Priority
 ```
 
 ### Helper Script (Preferred for New Items)
@@ -91,12 +101,21 @@ Every item should include all of these:
 - `Priority`: `Critical`, `High`, `Normal`, or `Low`
 - `Software Project(s)`: `Aglet` (plus `NeoNV` only if truly cross-project)
 - `Status`: `Needs Refinement`, `Ready`, `In Progress`, `Waiting/Blocked`, or `Complete`
+- `Complexity` (numeric): `1`, `2`, `3`, `5`, or `7`
 
 Status guidance:
 
 - Use `Ready` as the default actionable queue status.
 - Use `Needs Refinement` to explicitly flag items requiring PM grooming before implementation.
 - Use `Next Action` only for legacy continuity while it still exists in the taxonomy.
+
+Complexity guidance:
+
+- `1`: trivial change; suitable for smaller-capability agents
+- `2`: small change; suitable for smaller-capability agents
+- `3`: medium change; frontier agent required, no full architecture review required
+- `5`: large/complex change; strongest frontier agents only, requires detailed implementation plan and architecture guide
+- `7`: too large/unclear for single story; must be broken into smaller items before implementation
 
 ---
 
@@ -123,10 +142,32 @@ For each item, verify:
 - Note explains WHAT and WHY
 - Acceptance criteria present in note
 - Correct issue type, priority, project, and status categories
+- Complexity score assigned (`1|2|3|5|7`)
 - Work is implementable in one focused session, or decomposed
 - Dependencies are correctly linked and directionally correct
 
-If an item is missing acceptance criteria, required categories, or has unclear scope, assign `Needs Refinement` until groomed.
+If an item is missing acceptance criteria, required categories (including complexity), or has unclear scope, assign `Needs Refinement` until groomed.
+If an item is scored `7`, split it into smaller stories and rescore the child stories before marking them `Ready`.
+
+### 2.1 Complexity Cleanup Pass (Learned Workflow)
+
+Use this focused pass whenever backlog hygiene drifts:
+
+1. List only open Aglet items missing complexity:
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag list \
+  --any-category Aglet \
+  --exclude-category Done \
+  --exclude-category Complete \
+  --exclude-category Complexity \
+  --view "All Items" \
+  --sort Priority
+```
+2. For each result, add missing required categories (`Issue type`, `Priority`, `Status`) and tighten note/acceptance criteria.
+3. Set complexity only if missing; never overwrite existing scores unless explicitly requested.
+4. Move to `Ready` only when implementation-ready. Keep `Needs Refinement` for large/underspecified items.
+5. Treat `Complexity=5` as requiring a detailed plan/architecture notes before implementation.
+6. Treat `Complexity=7` as mandatory decomposition before implementation.
 
 ### 3. Common Grooming Actions
 
@@ -172,6 +213,16 @@ cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "
 ```
 
 Then update the note with explicit blocker details and required decision/input.
+
+#### Set Complexity Score
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag category set-value <ITEM_ID> Complexity <1|2|3|5|7>
+```
+
+Use this on every groomed item that does not already have a complexity value.
+Do not overwrite an existing complexity score unless a PM explicitly requests a rescore.
+If score is `7`, do not leave the item implementation-ready; break it down first.
 
 #### Mark an Item as Needs Refinement
 
@@ -220,6 +271,7 @@ When a decision blocks multiple items, create a dedicated design item and block 
 ./scripts/list-open-project-items.sh aglet
 cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
 cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --category "Needs Refinement" --view "All Items" --sort Priority
+cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --exclude-category Complexity --view "All Items" --sort Priority
 
 git add PM.md docs/questions.md aglet-features.ag
 git commit -m "PM grooming: <summary>"
@@ -260,12 +312,15 @@ Before opening a grooming PR:
 
 - [ ] Open Aglet backlog reviewed
 - [ ] Groomed items have clear title/note/acceptance criteria
-- [ ] Required categories assigned (Issue type, Priority, Project, Status)
+- [ ] Required categories assigned (Issue type, Priority, Project, Status, Complexity)
+- [ ] Complexity score set to one of `1|2|3|5|7`
+- [ ] Any `Complexity=7` item is split into smaller items before implementation
 - [ ] Items needing PM work explicitly marked `Needs Refinement`
 - [ ] Refined items moved to `Ready` when implementation-ready
 - [ ] Large items split into subtasks where needed
 - [ ] Dependency direction verified (`blocks <BLOCKER> <BLOCKED>`)
 - [ ] Blocked items marked `Waiting/Blocked` with explicit reason
 - [ ] `docs/questions.md` updated where needed
+- [ ] Open Aglet items missing complexity reviewed (or none found)
 - [ ] `aglet-features.ag` + docs committed
 - [ ] Branch pushed and PR opened

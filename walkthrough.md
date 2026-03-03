@@ -941,7 +941,8 @@ The CLI provides:
 - **`delete`** / **`deleted`** / **`restore`** — soft-delete lifecycle.
 - **`category`** subcommands — list, show, create, delete, rename, reparent, update, assign, set-value, unassign. Categories can be created with `--type numeric` for numeric value support.
 - **`view`** subcommands — list, create, rename, delete, show (with `--sort`).
-- **`link`** subcommands — depends-on, blocks, related, unlink-depends-on, unlink-blocks, unlink-related.
+- **`link`** subcommands — depends-on, blocks, related.
+- **`unlink`** subcommands — depends-on, blocks, related.
 - **`tui`** — launches the interactive terminal UI.
 
 A key detail: running `agenda-cli` with no subcommand defaults to `list`. The `tui` command is special — it delegates to `agenda_tui::run()` before the normal Store/Agenda setup, since the TUI manages its own lifecycle.
