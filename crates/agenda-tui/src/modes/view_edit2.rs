@@ -533,18 +533,7 @@ impl App {
             return Ok(false);
         }
 
-        // Layer 3: discard confirmation intercepts before region/global keys.
-        if self
-            .view_edit_state
-            .as_ref()
-            .map(|s| s.discard_confirm)
-            .unwrap_or(false)
-        {
-            self.handle_view_edit_discard_confirm_key(code, agenda)?;
-            return Ok(false);
-        }
-
-        // Layer 4: section delete confirmation intercepts before pane/global keys.
+        // Layer 3: section delete confirmation intercepts before pane/global keys.
         if self
             .view_edit_state
             .as_ref()
@@ -555,37 +544,9 @@ impl App {
             return Ok(false);
         }
 
-        // Layer 5: global and region keys.
+        // Layer 4: global and region keys.
         self.handle_view_edit_region_key(code, agenda)?;
         Ok(false)
-    }
-
-    fn handle_view_edit_discard_confirm_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.discard_confirm = false;
-                }
-                return self.handle_view_edit_save(agenda);
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.view_edit_state = None;
-                self.mode = Mode::ViewPicker;
-                self.status = "Discarded unsaved changes".to_string();
-            }
-            KeyCode::Esc => {
-                if let Some(state) = &mut self.view_edit_state {
-                    state.discard_confirm = false;
-                }
-                self.status = Self::view_edit_default_status();
-            }
-            _ => {}
-        }
-        Ok(true)
     }
 
     fn handle_view_edit_section_delete_confirm_key(
@@ -898,23 +859,18 @@ impl App {
                     self.clear_view_edit_section_filter();
                     return Ok(true);
                 }
-                let is_dirty = self
+                let was_dirty = self
                     .view_edit_state
                     .as_ref()
                     .map(|s| s.dirty)
                     .unwrap_or(false);
-                if is_dirty {
-                    if let Some(state) = &mut self.view_edit_state {
-                        state.discard_confirm = true;
-                    }
-                    self.status =
-                        "Unsaved changes: save before closing? y=save n=discard Esc=keep editing"
-                            .to_string();
+                self.view_edit_state = None;
+                self.mode = Mode::ViewPicker;
+                self.status = if was_dirty {
+                    "View edit canceled; unsaved changes discarded".to_string()
                 } else {
-                    self.view_edit_state = None;
-                    self.mode = Mode::ViewPicker;
-                    self.status = "View edit canceled".to_string();
-                }
+                    "View edit canceled".to_string()
+                };
                 return Ok(true);
             }
             KeyCode::Tab => {
