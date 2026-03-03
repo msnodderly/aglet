@@ -3987,6 +3987,43 @@ mod tests {
     }
 
     #[test]
+    fn add_item_panel_context_is_static_not_inline_with_text_input() {
+        let mut app = App {
+            mode: Mode::InputPanel,
+            input_panel: Some(input_panel::InputPanel::new_add_item(
+                "Unassigned",
+                &std::collections::HashSet::new(),
+            )),
+            ..App::default()
+        };
+        if let Some(panel) = &mut app.input_panel {
+            panel.text.set("Draft title".to_string());
+        }
+
+        let backend = TestBackend::new(110, 28);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render add-item panel");
+        let lines = terminal_buffer_lines(&terminal);
+
+        let text_line = lines
+            .iter()
+            .find(|line| line.contains("Text> Draft title"))
+            .expect("text input line should be rendered");
+        assert!(
+            !text_line.contains("Adding to"),
+            "add-item context should not float inline with text input: {text_line:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Adding to \"Unassigned\"")),
+            "context should still be visible in a static row"
+        );
+    }
+
+    #[test]
     fn list_scroll_keeps_selected_line_visible() {
         let area = Rect::new(0, 0, 50, 10);
         assert_eq!(list_scroll_for_selected_line(area, None), 0);
