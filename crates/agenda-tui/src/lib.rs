@@ -4313,6 +4313,10 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
             .expect("u alias should open item category picker");
         assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert!(
+            app.status.contains("n or / type category"),
+            "picker prompt should mention both category-entry keys"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -4443,12 +4447,25 @@ mod tests {
             .iter()
             .find(|category| category.name == "wor")
             .expect("new category should be created for ambiguous search");
+        let created_row_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == created.id)
+            .expect("new category should be visible in assign picker rows");
         let updated = store.get_item(item.id).expect("load updated item");
         assert!(
             updated.assignments.contains_key(&created.id),
             "newly created category should be assigned"
         );
         assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(
+            app.item_assign_category_index, created_row_index,
+            "newly created category should be selected in picker"
+        );
+        assert!(
+            app.status.contains("Created and assigned category wor"),
+            "status should clearly report create + assign outcome"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
