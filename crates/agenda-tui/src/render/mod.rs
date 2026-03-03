@@ -193,12 +193,19 @@ impl App {
                         let section_column_index =
                             Self::board_column_to_section_column_index(section, self.column_index)?;
                         let column = section.columns.get(section_column_index)?;
-                        let heading = self
-                            .categories
-                            .iter()
-                            .find(|c| c.id == column.heading)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("?");
+                        let heading = view
+                            .category_aliases
+                            .get(&column.heading)
+                            .map(|alias| alias.trim())
+                            .filter(|alias| !alias.is_empty())
+                            .map(|alias| alias.to_string())
+                            .or_else(|| {
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == column.heading)
+                                    .map(|c| c.name.clone())
+                            })
+                            .unwrap_or_else(|| "?".to_string());
                         let item_label = self
                             .selected_item()
                             .map(|item| truncate_board_cell(&board_item_label(item), 40))
@@ -1414,8 +1421,16 @@ impl App {
             .constraints(constraints)
             .split(area);
 
-        let category_names = category_name_map(&self.categories);
         let current_view = self.current_view().cloned();
+        let mut category_display_names = category_name_map(&self.categories);
+        if let Some(view) = current_view.as_ref() {
+            for (category_id, alias) in &view.category_aliases {
+                let alias = alias.trim();
+                if !alias.is_empty() {
+                    category_display_names.insert(*category_id, alias.to_string());
+                }
+            }
+        }
         let view_item_label = current_view
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
@@ -1477,7 +1492,7 @@ impl App {
                 let layout = compute_board_layout(
                     &slot_columns_owned,
                     &self.categories,
-                    &category_names,
+                    &category_display_names,
                     &view_item_label,
                     inner_width,
                 );
@@ -1619,7 +1634,7 @@ impl App {
                                         ColumnKind::Standard => standard_column_value(
                                             item,
                                             &column.child_ids,
-                                            &category_names,
+                                            &category_display_names,
                                         ),
                                     };
                                     let content = if effective_display_mode
@@ -1662,7 +1677,8 @@ impl App {
                             cells.push(item_cell);
                             cells.extend(right_cells);
                             if synthetic_categories_width > 0 {
-                                let categories = item_assignment_labels(item, &category_names);
+                                let categories =
+                                    item_assignment_labels(item, &category_display_names);
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
                                 } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -1835,7 +1851,7 @@ impl App {
                                 has_note_text(item.note.as_deref()),
                             );
                             let item_text = board_item_label(item);
-                            let categories = item_assignment_labels(item, &category_names);
+                            let categories = item_assignment_labels(item, &category_display_names);
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
                             } else if effective_display_mode == BoardDisplayMode::MultiLine {
