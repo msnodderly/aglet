@@ -2127,18 +2127,6 @@ impl App {
                     self.open_input_panel_edit_item();
                 }
             }
-            KeyCode::Char('m') => {
-                if let Some(item) = self.selected_item() {
-                    let existing_note = item.note.clone().unwrap_or_default();
-                    self.note_edit_original = existing_note.clone();
-                    self.mode = Mode::NoteEdit;
-                    self.set_input(existing_note);
-                    self.status =
-                        "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
-                } else {
-                    self.status = "No selected item to add/edit note".to_string();
-                }
-            }
             KeyCode::Char('/') => {
                 self.mode = Mode::SearchBarFocused;
                 // Load existing filter text if search_buffer is empty
