@@ -193,10 +193,7 @@ impl App {
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
-        let provenance_len = self
-            .selected_item()
-            .map(|item| self.inspect_assignment_rows_for_item(item).len())
-            .unwrap_or(0);
+        let provenance_len = self.preview_info_line_count_for_selected_item();
         let summary_len = self
             .selected_item()
             .map(|item| self.item_details_lines_for_item(item).len())
