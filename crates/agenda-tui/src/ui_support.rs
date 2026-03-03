@@ -1,21 +1,5 @@
 use super::*;
 
-pub(super) fn generated_section(
-    on_remove_unassign: HashSet<CategoryId>,
-    on_insert_assign: HashSet<CategoryId>,
-) -> Section {
-    Section {
-        title: "generated".to_string(),
-        criteria: Query::default(),
-        columns: Vec::new(),
-        item_column_index: 0,
-        on_insert_assign,
-        on_remove_unassign,
-        show_children: false,
-        board_display_mode_override: None,
-    }
-}
-
 pub(super) fn next_index(current: usize, len: usize, delta: i32) -> usize {
     if len == 0 {
         return 0;
