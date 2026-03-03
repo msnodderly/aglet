@@ -2127,7 +2127,7 @@ impl App {
                     let blocked_count = done_confirm.blocked_item_ids.len();
                     let suffix = if blocked_count == 1 { "" } else { "s" };
                     format!(
-                        "Mark done and remove {blocked_count} blocker link{suffix}? y:yes n:keep links Esc:cancel"
+                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
                     )
                 } else {
                     "Delete item? y:confirm Esc:cancel".to_string()
@@ -2236,7 +2236,7 @@ impl App {
             Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
             Mode::ConfirmDelete => {
                 if self.done_blocks_confirm.is_some() {
-                    "y:clear links + done  n:done only  Esc:cancel"
+                    "y:remove blocking links + done  n:mark done only  Esc:cancel"
                 } else {
                     "y:confirm  Esc:cancel"
                 }

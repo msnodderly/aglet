@@ -6625,7 +6625,7 @@ mod tests {
         );
         assert_eq!(app.mode, Mode::Normal);
         assert!(
-            app.status.contains("removed 1 blocker link"),
+            app.status.contains("removed 1 blocking link"),
             "status should mention blocker-link cleanup: {}",
             app.status
         );
