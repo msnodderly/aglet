@@ -660,7 +660,7 @@ impl App {
             self.preview_mode = PreviewMode::Summary;
             self.normal_focus = NormalFocus::Board;
             self.preview_summary_scroll = 0;
-            self.status = "Preview opened (Summary). f to focus pane, o for provenance".to_string();
+            self.status = "Preview opened (Summary). f to focus pane, i for info".to_string();
         } else {
             self.normal_focus = NormalFocus::Board;
             self.status = "Preview closed".to_string();
@@ -678,7 +678,7 @@ impl App {
         };
         self.status = match self.preview_mode {
             PreviewMode::Summary => "Preview mode: Summary".to_string(),
-            PreviewMode::Provenance => "Preview mode: Provenance".to_string(),
+            PreviewMode::Provenance => "Preview mode: Info".to_string(),
         };
     }
 
@@ -727,11 +727,11 @@ impl App {
             return;
         }
         if self.normal_focus != NormalFocus::Preview {
-            self.status = "Focus preview pane to unassign from provenance (f)".to_string();
+            self.status = "Focus preview pane to unassign from info (f)".to_string();
             return;
         }
         if self.preview_mode != PreviewMode::Provenance {
-            self.status = "Switch preview to Provenance mode (o) to unassign".to_string();
+            self.status = "Switch preview to Info mode (i) to unassign".to_string();
             return;
         }
         let Some(item) = self.selected_item() else {
@@ -2110,6 +2110,7 @@ impl App {
                 }
             }
             KeyCode::Char('p') => self.toggle_preview(),
+            KeyCode::Char('i') => self.toggle_preview_mode(),
             KeyCode::Char('o') => self.toggle_preview_mode(),
             KeyCode::Char('J') => {
                 self.scroll_preview(1);
