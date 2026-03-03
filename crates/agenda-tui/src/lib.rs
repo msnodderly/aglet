@@ -807,7 +807,7 @@ mod tests {
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::Terminal;
@@ -4356,6 +4356,49 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('p'), &agenda)
             .expect("close preview");
         assert!(!app.show_preview);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_ctrl_l_reloads_data_from_store() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-ctrl-l-refresh-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("initial refresh");
+        app.mode = Mode::Normal;
+
+        let external = Item::new("Externally added".to_string());
+        store.create_item(&external).expect("create external item");
+
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != external.id)),
+            "app state should remain stale before explicit reload"
+        );
+
+        app.handle_normal_key_event(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-l reload");
+
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == external.id)),
+            "ctrl-l should reload and reveal newly added item"
+        );
+        assert_eq!(app.status, "Reloaded view from store");
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
