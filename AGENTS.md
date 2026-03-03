@@ -306,6 +306,21 @@ category names with this precedence:
 This avoids accidental category creation when there is a single clear match,
 while preserving exact-match and create-new behavior.
 
+## Esc One-Step Exit Semantics (Surprising)
+
+`Esc` now exits several editing panes in a single step and discards dirty
+changes immediately (no hidden discard-confirm sub-state):
+
+- `Mode::InputPanel` (`AddItem`/`EditItem`/name/numeric/category-create panels)
+- `Mode::NoteEdit`
+- `Mode::ViewEdit`
+
+Practical implications:
+- Do not reintroduce hidden booleans like `*_discard_confirm` for these flows.
+- Footer/status hints should reflect one-step exit behavior (no `y/n/Esc` prompt).
+- In InputPanel category-filter editing, `Esc` now closes filter editing directly
+  and keeps the typed filter text (it no longer does clear-then-exit).
+
 ## Board Table Column Spacing Budget (Surprising)
 
 Board rendering uses ratatui `Table::column_spacing` for inter-column gaps. If
