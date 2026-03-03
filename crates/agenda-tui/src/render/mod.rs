@@ -2319,6 +2319,10 @@ impl App {
                     self.status.clone()
                 }
             }
+            Mode::Normal => self
+                .active_transient_status_text()
+                .map(str::to_string)
+                .unwrap_or_else(|| self.status.clone()),
             _ => self.status.clone(),
         }
     }
