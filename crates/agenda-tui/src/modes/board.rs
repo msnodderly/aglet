@@ -189,9 +189,8 @@ impl App {
 
             if code == KeyCode::Char('/') {
                 panel.category_filter_editing = true;
-                status = Some(
-                    "Type to filter categories, Enter to keep filter, Esc clear/exit".to_string(),
-                );
+                status =
+                    Some("Type to filter categories, Enter to keep filter, Esc done".to_string());
                 true
             } else if !panel.category_filter_editing {
                 false
@@ -203,14 +202,8 @@ impl App {
                         true
                     }
                     KeyCode::Esc => {
-                        if panel.category_filter.is_empty() {
-                            panel.category_filter_editing = false;
-                            status = Some("Category filter exited".to_string());
-                        } else {
-                            panel.category_filter.clear();
-                            status = Some("Category filter cleared".to_string());
-                            should_clamp = true;
-                        }
+                        panel.category_filter_editing = false;
+                        status = Some("Category filter exited".to_string());
                         true
                     }
                     KeyCode::Tab | KeyCode::BackTab => {
@@ -2134,19 +2127,6 @@ impl App {
                     self.open_input_panel_edit_item();
                 }
             }
-            KeyCode::Char('m') => {
-                if let Some(item) = self.selected_item() {
-                    let existing_note = item.note.clone().unwrap_or_default();
-                    self.note_edit_original = existing_note.clone();
-                    self.note_edit_discard_confirm = false;
-                    self.mode = Mode::NoteEdit;
-                    self.set_input(existing_note);
-                    self.status =
-                        "Edit note: Enter to save (empty clears), Esc to cancel".to_string();
-                } else {
-                    self.status = "No selected item to add/edit note".to_string();
-                }
-            }
             KeyCode::Char('/') => {
                 self.mode = Mode::SearchBarFocused;
                 // Load existing filter text if search_buffer is empty
@@ -3274,38 +3254,6 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        // Handle discard confirm sub-state
-        if self.input_panel_discard_confirm {
-            match code {
-                KeyCode::Char('y') => {
-                    // Save
-                    self.input_panel_discard_confirm = false;
-                    return self.handle_input_panel_key(KeyCode::Char('S'), agenda);
-                }
-                KeyCode::Esc => {
-                    // Discard
-                    self.input_panel_discard_confirm = false;
-                    let kind = self.input_panel.as_ref().map(|p| p.kind);
-                    self.input_panel = None;
-                    match kind {
-                        Some(input_panel::InputPanelKind::NameInput)
-                        | Some(input_panel::InputPanelKind::NumericValue)
-                        | Some(input_panel::InputPanelKind::CategoryCreate) => {
-                            self.mode = self.name_input_return_mode();
-                            self.name_input_context = None;
-                            self.status = "Changes discarded".to_string();
-                        }
-                        _ => {
-                            self.mode = Mode::Normal;
-                            self.status = "Changes discarded".to_string();
-                        }
-                    }
-                }
-                _ => {}
-            }
-            return Ok(false);
-        }
-
         let Some(_) = &self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
@@ -3343,31 +3291,29 @@ impl App {
         use input_panel::InputPanelAction;
         match action {
             InputPanelAction::Cancel => {
-                let is_dirty = self
+                let was_dirty = self
                     .input_panel
                     .as_ref()
                     .map(|p| p.is_dirty())
                     .unwrap_or(false);
-                if is_dirty {
-                    self.input_panel_discard_confirm = true;
-                    self.status = "Unsaved changes: y:save  Esc:discard".to_string();
-                } else {
-                    let kind = self.input_panel.as_ref().map(|p| p.kind);
-                    self.input_panel = None;
-                    match kind {
-                        Some(input_panel::InputPanelKind::NameInput)
-                        | Some(input_panel::InputPanelKind::NumericValue)
-                        | Some(input_panel::InputPanelKind::CategoryCreate) => {
-                            self.mode = self.name_input_return_mode();
-                            self.name_input_context = None;
-                            self.status = "Canceled".to_string();
-                        }
-                        _ => {
-                            self.mode = Mode::Normal;
-                            self.status = "Canceled".to_string();
-                        }
+                let kind = self.input_panel.as_ref().map(|p| p.kind);
+                self.input_panel = None;
+                match kind {
+                    Some(input_panel::InputPanelKind::NameInput)
+                    | Some(input_panel::InputPanelKind::NumericValue)
+                    | Some(input_panel::InputPanelKind::CategoryCreate) => {
+                        self.mode = self.name_input_return_mode();
+                        self.name_input_context = None;
+                    }
+                    _ => {
+                        self.mode = Mode::Normal;
                     }
                 }
+                self.status = if was_dirty {
+                    "Changes discarded".to_string()
+                } else {
+                    "Canceled".to_string()
+                };
             }
             InputPanelAction::Save => {
                 let kind = self
@@ -3974,35 +3920,14 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
-        // Handle discard confirm sub-state
-        if self.note_edit_discard_confirm {
-            match code {
-                KeyCode::Char('y') => {
-                    // Save and exit
-                    self.note_edit_discard_confirm = false;
-                    return self.handle_note_edit_key(KeyCode::Enter, agenda);
-                }
-                KeyCode::Esc => {
-                    // Discard and exit
-                    self.note_edit_discard_confirm = false;
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = "Note changes discarded".to_string();
-                }
-                _ => {}
-            }
-            return Ok(false);
-        }
-
         match code {
             KeyCode::Esc => {
                 let dirty = self.input.text() != self.note_edit_original;
+                self.mode = Mode::Normal;
+                self.clear_input();
                 if dirty {
-                    self.note_edit_discard_confirm = true;
-                    self.status = "Unsaved changes: y:save  Esc:discard".to_string();
+                    self.status = "Note changes discarded".to_string();
                 } else {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
                     self.status = "Note edit canceled".to_string();
                 }
             }
@@ -4880,7 +4805,7 @@ mod tests {
     }
 
     #[test]
-    fn input_panel_filter_esc_clears_then_exits_without_canceling_panel() {
+    fn input_panel_filter_esc_exits_filter_editing_in_one_step() {
         let store = Store::open_memory().expect("open store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4907,19 +4832,10 @@ mod tests {
             .expect("type filter");
 
         app.handle_input_panel_key(KeyCode::Esc, &agenda)
-            .expect("clear filter");
-        let panel = app.input_panel.as_ref().expect("panel");
-        assert_eq!(panel.category_filter.text(), "");
-        assert!(
-            panel.category_filter_editing,
-            "first Esc should clear filter text but keep filter editing"
-        );
-        assert_eq!(app.mode, Mode::InputPanel);
-
-        app.handle_input_panel_key(KeyCode::Esc, &agenda)
             .expect("exit filter editing");
         let panel = app.input_panel.as_ref().expect("panel");
         assert!(!panel.category_filter_editing);
+        assert_eq!(panel.category_filter.text(), "b");
         assert_eq!(app.mode, Mode::InputPanel);
 
         app.handle_input_panel_key(KeyCode::Esc, &agenda)

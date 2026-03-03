@@ -2378,7 +2378,7 @@ impl App {
                 } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
                 }) {
-                    "Type:filter  Enter:keep  Esc:clear/exit  Tab:next"
+                    "Type:filter  Enter:keep  Esc:done  Tab:next"
                 } else if self
                     .input_panel
                     .as_ref()
@@ -2692,7 +2692,7 @@ impl App {
             InputPanelKind::CategoryCreate => "S:save  Tab:cycle  Enter:select  Esc:cancel",
             InputPanelKind::NumericValue => "Enter:save  S:save  Esc:cancel",
             _ if panel.focus == InputPanelFocus::Categories && panel.category_filter_editing => {
-                "Type:filter  Enter:keep  Esc:clear/exit  Tab:next"
+                "Type:filter  Enter:keep  Esc:done  Tab:next"
             }
             _ => "S:save  Tab:cycle  /:filter  Space:toggle  j/k:move  Esc:cancel",
         };
