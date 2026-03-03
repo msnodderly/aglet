@@ -9014,6 +9014,59 @@ mod tests {
     }
 
     #[test]
+    fn section_column_picker_includes_nested_non_leaf_tag_headings() {
+        let (store, db_path) = make_test_store_with_view("col-picker-nested-nonleaf");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let project = Category::new("Project".to_string());
+        store.create_category(&project).expect("create project");
+        let mut phase = Category::new("Phase".to_string());
+        phase.parent = Some(project.id);
+        store.create_category(&phase).expect("create phase");
+        let mut task = Category::new("Task".to_string());
+        task.parent = Some(phase.id);
+        store.create_category(&task).expect("create task");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .unwrap();
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .unwrap();
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+        app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
+            .unwrap();
+
+        let phase_idx = app
+            .category_rows
+            .iter()
+            .position(|r| r.name == "Phase")
+            .expect("phase row");
+        if let Some(state) = &mut app.view_edit_state {
+            state.picker_index = phase_idx;
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
+
+        assert!(
+            app.view_edit_state.as_ref().unwrap().draft.sections[0]
+                .columns
+                .iter()
+                .any(|c| c.heading == phase.id),
+            "nested non-leaf tag category should be selectable as column heading"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn section_column_picker_includes_numeric_leaf_headings() {
         let (store, db_path) = make_test_store_with_view("col-picker-numeric");
         let classifier = SubstringClassifier;
