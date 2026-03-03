@@ -3412,7 +3412,7 @@ mod tests {
     }
 
     #[test]
-    fn board_column_reorder_visidata_keys_move_item_column() {
+    fn board_column_reorder_shift_keys_move_item_column() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -3461,10 +3461,10 @@ mod tests {
         assert_eq!(saved.sections[0].item_column_index, 0);
         assert_eq!(app.column_index, 0);
 
-        app.handle_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
-            .expect("gL moves item column to end");
+            .expect("Shift+L moves item column right once");
+        app.handle_key(KeyCode::Char('L'), &agenda)
+            .expect("Shift+L moves item column to end");
         let saved = store
             .get_view(app.current_view().expect("current view").id)
             .expect("saved view");
@@ -3520,10 +3520,12 @@ mod tests {
         app.refresh(&store).expect("refresh board");
 
         app.column_index = 3; // C in [A, Item, B, C]
-        app.handle_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
-            .expect("gH moves category to first");
+            .expect("Shift+H moves category left");
+        app.handle_key(KeyCode::Char('H'), &agenda)
+            .expect("Shift+H moves category left again");
+        app.handle_key(KeyCode::Char('H'), &agenda)
+            .expect("Shift+H moves category to first");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -3559,10 +3561,74 @@ mod tests {
         app.handle_key(KeyCode::Char('-'), &agenda)
             .expect("- on item column should be blocked");
         assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(
-            app.status,
-            "Cannot delete Item column (move it with H/L or gH/gL)"
-        );
+        assert_eq!(app.status, "Cannot delete Item column (move it with H/L)");
+    }
+
+    #[test]
+    fn board_g_prefix_rejects_removed_gh_gl_bindings() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Category::new("A".to_string());
+        let b = Category::new("B".to_string());
+        for cat in [&a, &b] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: a.id,
+                    width: 12,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: b.id,
+                    width: 12,
+                },
+            ],
+            item_column_index: 1,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1; // item column
+
+        app.handle_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_key(KeyCode::Char('H'), &agenda)
+            .expect("gH should be rejected");
+        assert_eq!(app.status, "Unknown g command (use ga)");
+
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        assert_eq!(saved.sections[0].item_column_index, 1);
+        assert_eq!(app.column_index, 1);
+
+        app.handle_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_key(KeyCode::Char('L'), &agenda)
+            .expect("gL should be rejected");
+        assert_eq!(app.status, "Unknown g command (use ga)");
+
+        let saved = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("saved view");
+        assert_eq!(saved.sections[0].item_column_index, 1);
+        assert_eq!(app.column_index, 1);
     }
 
     #[test]
