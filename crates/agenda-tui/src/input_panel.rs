@@ -65,7 +65,7 @@ pub(crate) struct InputPanel {
     pub(crate) focus: InputPanelFocus,
     /// `Some` when editing an existing item, `None` when adding.
     pub(crate) item_id: Option<ItemId>,
-    /// Descriptive context shown below categories (section name + auto-assign preview).
+    /// Descriptive context shown in a static panel row (section + auto-assign preview).
     pub(crate) preview_context: String,
     /// Cursor position within the category list.
     pub(crate) category_cursor: usize,
