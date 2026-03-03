@@ -49,7 +49,7 @@ Do not start additional tasks after completing your assigned work.
      --value-max Complexity 2 \
      --sort Priority
    ```
-   - High-capability lane (`1,2,3,5`, only if explicitly `Codex 5.3` or `Opus 4.6`) (or higher):
+   - High-capability lane (`1,2,3,5`, if the model is any `Opus` or `GPT-5/Codex` variant):
    ```bash
    cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
      --any-category Aglet \
@@ -63,7 +63,7 @@ Do not start additional tasks after completing your assigned work.
 
    **Selection rules (priority + complexity):**
    - Pick by **highest priority first**, but only from tasks in your allowed complexity lane.
-   - If the model explicitly knows it is `Codex 5.3` or `Opus 4.6`: allowed complexity is `1, 2, 3, 5`.
+   - If the model is any `Opus` or `GPT-5/Codex` variant: allowed complexity is `1, 2, 3, 5`.
    - Otherwise: allowed complexity is `1, 2` only.
    - Never pick `Complexity=7` for implementation; it must be split into smaller stories first.
    - If complexity is missing or cannot be confirmed from CLI output, skip that item and pick the next candidate.
@@ -88,15 +88,8 @@ Do not start additional tasks after completing your assigned work.
    ```bash
    branch_name=$(git branch --show-current)
    worktree_path=$(pwd)
-
-   note_with_claim=$(cat <<EOF
-   <EXISTING_NOTE_TEXT>
-
-   Claimed $(date +%F): branch=${branch_name} worktree=${worktree_path}
-   EOF
-   )
-
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$note_with_claim"
+   claim_note=$(printf 'Claimed %s: branch=%s worktree=%s\n' "$(date +%F)" "$branch_name" "$worktree_path")
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$claim_note"
    ```
 
 6. **Read item details**:
@@ -105,12 +98,10 @@ Do not start additional tasks after completing your assigned work.
    cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
    ```
 
-7. **Create plan and save as note** (append/update note with concrete implementation steps):
+7. **Create plan and save as note** (append concrete implementation steps):
 
    ```bash
-   new_note=$(cat <<'PLAN'
-   <EXISTING_NOTE_TEXT>
-
+   plan_note=$(cat <<'PLAN'
    Implementation plan (<YYYY-MM-DD>):
    1. <step 1>
    2. <step 2>
@@ -118,8 +109,7 @@ Do not start additional tasks after completing your assigned work.
    4. <step 4>
    PLAN
    )
-
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$new_note"
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$plan_note"
    ```
 
 ---
@@ -175,18 +165,24 @@ cargo test
 
    ```bash
    completion_note=$(cat <<'DONE'
-   <UPDATED_NOTE_WITH_PLAN_AND_IMPLEMENTATION_SUMMARY>
+   Implementation summary (<YYYY-MM-DD>):
+   - <what changed>
+   - <tests/checks run>
+   - <known caveats, if any>
    DONE
    )
-
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$completion_note"
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$completion_note"
    cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
    ```
 
 4. **Create PR** (for normal code-review flow):
 
    ```bash
-   gh pr create --title "<TITLE>" --body "<BODY>"
+   pr_body_file=$(mktemp /tmp/aglet-pr-body-XXXX.md)
+   cat > "$pr_body_file" <<'EOF'
+   <BODY>
+   EOF
+   gh pr create --title "<TITLE>" --body-file "$pr_body_file"
    ```
 
 5. **If explicitly asked to merge directly to `main`**:
@@ -222,7 +218,7 @@ cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
   --value-in Complexity 1,2 \
   --sort Priority
 
-# High-capability model (Codex 5.3 / Opus 4.6): complexity 1,2,3,5
+# High-capability model (any Opus or GPT-5/Codex variant): complexity 1,2,3,5
 # Replace the value-in line with:
 # --value-in Complexity 1,2,3,5
 
@@ -236,21 +232,14 @@ cd ../aglet-<ITEM_ID>-<SHORT_SLUG>
 # 4) Add claim metadata to note (branch + worktree)
 branch_name=$(git branch --show-current)
 worktree_path=$(pwd)
-note_with_claim=$(cat <<EOF
-<EXISTING_NOTE_TEXT>
-
-Claimed $(date +%F): branch=${branch_name} worktree=${worktree_path}
-EOF
-)
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$note_with_claim"
+claim_note=$(printf 'Claimed %s: branch=%s worktree=%s\n' "$(date +%F)" "$branch_name" "$worktree_path")
+cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$claim_note"
 
 # 5) Read item details
 cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
 
 # 6) Save implementation plan to note
-new_note=$(cat <<'PLAN'
-<EXISTING_NOTE_TEXT>
-
+plan_note=$(cat <<'PLAN'
 Implementation plan (<YYYY-MM-DD>):
 1. <step 1>
 2. <step 2>
@@ -258,7 +247,7 @@ Implementation plan (<YYYY-MM-DD>):
 4. <step 4>
 PLAN
 )
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$new_note"
+cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$plan_note"
 
 # 7) Implement + verify
 cargo fmt
@@ -274,14 +263,21 @@ git push -u origin <BRANCH_NAME>
 
 # 10) Mark complete + update note (only after push succeeds)
 completion_note=$(cat <<'DONE'
-<UPDATED_NOTE_WITH_PLAN_AND_IMPLEMENTATION_SUMMARY>
+Implementation summary (<YYYY-MM-DD>):
+- <what changed>
+- <tests/checks run>
+- <known caveats, if any>
 DONE
 )
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$completion_note"
+cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$completion_note"
 cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
 
 # 11) Create PR unless direct-merge is explicitly requested
-# gh pr create --title "<TITLE>" --body "<BODY>"
+# pr_body_file=$(mktemp /tmp/aglet-pr-body-XXXX.md)
+# cat > "$pr_body_file" <<'EOF'
+# <BODY>
+# EOF
+# gh pr create --title "<TITLE>" --body-file "$pr_body_file"
 
 # 12) Only when explicitly requested: push directly to main
 git fetch origin main
