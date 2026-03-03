@@ -4499,7 +4499,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_u_opens_item_category_picker_alias() {
+    fn normal_mode_u_no_longer_opens_item_category_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4521,12 +4521,8 @@ mod tests {
         app.mode = Mode::Normal;
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
-            .expect("u alias should open item category picker");
-        assert_eq!(app.mode, Mode::ItemAssignPicker);
-        assert!(
-            app.status.contains("n or / type category"),
-            "picker prompt should mention both category-entry keys"
-        );
+            .expect("u should be ignored");
+        assert_eq!(app.mode, Mode::Normal);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -4682,7 +4678,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_u_in_preview_provenance_opens_unassign_picker() {
+    fn normal_mode_u_in_preview_provenance_is_ignored() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4708,8 +4704,8 @@ mod tests {
         app.preview_mode = super::PreviewMode::Provenance;
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
-            .expect("open unassign picker from preview provenance");
-        assert_eq!(app.mode, Mode::InspectUnassign);
+            .expect("u should be ignored");
+        assert_eq!(app.mode, Mode::Normal);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -4741,13 +4737,8 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.mode = Mode::Normal;
-        app.show_preview = true;
-        app.normal_focus = super::NormalFocus::Preview;
-        app.preview_mode = super::PreviewMode::Provenance;
-
-        app.handle_normal_key(KeyCode::Char('u'), &agenda)
-            .expect("open unassign picker from preview provenance");
+        app.mode = Mode::InspectUnassign;
+        app.inspect_assignment_index = 0;
         assert_eq!(app.mode, Mode::InspectUnassign);
         assert_eq!(app.inspect_assignment_index, 0);
 
