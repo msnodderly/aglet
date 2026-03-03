@@ -1119,28 +1119,6 @@ impl App {
                         .min(max_x);
                     return Some((cursor_x, inner.y));
                 }
-                CategoryInlineAction::ParentPicker {
-                    target_category_name,
-                    filter,
-                    filter_editing,
-                    focus,
-                    ..
-                } => {
-                    if *filter_editing && *focus == CategoryParentPickerFocus::Filter {
-                        let prefix_len =
-                            format!("Reparent {} | parent filter> ", target_category_name)
-                                .chars()
-                                .count()
-                                .min(u16::MAX as usize) as u16;
-                        let cursor_chars = filter.cursor().min(u16::MAX as usize) as u16;
-                        let cursor_x = inner
-                            .x
-                            .saturating_add(prefix_len)
-                            .saturating_add(cursor_chars)
-                            .min(max_x);
-                        return Some((cursor_x, inner.y));
-                    }
-                }
                 CategoryInlineAction::DeleteConfirm { .. } => {}
             }
             return None;
@@ -1213,40 +1191,6 @@ impl App {
             return None;
         }
         let regions = input_panel_popup_regions(popup_area, panel.kind)?;
-        if panel.kind == input_panel::InputPanelKind::CategoryCreate
-            && self.name_input_context == Some(NameInputContext::CategoryCreate)
-        {
-            if let Some(CategoryInlineAction::ParentPicker {
-                filter,
-                filter_editing,
-                focus,
-                ..
-            }) = self.category_manager_inline_action()
-            {
-                if *focus == CategoryParentPickerFocus::Filter && *filter_editing {
-                    let picker_area = centered_rect(94, 68, popup_area);
-                    if picker_area.width >= 8 && picker_area.height >= 3 {
-                        let inner = Rect {
-                            x: picker_area.x.saturating_add(1),
-                            y: picker_area.y.saturating_add(1),
-                            width: picker_area.width.saturating_sub(2),
-                            height: picker_area.height.saturating_sub(2),
-                        };
-                        if inner.width > 0 && inner.height > 0 {
-                            let filter_prefix = "> Filter> ";
-                            let cursor_x = inner
-                                .x
-                                .saturating_add(
-                                    filter_prefix.chars().count().min(u16::MAX as usize) as u16,
-                                )
-                                .saturating_add(filter.cursor().min(u16::MAX as usize) as u16)
-                                .min(inner.x.saturating_add(inner.width.saturating_sub(1)));
-                            return Some((cursor_x, inner.y));
-                        }
-                    }
-                }
-            }
-        }
         match panel.focus {
             InputPanelFocus::Text => {
                 let prefix_str = match panel.kind {
@@ -1340,8 +1284,7 @@ impl App {
                 }
                 None
             }
-            InputPanelFocus::Parent
-            | InputPanelFocus::TypePicker
+            InputPanelFocus::TypePicker
             | InputPanelFocus::SaveButton
             | InputPanelFocus::CancelButton => None,
         }
@@ -2257,7 +2200,6 @@ impl App {
                             InputPanelFocus::Text => "Text",
                             InputPanelFocus::Note => "Note",
                             InputPanelFocus::Categories => "Categories",
-                            InputPanelFocus::Parent => "Parent",
                             InputPanelFocus::TypePicker => "Type",
                             InputPanelFocus::SaveButton => "Save",
                             InputPanelFocus::CancelButton => "Cancel",
@@ -2280,9 +2222,6 @@ impl App {
                     match action {
                         CategoryInlineAction::Rename { .. } => "Enter:apply  Esc:cancel",
                         CategoryInlineAction::DeleteConfirm { .. } => "y:confirm  Esc:cancel",
-                        CategoryInlineAction::ParentPicker { .. } => {
-                            "Enter:select  /:filter  Esc:cancel"
-                        }
                     }
                 } else {
                     "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
@@ -2323,12 +2262,6 @@ impl App {
             Mode::NoteEdit => "Enter:save  Esc:cancel",
             Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
             Mode::InputPanel => {
-                let category_create_parent_picker_open = self.name_input_context
-                    == Some(NameInputContext::CategoryCreate)
-                    && matches!(
-                        self.category_manager_inline_action(),
-                        Some(CategoryInlineAction::ParentPicker { .. })
-                    );
                 if self
                     .input_panel
                     .as_ref()
@@ -2336,8 +2269,6 @@ impl App {
                     .unwrap_or(false)
                 {
                     "Enter:save  S:save  Tab:buttons  Esc:cancel"
-                } else if category_create_parent_picker_open {
-                    "Enter:apply  /:filter  Tab:focus  Esc:cancel"
                 } else if self
                     .input_panel
                     .as_ref()
@@ -2581,31 +2512,6 @@ impl App {
             Self::render_vertical_scrollbar(frame, cat_rect, item_count, cat_scroll as usize);
         }
 
-        // Parent field (CategoryCreate only)
-        if let Some(parent_rect) = regions.parent {
-            let parent_marker = if panel.focus == InputPanelFocus::Parent {
-                "> "
-            } else {
-                "  "
-            };
-            let parent_style = if panel.focus == InputPanelFocus::Parent {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(format!("{parent_marker}Parent: "), parent_style),
-                    Span::styled(
-                        panel.parent_label.clone(),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::styled("  [Enter: change]", Style::default().fg(MUTED_TEXT_COLOR)),
-                ])),
-                parent_rect,
-            );
-        }
-
         // Type picker (CategoryCreate only)
         if let Some(type_rect) = regions.type_picker {
             let type_marker = if panel.focus == InputPanelFocus::TypePicker {
@@ -2656,105 +2562,6 @@ impl App {
             _ => "S:save  Tab:cycle  Space:toggle  j/k:move  Esc:cancel",
         };
         frame.render_widget(Paragraph::new(help_text), regions.help);
-
-        if let Some(ref picker) = panel.parent_picker {
-            let picker_area = centered_rect(94, 68, area);
-            if picker_area.width >= 8 && picker_area.height >= 6 {
-                frame.render_widget(Clear, picker_area);
-                frame.render_widget(
-                    Block::default()
-                        .title("Pick Parent")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
-                    picker_area,
-                );
-
-                let inner = Rect {
-                    x: picker_area.x.saturating_add(1),
-                    y: picker_area.y.saturating_add(1),
-                    width: picker_area.width.saturating_sub(2),
-                    height: picker_area.height.saturating_sub(2),
-                };
-                if inner.width > 0 && inner.height > 0 {
-                    let picker_chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Length(1),
-                            Constraint::Min(1),
-                            Constraint::Length(1),
-                        ])
-                        .split(inner);
-
-                    let filter_label = if picker.focus == CategoryParentPickerFocus::Filter {
-                        if picker.filter_editing {
-                            "> Filter> "
-                        } else {
-                            "> Filter: "
-                        }
-                    } else {
-                        "  Filter: "
-                    };
-                    frame.render_widget(
-                        Paragraph::new(format!("{filter_label}{}", picker.filter.text())),
-                        picker_chunks[0],
-                    );
-
-                    let parent_items: Vec<ListItem<'_>> =
-                        if picker.visible_option_indices.is_empty() {
-                            vec![ListItem::new(Line::from("(no matching parent options)"))]
-                        } else {
-                            picker
-                                .visible_option_indices
-                                .iter()
-                                .filter_map(|idx| picker.options.get(*idx))
-                                .map(|option| ListItem::new(Line::from(option.label.clone())))
-                                .collect()
-                        };
-                    let mut parent_state = Self::list_state_for(
-                        picker_chunks[1],
-                        if picker.visible_option_indices.is_empty() {
-                            None
-                        } else {
-                            Some(
-                                picker
-                                    .list_index
-                                    .min(picker.visible_option_indices.len().saturating_sub(1)),
-                            )
-                        },
-                    );
-                    let item_count = parent_items.len();
-                    let list_border = if picker.focus == CategoryParentPickerFocus::List {
-                        Color::Yellow
-                    } else {
-                        Color::Blue
-                    };
-                    frame.render_stateful_widget(
-                        List::new(parent_items)
-                            .highlight_symbol("> ")
-                            .highlight_style(selected_row_style())
-                            .block(
-                                Block::default()
-                                    .title("Options")
-                                    .borders(Borders::ALL)
-                                    .border_style(Style::default().fg(list_border)),
-                            ),
-                        picker_chunks[1],
-                        &mut parent_state,
-                    );
-                    Self::render_vertical_scrollbar(
-                        frame,
-                        picker_chunks[1],
-                        item_count,
-                        parent_state.offset(),
-                    );
-
-                    frame.render_widget(
-                        Paragraph::new("Enter:apply  /:filter  Tab:focus  Esc:cancel"),
-                        picker_chunks[2],
-                    );
-                }
-            }
-        }
     }
 
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2904,25 +2711,6 @@ impl App {
                 CategoryInlineAction::DeleteConfirm { category_name, .. } => {
                     format!("Delete '{}'? y:confirm Esc:cancel", category_name)
                 }
-                CategoryInlineAction::ParentPicker {
-                    target_category_name,
-                    filter,
-                    visible_option_indices,
-                    focus,
-                    ..
-                } => {
-                    let focus_label = match focus {
-                        CategoryParentPickerFocus::Filter => "filter",
-                        CategoryParentPickerFocus::List => "list",
-                    };
-                    format!(
-                        "Reparent {} | parent filter> {} ({}) [{}]",
-                        target_category_name,
-                        filter.text(),
-                        visible_option_indices.len(),
-                        focus_label
-                    )
-                }
             });
         frame.render_widget(
             Paragraph::new(
@@ -2992,25 +2780,7 @@ impl App {
             frame.set_cursor_position((x, y));
         }
 
-        let category_create_parent_picker_open = self.mode == Mode::InputPanel
-            && self.name_input_context == Some(NameInputContext::CategoryCreate)
-            && matches!(
-                self.category_manager_inline_action(),
-                Some(CategoryInlineAction::ParentPicker { .. })
-            );
-        let show_inline_parent_picker = matches!(
-            self.category_manager_inline_action(),
-            Some(CategoryInlineAction::ParentPicker { .. })
-        ) && !category_create_parent_picker_open;
-        let table_area = if show_inline_parent_picker {
-            let left_body = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(60), Constraint::Min(4)])
-                .split(left[1]);
-            left_body[0]
-        } else {
-            left[1]
-        };
+        let table_area = left[1];
 
         let title_suffix = String::new();
 
@@ -3365,64 +3135,6 @@ impl App {
                     ])
                     .wrap(Wrap { trim: false }),
                     details_inner,
-                );
-            }
-        }
-
-        if show_inline_parent_picker {
-            let left_body = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(60), Constraint::Min(4)])
-                .split(left[1]);
-            if let Some(CategoryInlineAction::ParentPicker {
-                options,
-                visible_option_indices,
-                list_index,
-                focus,
-                ..
-            }) = self.category_manager_inline_action()
-            {
-                let parent_items: Vec<ListItem<'_>> = if visible_option_indices.is_empty() {
-                    vec![ListItem::new(Line::from("(no matching parent options)"))]
-                } else {
-                    visible_option_indices
-                        .iter()
-                        .filter_map(|idx| options.get(*idx))
-                        .map(|option| ListItem::new(Line::from(option.label.clone())))
-                        .collect()
-                };
-                let mut parent_state = Self::list_state_for(
-                    left_body[1],
-                    if visible_option_indices.is_empty() {
-                        None
-                    } else {
-                        Some((*list_index).min(visible_option_indices.len().saturating_sub(1)))
-                    },
-                );
-                let item_count = parent_items.len();
-                let border_color = if *focus == CategoryParentPickerFocus::List {
-                    Color::Cyan
-                } else {
-                    Color::Blue
-                };
-                frame.render_stateful_widget(
-                    List::new(parent_items)
-                        .highlight_symbol("> ")
-                        .highlight_style(selected_row_style())
-                        .block(
-                            Block::default()
-                                .title("Parent Picker")
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(border_color)),
-                        ),
-                    left_body[1],
-                    &mut parent_state,
-                );
-                Self::render_vertical_scrollbar(
-                    frame,
-                    left_body[1],
-                    item_count,
-                    parent_state.offset(),
                 );
             }
         }

@@ -268,27 +268,25 @@ Behavior details:
 ## Category Manager Action/Filter Cursor Rendering (Surprising)
 
 Category Manager has multiple inline text-entry states in the top
-Action/Filter pane (global filter editing, inline rename, parent-picker
-filter). These modes do not use footer/input-panel cursor logic.
+Action/Filter pane (global filter editing, inline rename). These modes do not
+use footer/input-panel cursor logic.
 
 If you add or refactor Category Manager render code, explicitly position the
 terminal cursor for these Action/Filter editing states; otherwise text editing
 still works but the caret appears missing/intermittent.
 
-## Category Create Parent Picker Ownership (Surprising)
+## Category Create Parent Defaults (Surprising)
 
-The CategoryCreate popup (`Mode::InputPanel` with
-`NameInputContext::CategoryCreate`) reuses `CategoryInlineAction::ParentPicker`
-state from Category Manager instead of a dedicated panel-local picker state.
+CategoryCreate (`Mode::InputPanel` with `NameInputContext::CategoryCreate`) no
+longer has a parent-picker menu.
 
 Practical implications:
-- Parent-picker keys while creating a category are handled through
-  `handle_category_manager_inline_action_key`, even though mode is
-  `Mode::InputPanel`.
-- Rendering must treat this as an InputPanel overlay flow; otherwise the picker
-  may appear embedded in Category Manager or persist as stale inline action.
-- When closing CategoryCreate (save/cancel/discard), clear
-  `category_manager.inline_action` to avoid orphaned parent-picker UI.
+- Parent is set when opening CategoryCreate (`n` uses selected category as the
+  default parent when allowed, otherwise root).
+- InputPanel focus cycle for CategoryCreate is now `Text -> Type -> Save ->
+  Cancel` (no Parent focus row).
+- To change hierarchy after create, use Category Manager structural moves
+  (`H/J/K/L` and `<<`/`>>`).
 
 ## Board Table Column Spacing Budget (Surprising)
 
