@@ -105,7 +105,7 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Numeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Numeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nBacklog lint example:\n  agenda list --any-category Aglet --missing-required\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
         #[arg(long)]
@@ -147,6 +147,10 @@ enum Command {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only show items missing one or more required category groups
+        /// (Issue type, Priority, Status, Software Project(s), Complexity).
+        #[arg(long = "missing-required")]
+        missing_required: bool,
         #[arg(long)]
         include_done: bool,
     },
@@ -370,6 +374,7 @@ fn run() -> Result<(), String> {
         value_max: Vec::new(),
         sort: Vec::new(),
         format: OutputFormatArg::Table,
+        missing_required: false,
         include_done: false,
     });
 
@@ -425,6 +430,7 @@ fn run() -> Result<(), String> {
             value_max,
             sort,
             format,
+            missing_required,
             include_done,
         } => cmd_list(
             &store,
@@ -436,6 +442,7 @@ fn run() -> Result<(), String> {
                 value_eq,
                 value_in,
                 value_max,
+                missing_required,
                 include_done,
             },
             sort,
@@ -555,7 +562,11 @@ fn cmd_edit(
         .map_err(|e| e.to_string())?;
 
     let note_stdin_has_content = note_stdin.as_ref().is_some_and(|value| !value.is_empty());
-    if text.is_some() || note.is_some() || append_note.is_some() || note_stdin_has_content || clear_note
+    if text.is_some()
+        || note.is_some()
+        || append_note.is_some()
+        || note_stdin_has_content
+        || clear_note
     {
         if let Some(new_text) = text {
             if new_text.is_empty() {
@@ -726,6 +737,7 @@ struct ListFilters {
     value_eq: Vec<String>,
     value_in: Vec<String>,
     value_max: Vec<String>,
+    missing_required: bool,
     include_done: bool,
 }
 
@@ -788,6 +800,15 @@ fn cmd_list(
         retain_items_matching_numeric_filters(&mut items, &numeric_filters);
     }
 
+    let missing_required_by_item = if filters.missing_required {
+        let missing_by_item = compute_missing_required_by_item(&items, &categories);
+        items.retain(|item| missing_by_item.contains_key(&item.id));
+        Some(missing_by_item)
+    } else {
+        None
+    };
+    let missing_required_by_item = missing_required_by_item.as_ref();
+
     let resolved_view = if let Some(view_name) = view_name {
         Some(view_by_name(store, &view_name)?)
     } else {
@@ -806,11 +827,24 @@ fn cmd_list(
             &category_names,
             &sort_keys,
             output_format,
+            missing_required_by_item,
         )?;
     } else if output_format == OutputFormatArg::Json {
-        print_items_json(&items, &category_names, &sort_keys, &categories)?;
+        print_items_json(
+            &items,
+            &category_names,
+            &sort_keys,
+            &categories,
+            missing_required_by_item,
+        )?;
     } else {
-        print_item_table(&items, &category_names, &sort_keys, &categories);
+        print_item_table(
+            &items,
+            &category_names,
+            &sort_keys,
+            &categories,
+            missing_required_by_item,
+        );
     }
     Ok(())
 }
@@ -969,9 +1003,9 @@ fn cmd_search(
 
     let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
     if output_format == OutputFormatArg::Json {
-        print_items_json(&matched_items, &category_names, &[], &categories)?;
+        print_items_json(&matched_items, &category_names, &[], &categories, None)?;
     } else {
-        print_item_table(&matched_items, &category_names, &[], &categories);
+        print_item_table(&matched_items, &category_names, &[], &categories, None);
     }
     Ok(())
 }
@@ -1585,6 +1619,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                 &category_names,
                 &sort_keys,
                 format,
+                None,
             )?;
             Ok(())
         }
@@ -1712,6 +1747,98 @@ fn parse_decimal_value(input: &str) -> Result<Decimal, String> {
         .map_err(|e| format!("invalid decimal value '{input}': {e}"))
 }
 
+#[derive(Clone, Copy)]
+struct RequiredCategoryGroup {
+    label: &'static str,
+    category_names: &'static [&'static str],
+}
+
+#[derive(Clone)]
+struct ResolvedRequiredCategoryGroup {
+    label: &'static str,
+    category_ids: Vec<CategoryId>,
+}
+
+const REQUIRED_CATEGORY_GROUPS: &[RequiredCategoryGroup] = &[
+    RequiredCategoryGroup {
+        label: "Issue type",
+        category_names: &["Issue type"],
+    },
+    RequiredCategoryGroup {
+        label: "Priority",
+        category_names: &["Priority"],
+    },
+    RequiredCategoryGroup {
+        label: "Status",
+        category_names: &["Status"],
+    },
+    RequiredCategoryGroup {
+        label: "Software Projects",
+        category_names: &["Software Projects", "Software Project"],
+    },
+    RequiredCategoryGroup {
+        label: "Complexity",
+        category_names: &["Complexity"],
+    },
+];
+
+fn resolve_required_category_groups(categories: &[Category]) -> Vec<ResolvedRequiredCategoryGroup> {
+    REQUIRED_CATEGORY_GROUPS
+        .iter()
+        .map(|group| {
+            let category_ids = categories
+                .iter()
+                .filter(|category| {
+                    group
+                        .category_names
+                        .iter()
+                        .any(|name| category.name.eq_ignore_ascii_case(name))
+                })
+                .map(|category| category.id)
+                .collect();
+            ResolvedRequiredCategoryGroup {
+                label: group.label,
+                category_ids,
+            }
+        })
+        .collect()
+}
+
+fn missing_required_group_labels(
+    item: &Item,
+    groups: &[ResolvedRequiredCategoryGroup],
+) -> Vec<String> {
+    groups
+        .iter()
+        .filter_map(|group| {
+            let has_group = group
+                .category_ids
+                .iter()
+                .any(|category_id| item.assignments.contains_key(category_id));
+            if has_group {
+                None
+            } else {
+                Some(group.label.to_string())
+            }
+        })
+        .collect()
+}
+
+fn compute_missing_required_by_item(
+    items: &[Item],
+    categories: &[Category],
+) -> HashMap<ItemId, Vec<String>> {
+    let groups = resolve_required_category_groups(categories);
+    let mut out = HashMap::new();
+    for item in items {
+        let missing = missing_required_group_labels(item, &groups);
+        if !missing.is_empty() {
+            out.insert(item.id, missing);
+        }
+    }
+    out
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CliSortDirection {
     Asc,
@@ -1783,6 +1910,8 @@ struct JsonItemRow {
     when: Option<String>,
     categories: Vec<String>,
     note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    missing_required: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1848,7 +1977,11 @@ fn item_categories(item: &Item, category_names: &HashMap<CategoryId, String>) ->
     names
 }
 
-fn item_row(item: &Item, category_names: &HashMap<CategoryId, String>) -> JsonItemRow {
+fn item_row(
+    item: &Item,
+    category_names: &HashMap<CategoryId, String>,
+    missing_required_by_item: Option<&HashMap<ItemId, Vec<String>>>,
+) -> JsonItemRow {
     JsonItemRow {
         id: item.id.to_string(),
         text: item.text.clone(),
@@ -1861,6 +1994,10 @@ fn item_row(item: &Item, category_names: &HashMap<CategoryId, String>) -> JsonIt
         when: item.when_date.map(|dt| dt.to_string()),
         categories: item_categories(item, category_names),
         note: item.note.clone(),
+        missing_required: missing_required_by_item
+            .and_then(|by_item| by_item.get(&item.id))
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 
@@ -1869,10 +2006,11 @@ fn rows_to_json(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     categories: &[Category],
+    missing_required_by_item: Option<&HashMap<ItemId, Vec<String>>>,
 ) -> Vec<JsonItemRow> {
     sorted_rows(items, sort_keys, categories)
         .into_iter()
-        .map(|item| item_row(item, category_names))
+        .map(|item| item_row(item, category_names, missing_required_by_item))
         .collect()
 }
 
@@ -1881,9 +2019,16 @@ fn print_items_json(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     categories: &[Category],
+    missing_required_by_item: Option<&HashMap<ItemId, Vec<String>>>,
 ) -> Result<(), String> {
     let payload = JsonItemsOutput {
-        items: rows_to_json(items, category_names, sort_keys, categories),
+        items: rows_to_json(
+            items,
+            category_names,
+            sort_keys,
+            categories,
+            missing_required_by_item,
+        ),
     };
     let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
     println!("{body}");
@@ -1934,6 +2079,7 @@ fn print_items_for_view(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     output_format: OutputFormatArg,
+    missing_required_by_item: Option<&HashMap<ItemId, Vec<String>>>,
 ) -> Result<(), String> {
     let reference_date = Local::now().date_naive();
     let result = resolve_view(view, items, categories, reference_date);
@@ -1946,7 +2092,13 @@ fn print_items_for_view(
             if section.subsections.is_empty() {
                 sections.push(JsonViewSectionOutput {
                     title: section.title,
-                    items: rows_to_json(&section.items, category_names, sort_keys, categories),
+                    items: rows_to_json(
+                        &section.items,
+                        category_names,
+                        sort_keys,
+                        categories,
+                        missing_required_by_item,
+                    ),
                     subsections: Vec::new(),
                 });
                 continue;
@@ -1956,7 +2108,13 @@ fn print_items_for_view(
             for subsection in section.subsections {
                 subsections.push(JsonViewSubsectionOutput {
                     title: subsection.title,
-                    items: rows_to_json(&subsection.items, category_names, sort_keys, categories),
+                    items: rows_to_json(
+                        &subsection.items,
+                        category_names,
+                        sort_keys,
+                        categories,
+                        missing_required_by_item,
+                    ),
                 });
             }
 
@@ -1971,7 +2129,13 @@ fn print_items_for_view(
             if rows.is_empty() {
                 None
             } else {
-                Some(rows_to_json(&rows, category_names, sort_keys, categories))
+                Some(rows_to_json(
+                    &rows,
+                    category_names,
+                    sort_keys,
+                    categories,
+                    missing_required_by_item,
+                ))
             }
         });
         let unmatched_label = if unmatched.is_some() {
@@ -2014,20 +2178,38 @@ fn print_items_for_view(
     for section in result.sections {
         println!("\n## {}", section.title);
         if section.subsections.is_empty() {
-            print_item_table(&section.items, category_names, sort_keys, categories);
+            print_item_table(
+                &section.items,
+                category_names,
+                sort_keys,
+                categories,
+                missing_required_by_item,
+            );
             continue;
         }
 
         for subsection in section.subsections {
             println!("\n### {}", subsection.title);
-            print_item_table(&subsection.items, category_names, sort_keys, categories);
+            print_item_table(
+                &subsection.items,
+                category_names,
+                sort_keys,
+                categories,
+                missing_required_by_item,
+            );
         }
     }
 
     if let Some(unmatched) = result.unmatched {
         if !unmatched.is_empty() {
             if !has_sections {
-                print_item_table(&unmatched, category_names, sort_keys, categories);
+                print_item_table(
+                    &unmatched,
+                    category_names,
+                    sort_keys,
+                    categories,
+                    missing_required_by_item,
+                );
                 return Ok(());
             }
 
@@ -2040,7 +2222,13 @@ fn print_items_for_view(
                 heading
             };
             println!("\n## {}", heading);
-            print_item_table(&unmatched, category_names, sort_keys, categories);
+            print_item_table(
+                &unmatched,
+                category_names,
+                sort_keys,
+                categories,
+                missing_required_by_item,
+            );
         }
     }
     Ok(())
@@ -2051,6 +2239,7 @@ fn print_item_table(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     categories: &[Category],
+    missing_required_by_item: Option<&HashMap<ItemId, Vec<String>>>,
 ) {
     if items.is_empty() {
         println!("(no items)");
@@ -2121,6 +2310,21 @@ fn print_item_table(
                 "",
                 "",
                 note.replace('\n', " "),
+                id_width = id_width,
+                status_width = status_width,
+                when_width = when_width
+            );
+        }
+
+        if let Some(missing_required) =
+            missing_required_by_item.and_then(|by_item| by_item.get(&item.id))
+        {
+            println!(
+                "{:<id_width$}  {:<status_width$}  {:<when_width$}  missing_required: {}",
+                "",
+                "",
+                "",
+                missing_required.join(", "),
                 id_width = id_width,
                 status_width = status_width,
                 when_width = when_width
@@ -2291,6 +2495,7 @@ fn print_category_subtree(
 mod tests {
     use super::{
         build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
+        compute_missing_required_by_item,
         compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
         parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
         read_note_from_stdin, reject_items_with_any_categories,
@@ -2816,6 +3021,7 @@ mod tests {
         assert!(help.contains("Numeric value filter examples:"));
         assert!(help.contains("--value-in Complexity 1,2"));
         assert!(help.contains("--value-max Complexity 2"));
+        assert!(help.contains("--missing-required"));
     }
 
     #[test]
@@ -2842,6 +3048,20 @@ mod tests {
         match cli.command {
             Some(Command::List { format, .. }) => {
                 assert_eq!(format, OutputFormatArg::Json);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_missing_required_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--missing-required"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List {
+                missing_required, ..
+            }) => {
+                assert!(missing_required);
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -3094,6 +3314,7 @@ mod tests {
             value_eq: vec!["Nope".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
+            missing_required: false,
             include_done: false,
         };
 
@@ -3111,6 +3332,7 @@ mod tests {
             value_eq: vec!["Status".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
+            missing_required: false,
             include_done: false,
         };
 
@@ -3132,6 +3354,7 @@ mod tests {
             value_eq: vec!["Complexity".to_string(), "abc".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
+            missing_required: false,
             include_done: false,
         };
 
@@ -3416,6 +3639,122 @@ mod tests {
 
         let remaining_texts: Vec<String> = rows.into_iter().map(|item| item.text).collect();
         assert_eq!(remaining_texts, vec!["Active item".to_string()]);
+    }
+
+    #[test]
+    fn compute_missing_required_by_item_finds_only_incomplete_items() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let issue_type = Category::new("Issue type".to_string());
+        let priority = Category::new("Priority".to_string());
+        let status = Category::new("Status".to_string());
+        let project = Category::new("Software Projects".to_string());
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        for category in [&issue_type, &priority, &status, &project, &complexity] {
+            store.create_category(category).expect("create category");
+        }
+
+        let complete = Item::new("Complete taxonomy".to_string());
+        let incomplete = Item::new("Missing groups".to_string());
+        store.create_item(&complete).expect("create complete");
+        store.create_item(&incomplete).expect("create incomplete");
+
+        for category_id in [issue_type.id, priority.id, status.id, project.id] {
+            agenda
+                .assign_item_manual(complete.id, category_id, Some("test:assign".to_string()))
+                .expect("assign complete category");
+        }
+        agenda
+            .assign_item_numeric_manual(
+                complete.id,
+                complexity.id,
+                Decimal::new(2, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("assign complete complexity");
+
+        agenda
+            .assign_item_manual(
+                incomplete.id,
+                issue_type.id,
+                Some("test:assign".to_string()),
+            )
+            .expect("assign incomplete issue type");
+
+        let items = store.list_items().expect("list items");
+        let categories = store.get_hierarchy().expect("hierarchy");
+        let missing_by_item = compute_missing_required_by_item(&items, &categories);
+
+        assert!(
+            !missing_by_item.contains_key(&complete.id),
+            "fully classified item should not be flagged"
+        );
+        let missing = missing_by_item
+            .get(&incomplete.id)
+            .expect("incomplete item should be flagged");
+        assert_eq!(
+            missing,
+            &vec![
+                "Priority".to_string(),
+                "Status".to_string(),
+                "Software Projects".to_string(),
+                "Complexity".to_string()
+            ]
+        );
+
+        let mut lint_rows = items.clone();
+        lint_rows.retain(|item| missing_by_item.contains_key(&item.id));
+        assert_eq!(
+            lint_rows
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>(),
+            vec!["Missing groups".to_string()]
+        );
+    }
+
+    #[test]
+    fn compute_missing_required_by_item_accepts_singular_project_parent_name() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let issue_type = Category::new("Issue type".to_string());
+        let priority = Category::new("Priority".to_string());
+        let status = Category::new("Status".to_string());
+        let project = Category::new("Software Project".to_string());
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        for category in [&issue_type, &priority, &status, &project, &complexity] {
+            store.create_category(category).expect("create category");
+        }
+
+        let item = Item::new("Singular parent naming".to_string());
+        store.create_item(&item).expect("create item");
+        for category_id in [issue_type.id, priority.id, status.id, project.id] {
+            agenda
+                .assign_item_manual(item.id, category_id, Some("test:assign".to_string()))
+                .expect("assign category");
+        }
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                complexity.id,
+                Decimal::new(1, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("assign complexity");
+
+        let items = store.list_items().expect("list items");
+        let categories = store.get_hierarchy().expect("hierarchy");
+        let missing_by_item = compute_missing_required_by_item(&items, &categories);
+        assert!(
+            !missing_by_item.contains_key(&item.id),
+            "software project singular parent should satisfy required project group"
+        );
     }
 
     #[test]
