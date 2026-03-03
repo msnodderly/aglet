@@ -19,6 +19,26 @@ Use `claim` to atomically move an item into active work:
 cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
 ```
 
+Equivalent explicit criteria:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> \
+  --claim-category "In Progress" \
+  --must-not-have "In Progress" \
+  --must-not-have "Complete"
+```
+
+`claim` requires the target category to exist. If `In Progress` is missing, create
+it as a category or sub-category first. Feature DB-style setup:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag category create Status --exclusive
+cargo run --bin agenda-cli -- --db aglet-features.ag category create Ready --parent Status
+cargo run --bin agenda-cli -- --db aglet-features.ag category create "In Progress" --parent Status
+cargo run --bin agenda-cli -- --db aglet-features.ag category create "Waiting/Blocked" --parent Status
+cargo run --bin agenda-cli -- --db aglet-features.ag category create Complete --parent Status
+```
+
 Custom preconditions:
 
 ```bash
