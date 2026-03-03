@@ -835,33 +835,6 @@ impl App {
         }
     }
 
-    pub(crate) fn open_provenance_unassign_picker(&mut self) {
-        if !self.show_preview {
-            self.status = "Preview is closed (press p to open)".to_string();
-            return;
-        }
-        if self.normal_focus != NormalFocus::Preview {
-            self.status = "Focus preview pane to unassign from info (f)".to_string();
-            return;
-        }
-        if self.preview_mode != PreviewMode::Provenance {
-            self.status = "Switch preview to Info mode (i) to unassign".to_string();
-            return;
-        }
-        let Some(item) = self.selected_item() else {
-            self.status = "No selected item to unassign".to_string();
-            return;
-        };
-        let rows = self.inspect_assignment_rows_for_item(item);
-        if rows.is_empty() {
-            self.status = "No assignments available to unassign".to_string();
-            return;
-        }
-        self.mode = Mode::InspectUnassign;
-        self.inspect_assignment_index = self.inspect_assignment_index.min(rows.len() - 1);
-        self.status = "Select assignment to unassign (j/k, Enter, Esc)".to_string();
-    }
-
     pub(crate) fn open_board_add_column_picker(
         &mut self,
         direction: AddColumnDirection,
@@ -2179,26 +2152,6 @@ impl App {
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
-                    self.status = "No selected item to edit categories".to_string();
-                } else if self.category_rows.is_empty() {
-                    self.status = "No categories available".to_string();
-                } else {
-                    self.mode = Mode::ItemAssignPicker;
-                    self.item_assign_category_index =
-                        first_non_reserved_category_index(&self.category_rows);
-                    self.clear_input();
-                    self.status =
-                        "Item categories: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
-                            .to_string();
-                }
-            }
-            KeyCode::Char('u') => {
-                if self.show_preview
-                    && self.normal_focus == NormalFocus::Preview
-                    && self.preview_mode == PreviewMode::Provenance
-                {
-                    self.open_provenance_unassign_picker();
-                } else if self.selected_item_id().is_none() {
                     self.status = "No selected item to edit categories".to_string();
                 } else if self.category_rows.is_empty() {
                     self.status = "No categories available".to_string();
