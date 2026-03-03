@@ -2054,7 +2054,7 @@ impl App {
         } else {
             items.push(ListItem::new(Line::from("Info")));
             items.push(ListItem::new(Line::from(
-                "f focus | j/k or J/K scroll | i summary | u unassign",
+                "f focus | j/k or J/K scroll | i summary",
             )));
             items.push(ListItem::new(Line::from("")));
             items.push(ListItem::new(Line::from("(no selected item)")));
@@ -2115,7 +2115,7 @@ impl App {
     pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
         let mut lines = vec![
             "Info".to_string(),
-            "f focus | j/k or J/K scroll | i summary | u unassign".to_string(),
+            "f focus | j/k or J/K scroll | i summary".to_string(),
             String::new(),
             "Metadata".to_string(),
             format!("  Done: {}", if item.is_done { "yes" } else { "no" }),
