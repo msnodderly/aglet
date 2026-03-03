@@ -2208,7 +2208,7 @@ impl App {
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
                     self.status =
-                        "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                        "Item categories: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
                             .to_string();
                 }
             }
@@ -2228,7 +2228,7 @@ impl App {
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
                     self.status =
-                        "Item categories: j/k select, Space toggle, n type category, Enter done, Esc cancel"
+                        "Item categories: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
                             .to_string();
                 }
             }
@@ -4082,7 +4082,8 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('/') => {
                 self.mode = Mode::ItemAssignInput;
                 self.clear_input();
-                self.status = "Type category name: Enter assign/create, Esc back".to_string();
+                self.status = "Type category name: Enter assign/create, Tab autocomplete, Esc back"
+                    .to_string();
             }
             KeyCode::Char(' ') => {
                 let Some(item_id) = self.selected_item_id() else {
@@ -4190,6 +4191,7 @@ impl App {
                     None
                 };
 
+                let mut created_new_category = false;
                 let (category_id, category_name) =
                     if let Some((category_id, category_name)) = exact_match {
                         (category_id, category_name)
@@ -4203,28 +4205,65 @@ impl App {
                             .store()
                             .create_category(&category)
                             .map_err(|e| e.to_string())?;
+                        created_new_category = true;
                         (category_id, category.name)
                     };
 
-                let result = agenda
-                    .assign_item_manual(item_id, category_id, Some("manual:tui.assign".to_string()))
-                    .map_err(|e| e.to_string())?;
-                self.refresh(agenda.store())?;
-                self.set_item_selection_by_id(item_id);
-                if let Some(index) = self
-                    .category_rows
-                    .iter()
-                    .position(|row| row.id == category_id)
-                {
-                    self.item_assign_category_index = index;
+                match agenda.assign_item_manual(
+                    item_id,
+                    category_id,
+                    Some("manual:tui.assign".to_string()),
+                ) {
+                    Ok(result) => {
+                        self.refresh(agenda.store())?;
+                        self.set_item_selection_by_id(item_id);
+                        if let Some(index) = self
+                            .category_rows
+                            .iter()
+                            .position(|row| row.id == category_id)
+                        {
+                            self.item_assign_category_index = index;
+                        }
+                        self.mode = Mode::ItemAssignPicker;
+                        self.clear_input();
+                        self.status = if created_new_category {
+                            format!(
+                                "Created and assigned category {} (new_assignments={})",
+                                category_name,
+                                result.new_assignments.len()
+                            )
+                        } else {
+                            format!(
+                                "Assigned category {} (new_assignments={})",
+                                category_name,
+                                result.new_assignments.len()
+                            )
+                        };
+                    }
+                    Err(err) => {
+                        // Keep the picker open and refreshed so newly created categories
+                        // appear immediately even if the assignment step fails.
+                        self.refresh(agenda.store())?;
+                        self.set_item_selection_by_id(item_id);
+                        if let Some(index) = self
+                            .category_rows
+                            .iter()
+                            .position(|row| row.id == category_id)
+                        {
+                            self.item_assign_category_index = index;
+                        }
+                        self.mode = Mode::ItemAssignPicker;
+                        self.clear_input();
+                        self.status = if created_new_category {
+                            format!(
+                                "Created category {} but could not assign: {}",
+                                category_name, err
+                            )
+                        } else {
+                            format!("Could not assign category {}: {}", category_name, err)
+                        };
+                    }
                 }
-                self.mode = Mode::ItemAssignPicker;
-                self.clear_input();
-                self.status = format!(
-                    "Assigned category {} (new_assignments={})",
-                    category_name,
-                    result.new_assignments.len()
-                );
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}
