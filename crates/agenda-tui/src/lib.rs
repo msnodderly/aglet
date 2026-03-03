@@ -6872,6 +6872,80 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
+    #[test]
+    fn board_column_header_uses_view_alias_for_numeric_heading() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-alias-header-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&complexity)
+            .expect("create numeric category");
+
+        let item = Item::new("Alias header item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                complexity.id,
+                rust_decimal::Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign numeric value");
+
+        let mut view = View::new("Board".to_string());
+        view.category_aliases
+            .insert(complexity.id, "Points".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: complexity.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(70, 16);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Points"),
+            "board header should render aliased column name: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Complexity"),
+            "board header should prefer alias over canonical heading: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
     // -------------------------------------------------------------------------
     // Phase 2a: ViewEdit tests
     // -------------------------------------------------------------------------
