@@ -2128,6 +2128,8 @@ impl App {
             KeyCode::Enter => {
                 if self.column_index != self.current_slot_item_column_index() {
                     self.open_category_column_editor();
+                } else if self.selected_item_id().is_none() {
+                    self.open_input_panel_add_item();
                 } else {
                     self.open_input_panel_edit_item();
                 }
