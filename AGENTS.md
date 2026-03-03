@@ -265,6 +265,16 @@ Behavior details:
 - Any non-`<`/`>` key clears the pending shift prefix.
 - `<<` / `>>` are disabled while the Details pane is focused (same as `H/J/K/L`).
 
+## Category Manager Action/Filter Cursor Rendering (Surprising)
+
+Category Manager has multiple inline text-entry states in the top
+Action/Filter pane (global filter editing, inline rename, parent-picker
+filter). These modes do not use footer/input-panel cursor logic.
+
+If you add or refactor Category Manager render code, explicitly position the
+terminal cursor for these Action/Filter editing states; otherwise text editing
+still works but the caret appears missing/intermittent.
+
 ## Category Create Parent Picker Ownership (Surprising)
 
 The CategoryCreate popup (`Mode::InputPanel` with
