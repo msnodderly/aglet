@@ -2843,7 +2843,7 @@ impl App {
             });
         frame.render_widget(
             Paragraph::new(
-                "Categories are shared across all views. Press n to add, H/J/K/L to reorder, and use Details to edit flags and notes.",
+                "Categories are shared across all views. Press n to add, H/J/K/L to reorder (or << / >> to outdent/indent), and use Details to edit flags and notes.",
             ),
             layout[0],
         );

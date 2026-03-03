@@ -855,6 +855,9 @@ impl App {
                 }
             }
         }
+        if !matches!(code, KeyCode::Char('<') | KeyCode::Char('>')) {
+            self.set_category_manager_structure_move_prefix(None);
+        }
         match code {
             KeyCode::Tab => {
                 self.set_category_manager_filter_editing(false);
@@ -907,6 +910,32 @@ impl App {
                     return Ok(false);
                 }
                 self.reorder_selected_category_sibling(1, agenda)?;
+            }
+            KeyCode::Char('<') => {
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    self.set_category_manager_structure_move_prefix(None);
+                    return Ok(false);
+                }
+                if self.category_manager_structure_move_prefix() == Some('<') {
+                    self.set_category_manager_structure_move_prefix(None);
+                    self.outdent_selected_category(agenda)?;
+                } else {
+                    self.set_category_manager_structure_move_prefix(Some('<'));
+                    self.status = "Press < again to outdent selected category (<<)".to_string();
+                }
+            }
+            KeyCode::Char('>') => {
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    self.set_category_manager_structure_move_prefix(None);
+                    return Ok(false);
+                }
+                if self.category_manager_structure_move_prefix() == Some('>') {
+                    self.set_category_manager_structure_move_prefix(None);
+                    self.indent_selected_category_under_previous_sibling(agenda)?;
+                } else {
+                    self.set_category_manager_structure_move_prefix(Some('>'));
+                    self.status = "Press > again to indent selected category (>>)".to_string();
+                }
             }
             KeyCode::Char('H') => {
                 if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
