@@ -1092,6 +1092,81 @@ impl App {
         ))
     }
 
+    pub(crate) fn category_manager_action_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+        let max_x = inner.x.saturating_add(inner.width.saturating_sub(1));
+
+        if let Some(action) = self.category_manager_inline_action() {
+            match action {
+                CategoryInlineAction::Rename { buf, .. } => {
+                    let prefix_len = "Rename> ".chars().count().min(u16::MAX as usize) as u16;
+                    let cursor_chars = buf.cursor().min(u16::MAX as usize) as u16;
+                    let cursor_x = inner
+                        .x
+                        .saturating_add(prefix_len)
+                        .saturating_add(cursor_chars)
+                        .min(max_x);
+                    return Some((cursor_x, inner.y));
+                }
+                CategoryInlineAction::ParentPicker {
+                    target_category_name,
+                    filter,
+                    filter_editing,
+                    focus,
+                    ..
+                } => {
+                    if *filter_editing && *focus == CategoryParentPickerFocus::Filter {
+                        let prefix_len =
+                            format!("Reparent {} | parent filter> ", target_category_name)
+                                .chars()
+                                .count()
+                                .min(u16::MAX as usize) as u16;
+                        let cursor_chars = filter.cursor().min(u16::MAX as usize) as u16;
+                        let cursor_x = inner
+                            .x
+                            .saturating_add(prefix_len)
+                            .saturating_add(cursor_chars)
+                            .min(max_x);
+                        return Some((cursor_x, inner.y));
+                    }
+                }
+                CategoryInlineAction::DeleteConfirm { .. } => {}
+            }
+            return None;
+        }
+
+        if self.category_manager_focus() == Some(CategoryManagerFocus::Filter)
+            && self.category_manager_filter_editing()
+        {
+            let prefix_len = "Filter: ".chars().count().min(u16::MAX as usize) as u16;
+            let cursor_chars = self
+                .category_manager
+                .as_ref()
+                .map(|state| state.filter.cursor())
+                .unwrap_or(0)
+                .min(u16::MAX as usize) as u16;
+            let cursor_x = inner
+                .x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x);
+            return Some((cursor_x, inner.y));
+        }
+
+        None
+    }
+
     pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
         match self.mode {
             Mode::NoteEdit => {
@@ -2823,22 +2898,13 @@ impl App {
                         CategoryParentPickerFocus::Filter => "filter",
                         CategoryParentPickerFocus::List => "list",
                     };
-                    if filter.text().trim().is_empty() {
-                        format!(
-                            "Reparent {} | parent filter ({}) [{}]",
-                            target_category_name,
-                            visible_option_indices.len(),
-                            focus_label
-                        )
-                    } else {
-                        format!(
-                            "Reparent {} | parent filter> {} ({}) [{}]",
-                            target_category_name,
-                            filter.text(),
-                            visible_option_indices.len(),
-                            focus_label
-                        )
-                    }
+                    format!(
+                        "Reparent {} | parent filter> {} ({}) [{}]",
+                        target_category_name,
+                        filter.text(),
+                        visible_option_indices.len(),
+                        focus_label
+                    )
                 }
             });
         frame.render_widget(
@@ -2876,6 +2942,10 @@ impl App {
         frame.render_widget(
             Paragraph::new(if let Some(prompt) = action_prompt {
                 prompt
+            } else if manager_focus == CategoryManagerFocus::Filter
+                && self.category_manager_filter_editing()
+            {
+                format!("Filter: {}", filter_text)
             } else if filter_text.trim().is_empty() {
                 "Press / to filter categories by name.".to_string()
             } else {
@@ -2901,6 +2971,9 @@ impl App {
             ),
             left[0],
         );
+        if let Some((x, y)) = self.category_manager_action_cursor_position(left[0]) {
+            frame.set_cursor_position((x, y));
+        }
 
         let category_create_parent_picker_open = self.mode == Mode::InputPanel
             && self.name_input_context == Some(NameInputContext::CategoryCreate)
