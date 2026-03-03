@@ -132,6 +132,33 @@ impl<'a> Agenda<'a> {
         process_item(self.store, self.classifier, item_id)
     }
 
+    pub fn claim_item_manual(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        must_not_have_category_ids: &[CategoryId],
+        origin: Option<String>,
+    ) -> Result<ProcessItemResult> {
+        self.store.with_immediate_transaction(|store| {
+            let _ = store.get_item(item_id)?;
+            let assignments = store.get_assignments_for_item(item_id)?;
+            for blocked_category_id in must_not_have_category_ids {
+                if assignments.contains_key(blocked_category_id) {
+                    let blocked_category_name = store
+                        .get_category(*blocked_category_id)
+                        .map(|category| category.name)
+                        .unwrap_or_else(|_| blocked_category_id.to_string());
+                    return Err(AgendaError::InvalidOperation {
+                        message: format!(
+                            "claim precondition failed: item {item_id} already has category '{blocked_category_name}'"
+                        ),
+                    });
+                }
+            }
+            self.assign_item_manual(item_id, category_id, origin.clone())
+        })
+    }
+
     pub fn assign_item_numeric_manual(
         &self,
         item_id: ItemId,
@@ -635,6 +662,9 @@ impl<'a> Agenda<'a> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use chrono::{NaiveDate, NaiveDateTime, Utc};
     use rust_decimal::Decimal;
@@ -1100,6 +1130,130 @@ mod tests {
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(!assignments.contains_key(&high.id));
         assert!(assignments.contains_key(&medium.id));
+    }
+
+    #[test]
+    fn claim_item_manual_rejects_when_precondition_category_is_already_assigned() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        store.create_category(&status).unwrap();
+        let in_progress = child_category("In Progress", status.id, false);
+        let complete = child_category("Complete", status.id, false);
+        store.create_category(&in_progress).unwrap();
+        store.create_category(&complete).unwrap();
+
+        let item = Item::new("Task".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, complete.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let err = agenda
+            .claim_item_manual(
+                item.id,
+                in_progress.id,
+                &[in_progress.id, complete.id],
+                Some("manual:test.claim".to_string()),
+            )
+            .expect_err("claim should fail when complete is assigned");
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+        let msg = err.to_string();
+        assert!(msg.contains("claim precondition failed"));
+        assert!(msg.contains("Complete"));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&complete.id));
+        assert!(!assignments.contains_key(&in_progress.id));
+    }
+
+    #[test]
+    fn claim_item_manual_race_allows_only_one_winner() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-claim-race-{nanos}.ag"));
+
+        let (item_id, ready_id, in_progress_id, complete_id) = {
+            let store = Store::open(&db_path).expect("open temp db");
+            let classifier = SubstringClassifier;
+            let agenda = Agenda::new(&store, &classifier);
+
+            let mut status = category("Status", false);
+            status.is_exclusive = true;
+            store.create_category(&status).expect("create status");
+            let ready = child_category("Ready", status.id, false);
+            let in_progress = child_category("In Progress", status.id, false);
+            let complete = child_category("Complete", status.id, false);
+            store.create_category(&ready).expect("create ready");
+            store
+                .create_category(&in_progress)
+                .expect("create in progress");
+            store.create_category(&complete).expect("create complete");
+
+            let item = Item::new("Concurrent claim target".to_string());
+            store.create_item(&item).expect("create item");
+            agenda
+                .assign_item_manual(item.id, ready.id, Some("manual:test".to_string()))
+                .expect("assign ready");
+            (item.id, ready.id, in_progress.id, complete.id)
+        };
+
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let db_path = db_path.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let store = Store::open(&db_path).expect("open raced store");
+                let classifier = SubstringClassifier;
+                let agenda = Agenda::new(&store, &classifier);
+                barrier.wait();
+                agenda
+                    .claim_item_manual(
+                        item_id,
+                        in_progress_id,
+                        &[in_progress_id, complete_id],
+                        Some("manual:test.claim".to_string()),
+                    )
+                    .map(|_| ())
+                    .map_err(|err| err.to_string())
+            }));
+        }
+
+        let outcomes: Vec<Result<(), String>> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread result"))
+            .collect();
+
+        let success_count = outcomes.iter().filter(|result| result.is_ok()).count();
+        assert_eq!(success_count, 1, "exactly one claim should succeed");
+        let failure_messages: Vec<&str> = outcomes
+            .iter()
+            .filter_map(|result| result.as_ref().err().map(String::as_str))
+            .collect();
+        assert_eq!(failure_messages.len(), 1);
+        assert!(
+            failure_messages[0].contains("claim precondition failed"),
+            "expected precondition failure, got: {}",
+            failure_messages[0]
+        );
+
+        let verify_store = Store::open(&db_path).expect("open verify store");
+        let assignments = verify_store
+            .get_assignments_for_item(item_id)
+            .expect("load assignments");
+        assert!(assignments.contains_key(&in_progress_id));
+        assert!(!assignments.contains_key(&ready_id));
+        assert!(!assignments.contains_key(&complete_id));
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
     }
 
     #[test]

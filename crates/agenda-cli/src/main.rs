@@ -76,6 +76,23 @@ enum Command {
     /// Show a single item with its assignments
     Show { item_id: String },
 
+    /// Atomically claim an item for active work
+    #[command(
+        after_help = "Defaults (`agenda claim <ITEM_ID>`):\n  --claim-category \"In Progress\"\n  --must-not-have \"In Progress\"\n  --must-not-have \"Complete\"\n\nSetup:\n  Create an `In Progress` category (or sub-category) before claiming.\n\n  Feature DB example (`aglet-features.ag`):\n  agenda category create Status --exclusive\n  agenda category create Ready --parent Status\n  agenda category create \"In Progress\" --parent Status\n  agenda category create \"Waiting/Blocked\" --parent Status\n  agenda category create Complete --parent Status\n\nExamples:\n  agenda claim <ITEM_ID>\n  agenda claim <ITEM_ID> --must-not-have \"In Progress\" --must-not-have \"Complete\"\n  agenda claim <ITEM_ID> --claim-category \"In Progress\" --must-not-have \"Waiting/Blocked\""
+    )]
+    Claim {
+        item_id: String,
+        /// Category to assign on successful claim.
+        #[arg(long = "claim-category", default_value = "In Progress")]
+        claim_category: String,
+        /// Claim preconditions: fail if the item already has any of these categories.
+        #[arg(
+            long = "must-not-have",
+            default_values = ["In Progress", "Complete"]
+        )]
+        must_not_have: Vec<String>,
+    },
+
     /// List items (optionally filtered)
     List {
         #[arg(long)]
@@ -337,6 +354,11 @@ fn run() -> Result<(), String> {
             done,
         } => cmd_edit(&agenda, item_id, text, note, clear_note, done),
         Command::Show { item_id } => cmd_show(&store, item_id),
+        Command::Claim {
+            item_id,
+            claim_category,
+            must_not_have,
+        } => cmd_claim(&agenda, &store, item_id, claim_category, must_not_have),
         Command::List {
             view,
             category,
@@ -529,6 +551,53 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
         println!("{line}");
     }
 
+    Ok(())
+}
+
+fn cmd_claim(
+    agenda: &Agenda<'_>,
+    store: &Store,
+    item_id_str: String,
+    claim_category_name: String,
+    must_not_have_names: Vec<String>,
+) -> Result<(), String> {
+    let item_id = parse_item_id(&item_id_str)?;
+    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let claim_category_id = category_id_by_name(&categories, &claim_category_name)?;
+    let claim_category = categories
+        .iter()
+        .find(|category| category.id == claim_category_id)
+        .ok_or_else(|| format!("category not found: {claim_category_name}"))?;
+    if claim_category.value_kind == CategoryValueKind::Numeric {
+        return Err(format!(
+            "category '{}' is Numeric; claims require a non-numeric category",
+            claim_category.name
+        ));
+    }
+
+    let mut must_not_have_ids = Vec::new();
+    for name in must_not_have_names {
+        let category_id = category_id_by_name(&categories, &name)?;
+        if !must_not_have_ids.contains(&category_id) {
+            must_not_have_ids.push(category_id);
+        }
+    }
+
+    let result = agenda
+        .claim_item_manual(
+            item_id,
+            claim_category_id,
+            &must_not_have_ids,
+            Some("manual:cli.claim".to_string()),
+        )
+        .map_err(|e| e.to_string())?;
+    println!(
+        "claimed item {} to category {}",
+        item_id, claim_category.name
+    );
+    if !result.new_assignments.is_empty() {
+        println!("new_assignments={}", result.new_assignments.len());
+    }
     Ok(())
 }
 
@@ -1989,12 +2058,13 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd_unlink, cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
-        item_link_section_lines, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        reject_items_with_any_categories, retain_items_with_all_categories,
-        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg,
-        UnlinkCommand, ViewCommand,
+        cmd_claim, cmd_unlink, cmd_view, compare_items_by_sort_keys,
+        duplicate_category_create_error, item_link_section_lines, parse_decimal_value,
+        parse_sort_spec, parsed_when_feedback_line, reject_items_with_any_categories,
+        retain_items_with_all_categories, retain_items_with_any_categories,
+        unknown_hashtag_feedback_line, view_category_alias_rows, Cli, CliSortDirection,
+        CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, UnlinkCommand,
+        ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2096,6 +2166,164 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].category_name, format!("(deleted:{missing})"));
         assert_eq!(rows[0].alias, "Archived");
+    }
+
+    #[test]
+    fn clap_parses_claim_with_defaults() {
+        let cli = Cli::try_parse_from(["agenda", "claim", "123e4567-e89b-12d3-a456-426614174000"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Claim {
+                item_id,
+                claim_category,
+                must_not_have,
+            }) => {
+                assert_eq!(item_id, "123e4567-e89b-12d3-a456-426614174000");
+                assert_eq!(claim_category, "In Progress");
+                assert_eq!(
+                    must_not_have,
+                    vec!["In Progress".to_string(), "Complete".to_string()]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_claim_with_custom_preconditions() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "claim",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--claim-category",
+            "Ready",
+            "--must-not-have",
+            "In Progress",
+            "--must-not-have",
+            "Complete",
+            "--must-not-have",
+            "Waiting/Blocked",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Claim {
+                claim_category,
+                must_not_have,
+                ..
+            }) => {
+                assert_eq!(claim_category, "Ready");
+                assert_eq!(
+                    must_not_have,
+                    vec![
+                        "In Progress".to_string(),
+                        "Complete".to_string(),
+                        "Waiting/Blocked".to_string()
+                    ]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn claim_help_includes_agent_examples() {
+        let mut cmd = Cli::command();
+        let claim_cmd = cmd
+            .find_subcommand_mut("claim")
+            .expect("claim subcommand should exist");
+        let help = claim_cmd.render_help().to_string();
+        assert!(help.contains("Defaults (`agenda claim <ITEM_ID>`):"));
+        assert!(help.contains("--claim-category \"In Progress\""));
+        assert!(help.contains("--must-not-have \"Complete\""));
+        assert!(help.contains("Create an `In Progress` category"));
+        assert!(help.contains("agenda category create \"In Progress\" --parent Status"));
+        assert!(help.contains("Examples:"));
+        assert!(help.contains("agenda claim <ITEM_ID>"));
+        assert!(help.contains("--must-not-have"));
+    }
+
+    #[test]
+    fn cmd_claim_fails_when_precondition_category_already_assigned() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+        let mut in_progress = Category::new("In Progress".to_string());
+        in_progress.parent = Some(status.id);
+        store
+            .create_category(&in_progress)
+            .expect("create in-progress");
+        let mut complete = Category::new("Complete".to_string());
+        complete.parent = Some(status.id);
+        store.create_category(&complete).expect("create complete");
+
+        let item = Item::new("Claim target".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(
+                item.id,
+                in_progress.id,
+                Some("manual:test.assign".to_string()),
+            )
+            .expect("seed in-progress");
+
+        let err = cmd_claim(
+            &agenda,
+            &store,
+            item.id.to_string(),
+            "In Progress".to_string(),
+            vec!["In Progress".to_string(), "Complete".to_string()],
+        )
+        .expect_err("claim should fail");
+        assert!(err.contains("claim precondition failed"));
+    }
+
+    #[test]
+    fn cmd_claim_assigns_claim_category_and_clears_exclusive_sibling() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+        let mut ready = Category::new("Ready".to_string());
+        ready.parent = Some(status.id);
+        store.create_category(&ready).expect("create ready");
+        let mut in_progress = Category::new("In Progress".to_string());
+        in_progress.parent = Some(status.id);
+        store
+            .create_category(&in_progress)
+            .expect("create in-progress");
+        let mut complete = Category::new("Complete".to_string());
+        complete.parent = Some(status.id);
+        store.create_category(&complete).expect("create complete");
+
+        let item = Item::new("Claim target".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ready.id, Some("manual:test.assign".to_string()))
+            .expect("seed ready");
+
+        cmd_claim(
+            &agenda,
+            &store,
+            item.id.to_string(),
+            "In Progress".to_string(),
+            vec!["In Progress".to_string(), "Complete".to_string()],
+        )
+        .expect("claim should succeed");
+
+        let assignments = store
+            .get_assignments_for_item(item.id)
+            .expect("load assignments");
+        assert!(assignments.contains_key(&in_progress.id));
+        assert!(!assignments.contains_key(&ready.id));
     }
 
     #[test]
