@@ -2593,7 +2593,7 @@ impl App {
             return;
         }
         if let Some(state) = self.link_wizard_state_mut() {
-            state.target_index = next_index(state.target_index, len, delta);
+            state.target_index = next_index_clamped(state.target_index, len, delta);
         }
     }
 

@@ -3172,6 +3172,55 @@ mod tests {
     }
 
     #[test]
+    fn link_wizard_target_navigation_does_not_wrap() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let anchor = Item::new("Anchor task".to_string());
+        let alpha = Item::new("Alpha target".to_string());
+        let beta = Item::new("Beta target".to_string());
+        let gamma = Item::new("Gamma target".to_string());
+        for item in [&anchor, &alpha, &beta, &gamma] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(anchor.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open link wizard");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target list");
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").focus,
+            super::LinkWizardFocus::Target
+        );
+
+        for _ in 0..8 {
+            app.handle_key(KeyCode::Down, &agenda)
+                .expect("move target cursor down");
+        }
+        let last = app.link_wizard_target_matches().len().saturating_sub(1);
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").target_index,
+            last,
+            "down movement should clamp at the last row"
+        );
+
+        for _ in 0..8 {
+            app.handle_key(KeyCode::Up, &agenda)
+                .expect("move target cursor up");
+        }
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").target_index,
+            0,
+            "up movement should clamp at the first row"
+        );
+    }
+
+    #[test]
     fn link_wizard_render_keeps_selected_target_visible_when_scrolled() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
