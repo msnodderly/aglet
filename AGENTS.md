@@ -387,17 +387,17 @@ Practical implications:
   assignment rows/fallback line) or users will be unable to scroll to all
   info content.
 
-## Add-Item Context Text Must Not Render Inline With `Text>` (Surprising)
+## Add-Item Context Text Must Use Fixed Help Row (Surprising)
 
 In the InputPanel add-item flow, rendering `preview_context` (for example
 `Adding to "Unassigned"`) on the same line as `Text>` causes the helper text to
 appear to "float" as the cursor moves/typing changes line content.
 
 Practical implications:
-- Keep add-item context on a dedicated static row (not inline with the text
-  input row).
-- `input_panel_popup_regions` for Add/Edit should reserve a context line so the
-  message remains visually stable.
+- Keep add-item context in the fixed help/status row (`regions.help`) and
+  include destination + auto-assign count.
+- Do not render add-item context near the text cursor row; numeric-value panels
+  may still use the context row near the value input.
 - Preserve a regression test that asserts the `Text>` line does not contain the
   `Adding to ...` context string.
 
