@@ -31,7 +31,7 @@ Do not start additional tasks after completing your assigned work.
 3. **Claim task**:
 
    ```bash
-   cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "In Progress"
+   cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
    ```
 
 4. **Create worktree** (isolated branch/workdir):
@@ -154,7 +154,7 @@ git switch main
 ./scripts/list-open-project-items.sh aglet
 
 # 2) Claim item
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "In Progress"
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
 
 # 3) Create isolated worktree + branch
 git worktree add ../aglet-<ITEM_ID>-<SHORT_SLUG> -b codex/<ITEM_ID>-<SHORT_SLUG> main
@@ -215,5 +215,5 @@ Before finishing, confirm:
 - [ ] `cargo clippy --all-targets --all-features` runs clean and all findings are addressed
 - [ ] `git status` is clean (or only expected uncommitted work if not finishing yet)
 - [ ] Branch has been pushed to remote (`git push` completed successfully)
-- [ ] `agenda-cli show <ITEM_ID>` reflects latest plan/completion note and `Complete` status (set after push)
+- [ ] `agenda-cli show <ITEM_ID>` reflects latest plan/completion note and includes `Complete` in `assignments:` (set after push)
 - [ ] `AGENTS.md` updated for newly discovered gotchas (if any)

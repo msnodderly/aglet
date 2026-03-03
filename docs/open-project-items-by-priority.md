@@ -45,6 +45,16 @@ scripts/list-open-project-items.sh --db aglet-features.ag project3
 
 The script uses native `list` filters (`--any-category`, `--exclude-category`) and sorts by `Priority`.
 
+## Atomic Pickup
+
+After selecting an `ITEM_ID` from the open-item list, claim it atomically:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+```
+
+Default claim preconditions fail when the item already has `In Progress` or `Complete`, which reduces multi-agent pickup races.
+
 ## Notes
 
 - Category matching is case-insensitive (`neonv` and `NeoNV` are equivalent).

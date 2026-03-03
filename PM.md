@@ -32,6 +32,10 @@ cargo run --bin agenda-cli -- --db aglet-features.ag category list
 cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "<CATEGORY>"
 cargo run --bin agenda-cli -- --db aglet-features.ag category unassign <ITEM_ID> "<CATEGORY>"
 
+# Atomic claim (preferred for multi-agent task pickup)
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> --must-not-have "In Progress" --must-not-have "Complete" --must-not-have "Waiting/Blocked"
+
 # Dependency links
 cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
 cargo run --bin agenda-cli -- --db aglet-features.ag link depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
@@ -269,3 +273,31 @@ Before opening a grooming PR:
 - [ ] `docs/questions.md` updated where needed
 - [ ] `aglet-features.ag` + docs committed
 - [ ] Branch pushed and PR opened
+
+---
+
+## Smoke Test: `agenda claim`
+
+Use this against `aglet-features.ag` to validate claim behavior quickly.
+
+```bash
+# 1) Create a disposable test item (capture the UUID from output)
+cargo run --bin agenda-cli -- --db aglet-features.ag add "Smoke test claim"
+
+# 2) Seed it as Ready
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Ready"
+
+# 3) Claim once (should succeed)
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+
+# 4) Claim again (should fail due to precondition, non-zero exit)
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+
+# 5) Verify assignments include In Progress and not Complete
+cargo run --bin agenda-cli -- --db aglet-features.ag show <ITEM_ID>
+```
+
+Expected outcomes:
+- Step 3 prints `claimed item ... to category In Progress`.
+- Step 4 prints `error: ... claim precondition failed ...` and exits non-zero.
+- Step 5 shows `In Progress` under `assignments:`.
