@@ -1170,30 +1170,6 @@ impl App {
         self.move_current_board_column_to_index(target, agenda)
     }
 
-    fn move_current_board_column_to_edge(
-        &mut self,
-        rightmost: bool,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
-        let Some(slot) = self.current_slot() else {
-            self.status = "No active board slot".to_string();
-            return Ok(());
-        };
-        let max_board_index = match slot.context {
-            SlotContext::Section { section_index }
-            | SlotContext::GeneratedSection { section_index, .. } => self
-                .current_view()
-                .and_then(|v| v.sections.get(section_index))
-                .map(|s| s.columns.len())
-                .unwrap_or(0),
-            SlotContext::Unmatched => {
-                self.status = "Cannot reorder columns in unmatched lane".to_string();
-                return Ok(());
-            }
-        };
-        self.move_current_board_column_to_index(if rightmost { max_board_index } else { 0 }, agenda)
-    }
-
     fn open_remove_current_board_column_confirm(&mut self) {
         let Some(slot) = self.current_slot() else {
             self.status = "No active board slot".to_string();
@@ -1217,7 +1193,7 @@ impl App {
         };
         let item_board_index = Self::section_item_column_index(section);
         if self.column_index == item_board_index {
-            self.status = "Cannot delete Item column (move it with H/L or gH/gL)".to_string();
+            self.status = "Cannot delete Item column (move it with H/L)".to_string();
             return;
         }
         let Some(section_column_index) =
@@ -1262,7 +1238,7 @@ impl App {
         };
         let item_board_index = Self::section_item_column_index(section);
         if self.column_index == item_board_index {
-            self.status = "Cannot delete Item column (move it with H/L or gH/gL)".to_string();
+            self.status = "Cannot delete Item column (move it with H/L)".to_string();
             return Ok(());
         }
         let Some(section_column_index) =
@@ -2010,20 +1986,12 @@ impl App {
                     self.status = "Jumped to All Items view".to_string();
                     return Ok(false);
                 }
-                (NormalModePrefix::G, KeyCode::Char('H')) => {
-                    self.move_current_board_column_to_edge(false, agenda)?;
-                    return Ok(false);
-                }
-                (NormalModePrefix::G, KeyCode::Char('L')) => {
-                    self.move_current_board_column_to_edge(true, agenda)?;
-                    return Ok(false);
-                }
                 (NormalModePrefix::G, KeyCode::Esc) => {
                     self.status = "Cancelled g-prefix command".to_string();
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga, gH, or gL)".to_string();
+                    self.status = "Unknown g command (use ga)".to_string();
                     return Ok(false);
                 }
             }
@@ -2147,8 +2115,7 @@ impl App {
             KeyCode::Char('f') => self.toggle_normal_focus(),
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status =
-                    "g-prefix: ga=All Items  gH=move column first  gL=move column last".to_string();
+                self.status = "g-prefix: ga=All Items".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -4871,7 +4838,10 @@ mod tests {
         let assignments = store
             .get_assignments_for_item(created.id)
             .expect("load assignments");
-        assert!(assignments.contains_key(&ready.id), "Ready should be assigned");
+        assert!(
+            assignments.contains_key(&ready.id),
+            "Ready should be assigned"
+        );
         assert!(
             assignments.contains_key(&aglet.id),
             "view include should be assigned"
