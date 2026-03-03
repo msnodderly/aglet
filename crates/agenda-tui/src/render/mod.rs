@@ -1565,17 +1565,25 @@ impl App {
                     ));
                 }
                 let mut header_cells = vec![Cell::from(String::new()), Cell::from(String::new())];
-                header_cells.extend(
-                    layout.columns[..item_board_column_index]
-                        .iter()
-                        .map(|column| Cell::from(column.label.clone())),
-                );
+                header_cells.extend(layout.columns[..item_board_column_index].iter().map(
+                    |column| {
+                        Cell::from(format_board_header_cell(
+                            &column.label,
+                            column.heading_value_kind,
+                            column.width,
+                        ))
+                    },
+                ));
                 header_cells.push(Cell::from(layout.item_label.clone()));
-                header_cells.extend(
-                    layout.columns[item_board_column_index..]
-                        .iter()
-                        .map(|column| Cell::from(column.label.clone())),
-                );
+                header_cells.extend(layout.columns[item_board_column_index..].iter().map(
+                    |column| {
+                        Cell::from(format_board_header_cell(
+                            &column.label,
+                            column.heading_value_kind,
+                            column.width,
+                        ))
+                    },
+                ));
                 if synthetic_categories_width > 0 {
                     header_cells.push(Cell::from("All Categories"));
                 }
