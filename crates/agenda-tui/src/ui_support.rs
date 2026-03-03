@@ -95,15 +95,30 @@ pub(super) fn should_render_unmatched_lane(unmatched_items: &[Item]) -> bool {
     !unmatched_items.is_empty()
 }
 
-pub(super) fn item_text_matches(item: &Item, needle_lower_ascii: &str) -> bool {
+pub(super) fn item_text_matches(
+    item: &Item,
+    needle_lower_ascii: &str,
+    category_names_lower_ascii: &HashMap<CategoryId, String>,
+) -> bool {
     if item.text.to_ascii_lowercase().contains(needle_lower_ascii) {
         return true;
     }
 
-    item.note
+    if item
+        .note
         .as_ref()
         .map(|note| note.to_ascii_lowercase().contains(needle_lower_ascii))
         .unwrap_or(false)
+    {
+        return true;
+    }
+
+    item.assignments.keys().any(|category_id| {
+        category_names_lower_ascii
+            .get(category_id)
+            .map(|name| name.contains(needle_lower_ascii))
+            .unwrap_or(false)
+    })
 }
 
 pub(super) fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {

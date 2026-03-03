@@ -9555,6 +9555,37 @@ mod tests {
     }
 
     #[test]
+    fn search_bar_filters_match_assigned_category_names() {
+        let (store, db_path) = make_two_section_store("category-name-match");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        // Personal section items do not contain the word "personal" in text,
+        // so this only matches once category-name search is enabled.
+        app.slot_index = 1;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+        for ch in "personal".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+
+        assert_eq!(app.section_filters[1], Some("personal".to_string()));
+        assert_eq!(
+            app.slots[1].items.len(),
+            2,
+            "items should match by assigned Personal category name"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn search_bar_enter_exact_match_jumps() {
         let (store, db_path) = make_two_section_store("exact-match");
         let classifier = SubstringClassifier;
