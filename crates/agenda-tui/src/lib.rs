@@ -473,6 +473,19 @@ enum NormalModePrefix {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DoneToggleOrigin {
+    NormalMode,
+    ItemAssignPicker,
+}
+
+#[derive(Clone, Debug)]
+struct DoneBlocksConfirmState {
+    item_id: ItemId,
+    blocked_item_ids: Vec<ItemId>,
+    origin: DoneToggleOrigin,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct BoardAddColumnAnchor {
     slot_index: usize,
     section_index: usize,
@@ -732,6 +745,7 @@ struct App {
     item_index: usize,
     column_index: usize,
     normal_mode_prefix: Option<NormalModePrefix>,
+    done_blocks_confirm: Option<DoneBlocksConfirmState>,
     board_pending_delete_column_label: Option<String>,
     note_edit_original: String,
     note_edit_discard_confirm: bool,
@@ -781,6 +795,7 @@ impl Default for App {
             item_index: 0,
             column_index: 0,
             normal_mode_prefix: None,
+            done_blocks_confirm: None,
             board_pending_delete_column_label: None,
             note_edit_original: String::new(),
             note_edit_discard_confirm: false,
@@ -6555,6 +6570,168 @@ mod tests {
         assert_eq!(
             app.status,
             "Done unavailable: item has no actionable category assignments"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_d_prompts_then_y_clears_blocker_links() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-d-clear-links-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign actionable category");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(blocker.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("d should open done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+        assert!(
+            !store.get_item(blocker.id).expect("load blocker").is_done,
+            "item should not be marked done until confirm"
+        );
+
+        app.handle_confirm_delete_key(KeyCode::Char('y'), &agenda)
+            .expect("y should confirm done + link cleanup");
+
+        assert!(store.get_item(blocker.id).expect("load blocker").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents"),
+            Vec::<ItemId>::new()
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("removed 1 blocker link"),
+            "status should mention blocker-link cleanup: {}",
+            app.status
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_d_prompt_n_keeps_blocker_links() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-d-keep-links-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign actionable category");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(blocker.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("d should open done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
+            .expect("n should mark done and keep links");
+
+        assert!(store.get_item(blocker.id).expect("load blocker").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents")
+                .len(),
+            1
+        );
+        assert_eq!(app.mode, Mode::Normal);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-d-picker-esc-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign actionable category");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(blocker.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
+            .expect("Esc should cancel done prompt");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents")
+                .len(),
+            1
         );
 
         drop(store);

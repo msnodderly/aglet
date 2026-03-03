@@ -173,6 +173,38 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        if let Some(done_confirm) = self.done_blocks_confirm.clone() {
+            match code {
+                KeyCode::Char('y') => {
+                    self.done_blocks_confirm = None;
+                    self.apply_done_toggle_action(
+                        agenda,
+                        done_confirm.item_id,
+                        false,
+                        done_confirm.origin,
+                        &done_confirm.blocked_item_ids,
+                    )?;
+                }
+                KeyCode::Char('n') => {
+                    self.done_blocks_confirm = None;
+                    self.apply_done_toggle_action(
+                        agenda,
+                        done_confirm.item_id,
+                        false,
+                        done_confirm.origin,
+                        &[],
+                    )?;
+                }
+                KeyCode::Esc => {
+                    self.done_blocks_confirm = None;
+                    self.mode = Self::done_toggle_return_mode(done_confirm.origin);
+                    self.status = "Done update canceled".to_string();
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         match code {
             KeyCode::Char('y') => {
                 if let Some(item_id) = self.selected_item_id() {
@@ -182,9 +214,11 @@ impl App {
                     self.refresh(agenda.store())?;
                     self.status = "Item deleted".to_string();
                 }
+                self.done_blocks_confirm = None;
                 self.mode = Mode::Normal;
             }
             KeyCode::Esc => {
+                self.done_blocks_confirm = None;
                 self.mode = Mode::Normal;
                 self.status = "Delete canceled".to_string();
             }
