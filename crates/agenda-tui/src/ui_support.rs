@@ -553,6 +553,20 @@ pub(super) fn right_pad_cell(text: &str, width: usize) -> String {
     }
 }
 
+/// Format a board header cell label.
+/// Numeric column headers are right-aligned to match numeric value alignment.
+pub(super) fn format_board_header_cell(
+    label: &str,
+    heading_value_kind: CategoryValueKind,
+    width: usize,
+) -> String {
+    if heading_value_kind == CategoryValueKind::Numeric {
+        right_pad_cell(label, width)
+    } else {
+        label.to_string()
+    }
+}
+
 pub(super) fn has_note_text(note: Option<&str>) -> bool {
     note.map(|text| !text.trim().is_empty()).unwrap_or(false)
 }
@@ -1243,6 +1257,18 @@ mod tests {
     #[test]
     fn right_pad_cell_truncates_long_text() {
         assert_eq!(right_pad_cell("$1,234,567.89", 10), "234,567.89");
+    }
+
+    #[test]
+    fn format_board_header_cell_right_aligns_numeric_headers() {
+        let result = format_board_header_cell("Points", CategoryValueKind::Numeric, 12);
+        assert_eq!(result, "      Points");
+    }
+
+    #[test]
+    fn format_board_header_cell_keeps_non_numeric_headers_left_aligned() {
+        let result = format_board_header_cell("Status", CategoryValueKind::Tag, 12);
+        assert_eq!(result, "Status");
     }
 
     // --- NumericAggregate tests ---
