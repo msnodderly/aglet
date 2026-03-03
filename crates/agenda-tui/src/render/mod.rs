@@ -2444,9 +2444,7 @@ impl App {
         ))];
         frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
 
-        if (panel.kind == InputPanelKind::NumericValue || panel.kind == InputPanelKind::AddItem)
-            && !panel.preview_context.is_empty()
-        {
+        if panel.kind == InputPanelKind::NumericValue && !panel.preview_context.is_empty() {
             if let Some(context_rect) = regions.context {
                 frame.render_widget(
                     Paragraph::new(format!("  {}", panel.preview_context))
@@ -2688,7 +2686,7 @@ impl App {
         );
 
         // Help row
-        let help_text = match panel.kind {
+        let base_help = match panel.kind {
             InputPanelKind::CategoryCreate => "S:save  Tab:cycle  Enter:select  Esc:cancel",
             InputPanelKind::NumericValue => "Enter:save  S:save  Esc:cancel",
             _ if panel.focus == InputPanelFocus::Categories && panel.category_filter_editing => {
@@ -2696,6 +2694,12 @@ impl App {
             }
             _ => "S:save  Tab:cycle  /:filter  Space:toggle  j/k:move  Esc:cancel",
         };
+        let help_text =
+            if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
+                format!("{} | {}", panel.preview_context, base_help)
+            } else {
+                base_help.to_string()
+            };
         frame.render_widget(Paragraph::new(help_text), regions.help);
     }
 
