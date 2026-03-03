@@ -420,15 +420,11 @@ impl InputPanel {
 }
 
 fn format_section_context(section_title: &str, on_insert_assign: &HashSet<CategoryId>) -> String {
-    if on_insert_assign.is_empty() {
-        format!("Adding to \"{}\"", section_title)
-    } else {
-        format!(
-            "Adding to \"{}\" (will auto-assign {} categories)",
-            section_title,
-            on_insert_assign.len()
-        )
-    }
+    format!(
+        "Adding to \"{}\" (auto-assign {} categories)",
+        section_title,
+        on_insert_assign.len()
+    )
 }
 
 #[cfg(test)]
@@ -757,6 +753,7 @@ mod tests {
         assert!(p.categories.is_empty());
         assert!(p.item_id.is_none());
         assert!(p.preview_context.contains("Open"));
+        assert!(p.preview_context.contains("auto-assign 0 categories"));
     }
 
     #[test]
