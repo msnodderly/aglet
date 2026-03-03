@@ -37,6 +37,10 @@ impl App {
         "View editor".to_string()
     }
 
+    fn view_edit_alias_picker_status() -> String {
+        "Aliases: j/k select  A/Enter:edit alias  Esc:done".to_string()
+    }
+
     fn set_view_edit_dirty(&mut self) {
         if let Some(state) = &mut self.view_edit_state {
             state.dirty = true;
@@ -76,6 +80,25 @@ impl App {
             state.section_delete_confirm = None;
             self.status = "View name: type text  Enter:confirm  Esc:cancel".to_string();
         }
+    }
+
+    fn begin_view_edit_alias_input(&mut self, category_id: CategoryId) {
+        let Some(row) = self.category_rows.iter().find(|row| row.id == category_id) else {
+            return;
+        };
+        if let Some(state) = &mut self.view_edit_state {
+            let current = state
+                .draft
+                .category_aliases
+                .get(&category_id)
+                .cloned()
+                .unwrap_or_default();
+            state.inline_input = Some(ViewEditInlineInput::CategoryAlias { category_id });
+            state.inline_buf = text_buffer::TextBuffer::new(current);
+            state.discard_confirm = false;
+            state.section_delete_confirm = None;
+        }
+        self.status = format!("Alias for {}: type text  Enter:save  Esc:cancel", row.name);
     }
 
     fn insert_view_edit_section(&mut self, insert_index: usize) -> Option<usize> {
@@ -142,8 +165,8 @@ impl App {
     }
 
     fn view_details_aux_field_count() -> usize {
-        // when include, when exclude, display mode, unmatched visible, unmatched label
-        5
+        // when include, when exclude, display mode, unmatched visible, unmatched label, aliases
+        6
     }
 
     fn view_edit_showing_view_details(state: &ViewEditState) -> bool {
@@ -194,7 +217,10 @@ impl App {
         }
     }
 
-    fn view_edit_filtered_category_row_indices(&self, state: &ViewEditState) -> Vec<usize> {
+    pub(crate) fn view_edit_filtered_category_row_indices(
+        &self,
+        state: &ViewEditState,
+    ) -> Vec<usize> {
         let filter = Self::view_edit_overlay_category_filter_query(state);
         let is_column_picker = matches!(
             state.overlay,
@@ -439,6 +465,7 @@ impl App {
                 CategoryEditTarget::ViewCriteria => {
                     Self::cycle_criterion_mode(&mut state.draft.criteria, cat_id);
                 }
+                CategoryEditTarget::ViewAliases => {}
                 CategoryEditTarget::SectionCriteria => {
                     if let Some(section) = state.draft.sections.get_mut(section_expanded) {
                         Self::cycle_criterion_mode(&mut section.criteria, cat_id);
@@ -604,7 +631,11 @@ impl App {
                         state.inline_buf.clear();
                     }
                 }
-                self.status = Self::view_edit_default_status();
+                self.status = if matches!(inline, Some(ViewEditInlineInput::CategoryAlias { .. })) {
+                    Self::view_edit_alias_picker_status()
+                } else {
+                    Self::view_edit_default_status()
+                };
             }
             KeyCode::Enter => {
                 let Some(state) = &mut self.view_edit_state else {
@@ -613,6 +644,7 @@ impl App {
                 let text = state.inline_buf.trimmed().to_string();
                 let mut changed = false;
                 let mut filter_done_status: Option<String> = None;
+                let mut alias_status: Option<String> = None;
                 match &inline {
                     Some(ViewEditInlineInput::SectionsFilter) => {
                         state.inline_input = None;
@@ -637,6 +669,21 @@ impl App {
                         changed = state.draft.unmatched_label != text;
                         state.draft.unmatched_label = text;
                     }
+                    Some(ViewEditInlineInput::CategoryAlias { category_id }) => {
+                        if text.is_empty() {
+                            changed = state.draft.category_aliases.remove(category_id).is_some();
+                            alias_status = Some("Alias cleared".to_string());
+                        } else {
+                            let next_alias = text.clone();
+                            let previous = state.draft.category_aliases.get(category_id).cloned();
+                            changed = previous.as_deref() != Some(next_alias.as_str());
+                            state
+                                .draft
+                                .category_aliases
+                                .insert(*category_id, next_alias);
+                            alias_status = Some("Alias saved".to_string());
+                        }
+                    }
                     None => {}
                 }
                 if filter_done_status.is_some() {
@@ -657,7 +704,13 @@ impl App {
                     self.status = status;
                     return Ok(true);
                 }
-                self.status = Self::view_edit_default_status();
+                self.status = if let Some(status) = alias_status {
+                    status
+                } else if matches!(inline, Some(ViewEditInlineInput::CategoryAlias { .. })) {
+                    Self::view_edit_alias_picker_status()
+                } else {
+                    Self::view_edit_default_status()
+                };
             }
             _ => {
                 let mut filter_status: Option<String> = None;
@@ -728,8 +781,24 @@ impl App {
                             }
                         }
                     }
-                    KeyCode::Char(' ') | KeyCode::Enter => {
+                    KeyCode::Char('a') | KeyCode::Char('A')
+                        if matches!(target, CategoryEditTarget::ViewAliases) =>
+                    {
                         if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx) {
+                                self.begin_view_edit_alias_input(row.id);
+                            }
+                        }
+                    }
+                    KeyCode::Char(' ') | KeyCode::Enter => {
+                        if matches!(target, CategoryEditTarget::ViewAliases) {
+                            if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                                if let Some(row) = self.category_rows.get(actual_idx) {
+                                    self.begin_view_edit_alias_input(row.id);
+                                }
+                            }
+                        } else if let Some(&actual_idx) = filtered_indices.get(current_visible_pos)
+                        {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
                                 self.toggle_category_picker_selection(
                                     target,
@@ -937,7 +1006,7 @@ impl App {
                     .as_ref()
                     .map(Self::view_details_focus_index)
                     .unwrap_or(0);
-                let max_index = criteria_rows + 2 - 1;
+                let max_index = criteria_rows + Self::view_details_aux_field_count() - 1;
                 self.set_view_details_focus_index((current + 1).min(max_index));
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -1033,6 +1102,19 @@ impl App {
         }
         self.status =
             "Criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done".to_string();
+    }
+
+    fn open_view_edit_alias_picker(&mut self) {
+        let first = first_non_reserved_category_index(&self.category_rows);
+        if let Some(state) = &mut self.view_edit_state {
+            state.region = ViewEditRegion::Unmatched;
+            state.unmatched_field_index = 5;
+            state.overlay = Some(ViewEditOverlay::CategoryPicker {
+                target: CategoryEditTarget::ViewAliases,
+            });
+            state.picker_index = first;
+        }
+        self.status = Self::view_edit_alias_picker_status();
     }
 
     // -------------------------------------------------------------------------
@@ -1403,6 +1485,9 @@ impl App {
                 }
                 self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
             }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.open_view_edit_alias_picker();
+            }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 self.begin_view_edit_name_input();
             }
@@ -1472,14 +1557,18 @@ impl App {
                         }
                     }
                     _ => {
-                        if let Some(state) = &mut self.view_edit_state {
-                            let current = state.draft.unmatched_label.clone();
-                            state.unmatched_field_index = 4;
-                            state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
-                            state.inline_buf = text_buffer::TextBuffer::new(current);
+                        if target == 4 {
+                            if let Some(state) = &mut self.view_edit_state {
+                                let current = state.draft.unmatched_label.clone();
+                                state.unmatched_field_index = 4;
+                                state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
+                                state.inline_buf = text_buffer::TextBuffer::new(current);
+                            }
+                            self.status =
+                                "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+                        } else {
+                            self.open_view_edit_alias_picker();
                         }
-                        self.status =
-                            "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
                     }
                 }
             }

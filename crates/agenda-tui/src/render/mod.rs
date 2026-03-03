@@ -3596,8 +3596,34 @@ impl App {
                     .style(unmatched_label_style),
                 );
 
+                let alias_count = state
+                    .draft
+                    .category_aliases
+                    .values()
+                    .filter(|alias| !alias.trim().is_empty())
+                    .count();
+                let alias_summary = if alias_count == 0 {
+                    "(none)".to_string()
+                } else {
+                    format!("{alias_count} configured")
+                };
+                let aliases_row = items.len();
+                let aliases_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 5
+                {
+                    selected_line = Some(aliases_row);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!("  Aliases: {alias_summary}")))
+                        .style(aliases_style),
+                );
+
                 items.push(ListItem::new(Line::from(
-                    "  View keys: n:add  x:remove  Enter:pick criteria  Space:cycle criterion mode  ]/[:when  m:display  t/l:unmatched",
+                    "  View keys: n:add  x:remove  Enter:pick/edit field  Space:cycle criterion mode  ]/[:when  m:display  t/l/a:unmatched",
                 )));
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
@@ -4009,22 +4035,7 @@ impl App {
             match overlay {
                 ViewEditOverlay::CategoryPicker { target } => {
                     let overlay_filter = state.overlay_filter_buf.text();
-                    let filtered_indices: Vec<usize> = if overlay_filter.trim().is_empty() {
-                        (0..self.category_rows.len()).collect()
-                    } else {
-                        let q = overlay_filter.trim().to_ascii_lowercase();
-                        self.category_rows
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, row)| {
-                                if row.name.to_ascii_lowercase().contains(&q) {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect()
-                    };
+                    let filtered_indices = self.view_edit_filtered_category_row_indices(state);
                     let selected_filtered_index = filtered_indices
                         .iter()
                         .position(|&i| i == state.picker_index)
@@ -4033,7 +4044,10 @@ impl App {
                         target,
                         CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
                     );
-                    let toggle_hint = if is_criteria_picker {
+                    let is_alias_picker = matches!(target, CategoryEditTarget::ViewAliases);
+                    let toggle_hint = if is_alias_picker {
+                        "A/Enter edit alias"
+                    } else if is_criteria_picker {
                         "Space/Enter cycle mode"
                     } else {
                         "Space/Enter toggle"
@@ -4067,9 +4081,8 @@ impl App {
                             );
                             let criterion_mode = if is_criteria_target {
                                 let query = match target {
-                                    CategoryEditTarget::ViewCriteria => {
-                                        Some(&state.draft.criteria)
-                                    }
+                                    CategoryEditTarget::ViewCriteria => Some(&state.draft.criteria),
+                                    CategoryEditTarget::ViewAliases => None,
                                     CategoryEditTarget::SectionCriteria => state
                                         .draft
                                         .sections
@@ -4089,8 +4102,32 @@ impl App {
                                     Some(CriterionMode::Or) => "Any",
                                 };
                                 format!("{indent}[{tag}] {}", row.name)
+                            } else if is_alias_picker {
+                                let active_alias_edit = matches!(
+                                    state.inline_input,
+                                    Some(ViewEditInlineInput::CategoryAlias { category_id })
+                                    if category_id == row.id
+                                );
+                                let current_alias = if active_alias_edit {
+                                    state.inline_buf.text().to_string()
+                                } else {
+                                    state
+                                        .draft
+                                        .category_aliases
+                                        .get(&row.id)
+                                        .cloned()
+                                        .unwrap_or_default()
+                                };
+                                let alias_text = if current_alias.trim().is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    current_alias
+                                };
+                                let edit_marker = if active_alias_edit { " ◀" } else { "" };
+                                format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name)
                             } else {
                                 let checked = match target {
+                                    CategoryEditTarget::ViewAliases => false,
                                     CategoryEditTarget::SectionColumns => state
                                         .draft
                                         .sections
@@ -4103,17 +4140,13 @@ impl App {
                                         .draft
                                         .sections
                                         .get(section_expanded)
-                                        .map(|section| {
-                                            section.on_insert_assign.contains(&row.id)
-                                        })
+                                        .map(|section| section.on_insert_assign.contains(&row.id))
                                         .unwrap_or(false),
                                     CategoryEditTarget::SectionOnRemoveUnassign => state
                                         .draft
                                         .sections
                                         .get(section_expanded)
-                                        .map(|section| {
-                                            section.on_remove_unassign.contains(&row.id)
-                                        })
+                                        .map(|section| section.on_remove_unassign.contains(&row.id))
                                         .unwrap_or(false),
                                     _ => false,
                                 };
