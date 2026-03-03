@@ -152,12 +152,6 @@ struct InspectAssignmentRow {
     origin_label: String,
 }
 
-#[derive(Clone)]
-pub(crate) struct ReparentOptionRow {
-    pub(crate) parent_id: Option<CategoryId>,
-    pub(crate) label: String,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryEditTarget {
     ViewCriteria,
@@ -372,12 +366,6 @@ enum CategoryManagerFocus {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CategoryParentPickerFocus {
-    Filter,
-    List,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryManagerDetailsFocus {
     Exclusive,
     MatchName,
@@ -425,16 +413,6 @@ enum CategoryInlineAction {
     DeleteConfirm {
         category_id: CategoryId,
         category_name: String,
-    },
-    ParentPicker {
-        target_category_id: CategoryId,
-        target_category_name: String,
-        filter: text_buffer::TextBuffer,
-        filter_editing: bool,
-        options: Vec<ReparentOptionRow>,
-        visible_option_indices: Vec<usize>,
-        list_index: usize,
-        focus: CategoryParentPickerFocus,
     },
 }
 
@@ -812,16 +790,14 @@ mod tests {
 
     use super::{
         add_capture_status_message, board_column_widths, board_item_label,
-        board_table_spacing_budget, bucket_target_set_mut, build_category_rows,
-        build_reparent_options, category_name_map, compute_board_layout,
-        first_non_reserved_category_index, input_panel, input_panel_popup_area,
-        item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
-        should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
-        AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
+        board_table_spacing_budget, bucket_target_set_mut, build_category_rows, category_name_map,
+        compute_board_layout, first_non_reserved_category_index, input_panel,
+        input_panel_popup_area, item_assignment_labels, list_scroll_for_selected_line, next_index,
+        next_index_clamped, should_render_unmatched_lane, text_buffer, truncate_board_cell,
+        when_bucket_options, AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
         CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
         CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus,
-        CategoryParentPickerFocus, Mode, NameInputContext, SlotSortDirection, ViewEditPaneFocus,
-        ViewEditRegion,
+        Mode, NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3469,39 +3445,6 @@ mod tests {
     }
 
     #[test]
-    fn build_reparent_options_excludes_self_and_descendants() {
-        let work = Category::new("Work".to_string());
-        let mut project = Category::new("Project Y".to_string());
-        project.parent = Some(work.id);
-        let mut subproject = Category::new("Frabulator".to_string());
-        subproject.parent = Some(project.id);
-        let personal = Category::new("Personal".to_string());
-
-        let categories = vec![
-            work.clone(),
-            project.clone(),
-            subproject.clone(),
-            personal.clone(),
-        ];
-        let rows = build_category_rows(&categories);
-
-        let options = build_reparent_options(&rows, &categories, project.id);
-        assert!(options.iter().any(|option| option.parent_id.is_none()));
-        assert!(options
-            .iter()
-            .any(|option| option.parent_id == Some(work.id)));
-        assert!(options
-            .iter()
-            .any(|option| option.parent_id == Some(personal.id)));
-        assert!(!options
-            .iter()
-            .any(|option| option.parent_id == Some(project.id)));
-        assert!(!options
-            .iter()
-            .any(|option| option.parent_id == Some(subproject.id)));
-    }
-
-    #[test]
     fn first_non_reserved_category_index_prefers_non_reserved_row() {
         let reserved = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -3718,36 +3661,6 @@ mod tests {
 
         let prefix_len = "Rename> ".chars().count() as u16;
         let expected = (action_area.x + 1 + prefix_len + 3, action_area.y + 1);
-        assert_eq!(
-            app.category_manager_action_cursor_position(action_area),
-            Some(expected)
-        );
-    }
-
-    #[test]
-    fn category_manager_action_cursor_position_tracks_parent_picker_filter_input() {
-        let action_area = Rect::new(10, 4, 64, 3);
-        let mut app = App {
-            mode: Mode::CategoryManager,
-            ..App::default()
-        };
-        app.ensure_category_manager_session();
-        let target_name = "Child".to_string();
-        app.set_category_manager_inline_action(Some(CategoryInlineAction::ParentPicker {
-            target_category_id: CategoryId::new_v4(),
-            target_category_name: target_name.clone(),
-            filter: text_buffer::TextBuffer::with_cursor("Beta".to_string(), 2),
-            filter_editing: true,
-            options: Vec::new(),
-            visible_option_indices: Vec::new(),
-            list_index: 0,
-            focus: CategoryParentPickerFocus::Filter,
-        }));
-
-        let prefix_len = format!("Reparent {} | parent filter> ", target_name)
-            .chars()
-            .count() as u16;
-        let expected = (action_area.x + 1 + prefix_len + 2, action_area.y + 1);
         assert_eq!(
             app.category_manager_action_cursor_position(action_area),
             Some(expected)
@@ -4657,59 +4570,6 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_parent_picker_preselects_current_parent_inline() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-category-reparent-select-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let parent = Category::new("Parent".to_string());
-        store.create_category(&parent).expect("create parent");
-        let mut child = Category::new("Child".to_string());
-        child.parent = Some(parent.id);
-        store.create_category(&child).expect("create child");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::CategoryManager;
-        app.category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.id == child.id)
-            .expect("child category row should exist");
-
-        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
-            .expect("open reparent picker");
-        assert_eq!(app.mode, Mode::CategoryManager);
-
-        let selected_parent = match app
-            .category_manager
-            .as_ref()
-            .and_then(|s| s.inline_action.as_ref())
-        {
-            Some(CategoryInlineAction::ParentPicker {
-                options,
-                visible_option_indices,
-                list_index,
-                ..
-            }) => visible_option_indices
-                .get(*list_index)
-                .and_then(|idx| options.get(*idx))
-                .and_then(|option| option.parent_id),
-            _ => None,
-        };
-        assert_eq!(selected_parent, Some(parent.id));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
     fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4903,22 +4763,20 @@ mod tests {
     }
 
     #[test]
-    fn category_create_panel_parent_picker_enter_sets_parent_and_save_clears_inline_action() {
+    fn category_create_panel_tab_cycles_without_parent_picker_and_keeps_default_parent() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-create-panel-parent-picker-{nanos}.ag"
+            "agenda-tui-category-create-panel-no-parent-picker-{nanos}.ag"
         ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
         let alpha = Category::new("Alpha".to_string());
-        let beta = Category::new("Beta".to_string());
         store.create_category(&alpha).expect("create alpha");
-        store.create_category(&beta).expect("create beta");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
@@ -4933,29 +4791,12 @@ mod tests {
                 .expect("type child name");
         }
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to parent");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("open parent picker from create panel");
-        assert!(
-            app.input_panel.as_ref().unwrap().parent_picker.is_some(),
-            "parent picker overlay should be open on the InputPanel"
+            .expect("tab to type picker");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::TypePicker
         );
-
-        app.handle_input_panel_key(KeyCode::Char('/'), &agenda)
-            .expect("focus picker filter");
-        for c in "Beta".chars() {
-            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
-                .expect("type picker filter");
-        }
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus picker list");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("apply picker selection");
-        assert!(
-            app.input_panel.as_ref().unwrap().parent_picker.is_none(),
-            "parent picker should close after selecting a parent"
-        );
-        assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(beta.id));
+        assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(alpha.id));
 
         app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save category create");
@@ -4967,7 +4808,7 @@ mod tests {
             .iter()
             .find(|category| category.name == "Child")
             .expect("child should be created");
-        assert_eq!(child.parent, Some(beta.id));
+        assert_eq!(child.parent, Some(alpha.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -5103,9 +4944,7 @@ mod tests {
             CategoryValueKind::Tag
         );
 
-        // Tab to Parent, Tab to TypePicker, toggle to Numeric
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to parent");
+        // Tab to TypePicker, toggle to Numeric
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("tab to type picker");
         assert_eq!(
@@ -5600,7 +5439,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_tab_focuses_details_not_filter_and_p_still_opens_parent_picker() {
+    fn category_manager_tab_focuses_details_and_p_no_longer_opens_reparent_ui() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -5632,14 +5471,12 @@ mod tests {
         assert!(!app.category_manager.as_ref().expect("state").filter_editing);
 
         app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
-            .expect("p should open parent picker, not type filter");
+            .expect("p should be ignored");
 
         let state = app.category_manager.as_ref().expect("manager state");
         assert_eq!(state.filter.text(), "");
-        assert!(matches!(
-            state.inline_action.as_ref(),
-            Some(CategoryInlineAction::ParentPicker { .. })
-        ));
+        assert!(state.inline_action.is_none());
+        assert_eq!(app.selected_category_id(), Some(child.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -6126,187 +5963,6 @@ mod tests {
         assert!(app
             .status
             .contains("Clear category filter before direct H/L/J/K moves"));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn category_manager_parent_picker_filters_and_reparents_selected_category() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-parent-picker-apply-{nanos}.ag"
-        ));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let alpha = Category::new("Alpha".to_string());
-        let beta = Category::new("Beta".to_string());
-        store.create_category(&alpha).expect("create alpha");
-        store.create_category(&beta).expect("create beta");
-        let mut child = Category::new("Child".to_string());
-        child.parent = Some(alpha.id);
-        store.create_category(&child).expect("create child");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(child.id);
-
-        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
-            .expect("open parent picker");
-        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
-            .expect("focus parent filter");
-        for c in "Beta".chars() {
-            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
-                .expect("type parent filter");
-        }
-        app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("focus parent list");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("apply parent picker reparent");
-
-        let loaded_child = store.get_category(child.id).expect("load child");
-        assert_eq!(loaded_child.parent, Some(beta.id));
-        assert_eq!(app.mode, Mode::CategoryManager);
-        assert_eq!(app.selected_category_id(), Some(child.id));
-        assert!(app
-            .category_manager
-            .as_ref()
-            .and_then(|s| s.inline_action.as_ref())
-            .is_none());
-        assert!(app.status.contains("Reparented Child to Beta"));
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn category_manager_parent_picker_filter_requires_slash_and_slash_is_not_inserted() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-parent-picker-filter-slash-{nanos}.ag"
-        ));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let alpha = Category::new("Alpha".to_string());
-        let beta = Category::new("Beta".to_string());
-        store.create_category(&alpha).expect("create alpha");
-        store.create_category(&beta).expect("create beta");
-        let mut child = Category::new("Child".to_string());
-        child.parent = Some(alpha.id);
-        store.create_category(&child).expect("create child");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(child.id);
-        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
-            .expect("open parent picker");
-
-        app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("focus parent filter pane");
-        app.handle_category_manager_key(KeyCode::Char('B'), &agenda)
-            .expect("typing before slash should not edit picker filter");
-
-        let (filter_before, editing_before) = match app
-            .category_manager
-            .as_ref()
-            .and_then(|s| s.inline_action.as_ref())
-        {
-            Some(CategoryInlineAction::ParentPicker {
-                filter,
-                filter_editing,
-                ..
-            }) => (filter.text().to_string(), *filter_editing),
-            _ => panic!("expected inline parent picker"),
-        };
-        assert_eq!(filter_before, "");
-        assert!(!editing_before);
-
-        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
-            .expect("arm parent filter");
-        app.handle_category_manager_key(KeyCode::Char('/'), &agenda)
-            .expect("slash should not insert into picker filter");
-        app.handle_category_manager_key(KeyCode::Char('B'), &agenda)
-            .expect("type parent filter");
-
-        let (filter_after, editing_after) = match app
-            .category_manager
-            .as_ref()
-            .and_then(|s| s.inline_action.as_ref())
-        {
-            Some(CategoryInlineAction::ParentPicker {
-                filter,
-                filter_editing,
-                ..
-            }) => (filter.text().to_string(), *filter_editing),
-            _ => panic!("expected inline parent picker"),
-        };
-        assert_eq!(filter_after, "B");
-        assert!(editing_after);
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn category_manager_parent_picker_excludes_descendants_to_prevent_cycles() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-parent-picker-cycles-{nanos}.ag"
-        ));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let root = Category::new("Root".to_string());
-        store.create_category(&root).expect("create root");
-        let mut parent = Category::new("Parent".to_string());
-        parent.parent = Some(root.id);
-        store.create_category(&parent).expect("create parent");
-        let mut child = Category::new("Child".to_string());
-        child.parent = Some(parent.id);
-        store.create_category(&child).expect("create child");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(parent.id);
-
-        app.handle_category_manager_key(KeyCode::Char('p'), &agenda)
-            .expect("open parent picker");
-
-        let option_parent_ids: Vec<Option<CategoryId>> = match app
-            .category_manager
-            .as_ref()
-            .and_then(|s| s.inline_action.as_ref())
-        {
-            Some(CategoryInlineAction::ParentPicker { options, .. }) => {
-                options.iter().map(|option| option.parent_id).collect()
-            }
-            _ => panic!("expected inline parent picker"),
-        };
-
-        assert!(!option_parent_ids.contains(&Some(parent.id)));
-        assert!(!option_parent_ids.contains(&Some(child.id)));
-        assert!(option_parent_ids.contains(&None));
-        assert!(option_parent_ids.contains(&Some(root.id)));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
