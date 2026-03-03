@@ -78,7 +78,7 @@ enum Command {
 
     /// Atomically claim an item for active work
     #[command(
-        after_help = "Examples:\n  agenda claim <ITEM_ID>\n  agenda claim <ITEM_ID> --must-not-have \"In Progress\" --must-not-have \"Complete\"\n  agenda claim <ITEM_ID> --claim-category \"In Progress\" --must-not-have \"Waiting/Blocked\""
+        after_help = "Defaults (`agenda claim <ITEM_ID>`):\n  --claim-category \"In Progress\"\n  --must-not-have \"In Progress\"\n  --must-not-have \"Complete\"\n\nSetup:\n  Create an `In Progress` category (or sub-category) before claiming.\n\n  Feature DB example (`aglet-features.ag`):\n  agenda category create Status --exclusive\n  agenda category create Ready --parent Status\n  agenda category create \"In Progress\" --parent Status\n  agenda category create \"Waiting/Blocked\" --parent Status\n  agenda category create Complete --parent Status\n\nExamples:\n  agenda claim <ITEM_ID>\n  agenda claim <ITEM_ID> --must-not-have \"In Progress\" --must-not-have \"Complete\"\n  agenda claim <ITEM_ID> --claim-category \"In Progress\" --must-not-have \"Waiting/Blocked\""
     )]
     Claim {
         item_id: String,
@@ -2234,6 +2234,11 @@ mod tests {
             .find_subcommand_mut("claim")
             .expect("claim subcommand should exist");
         let help = claim_cmd.render_help().to_string();
+        assert!(help.contains("Defaults (`agenda claim <ITEM_ID>`):"));
+        assert!(help.contains("--claim-category \"In Progress\""));
+        assert!(help.contains("--must-not-have \"Complete\""));
+        assert!(help.contains("Create an `In Progress` category"));
+        assert!(help.contains("agenda category create \"In Progress\" --parent Status"));
         assert!(help.contains("Examples:"));
         assert!(help.contains("agenda claim <ITEM_ID>"));
         assert!(help.contains("--must-not-have"));
