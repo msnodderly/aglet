@@ -2888,7 +2888,7 @@ impl App {
                     return Ok(false);
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
-                    self.status = "Use + to add a column and H/L/gH/gL to move it".to_string();
+                    self.cycle_auto_refresh_interval();
                     return Ok(false);
                 }
                 _ => {}
