@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
+    const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
 
     fn is_auto_refresh_cycle_key(key: KeyEvent) -> bool {
         key.modifiers.contains(KeyModifiers::CONTROL)
@@ -57,6 +58,27 @@ impl App {
         });
     }
 
+    pub(crate) fn load_auto_refresh_interval(&mut self, store: &Store) -> Result<(), String> {
+        let persisted = store
+            .get_app_setting(Self::AUTO_REFRESH_SETTING_KEY)
+            .map_err(|e| e.to_string())?;
+        self.auto_refresh_interval = persisted
+            .as_deref()
+            .and_then(AutoRefreshInterval::from_persisted_value)
+            .unwrap_or(AutoRefreshInterval::Off);
+        self.auto_refresh_last_tick = Instant::now();
+        Ok(())
+    }
+
+    pub(crate) fn persist_auto_refresh_interval(&self, store: &Store) -> Result<(), String> {
+        store
+            .set_app_setting(
+                Self::AUTO_REFRESH_SETTING_KEY,
+                self.auto_refresh_interval.persisted_value(),
+            )
+            .map_err(|e| e.to_string())
+    }
+
     pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> Result<(), String> {
         if self.should_auto_refresh_now() {
             self.refresh(store)?;
@@ -71,6 +93,7 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<(), String> {
         self.refresh(agenda.store())?;
+        self.load_auto_refresh_interval(agenda.store())?;
         self.auto_refresh_last_tick = Instant::now();
 
         loop {
