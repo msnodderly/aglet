@@ -293,6 +293,19 @@ Practical implications:
 - To change hierarchy after create, use Category Manager structural moves
   (`H/J/K/L` and `<<`/`>>`).
 
+## Item Assign Search Enter Behavior (Surprising)
+
+In `Mode::ItemAssignInput` (`a`/`u` picker, then `n` or `/`), `Enter` resolves
+category names with this precedence:
+
+1. Exact existing category name match (case-insensitive)
+2. If no exact match, and the typed query matches exactly one visible category
+   row, auto-select that category
+3. Otherwise create a new category from the typed text
+
+This avoids accidental category creation when there is a single clear match,
+while preserving exact-match and create-new behavior.
+
 ## Board Table Column Spacing Budget (Surprising)
 
 Board rendering uses ratatui `Table::column_spacing` for inter-column gaps. If

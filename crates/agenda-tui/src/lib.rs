@@ -4120,6 +4120,142 @@ mod tests {
     }
 
     #[test]
+    fn item_assign_input_enter_autoselects_single_visible_match() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-single-match-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let home = Category::new("Home".to_string());
+        store.create_category(&work).expect("create Work");
+        store.create_category(&home).expect("create Home");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignInput;
+        app.set_input("wor".to_string());
+
+        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+            .expect("enter should auto-assign single visible match");
+
+        let updated = store.get_item(item.id).expect("load updated item");
+        assert!(
+            updated.assignments.contains_key(&work.id),
+            "work should be assigned"
+        );
+        assert!(
+            !app.categories
+                .iter()
+                .any(|category| category.name.eq_ignore_ascii_case("wor")),
+            "partial search text should not create a new category"
+        );
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert!(
+            app.status.contains("Assigned category Work"),
+            "status should use resolved category name"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_input_enter_prefers_exact_match_over_partial_matches() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-exact-match-priority-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let workshop = Category::new("Workshop".to_string());
+        store.create_category(&work).expect("create Work");
+        store.create_category(&workshop).expect("create Workshop");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignInput;
+        app.set_input("Work".to_string());
+
+        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+            .expect("enter should assign exact match");
+
+        let updated = store.get_item(item.id).expect("load updated item");
+        assert!(
+            updated.assignments.contains_key(&work.id),
+            "exact match should be assigned"
+        );
+        assert!(
+            !updated.assignments.contains_key(&workshop.id),
+            "partial-only match should not be chosen over exact"
+        );
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-create-ambiguous-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let workshop = Category::new("Workshop".to_string());
+        store.create_category(&work).expect("create Work");
+        store.create_category(&workshop).expect("create Workshop");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignInput;
+        app.set_input("wor".to_string());
+
+        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+            .expect("enter should create new category for ambiguous match");
+
+        let created = app
+            .categories
+            .iter()
+            .find(|category| category.name == "wor")
+            .expect("new category should be created for ambiguous search");
+        let updated = store.get_item(item.id).expect("load updated item");
+        assert!(
+            updated.assignments.contains_key(&created.id),
+            "newly created category should be assigned"
+        );
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn normal_mode_u_in_preview_provenance_opens_unassign_picker() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
