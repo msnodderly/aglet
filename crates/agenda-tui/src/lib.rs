@@ -805,7 +805,8 @@ mod tests {
         AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
         CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
         CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus,
-        Mode, NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
+        CategoryParentPickerFocus, Mode, NameInputContext, SlotSortDirection, ViewEditPaneFocus,
+        ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3661,6 +3662,81 @@ mod tests {
         );
         assert!(cx < popup.x + popup.width, "cursor x in bounds");
         assert!(cy < popup.y + popup.height, "cursor y in bounds");
+    }
+
+    #[test]
+    fn category_manager_action_cursor_position_tracks_filter_input() {
+        let action_area = Rect::new(10, 4, 40, 3);
+        let mut app = App {
+            mode: Mode::CategoryManager,
+            ..App::default()
+        };
+        app.ensure_category_manager_session();
+        app.set_category_manager_focus(CategoryManagerFocus::Filter);
+        app.set_category_manager_filter_editing(true);
+        if let Some(filter) = app.category_manager_filter_mut() {
+            filter.set("abc".to_string());
+            let _ = filter.handle_key(KeyCode::Left, false);
+        }
+
+        let prefix_len = "Filter: ".chars().count() as u16;
+        let expected = (action_area.x + 1 + prefix_len + 2, action_area.y + 1);
+        assert_eq!(
+            app.category_manager_action_cursor_position(action_area),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn category_manager_action_cursor_position_tracks_inline_rename_input() {
+        let action_area = Rect::new(10, 4, 50, 3);
+        let mut app = App {
+            mode: Mode::CategoryManager,
+            ..App::default()
+        };
+        app.ensure_category_manager_session();
+        app.set_category_manager_inline_action(Some(CategoryInlineAction::Rename {
+            category_id: CategoryId::new_v4(),
+            original_name: "Old".to_string(),
+            buf: text_buffer::TextBuffer::with_cursor("Office".to_string(), 3),
+        }));
+
+        let prefix_len = "Rename> ".chars().count() as u16;
+        let expected = (action_area.x + 1 + prefix_len + 3, action_area.y + 1);
+        assert_eq!(
+            app.category_manager_action_cursor_position(action_area),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn category_manager_action_cursor_position_tracks_parent_picker_filter_input() {
+        let action_area = Rect::new(10, 4, 64, 3);
+        let mut app = App {
+            mode: Mode::CategoryManager,
+            ..App::default()
+        };
+        app.ensure_category_manager_session();
+        let target_name = "Child".to_string();
+        app.set_category_manager_inline_action(Some(CategoryInlineAction::ParentPicker {
+            target_category_id: CategoryId::new_v4(),
+            target_category_name: target_name.clone(),
+            filter: text_buffer::TextBuffer::with_cursor("Beta".to_string(), 2),
+            filter_editing: true,
+            options: Vec::new(),
+            visible_option_indices: Vec::new(),
+            list_index: 0,
+            focus: CategoryParentPickerFocus::Filter,
+        }));
+
+        let prefix_len = format!("Reparent {} | parent filter> ", target_name)
+            .chars()
+            .count() as u16;
+        let expected = (action_area.x + 1 + prefix_len + 2, action_area.y + 1);
+        assert_eq!(
+            app.category_manager_action_cursor_position(action_area),
+            Some(expected)
+        );
     }
 
     #[test]
