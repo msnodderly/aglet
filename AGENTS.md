@@ -360,6 +360,16 @@ Practical implications:
   assignment rows/fallback line) or users will be unable to scroll to all
   info content.
 
+## Normal Mode Enter On Empty Slot Opens Add Item (Behavior)
+
+In `Mode::Normal`, `Enter` on the item column has dual behavior:
+- If an item is selected, it opens item edit (`InputPanel(EditItem)`).
+- If no item is selected (for example an empty section row), it opens add item
+  (`InputPanel(AddItem)`) for the current slot context.
+
+Do not regress this back to a "No selected item to edit" status in empty-slot
+flows; tests cover the add-item fallback.
+
 ## Link Wizard Target List Must Be Stateful To Scroll (Surprising)
 
 In `Mode::LinkWizard`, rendering target matches with a plain `List` plus manual

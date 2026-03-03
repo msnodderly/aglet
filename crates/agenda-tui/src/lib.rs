@@ -3955,6 +3955,38 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_empty_slot_opens_add_item_panel() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-empty-slot-enter-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        assert!(app.selected_item_id().is_none(), "slot should start empty");
+
+        app.handle_normal_key(KeyCode::Enter, &agenda)
+            .expect("enter opens add panel");
+        assert_eq!(app.mode, Mode::InputPanel);
+        let panel = app.input_panel.as_ref().expect("input panel opens");
+        assert_eq!(panel.kind, input_panel::InputPanelKind::AddItem);
+        assert_eq!(panel.item_id, None);
+        assert_eq!(panel.focus, input_panel::InputPanelFocus::Text);
+        assert!(
+            app.status.starts_with("Add item:"),
+            "status should describe add-item mode"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn list_scroll_keeps_selected_line_visible() {
         let area = Rect::new(0, 0, 50, 10);
         assert_eq!(list_scroll_for_selected_line(area, None), 0);
