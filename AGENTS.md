@@ -254,6 +254,17 @@ Current implementation behavior (intentional):
 - `H/J/K/L` structural move/reorder keys are disabled while the Details pane is
   focused, and only work when the Tree pane is focused.
 
+## Category Manager `<<` / `>>` Level Shift (Tree Editor)
+
+Category Manager now supports Vim-style level shifts:
+- `>>` indents the selected category under its previous sibling
+- `<<` outdents the selected category to its parent's level
+
+Behavior details:
+- The first `<` or `>` arms the action; the second matching key applies it.
+- Any non-`<`/`>` key clears the pending shift prefix.
+- `<<` / `>>` are disabled while the Details pane is focused (same as `H/J/K/L`).
+
 ## Category Create Parent Picker Ownership (Surprising)
 
 The CategoryCreate popup (`Mode::InputPanel` with

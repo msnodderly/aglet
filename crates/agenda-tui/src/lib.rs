@@ -443,6 +443,7 @@ struct CategoryManagerState {
     focus: CategoryManagerFocus,
     filter: text_buffer::TextBuffer,
     filter_editing: bool,
+    structure_move_prefix: Option<char>,
     details_focus: CategoryManagerDetailsFocus,
     details_note_category_id: Option<CategoryId>,
     details_note: text_buffer::TextBuffer,
@@ -5757,6 +5758,99 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_double_angle_right_indents_selected_category_under_previous_sibling() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-indent-double-angle-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        store.create_category(&alpha).expect("create alpha");
+        store.create_category(&beta).expect("create beta");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(beta.id);
+
+        app.handle_category_manager_key(KeyCode::Char('>'), &agenda)
+            .expect("arm double-angle indent");
+        assert_eq!(
+            store.get_category(beta.id).expect("beta before").parent,
+            None
+        );
+        assert!(app.status.contains("Press > again"));
+
+        app.handle_category_manager_key(KeyCode::Char('>'), &agenda)
+            .expect("indent with >>");
+
+        let loaded_alpha = store.get_category(alpha.id).expect("load alpha");
+        let loaded_beta = store.get_category(beta.id).expect("load beta");
+        assert_eq!(loaded_beta.parent, Some(alpha.id));
+        assert_eq!(loaded_alpha.children, vec![beta.id]);
+        assert!(app.status.contains("Indented Beta under Alpha"));
+        assert_eq!(app.selected_category_id(), Some(beta.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_double_angle_left_outdents_selected_category() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-outdent-double-angle-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = Category::new("Parent".to_string());
+        store.create_category(&parent).expect("create parent");
+        let mut child = Category::new("Child".to_string());
+        child.parent = Some(parent.id);
+        store.create_category(&child).expect("create child");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(child.id);
+
+        app.handle_category_manager_key(KeyCode::Char('<'), &agenda)
+            .expect("arm double-angle outdent");
+        assert_eq!(
+            store.get_category(child.id).expect("child before").parent,
+            Some(parent.id)
+        );
+        assert!(app.status.contains("Press < again"));
+
+        app.handle_category_manager_key(KeyCode::Char('<'), &agenda)
+            .expect("outdent with <<");
+
+        let loaded_parent = store.get_category(parent.id).expect("load parent");
+        let loaded_child = store.get_category(child.id).expect("load child");
+        assert_eq!(loaded_child.parent, None);
+        assert!(loaded_parent.children.is_empty());
+        assert!(app.status.contains("Outdented Child"));
+        assert_eq!(app.selected_category_id(), Some(child.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn category_manager_upper_h_outdents_selected_category_after_parent() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6432,6 +6526,14 @@ mod tests {
             .expect("shift-l ignored in details");
         app.handle_category_manager_key(KeyCode::Char('K'), &agenda)
             .expect("shift-k ignored in details");
+        app.handle_category_manager_key(KeyCode::Char('>'), &agenda)
+            .expect("first > ignored in details");
+        app.handle_category_manager_key(KeyCode::Char('>'), &agenda)
+            .expect("second > ignored in details");
+        app.handle_category_manager_key(KeyCode::Char('<'), &agenda)
+            .expect("first < ignored in details");
+        app.handle_category_manager_key(KeyCode::Char('<'), &agenda)
+            .expect("second < ignored in details");
 
         let parent_loaded = store.get_category(parent.id).expect("load parent");
         assert_eq!(parent_loaded.children, vec![alpha.id, beta.id]);
