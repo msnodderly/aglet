@@ -2427,7 +2427,7 @@ impl App {
             return;
         };
 
-        // Text field (with inline preview context for AddItem)
+        // Text field
         let text_marker = if panel.focus == InputPanelFocus::Text {
             "> "
         } else {
@@ -2438,21 +2438,15 @@ impl App {
             InputPanelKind::NumericValue => "Value",
             _ => "Text",
         };
-        let mut text_spans = vec![Span::raw(format!(
+        let text_spans = vec![Span::raw(format!(
             "{text_marker}{text_label}> {}",
             panel.text.text()
         ))];
-        if panel.kind == InputPanelKind::NumericValue {
-            // Render numeric edit context on its own line for cleaner value input.
-        } else if !panel.preview_context.is_empty() {
-            text_spans.push(Span::styled(
-                format!("  {}", panel.preview_context),
-                Style::default().fg(MUTED_TEXT_COLOR),
-            ));
-        }
         frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
 
-        if panel.kind == InputPanelKind::NumericValue {
+        if (panel.kind == InputPanelKind::NumericValue || panel.kind == InputPanelKind::AddItem)
+            && !panel.preview_context.is_empty()
+        {
             if let Some(context_rect) = regions.context {
                 frame.render_widget(
                     Paragraph::new(format!("  {}", panel.preview_context))
