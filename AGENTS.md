@@ -153,6 +153,11 @@ cargo run --bin agenda-cli -- --db feature-requests.ag add "Title" --note "..." 
 after `created <uuid>` (for example `parsed_when=...`). Do not assume the last
 line is always `created ...`; extract the ID by matching the `^created ` prefix.
 
+**`claim` race gotcha.** A candidate can appear in an open-item list but still
+fail claim with `claim precondition failed ... already has category 'In Progress'`
+if another agent claims it between your list step and claim step. If this
+happens, re-run selection and claim the next eligible item; do not force-assign.
+
 **Item ID prefix matching works.** You can use the first 8 hex characters of a
 UUID instead of the full ID:
 
