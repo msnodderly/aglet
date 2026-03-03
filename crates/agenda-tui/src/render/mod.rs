@@ -193,12 +193,19 @@ impl App {
                         let section_column_index =
                             Self::board_column_to_section_column_index(section, self.column_index)?;
                         let column = section.columns.get(section_column_index)?;
-                        let heading = self
-                            .categories
-                            .iter()
-                            .find(|c| c.id == column.heading)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("?");
+                        let heading = view
+                            .category_aliases
+                            .get(&column.heading)
+                            .map(|alias| alias.trim())
+                            .filter(|alias| !alias.is_empty())
+                            .map(|alias| alias.to_string())
+                            .or_else(|| {
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == column.heading)
+                                    .map(|c| c.name.clone())
+                            })
+                            .unwrap_or_else(|| "?".to_string());
                         let item_label = self
                             .selected_item()
                             .map(|item| truncate_board_cell(&board_item_label(item), 40))
@@ -1414,8 +1421,16 @@ impl App {
             .constraints(constraints)
             .split(area);
 
-        let category_names = category_name_map(&self.categories);
         let current_view = self.current_view().cloned();
+        let mut category_display_names = category_name_map(&self.categories);
+        if let Some(view) = current_view.as_ref() {
+            for (category_id, alias) in &view.category_aliases {
+                let alias = alias.trim();
+                if !alias.is_empty() {
+                    category_display_names.insert(*category_id, alias.to_string());
+                }
+            }
+        }
         let view_item_label = current_view
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
@@ -1477,7 +1492,7 @@ impl App {
                 let layout = compute_board_layout(
                     &slot_columns_owned,
                     &self.categories,
-                    &category_names,
+                    &category_display_names,
                     &view_item_label,
                     inner_width,
                 );
@@ -1619,7 +1634,7 @@ impl App {
                                         ColumnKind::Standard => standard_column_value(
                                             item,
                                             &column.child_ids,
-                                            &category_names,
+                                            &category_display_names,
                                         ),
                                     };
                                     let content = if effective_display_mode
@@ -1662,7 +1677,8 @@ impl App {
                             cells.push(item_cell);
                             cells.extend(right_cells);
                             if synthetic_categories_width > 0 {
-                                let categories = item_assignment_labels(item, &category_names);
+                                let categories =
+                                    item_assignment_labels(item, &category_display_names);
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
                                 } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -1835,7 +1851,7 @@ impl App {
                                 has_note_text(item.note.as_deref()),
                             );
                             let item_text = board_item_label(item);
-                            let categories = item_assignment_labels(item, &category_names);
+                            let categories = item_assignment_labels(item, &category_display_names);
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
                             } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -3596,8 +3612,34 @@ impl App {
                     .style(unmatched_label_style),
                 );
 
+                let alias_count = state
+                    .draft
+                    .category_aliases
+                    .values()
+                    .filter(|alias| !alias.trim().is_empty())
+                    .count();
+                let alias_summary = if alias_count == 0 {
+                    "(none)".to_string()
+                } else {
+                    format!("{alias_count} configured")
+                };
+                let aliases_row = items.len();
+                let aliases_style = if details_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 5
+                {
+                    selected_line = Some(aliases_row);
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!("  Aliases: {alias_summary}")))
+                        .style(aliases_style),
+                );
+
                 items.push(ListItem::new(Line::from(
-                    "  View keys: n:add  x:remove  Enter:pick criteria  Space:cycle criterion mode  ]/[:when  m:display  t/l:unmatched",
+                    "  View keys: n:add  x:remove  Enter:pick/edit field  Space:cycle criterion mode  ]/[:when  m:display  t/l/a:unmatched",
                 )));
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
@@ -4009,22 +4051,7 @@ impl App {
             match overlay {
                 ViewEditOverlay::CategoryPicker { target } => {
                     let overlay_filter = state.overlay_filter_buf.text();
-                    let filtered_indices: Vec<usize> = if overlay_filter.trim().is_empty() {
-                        (0..self.category_rows.len()).collect()
-                    } else {
-                        let q = overlay_filter.trim().to_ascii_lowercase();
-                        self.category_rows
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, row)| {
-                                if row.name.to_ascii_lowercase().contains(&q) {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect()
-                    };
+                    let filtered_indices = self.view_edit_filtered_category_row_indices(state);
                     let selected_filtered_index = filtered_indices
                         .iter()
                         .position(|&i| i == state.picker_index)
@@ -4033,7 +4060,10 @@ impl App {
                         target,
                         CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
                     );
-                    let toggle_hint = if is_criteria_picker {
+                    let is_alias_picker = matches!(target, CategoryEditTarget::ViewAliases);
+                    let toggle_hint = if is_alias_picker {
+                        "A/Enter edit alias"
+                    } else if is_criteria_picker {
                         "Space/Enter cycle mode"
                     } else {
                         "Space/Enter toggle"
@@ -4067,9 +4097,8 @@ impl App {
                             );
                             let criterion_mode = if is_criteria_target {
                                 let query = match target {
-                                    CategoryEditTarget::ViewCriteria => {
-                                        Some(&state.draft.criteria)
-                                    }
+                                    CategoryEditTarget::ViewCriteria => Some(&state.draft.criteria),
+                                    CategoryEditTarget::ViewAliases => None,
                                     CategoryEditTarget::SectionCriteria => state
                                         .draft
                                         .sections
@@ -4089,8 +4118,32 @@ impl App {
                                     Some(CriterionMode::Or) => "Any",
                                 };
                                 format!("{indent}[{tag}] {}", row.name)
+                            } else if is_alias_picker {
+                                let active_alias_edit = matches!(
+                                    state.inline_input,
+                                    Some(ViewEditInlineInput::CategoryAlias { category_id })
+                                    if category_id == row.id
+                                );
+                                let current_alias = if active_alias_edit {
+                                    state.inline_buf.text().to_string()
+                                } else {
+                                    state
+                                        .draft
+                                        .category_aliases
+                                        .get(&row.id)
+                                        .cloned()
+                                        .unwrap_or_default()
+                                };
+                                let alias_text = if current_alias.trim().is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    current_alias
+                                };
+                                let edit_marker = if active_alias_edit { " ◀" } else { "" };
+                                format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name)
                             } else {
                                 let checked = match target {
+                                    CategoryEditTarget::ViewAliases => false,
                                     CategoryEditTarget::SectionColumns => state
                                         .draft
                                         .sections
@@ -4103,17 +4156,13 @@ impl App {
                                         .draft
                                         .sections
                                         .get(section_expanded)
-                                        .map(|section| {
-                                            section.on_insert_assign.contains(&row.id)
-                                        })
+                                        .map(|section| section.on_insert_assign.contains(&row.id))
                                         .unwrap_or(false),
                                     CategoryEditTarget::SectionOnRemoveUnassign => state
                                         .draft
                                         .sections
                                         .get(section_expanded)
-                                        .map(|section| {
-                                            section.on_remove_unassign.contains(&row.id)
-                                        })
+                                        .map(|section| section.on_remove_unassign.contains(&row.id))
                                         .unwrap_or(false),
                                     _ => false,
                                 };

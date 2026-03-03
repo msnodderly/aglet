@@ -161,6 +161,7 @@ pub(crate) struct ReparentOptionRow {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryEditTarget {
     ViewCriteria,
+    ViewAliases,
     SectionCriteria,
     SectionColumns,
     SectionOnInsertAssign,
@@ -333,6 +334,7 @@ enum ViewEditOverlay {
 enum ViewEditInlineInput {
     ViewName,
     SectionsFilter,
+    CategoryAlias { category_id: CategoryId },
     SectionTitle { section_index: usize },
     UnmatchedLabel,
 }
@@ -6870,6 +6872,80 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
+    #[test]
+    fn board_column_header_uses_view_alias_for_numeric_heading() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-alias-header-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&complexity)
+            .expect("create numeric category");
+
+        let item = Item::new("Alias header item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                complexity.id,
+                rust_decimal::Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign numeric value");
+
+        let mut view = View::new("Board".to_string());
+        view.category_aliases
+            .insert(complexity.id, "Points".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: complexity.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(70, 16);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Points"),
+            "board header should render aliased column name: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Complexity"),
+            "board header should prefer alias over canonical heading: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
     // -------------------------------------------------------------------------
     // Phase 2a: ViewEdit tests
     // -------------------------------------------------------------------------
@@ -7151,12 +7227,7 @@ mod tests {
         // Close picker with Esc
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("close picker");
-        assert!(app
-            .view_edit_state
-            .as_ref()
-            .unwrap()
-            .overlay
-            .is_none());
+        assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
 
         // Back in criteria region, Space should cycle the criterion mode
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
@@ -7562,6 +7633,127 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().inline_input,
             Some(super::ViewEditInlineInput::UnmatchedLabel)
         ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
+        let (store, db_path) = make_test_store_with_view("view-edit-alias-picker-save");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Project".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = app.views[0].clone();
+        app.open_view_edit(view);
+
+        // Move focus to Aliases row in view details.
+        for _ in 0..6 {
+            app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+                .expect("move details selection");
+        }
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            5
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("open aliases picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::ViewAliases
+            })
+        ));
+
+        // Select Project row in picker and edit alias.
+        let project_idx = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == category.id)
+            .expect("project row");
+        app.view_edit_state.as_mut().unwrap().picker_index = project_idx;
+        app.handle_view_edit_key(KeyCode::Char('A'), &agenda)
+            .expect("start alias input");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().inline_input,
+            Some(super::ViewEditInlineInput::CategoryAlias { category_id })
+                if category_id == category.id
+        ));
+
+        if let Some(state) = &mut app.view_edit_state {
+            state.inline_buf = super::text_buffer::TextBuffer::new("Client".to_string());
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("save alias");
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .draft
+                .category_aliases
+                .get(&category.id)
+                .map(String::as_str),
+            Some("Client")
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_alias_input_empty_enter_clears_alias() {
+        let (store, db_path) = make_test_store_with_view("view-edit-alias-picker-clear");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Project".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app.views[0].clone();
+        view.category_aliases
+            .insert(category.id, "Client".to_string());
+        app.open_view_edit(view);
+
+        // Enter unmatched details, then open aliases picker.
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("move to unmatched details");
+        app.handle_view_edit_key(KeyCode::Char('A'), &agenda)
+            .expect("open aliases picker");
+        assert!(matches!(
+            app.view_edit_state.as_ref().unwrap().overlay,
+            Some(super::ViewEditOverlay::CategoryPicker {
+                target: super::CategoryEditTarget::ViewAliases
+            })
+        ));
+
+        let project_idx = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == category.id)
+            .expect("project row");
+        app.view_edit_state.as_mut().unwrap().picker_index = project_idx;
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("start alias input");
+        if let Some(state) = &mut app.view_edit_state {
+            state.inline_buf = super::text_buffer::TextBuffer::new(String::new());
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("commit empty alias");
+        assert!(
+            !app.view_edit_state
+                .as_ref()
+                .unwrap()
+                .draft
+                .category_aliases
+                .contains_key(&category.id),
+            "empty alias input should clear alias mapping"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }

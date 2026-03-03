@@ -1503,11 +1503,25 @@ struct JsonViewSectionOutput {
 }
 
 #[derive(Serialize)]
+struct JsonViewCategoryAliasOutput {
+    category_id: String,
+    category: String,
+    alias: String,
+}
+
+#[derive(Serialize)]
 struct JsonViewOutput {
     view: String,
+    category_aliases: Vec<JsonViewCategoryAliasOutput>,
     sections: Vec<JsonViewSectionOutput>,
     unmatched_label: Option<String>,
     unmatched: Option<Vec<JsonItemRow>>,
+}
+
+struct ViewCategoryAliasRow {
+    category_id: CategoryId,
+    category_name: String,
+    alias: String,
 }
 
 fn sorted_rows<'a>(
@@ -1575,6 +1589,43 @@ fn print_items_json(
     Ok(())
 }
 
+fn view_category_alias_rows(
+    view: &View,
+    category_names: &HashMap<CategoryId, String>,
+) -> Vec<ViewCategoryAliasRow> {
+    let mut rows: Vec<ViewCategoryAliasRow> = view
+        .category_aliases
+        .iter()
+        .filter_map(|(category_id, alias)| {
+            let alias = alias.trim();
+            if alias.is_empty() {
+                return None;
+            }
+            let category_name = category_names
+                .get(category_id)
+                .cloned()
+                .unwrap_or_else(|| format!("(deleted:{category_id})"));
+            Some(ViewCategoryAliasRow {
+                category_id: *category_id,
+                category_name,
+                alias: alias.to_string(),
+            })
+        })
+        .collect();
+    rows.sort_by(|left, right| {
+        left.category_name
+            .to_ascii_lowercase()
+            .cmp(&right.category_name.to_ascii_lowercase())
+            .then_with(|| {
+                left.alias
+                    .to_ascii_lowercase()
+                    .cmp(&right.alias.to_ascii_lowercase())
+            })
+            .then_with(|| left.category_id.cmp(&right.category_id))
+    });
+    rows
+}
+
 fn print_items_for_view(
     view: &View,
     items: &[Item],
@@ -1586,6 +1637,7 @@ fn print_items_for_view(
     let reference_date = Local::now().date_naive();
     let result = resolve_view(view, items, categories, reference_date);
     let has_sections = !result.sections.is_empty();
+    let alias_rows = view_category_alias_rows(view, category_names);
 
     if output_format == OutputFormatArg::Json {
         let mut sections = Vec::new();
@@ -1633,6 +1685,14 @@ fn print_items_for_view(
 
         let payload = JsonViewOutput {
             view: view.name.clone(),
+            category_aliases: alias_rows
+                .iter()
+                .map(|row| JsonViewCategoryAliasOutput {
+                    category_id: row.category_id.to_string(),
+                    category: row.category_name.clone(),
+                    alias: row.alias.clone(),
+                })
+                .collect(),
             sections,
             unmatched_label,
             unmatched,
@@ -1643,6 +1703,12 @@ fn print_items_for_view(
     }
 
     println!("# {}", view.name);
+    if !alias_rows.is_empty() {
+        println!("\nAliases:");
+        for row in &alias_rows {
+            println!("- {} => {}", row.category_name, row.alias);
+        }
+    }
 
     for section in result.sections {
         println!("\n## {}", section.title);
@@ -1926,17 +1992,18 @@ mod tests {
         cmd_unlink, cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
         item_link_section_lines, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
         reject_items_with_any_categories, retain_items_with_all_categories,
-        retain_items_with_any_categories, unknown_hashtag_feedback_line, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, UnlinkCommand,
-        ViewCommand,
+        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
+        Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg,
+        UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
-    use agenda_core::model::{Category, CategoryValueKind, Item};
+    use agenda_core::model::{Category, CategoryValueKind, Item, View};
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
+    use std::collections::HashMap;
     use uuid::Uuid;
 
     #[test]
@@ -1991,6 +2058,44 @@ mod tests {
     #[test]
     fn parse_decimal_value_rejects_empty() {
         assert!(parse_decimal_value("   ").is_err());
+    }
+
+    #[test]
+    fn view_category_alias_rows_sort_and_skip_blank_aliases() {
+        let alpha = Uuid::new_v4();
+        let beta = Uuid::new_v4();
+        let gamma = Uuid::new_v4();
+
+        let mut view = View::new("Aliases".to_string());
+        view.category_aliases.insert(alpha, "A".to_string());
+        view.category_aliases.insert(beta, "   ".to_string());
+        view.category_aliases.insert(gamma, "G".to_string());
+
+        let category_names = HashMap::from([
+            (alpha, "Alpha".to_string()),
+            (beta, "Beta".to_string()),
+            (gamma, "gamma".to_string()),
+        ]);
+
+        let rows = view_category_alias_rows(&view, &category_names);
+        assert_eq!(rows.len(), 2, "blank aliases are omitted");
+        assert_eq!(rows[0].category_name, "Alpha");
+        assert_eq!(rows[0].alias, "A");
+        assert_eq!(rows[1].category_name, "gamma");
+        assert_eq!(rows[1].alias, "G");
+    }
+
+    #[test]
+    fn view_category_alias_rows_shows_deleted_category_fallback() {
+        let missing = Uuid::new_v4();
+        let mut view = View::new("Aliases".to_string());
+        view.category_aliases
+            .insert(missing, "Archived".to_string());
+
+        let rows = view_category_alias_rows(&view, &HashMap::new());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].category_name, format!("(deleted:{missing})"));
+        assert_eq!(rows[0].alias, "Archived");
     }
 
     #[test]

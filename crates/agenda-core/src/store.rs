@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -14,7 +14,7 @@ use crate::model::{
     NumericFormat, Query, Section, View,
 };
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS views (
     show_unmatched              INTEGER NOT NULL DEFAULT 1,
     unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
     remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+    category_aliases_json       TEXT NOT NULL DEFAULT '{}',
     item_column_label           TEXT,
     board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
 );
@@ -667,14 +668,20 @@ impl Store {
             .map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
             })?;
+        let category_aliases_json =
+            serde_json::to_string(&view.category_aliases).map_err(|err| {
+                AgendaError::StorageError {
+                    source: Box::new(err),
+                }
+            })?;
 
         self.conn
             .execute(
                 "INSERT INTO views (
                     id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    item_column_label, board_display_mode
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    category_aliases_json, item_column_label, board_display_mode
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     view.id.to_string(),
                     view.name,
@@ -684,6 +691,7 @@ impl Store {
                     view.show_unmatched as i32,
                     view.unmatched_label,
                     remove_from_view_unassign_json,
+                    category_aliases_json,
                     view.item_column_label,
                     serde_json::to_string(&view.board_display_mode)
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
@@ -698,7 +706,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    item_column_label, board_display_mode
+                    category_aliases_json, item_column_label, board_display_mode
              FROM views WHERE id = ?1",
         )?;
         stmt.query_row(params![id.to_string()], Self::row_to_view)
@@ -738,6 +746,12 @@ impl Store {
             .map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
             })?;
+        let category_aliases_json =
+            serde_json::to_string(&view.category_aliases).map_err(|err| {
+                AgendaError::StorageError {
+                    source: Box::new(err),
+                }
+            })?;
 
         let rows = self
             .conn
@@ -750,9 +764,10 @@ impl Store {
                      show_unmatched = ?5,
                      unmatched_label = ?6,
                      remove_from_view_unassign_json = ?7,
-                     item_column_label = ?8,
-                     board_display_mode = ?9
-                 WHERE id = ?10",
+                     category_aliases_json = ?8,
+                     item_column_label = ?9,
+                     board_display_mode = ?10
+                 WHERE id = ?11",
                 params![
                     view.name,
                     criteria_json,
@@ -761,6 +776,7 @@ impl Store {
                     view.show_unmatched as i32,
                     view.unmatched_label,
                     remove_from_view_unassign_json,
+                    category_aliases_json,
                     view.item_column_label,
                     serde_json::to_string(&view.board_display_mode)
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
@@ -781,7 +797,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    item_column_label, board_display_mode
+                    category_aliases_json, item_column_label, board_display_mode
              FROM views
              ORDER BY name COLLATE NOCASE ASC",
         )?;
@@ -924,13 +940,17 @@ impl Store {
         let _columns_json: String = row.get(4)?; // legacy column, no longer used
         let show_unmatched: i32 = row.get(5)?;
         let remove_from_view_unassign_json: String = row.get(7)?;
-        let item_column_label: Option<String> = row.get(8)?;
-        let board_display_mode_json: Option<String> = row.get(9)?;
+        let category_aliases_json: Option<String> = row.get(8)?;
+        let item_column_label: Option<String> = row.get(9)?;
+        let board_display_mode_json: Option<String> = row.get(10)?;
 
         let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
         let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
         let remove_from_view_unassign: HashSet<CategoryId> =
             serde_json::from_str(&remove_from_view_unassign_json).unwrap_or_default();
+        let category_aliases: BTreeMap<CategoryId, String> = category_aliases_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
         let board_display_mode = board_display_mode_json
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or(BoardDisplayMode::SingleLine);
@@ -943,6 +963,7 @@ impl Store {
             show_unmatched: show_unmatched != 0,
             unmatched_label: row.get(6)?,
             remove_from_view_unassign,
+            category_aliases,
             item_column_label,
             board_display_mode,
         })
@@ -1690,6 +1711,11 @@ impl Store {
                 "ALTER TABLE views ADD COLUMN board_display_mode TEXT NOT NULL DEFAULT 'SingleLine';",
             )?;
         }
+        if !self.column_exists("views", "category_aliases_json")? {
+            self.conn.execute_batch(
+                "ALTER TABLE views ADD COLUMN category_aliases_json TEXT NOT NULL DEFAULT '{}';",
+            )?;
+        }
         if !self.column_exists("categories", "value_kind")? {
             self.conn.execute_batch(
                 "ALTER TABLE categories ADD COLUMN value_kind TEXT NOT NULL DEFAULT 'Tag';",
@@ -1797,7 +1823,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use rusqlite::params;
     use rust_decimal::Decimal;
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
     use uuid::Uuid;
 
     fn new_category(name: &str) -> Category {
@@ -1989,6 +2015,62 @@ mod tests {
             .optional()
             .unwrap();
         assert_eq!(exists.as_deref(), Some("item_links"));
+
+        let aliases_column_exists = store
+            .column_exists("views", "category_aliases_json")
+            .unwrap();
+        assert!(
+            aliases_column_exists,
+            "view aliases column should be present after migration"
+        );
+    }
+
+    #[test]
+    fn test_upgrade_from_v6_adds_view_category_aliases_column_for_existing_views_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE views (
+                id                          TEXT PRIMARY KEY,
+                name                        TEXT NOT NULL UNIQUE,
+                criteria_json               TEXT NOT NULL DEFAULT '{}',
+                sections_json               TEXT NOT NULL DEFAULT '[]',
+                columns_json                TEXT NOT NULL DEFAULT '[]',
+                show_unmatched              INTEGER NOT NULL DEFAULT 1,
+                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
+                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+                item_column_label           TEXT,
+                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
+            );
+            "#,
+        )
+        .unwrap();
+
+        let legacy_id = Uuid::new_v4();
+        conn.execute(
+            "INSERT INTO views (
+                id, name, criteria_json, sections_json, columns_json,
+                show_unmatched, unmatched_label, remove_from_view_unassign_json,
+                item_column_label, board_display_mode
+            ) VALUES (?1, 'Legacy', '{}', '[]', '[]', 1, 'Unassigned', '[]', NULL, '\"SingleLine\"')",
+            params![legacy_id.to_string()],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 6).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let aliases_column_exists = store
+            .column_exists("views", "category_aliases_json")
+            .unwrap();
+        assert!(aliases_column_exists, "migration should add aliases column");
+
+        let legacy = store.get_view(legacy_id).expect("legacy view loads");
+        assert!(
+            legacy.category_aliases.is_empty(),
+            "legacy rows default to no aliases"
+        );
     }
 
     #[test]
@@ -2980,6 +3062,7 @@ mod tests {
         view.show_unmatched = false;
         view.unmatched_label = "Other".to_string();
         view.remove_from_view_unassign.insert(when_category);
+        view.category_aliases = BTreeMap::from([(when_category, "Due".to_string())]);
 
         store.create_view(&view).unwrap();
 
@@ -2999,6 +3082,7 @@ mod tests {
             loaded.remove_from_view_unassign,
             view.remove_from_view_unassign
         );
+        assert_eq!(loaded.category_aliases, view.category_aliases);
     }
 
     #[test]
@@ -3058,6 +3142,7 @@ mod tests {
         view.show_unmatched = false;
         view.unmatched_label = "Unsectioned".to_string();
         view.remove_from_view_unassign.insert(category_id);
+        view.category_aliases = BTreeMap::from([(category_id, "Today".to_string())]);
 
         store.update_view(&view).unwrap();
 
@@ -3073,6 +3158,10 @@ mod tests {
         assert_eq!(
             loaded.remove_from_view_unassign,
             HashSet::from([category_id])
+        );
+        assert_eq!(
+            loaded.category_aliases,
+            BTreeMap::from([(category_id, "Today".to_string())])
         );
     }
 
