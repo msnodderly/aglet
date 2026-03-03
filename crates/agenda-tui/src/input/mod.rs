@@ -6,6 +6,8 @@ impl App {
         key: KeyEvent,
         agenda: &Agenda<'_>,
     ) -> Result<bool, String> {
+        self.clear_expired_transient_status();
+        self.clear_transient_status_on_key(key);
         match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
             _ => {
