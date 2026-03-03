@@ -2197,7 +2197,17 @@ impl App {
                 let match_count = self.current_slot().map(|s| s.items.len()).unwrap_or(0);
                 format!("[{section_name}] {match_count} matches")
             }
-            Mode::ConfirmDelete => "Delete item? y:confirm Esc:cancel".to_string(),
+            Mode::ConfirmDelete => {
+                if let Some(done_confirm) = &self.done_blocks_confirm {
+                    let blocked_count = done_confirm.blocked_item_ids.len();
+                    let suffix = if blocked_count == 1 { "" } else { "s" };
+                    format!(
+                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                    )
+                } else {
+                    "Delete item? y:confirm Esc:cancel".to_string()
+                }
+            }
             Mode::BoardColumnDeleteConfirm => {
                 if let Some(name) = &self.board_pending_delete_column_label {
                     format!("Delete column '{name}'? y:confirm Esc:cancel")
@@ -2299,9 +2309,16 @@ impl App {
             Mode::CategoryDirectEdit => "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel",
             Mode::CategoryColumnPicker => "Space:toggle  Enter:save  Esc:cancel",
             Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
-            Mode::ConfirmDelete
-            | Mode::BoardColumnDeleteConfirm
-            | Mode::CategoryCreateConfirm { .. } => "y:confirm  Esc:cancel",
+            Mode::ConfirmDelete => {
+                if self.done_blocks_confirm.is_some() {
+                    "y:remove blocking links + done  n:mark done only  Esc:cancel"
+                } else {
+                    "y:confirm  Esc:cancel"
+                }
+            }
+            Mode::BoardColumnDeleteConfirm | Mode::CategoryCreateConfirm { .. } => {
+                "y:confirm  Esc:cancel"
+            }
             Mode::SearchBarFocused => "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear",
             Mode::NoteEdit => "Enter:save  Esc:cancel",
             Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
