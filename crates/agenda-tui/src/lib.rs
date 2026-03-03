@@ -3216,6 +3216,98 @@ mod tests {
     }
 
     #[test]
+    fn link_wizard_excludes_closed_targets_and_restores_after_reopen() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let complete = Category::new("Complete".to_string());
+        for category in [&work, &complete] {
+            store.create_category(category).expect("create category");
+        }
+
+        let anchor = Item::new("Anchor task".to_string());
+        let open_target = Item::new("Open target".to_string());
+        let done_target = Item::new("Done target".to_string());
+        let complete_target = Item::new("Complete target".to_string());
+        for item in [&anchor, &open_target, &done_target, &complete_target] {
+            store.create_item(item).expect("create item");
+        }
+
+        agenda
+            .assign_item_manual(done_target.id, work.id, Some("manual:test".to_string()))
+            .expect("assign actionable category");
+        agenda.mark_item_done(done_target.id).expect("mark done");
+        agenda
+            .assign_item_manual(
+                complete_target.id,
+                complete.id,
+                Some("manual:test".to_string()),
+            )
+            .expect("assign complete");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(anchor.id);
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open link wizard");
+
+        let matches = app.link_wizard_target_matches();
+        assert!(matches.contains(&open_target.id));
+        assert!(!matches.contains(&anchor.id));
+        assert!(
+            !matches.contains(&done_target.id),
+            "Done targets should be excluded"
+        );
+        assert!(
+            !matches.contains(&complete_target.id),
+            "Complete targets should be excluded"
+        );
+
+        app.handle_key(KeyCode::Char('/'), &agenda)
+            .expect("focus target filter");
+        for ch in "target".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type target filter");
+        }
+        let filtered_matches = app.link_wizard_target_matches();
+        assert_eq!(filtered_matches, vec![open_target.id]);
+
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("close link wizard");
+
+        agenda
+            .mark_item_not_done(done_target.id)
+            .expect("reopen done item");
+        agenda
+            .unassign_item_manual(complete_target.id, complete.id)
+            .expect("unassign complete category");
+
+        app.refresh(&store).expect("refresh after reopen");
+        app.set_item_selection_by_id(anchor.id);
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("reopen link wizard");
+        let reopened_matches = app.link_wizard_target_matches();
+        assert!(reopened_matches.contains(&open_target.id));
+        assert!(reopened_matches.contains(&done_target.id));
+        assert!(reopened_matches.contains(&complete_target.id));
+        assert!(!reopened_matches.contains(&anchor.id));
+
+        app.handle_key(KeyCode::Char('/'), &agenda)
+            .expect("focus target filter after reopen");
+        for ch in "target".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type target filter after reopen");
+        }
+        let reopened_filtered_matches = app.link_wizard_target_matches();
+        assert_eq!(reopened_filtered_matches.len(), 3);
+        assert!(reopened_filtered_matches.contains(&open_target.id));
+        assert!(reopened_filtered_matches.contains(&done_target.id));
+        assert!(reopened_filtered_matches.contains(&complete_target.id));
+    }
+
+    #[test]
     fn link_wizard_target_navigation_does_not_wrap() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;

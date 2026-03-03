@@ -2516,10 +2516,26 @@ impl App {
             return Vec::new();
         };
         let query = state.target_filter.trimmed().to_ascii_lowercase();
+        let closed_category_ids: HashSet<CategoryId> = self
+            .categories
+            .iter()
+            .filter(|category| {
+                category.name.eq_ignore_ascii_case("Done")
+                    || category.name.eq_ignore_ascii_case("Complete")
+            })
+            .map(|category| category.id)
+            .collect();
         let mut rows: Vec<(String, ItemId)> = self
             .all_items
             .iter()
             .filter(|item| item.id != state.anchor_item_id)
+            .filter(|item| !item.is_done)
+            .filter(|item| {
+                !item
+                    .assignments
+                    .keys()
+                    .any(|category_id| closed_category_ids.contains(category_id))
+            })
             .filter(|item| {
                 if query.is_empty() {
                     return true;
