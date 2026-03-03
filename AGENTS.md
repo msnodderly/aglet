@@ -438,3 +438,14 @@ Practical implications:
 - Regression example: a `Ready` section with `show_children=true` and no child
   categories renders `Ready (Other)` as a generated slot; adding there must
   still assign `Ready`.
+
+## `show_children` With No Children Falls Back To Base Section (Behavior)
+
+If a section enables `show_children=true` but the parent category currently has
+no child categories, Aglet does not generate a synthetic `(Other)` subsection.
+It renders the base section as a normal section instead.
+
+Practical implications:
+- Expect `SlotContext::Section` (not `GeneratedSection`) in this case.
+- Add-item flows still apply section criteria assignments (for example `Ready`)
+  through the normal section insert path.
