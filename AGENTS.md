@@ -331,3 +331,15 @@ Practical implications for tests:
   keys.
 - If a test unexpectedly stays in `Mode::ViewPicker` with an "immutable" status
   message, verify it did not accidentally target `All Items`.
+
+## Preview Info Pane Scroll Clamp Must Use Rendered Line Count (Surprising)
+
+Normal-mode preview `Info` now includes metadata and link-summary lines in
+addition to assignment provenance rows.
+
+Practical implications:
+- Do not clamp `preview_provenance_scroll` using only
+  `inspect_assignment_rows_for_item(item).len()`.
+- Clamp against the full rendered info line count (header + metadata + links +
+  assignment rows/fallback line) or users will be unable to scroll to all
+  info content.

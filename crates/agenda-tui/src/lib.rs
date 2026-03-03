@@ -4412,7 +4412,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_p_and_o_manage_preview_modes() {
+    fn normal_mode_p_and_i_manage_preview_modes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4432,11 +4432,11 @@ mod tests {
         assert!(app.show_preview);
         assert_eq!(app.preview_mode, super::PreviewMode::Summary);
 
-        app.handle_normal_key(KeyCode::Char('o'), &agenda)
+        app.handle_normal_key(KeyCode::Char('i'), &agenda)
             .expect("switch to provenance");
         assert_eq!(app.preview_mode, super::PreviewMode::Provenance);
 
-        app.handle_normal_key(KeyCode::Char('o'), &agenda)
+        app.handle_normal_key(KeyCode::Char('i'), &agenda)
             .expect("switch to summary");
         assert_eq!(app.preview_mode, super::PreviewMode::Summary);
 
@@ -4479,10 +4479,11 @@ mod tests {
     }
 
     #[test]
-    fn item_details_categories_are_single_comma_separated_line() {
+    fn item_details_summary_prioritizes_note_and_categories() {
         let alpha = Category::new("Alpha".to_string());
         let beta = Category::new("Beta".to_string());
         let mut item = Item::new("demo".to_string());
+        item.note = Some("Primary note".to_string());
         let assignment = Assignment {
             source: AssignmentSource::Manual,
             assigned_at: chrono::Utc::now(),
@@ -4507,13 +4508,26 @@ mod tests {
                     .collect()
             })
             .collect();
+        let note_index = plain
+            .iter()
+            .position(|line| line == "Note")
+            .expect("summary contains Note header");
+        let categories_index = plain
+            .iter()
+            .position(|line| line == "Categories")
+            .expect("summary contains Categories header");
+        assert!(
+            note_index < categories_index,
+            "note appears before categories"
+        );
+        assert!(plain.iter().any(|line| line == "  Primary note"));
         assert!(plain
             .iter()
             .any(|line| line == "  Alpha, Beta" || line == "  Beta, Alpha"));
     }
 
     #[test]
-    fn item_details_summary_includes_link_sections() {
+    fn item_info_contains_link_sections_while_summary_stays_primary() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -4552,12 +4566,17 @@ mod tests {
             })
             .collect();
 
-        assert!(plain.iter().any(|line| line == "Prereqs"));
-        assert!(plain.iter().any(|line| line == "Blocks"));
-        assert!(plain.iter().any(|line| line == "Related"));
-        assert!(plain.iter().any(|line| line.contains("Task B")));
-        assert!(plain.iter().any(|line| line.contains("Task C")));
-        assert!(plain.iter().any(|line| line.contains("Task D")));
+        assert!(!plain.iter().any(|line| line == "Prereqs"));
+        assert!(!plain.iter().any(|line| line == "Blocks"));
+        assert!(!plain.iter().any(|line| line == "Related"));
+
+        let info_lines = app.item_info_header_lines_for_item(&loaded_a);
+        assert!(info_lines.iter().any(|line| line == "Prereqs"));
+        assert!(info_lines.iter().any(|line| line == "Blocks"));
+        assert!(info_lines.iter().any(|line| line == "Related"));
+        assert!(info_lines.iter().any(|line| line.contains("Task B")));
+        assert!(info_lines.iter().any(|line| line.contains("Task C")));
+        assert!(info_lines.iter().any(|line| line.contains("Task D")));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
