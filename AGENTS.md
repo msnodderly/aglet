@@ -424,3 +424,17 @@ Practical implications:
   so users can see which target is active.
 - If you change this path, ensure tests cover both filtering and deep-list
   navigation visibility in the wizard popup.
+
+## Generated Section Insert Must Preserve Base Criteria (Surprising)
+
+When inserting/removing items through `SlotContext::GeneratedSection` (for
+example sections expanded via `show_children`), do not construct a synthetic
+section with empty criteria for `insert_item_in_section`.
+
+Practical implications:
+- Generated-slot inserts must preserve the backing section criteria so
+  `Agenda::insert_item_in_section` can apply section/view `And` criteria
+  assignments.
+- Regression example: a `Ready` section with `show_children=true` and no child
+  categories renders `Ready (Other)` as a generated slot; adding there must
+  still assign `Ready`.

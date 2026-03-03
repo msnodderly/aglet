@@ -390,11 +390,16 @@ impl App {
                     .map_err(|e| e.to_string())
             }
             SlotContext::GeneratedSection {
-                section_index: _,
+                section_index,
                 on_insert_assign: _,
                 on_remove_unassign,
             } => {
-                let temp = generated_section(on_remove_unassign.clone(), HashSet::new());
+                let mut temp = view
+                    .sections
+                    .get(*section_index)
+                    .cloned()
+                    .ok_or("Section not found".to_string())?;
+                temp.on_remove_unassign = on_remove_unassign.clone();
                 agenda
                     .remove_item_from_section(item_id, &temp)
                     .map(|_| ())
@@ -426,11 +431,17 @@ impl App {
                     .map_err(|e| e.to_string())
             }
             SlotContext::GeneratedSection {
-                section_index: _,
+                section_index,
                 on_insert_assign,
                 on_remove_unassign,
             } => {
-                let temp = generated_section(on_remove_unassign.clone(), on_insert_assign.clone());
+                let mut temp = view
+                    .sections
+                    .get(*section_index)
+                    .cloned()
+                    .ok_or("Section not found".to_string())?;
+                temp.on_insert_assign = on_insert_assign.clone();
+                temp.on_remove_unassign = on_remove_unassign.clone();
                 agenda
                     .insert_item_in_section(item_id, view, &temp)
                     .map(|_| ())

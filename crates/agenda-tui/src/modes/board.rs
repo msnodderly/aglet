@@ -4858,4 +4858,69 @@ mod tests {
             .expect("cancel panel");
         assert_eq!(app.mode, Mode::Normal);
     }
+
+    #[test]
+    fn add_item_in_generated_ready_section_assigns_ready_category() {
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let aglet = Category::new("Aglet".to_string());
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        let mut ready = Category::new("Ready".to_string());
+        ready.parent = Some(status.id);
+
+        store.create_category(&aglet).expect("create Aglet");
+        store.create_category(&status).expect("create Status");
+        store.create_category(&ready).expect("create Ready");
+
+        let mut view = View::new("Aglet Board".to_string());
+        view.criteria.set_criterion(CriterionMode::And, aglet.id);
+        let mut ready_criteria = Query::default();
+        ready_criteria.set_criterion(CriterionMode::And, ready.id);
+        view.sections.push(Section {
+            title: "Ready".to_string(),
+            criteria: ready_criteria,
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: true,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Aglet Board");
+        app.refresh(&store).expect("refresh aglet board");
+        assert!(matches!(
+            app.slots.first().map(|slot| &slot.context),
+            Some(SlotContext::GeneratedSection { .. })
+        ));
+
+        app.open_input_panel_add_item();
+        if let Some(panel) = &mut app.input_panel {
+            panel.text.set("Ready task".to_string());
+            panel.focus = input_panel::InputPanelFocus::SaveButton;
+        }
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save add item");
+
+        let created = store
+            .list_items()
+            .expect("list items")
+            .into_iter()
+            .find(|item| item.text == "Ready task")
+            .expect("created item");
+        let assignments = store
+            .get_assignments_for_item(created.id)
+            .expect("load assignments");
+        assert!(assignments.contains_key(&ready.id), "Ready should be assigned");
+        assert!(
+            assignments.contains_key(&aglet.id),
+            "view include should be assigned"
+        );
+    }
 }
