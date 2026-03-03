@@ -4157,6 +4157,43 @@ mod tests {
                 .any(|line| line.contains("Adding to \"Unassigned\"")),
             "context should still be visible in a static row"
         );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("auto-assign 0 categories")),
+            "context should include auto-assigned category count"
+        );
+    }
+
+    #[test]
+    fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
+        let mut app = App {
+            mode: Mode::InputPanel,
+            input_panel: Some(input_panel::InputPanel::new_add_item(
+                "Unassigned",
+                &std::collections::HashSet::new(),
+            )),
+            ..App::default()
+        };
+        if let Some(panel) = &mut app.input_panel {
+            panel.text.set("Draft title".to_string());
+        }
+
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render add-item panel");
+        let lines = terminal_buffer_lines(&terminal);
+
+        let context_row_count = lines
+            .iter()
+            .filter(|line| line.contains("Adding to \"Unassigned\""))
+            .count();
+        assert_eq!(
+            context_row_count, 1,
+            "add-item context should stay in one fixed row even in narrow layouts"
+        );
     }
 
     #[test]
