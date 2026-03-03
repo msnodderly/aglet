@@ -205,6 +205,18 @@ cargo run ... show <id2> 2>/dev/null | head -5
 cargo run ... show <id1> 2>&1 | head -5 && cargo run ... show <id2> 2>&1 | head -5
 ```
 
+## `cargo fmt` File-Scoped Runs Can Touch Sibling Modules (Surprising)
+
+Running `cargo fmt --all -- <file>` in this workspace can still reformat other
+Rust files in the same crate/module tree (not just the listed file), because
+rustfmt follows `mod` declarations from the entry file.
+
+Practical implications:
+- After file-scoped fmt runs, always check `git status` for incidental
+  formatting diffs outside your task scope.
+- If you need strict single-file formatting, run `rustfmt <file>` directly and
+  still verify for spillover changes.
+
 ## `agenda-cli edit --note-stdin` Semantics (Surprising)
 
 `agenda-cli edit <ITEM_ID> --note-stdin` replaces the entire note with stdin
