@@ -221,6 +221,15 @@ Related gotcha: CLI `agenda-cli view show` prints section item tables but does
 not render section column definitions at all, so board-column changes are only
 visible in the TUI today.
 
+## View Category Aliases Storage (Surprising)
+
+View-level category display aliases are stored in `views.category_aliases_json`
+as a map of `CategoryId -> alias` and are treated as display metadata only.
+
+Do not apply these aliases to category identity, query/filter behavior, section
+titles, generated subsection labels, or board column headings unless a separate
+feature explicitly requests that behavior.
+
 ## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
 
 In the rewritten category manager (`c` / `F9`), the Details pane uses `j/k` for

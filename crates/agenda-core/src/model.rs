@@ -1,7 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
 pub type CategoryId = Uuid;
@@ -138,6 +138,8 @@ pub struct View {
     pub show_unmatched: bool,
     pub unmatched_label: String,
     pub remove_from_view_unassign: HashSet<CategoryId>,
+    #[serde(default)]
+    pub category_aliases: BTreeMap<CategoryId, String>,
     #[serde(default)]
     pub item_column_label: Option<String>,
     #[serde(default)]
@@ -410,6 +412,7 @@ impl View {
             show_unmatched: true,
             unmatched_label: "Unassigned".to_string(),
             remove_from_view_unassign: HashSet::new(),
+            category_aliases: BTreeMap::new(),
             item_column_label: None,
             board_display_mode: BoardDisplayMode::SingleLine,
         }
@@ -418,7 +421,9 @@ impl View {
 
 #[cfg(test)]
 mod tests {
-    use super::ItemLinkKind;
+    use super::{ItemLinkKind, View};
+    use serde_json::Value;
+    use uuid::Uuid;
 
     #[test]
     fn item_link_kind_serde_names_are_stable() {
@@ -433,5 +438,38 @@ mod tests {
 
         assert_eq!(parsed_depends_on, ItemLinkKind::DependsOn);
         assert_eq!(parsed_related, ItemLinkKind::Related);
+    }
+
+    #[test]
+    fn view_serde_defaults_missing_category_aliases_to_empty() {
+        let view = View::new("Example".to_string());
+        let mut json: Value = serde_json::to_value(view).expect("serialize view");
+        json.as_object_mut()
+            .expect("view object")
+            .remove("category_aliases");
+
+        let parsed: View = serde_json::from_value(json).expect("deserialize view");
+        assert!(
+            parsed.category_aliases.is_empty(),
+            "missing category_aliases should default to empty"
+        );
+    }
+
+    #[test]
+    fn view_serde_roundtrips_category_aliases() {
+        let mut view = View::new("Aliases".to_string());
+        let category_id = Uuid::new_v4();
+        view.category_aliases
+            .insert(category_id, "Customer".to_string());
+
+        let json = serde_json::to_string(&view).expect("serialize view");
+        let parsed: View = serde_json::from_str(&json).expect("deserialize view");
+        assert_eq!(
+            parsed
+                .category_aliases
+                .get(&category_id)
+                .map(String::as_str),
+            Some("Customer")
+        );
     }
 }
