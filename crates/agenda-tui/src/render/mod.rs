@@ -89,7 +89,11 @@ impl App {
             self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
         }
         if self.mode == Mode::LinkWizard {
-            self.render_link_wizard(frame, centered_rect(72, 72, frame.area()));
+            let popup_area = centered_rect(72, 72, frame.area());
+            self.render_link_wizard(frame, popup_area);
+            if let Some((x, y)) = self.link_wizard_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
         }
         if self.mode == Mode::CategoryDirectEdit {
             let popup_area = centered_rect(64, 62, frame.area());
@@ -524,7 +528,7 @@ impl App {
 
         let mut target_items: Vec<ListItem> = Vec::new();
         if action.requires_target() {
-            for (idx, item_id) in matches.iter().enumerate() {
+            for item_id in &matches {
                 let label = self
                     .all_items
                     .iter()
@@ -534,11 +538,7 @@ impl App {
                         format!("{status} | {}", item.text)
                     })
                     .unwrap_or_else(|| format!("missing | {item_id}"));
-                let marker = if idx == state.target_index { ">" } else { " " };
-                target_items.push(ListItem::new(format!(
-                    "{marker} {}",
-                    truncate_board_cell(&label, 72)
-                )));
+                target_items.push(ListItem::new(truncate_board_cell(&label, 72)));
             }
             if target_items.is_empty() {
                 target_items.push(ListItem::new("  (no matches)"));
@@ -548,19 +548,34 @@ impl App {
                 "  Clear dependencies removes prereqs and blocked items",
             ));
         }
-        frame.render_widget(
-            List::new(target_items).block(
-                Block::default()
-                    .title("Matches")
-                    .borders(Borders::ALL)
-                    .border_style(if state.focus == LinkWizardFocus::Target {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    }),
-            ),
-            rows[3],
-        );
+        let matches_block = Block::default()
+            .title("Matches")
+            .borders(Borders::ALL)
+            .border_style(if state.focus == LinkWizardFocus::Target {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            });
+        if action.requires_target() {
+            let selected = if matches.is_empty() {
+                None
+            } else {
+                Some(state.target_index.min(matches.len().saturating_sub(1)))
+            };
+            let mut list_state = Self::list_state_for(rows[3], selected);
+            let item_count = target_items.len();
+            frame.render_stateful_widget(
+                List::new(target_items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(matches_block),
+                rows[3],
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, rows[3], item_count, list_state.offset());
+        } else {
+            frame.render_widget(List::new(target_items).block(matches_block), rows[3]);
+        }
 
         let preview_lines = {
             let mut lines = vec![Line::from("Preview")];
@@ -662,11 +677,53 @@ impl App {
         );
 
         frame.render_widget(
-            Paragraph::new("j/k:move  Tab:focus  Enter:next/apply  b/B:different block direction  d/r/c:action  /:target  Esc:cancel")
+            Paragraph::new("j/k or arrows:move  Tab:focus  Enter:next/apply  type:search target  /:target focus  b/B:different block direction  d/r/c:action  Esc:cancel")
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(MUTED_TEXT_COLOR)),
             rows[5],
         );
+    }
+
+    fn link_wizard_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::LinkWizard || area.width < 6 || area.height < 8 {
+            return None;
+        }
+        let state = self.link_wizard_state()?;
+        let action = LinkWizardAction::from_index(state.action_index);
+        if state.focus != LinkWizardFocus::Target || !action.requires_target() {
+            return None;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // anchor
+                Constraint::Length(7), // actions
+                Constraint::Length(2), // target query
+                Constraint::Min(5),    // target matches
+                Constraint::Length(4), // preview
+                Constraint::Length(2), // help
+            ])
+            .split(inner);
+        let target_query = rows[2];
+        let input_x = target_query.x.saturating_add(1);
+        let input_y = target_query.y.saturating_add(1);
+        let prefix_len = "Search> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = state.target_filter.cursor().min(u16::MAX as usize) as u16;
+        let max_x = target_query
+            .x
+            .saturating_add(target_query.width.saturating_sub(2));
+        let x = input_x
+            .saturating_add(prefix_len)
+            .saturating_add(cursor_chars)
+            .min(max_x);
+        Some((x, input_y))
     }
 
     fn category_direct_edit_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
@@ -2285,7 +2342,7 @@ impl App {
             }
             Mode::ItemAssignPicker => "Space:toggle  n:new  Enter:done  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign  Esc:cancel",
-            Mode::LinkWizard => "Tab:focus  Enter:apply  Esc:cancel",
+            Mode::LinkWizard => "Tab:focus  Enter:apply  /:target  Type:search  Esc:cancel",
             Mode::CategoryDirectEdit => "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel",
             Mode::CategoryColumnPicker => "Space:toggle  Enter:save  Esc:cancel",
             Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
