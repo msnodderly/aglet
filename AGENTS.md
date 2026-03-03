@@ -210,7 +210,7 @@ content and is mutually exclusive with `--note`, `--append-note`, and
 Practical implications:
 - Passing `--note-stdin` with any other note-operation flag returns a validation
   error.
-- Empty stdin payload behaves like `--note ""` and clears the note.
+- Empty stdin payload is a no-op (note content is preserved).
 - Useful shell form: `printf "line one\nline two\n" | cargo run --bin agenda-cli -- --db <db> edit <ITEM_ID> --note-stdin`
 
 ## TUI Spec vs. Implementation

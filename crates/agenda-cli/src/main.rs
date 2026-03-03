@@ -554,11 +554,8 @@ fn cmd_edit(
         .get_item(item_id)
         .map_err(|e| e.to_string())?;
 
-    if text.is_some()
-        || note.is_some()
-        || append_note.is_some()
-        || note_stdin.is_some()
-        || clear_note
+    let note_stdin_has_content = note_stdin.as_ref().is_some_and(|value| !value.is_empty());
+    if text.is_some() || note.is_some() || append_note.is_some() || note_stdin_has_content || clear_note
     {
         if let Some(new_text) = text {
             if new_text.is_empty() {
@@ -568,12 +565,16 @@ fn cmd_edit(
         }
         if clear_note {
             item.note = None;
-        } else if let Some(new_note) = note.or(note_stdin) {
+        } else if let Some(new_note) = note {
             item.note = if new_note.is_empty() {
                 None
             } else {
                 Some(new_note)
             };
+        } else if let Some(new_note_from_stdin) = note_stdin {
+            if !new_note_from_stdin.is_empty() {
+                item.note = Some(new_note_from_stdin);
+            }
         } else if let Some(extra) = append_note {
             if !extra.is_empty() {
                 item.note = Some(match item.note {
@@ -3623,6 +3624,34 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn cmd_edit_note_stdin_empty_is_noop() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("Test item".to_string());
+        item.note = Some("existing".to_string());
+        let previous_modified_at = item.modified_at;
+        store.create_item(&item).expect("create");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            None,
+            Some(String::new()),
+            false,
+            None,
+        )
+        .expect("empty stdin no-op");
+
+        let updated = store.get_item(item.id).expect("get item");
+        assert_eq!(updated.note.as_deref(), Some("existing"));
+        assert_eq!(updated.modified_at, previous_modified_at);
     }
 
     #[test]
