@@ -5299,6 +5299,34 @@ mod tests {
     }
 
     #[test]
+    fn preview_summary_and_info_include_item_uuid() {
+        let item = Item::new("uuid test".to_string());
+        let expected_id = item.id.to_string();
+        let app = App::default();
+
+        let summary_lines = app.item_details_lines_for_item(&item);
+        let summary_plain: Vec<String> = summary_lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+        assert!(
+            summary_plain.iter().any(|line| line.contains(&expected_id)),
+            "summary should contain item UUID, got: {summary_plain:?}"
+        );
+
+        let info_lines = app.item_info_header_lines_for_item(&item);
+        assert!(
+            info_lines.iter().any(|line| line.contains(&expected_id)),
+            "info should contain item UUID, got: {info_lines:?}"
+        );
+    }
+
+    #[test]
     fn input_panel_note_up_down_moves_cursor_between_lines() {
         let mut panel = input_panel::InputPanel::new_edit_item(
             agenda_core::model::ItemId::new_v4(),
