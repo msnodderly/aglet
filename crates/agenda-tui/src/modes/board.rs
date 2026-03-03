@@ -2130,29 +2130,16 @@ impl App {
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 if let Some(item_id) = self.selected_item_id() {
-                    let was_done = self
-                        .selected_item()
-                        .map(|item| item.is_done)
-                        .unwrap_or(false);
-                    if !was_done && !self.selected_item_has_actionable_assignment() {
-                        self.status =
-                            "Done unavailable: item has no actionable category assignments"
-                                .to_string();
-                        return Ok(false);
-                    }
-                    agenda
-                        .toggle_item_done(item_id)
-                        .map_err(|e| e.to_string())?;
-                    self.refresh(agenda.store())?;
-                    self.status = if was_done {
-                        "Marked item not-done".to_string()
-                    } else {
-                        "Marked item done".to_string()
-                    };
+                    self.begin_done_toggle_or_confirm(
+                        agenda,
+                        item_id,
+                        DoneToggleOrigin::NormalMode,
+                    )?;
                 }
             }
             KeyCode::Char('x') => {
                 if self.selected_item_id().is_some() {
+                    self.done_blocks_confirm = None;
                     self.mode = Mode::ConfirmDelete;
                     self.status = "Delete item? y/n".to_string();
                 }
@@ -2167,6 +2154,117 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    pub(crate) fn done_toggle_return_mode(origin: DoneToggleOrigin) -> Mode {
+        match origin {
+            DoneToggleOrigin::NormalMode => Mode::Normal,
+            DoneToggleOrigin::ItemAssignPicker => Mode::ItemAssignPicker,
+        }
+    }
+
+    fn done_toggle_status_message(
+        origin: DoneToggleOrigin,
+        was_done: bool,
+        removed_blocker_links: usize,
+    ) -> String {
+        if was_done {
+            return match origin {
+                DoneToggleOrigin::NormalMode => "Marked item not-done".to_string(),
+                DoneToggleOrigin::ItemAssignPicker => {
+                    "Removed category Done (marked not-done)".to_string()
+                }
+            };
+        }
+
+        if removed_blocker_links > 0 {
+            let suffix = if removed_blocker_links == 1 { "" } else { "s" };
+            return match origin {
+                DoneToggleOrigin::NormalMode => format!(
+                    "Marked item done and removed {removed_blocker_links} blocker link{suffix}"
+                ),
+                DoneToggleOrigin::ItemAssignPicker => format!(
+                    "Assigned item to category Done (marked done; removed {removed_blocker_links} blocker link{suffix})"
+                ),
+            };
+        }
+
+        match origin {
+            DoneToggleOrigin::NormalMode => "Marked item done".to_string(),
+            DoneToggleOrigin::ItemAssignPicker => {
+                "Assigned item to category Done (marked done)".to_string()
+            }
+        }
+    }
+
+    pub(crate) fn apply_done_toggle_action(
+        &mut self,
+        agenda: &Agenda<'_>,
+        item_id: ItemId,
+        was_done: bool,
+        origin: DoneToggleOrigin,
+        clear_blocked_item_ids: &[ItemId],
+    ) -> Result<(), String> {
+        agenda
+            .toggle_item_done(item_id)
+            .map_err(|e| e.to_string())?;
+
+        let mut removed_blocker_links = 0usize;
+        if !was_done {
+            for blocked_id in clear_blocked_item_ids {
+                agenda
+                    .unlink_items_blocks(item_id, *blocked_id)
+                    .map_err(|e| e.to_string())?;
+                removed_blocker_links += 1;
+            }
+        }
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(item_id);
+        self.mode = Self::done_toggle_return_mode(origin);
+        self.status = Self::done_toggle_status_message(origin, was_done, removed_blocker_links);
+        Ok(())
+    }
+
+    fn begin_done_toggle_or_confirm(
+        &mut self,
+        agenda: &Agenda<'_>,
+        item_id: ItemId,
+        origin: DoneToggleOrigin,
+    ) -> Result<(), String> {
+        let was_done = self
+            .selected_item()
+            .map(|item| item.is_done)
+            .unwrap_or(false);
+        if !was_done && !self.selected_item_has_actionable_assignment() {
+            self.status =
+                "Done unavailable: item has no actionable category assignments".to_string();
+            return Ok(());
+        }
+
+        if !was_done {
+            let blocked_item_ids = self
+                .item_links_by_item_id
+                .get(&item_id)
+                .map(|links| links.blocks.clone())
+                .unwrap_or_default();
+            if !blocked_item_ids.is_empty() {
+                let blocked_count = blocked_item_ids.len();
+                let suffix = if blocked_count == 1 { "" } else { "s" };
+                self.done_blocks_confirm = Some(DoneBlocksConfirmState {
+                    item_id,
+                    blocked_item_ids,
+                    origin,
+                });
+                self.mode = Mode::ConfirmDelete;
+                self.status = format!(
+                    "Mark done and remove {blocked_count} blocker link{suffix}? y:yes n:keep links Esc:cancel"
+                );
+                return Ok(());
+            }
+        }
+
+        self.apply_done_toggle_action(agenda, item_id, was_done, origin, &[])
     }
 
     fn sort_current_slot_by_active_column(
@@ -3991,29 +4089,12 @@ impl App {
                 };
 
                 if row.name.eq_ignore_ascii_case("Done") {
-                    let was_done = self
-                        .selected_item()
-                        .map(|item| item.is_done)
-                        .unwrap_or(false);
-                    if !was_done && !self.selected_item_has_actionable_assignment() {
-                        self.status =
-                            "Done unavailable: item has no actionable category assignments"
-                                .to_string();
-                        return Ok(false);
-                    }
-                    match agenda.toggle_item_done(item_id) {
-                        Ok(_) => {
-                            self.refresh(agenda.store())?;
-                            self.set_item_selection_by_id(item_id);
-                            self.status = if was_done {
-                                "Removed category Done (marked not-done)".to_string()
-                            } else {
-                                "Assigned item to category Done (marked done)".to_string()
-                            };
-                        }
-                        Err(err) => {
-                            self.status = format!("Done toggle failed: {}", err);
-                        }
+                    if let Err(err) = self.begin_done_toggle_or_confirm(
+                        agenda,
+                        item_id,
+                        DoneToggleOrigin::ItemAssignPicker,
+                    ) {
+                        self.status = format!("Done toggle failed: {}", err);
                     }
                     return Ok(false);
                 }
