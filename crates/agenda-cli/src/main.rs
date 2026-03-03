@@ -94,6 +94,9 @@ enum Command {
     },
 
     /// List items (optionally filtered)
+    #[command(
+        after_help = "Numeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+    )]
     List {
         #[arg(long)]
         view: Option<String>,
@@ -106,6 +109,27 @@ enum Command {
         /// Exclude-category filter (repeat for OR). Item must have NONE of the specified categories.
         #[arg(long = "exclude-category")]
         exclude_category: Vec<String>,
+        /// Numeric equality filter (repeat for AND): category value must equal VALUE.
+        #[arg(
+            long = "value-eq",
+            value_names = ["CATEGORY", "VALUE"],
+            num_args = 2
+        )]
+        value_eq: Vec<String>,
+        /// Numeric membership filter (repeat for AND): category value must be in CSV_VALUES.
+        #[arg(
+            long = "value-in",
+            value_names = ["CATEGORY", "CSV_VALUES"],
+            num_args = 2
+        )]
+        value_in: Vec<String>,
+        /// Numeric max filter (repeat for AND): category value must be <= VALUE.
+        #[arg(
+            long = "value-max",
+            value_names = ["CATEGORY", "VALUE"],
+            num_args = 2
+        )]
+        value_max: Vec<String>,
         /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
         /// Optional suffix `:asc` or `:desc` (default: asc).
         #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
@@ -331,6 +355,9 @@ fn run() -> Result<(), String> {
         category: Vec::new(),
         any_category: Vec::new(),
         exclude_category: Vec::new(),
+        value_eq: Vec::new(),
+        value_in: Vec::new(),
+        value_max: Vec::new(),
         sort: Vec::new(),
         format: OutputFormatArg::Table,
         include_done: false,
@@ -364,6 +391,9 @@ fn run() -> Result<(), String> {
             category,
             any_category,
             exclude_category,
+            value_eq,
+            value_in,
+            value_max,
             sort,
             format,
             include_done,
@@ -374,6 +404,9 @@ fn run() -> Result<(), String> {
                 all_categories: category,
                 any_categories: any_category,
                 exclude_categories: exclude_category,
+                value_eq,
+                value_in,
+                value_max,
                 include_done,
             },
             sort,
@@ -619,7 +652,24 @@ struct ListFilters {
     all_categories: Vec<String>,
     any_categories: Vec<String>,
     exclude_categories: Vec<String>,
+    value_eq: Vec<String>,
+    value_in: Vec<String>,
+    value_max: Vec<String>,
     include_done: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NumericPredicate {
+    Eq(Decimal),
+    In(Vec<Decimal>),
+    Max(Decimal),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NumericFilter {
+    category_id: CategoryId,
+    category_name: String,
+    predicate: NumericPredicate,
 }
 
 fn cmd_list(
@@ -637,6 +687,7 @@ fn cmd_list(
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let category_names = category_name_map(&categories);
     let sort_keys = parse_sort_specs(&sort_args, &categories)?;
+    let numeric_filters = build_numeric_filters(&categories, &filters)?;
 
     if !filters.all_categories.is_empty() {
         let category_ids: Vec<CategoryId> = filters
@@ -661,6 +712,9 @@ fn cmd_list(
             .map(|name| category_id_by_name(&categories, &name))
             .collect::<Result<Vec<_>, _>>()?;
         reject_items_with_any_categories(&mut items, &category_ids);
+    }
+    if !numeric_filters.is_empty() {
+        retain_items_matching_numeric_filters(&mut items, &numeric_filters);
     }
 
     let resolved_view = if let Some(view_name) = view_name {
@@ -711,6 +765,113 @@ fn reject_items_with_any_categories(items: &mut Vec<Item>, category_ids: &[Categ
         category_ids
             .iter()
             .all(|id| !item.assignments.contains_key(id))
+    });
+}
+
+fn build_numeric_filters(
+    categories: &[Category],
+    filters: &ListFilters,
+) -> Result<Vec<NumericFilter>, String> {
+    let mut out = Vec::new();
+
+    for (category_name, value) in parse_arg_pairs(&filters.value_eq, "--value-eq")? {
+        let (category_id, resolved_name) =
+            resolve_numeric_filter_category(categories, &category_name)?;
+        let parsed = parse_decimal_value(&value)?;
+        out.push(NumericFilter {
+            category_id,
+            category_name: resolved_name,
+            predicate: NumericPredicate::Eq(parsed),
+        });
+    }
+
+    for (category_name, values_csv) in parse_arg_pairs(&filters.value_in, "--value-in")? {
+        let (category_id, resolved_name) =
+            resolve_numeric_filter_category(categories, &category_name)?;
+        let parsed_values = parse_csv_decimals(&values_csv, &resolved_name)?;
+        out.push(NumericFilter {
+            category_id,
+            category_name: resolved_name,
+            predicate: NumericPredicate::In(parsed_values),
+        });
+    }
+
+    for (category_name, value) in parse_arg_pairs(&filters.value_max, "--value-max")? {
+        let (category_id, resolved_name) =
+            resolve_numeric_filter_category(categories, &category_name)?;
+        let parsed = parse_decimal_value(&value)?;
+        out.push(NumericFilter {
+            category_id,
+            category_name: resolved_name,
+            predicate: NumericPredicate::Max(parsed),
+        });
+    }
+
+    Ok(out)
+}
+
+fn parse_arg_pairs(args: &[String], flag_name: &str) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    let chunks = args.chunks_exact(2);
+    if !chunks.remainder().is_empty() {
+        return Err(format!(
+            "invalid {flag_name} arguments: expected repeated <CATEGORY> <VALUE> pairs"
+        ));
+    }
+    for pair in chunks {
+        out.push((pair[0].clone(), pair[1].clone()));
+    }
+    Ok(out)
+}
+
+fn resolve_numeric_filter_category(
+    categories: &[Category],
+    category_name: &str,
+) -> Result<(CategoryId, String), String> {
+    let category_id = category_id_by_name(categories, category_name)?;
+    let category = categories
+        .iter()
+        .find(|c| c.id == category_id)
+        .ok_or_else(|| format!("category not found: {category_name}"))?;
+    if category.value_kind != CategoryValueKind::Numeric {
+        return Err(format!(
+            "category '{}' is not Numeric; numeric value filters require a Numeric category",
+            category.name
+        ));
+    }
+    Ok((category.id, category.name.clone()))
+}
+
+fn parse_csv_decimals(input: &str, category_name: &str) -> Result<Vec<Decimal>, String> {
+    let mut values = Vec::new();
+    for token in input.split(',') {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            return Err(format!(
+                "invalid --value-in for category '{}': empty value in CSV list",
+                category_name
+            ));
+        }
+        values.push(parse_decimal_value(trimmed)?);
+    }
+    Ok(values)
+}
+
+fn retain_items_matching_numeric_filters(items: &mut Vec<Item>, numeric_filters: &[NumericFilter]) {
+    items.retain(|item| {
+        numeric_filters.iter().all(|filter| {
+            let numeric_value = item
+                .assignments
+                .get(&filter.category_id)
+                .and_then(|assignment| assignment.numeric_value);
+            match &filter.predicate {
+                NumericPredicate::Eq(expected) => numeric_value.is_some_and(|v| v == *expected),
+                NumericPredicate::In(allowed) => {
+                    numeric_value.is_some_and(|v| allowed.contains(&v))
+                }
+                NumericPredicate::Max(max_value) => numeric_value.is_some_and(|v| v <= *max_value),
+            }
+        })
     });
 }
 
@@ -2058,13 +2219,14 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd_claim, cmd_unlink, cmd_view, compare_items_by_sort_keys,
-        duplicate_category_create_error, item_link_section_lines, parse_decimal_value,
-        parse_sort_spec, parsed_when_feedback_line, reject_items_with_any_categories,
+        build_numeric_filters, cmd_claim, cmd_unlink, cmd_view, compare_items_by_sort_keys,
+        duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
+        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
+        reject_items_with_any_categories, retain_items_matching_numeric_filters,
         retain_items_with_all_categories, retain_items_with_any_categories,
         unknown_hashtag_feedback_line, view_category_alias_rows, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, OutputFormatArg, UnlinkCommand,
-        ViewCommand,
+        CliSortField, CliSortKey, Command, LinkCommand, ListFilters, NumericFilter,
+        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2483,6 +2645,108 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_repeated_value_eq_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--value-eq",
+            "Complexity",
+            "2",
+            "--value-eq",
+            "Cost",
+            "10",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { value_eq, .. }) => {
+                assert_eq!(
+                    value_eq,
+                    vec![
+                        "Complexity".to_string(),
+                        "2".to_string(),
+                        "Cost".to_string(),
+                        "10".to_string()
+                    ]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_repeated_value_in_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--value-in",
+            "Complexity",
+            "1,2",
+            "--value-in",
+            "Cost",
+            "10,20",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { value_in, .. }) => {
+                assert_eq!(
+                    value_in,
+                    vec![
+                        "Complexity".to_string(),
+                        "1,2".to_string(),
+                        "Cost".to_string(),
+                        "10,20".to_string()
+                    ]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_repeated_value_max_flags() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "list",
+            "--value-max",
+            "Complexity",
+            "2",
+            "--value-max",
+            "Cost",
+            "100",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { value_max, .. }) => {
+                assert_eq!(
+                    value_max,
+                    vec![
+                        "Complexity".to_string(),
+                        "2".to_string(),
+                        "Cost".to_string(),
+                        "100".to_string()
+                    ]
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_help_includes_numeric_filter_examples() {
+        let mut cmd = Cli::command();
+        let list_cmd = cmd
+            .find_subcommand_mut("list")
+            .expect("list subcommand should exist");
+        let help = list_cmd.render_help().to_string();
+        assert!(help.contains("Numeric value filter examples:"));
+        assert!(help.contains("--value-in Complexity 1,2"));
+        assert!(help.contains("--value-max Complexity 2"));
+    }
+
+    #[test]
     fn clap_parses_view_show_with_sort_flag() {
         let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--sort", "when"])
             .expect("parse CLI");
@@ -2737,6 +3001,313 @@ mod tests {
             remaining_texts,
             vec!["Aglet item".to_string(), "NeoNV item".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_csv_decimals_rejects_empty_value_token() {
+        let err = parse_csv_decimals("1,,2", "Complexity").expect_err("should fail");
+        assert_eq!(
+            err,
+            "invalid --value-in for category 'Complexity': empty value in CSV list"
+        );
+    }
+
+    #[test]
+    fn build_numeric_filters_rejects_unknown_category() {
+        let categories = vec![Category::new("Complexity".to_string())];
+        let filters = ListFilters {
+            all_categories: Vec::new(),
+            any_categories: Vec::new(),
+            exclude_categories: Vec::new(),
+            value_eq: vec!["Nope".to_string(), "2".to_string()],
+            value_in: Vec::new(),
+            value_max: Vec::new(),
+            include_done: false,
+        };
+
+        let err = build_numeric_filters(&categories, &filters).expect_err("should fail");
+        assert_eq!(err, "category not found: Nope");
+    }
+
+    #[test]
+    fn build_numeric_filters_rejects_tag_category() {
+        let categories = vec![Category::new("Status".to_string())];
+        let filters = ListFilters {
+            all_categories: Vec::new(),
+            any_categories: Vec::new(),
+            exclude_categories: Vec::new(),
+            value_eq: vec!["Status".to_string(), "2".to_string()],
+            value_in: Vec::new(),
+            value_max: Vec::new(),
+            include_done: false,
+        };
+
+        let err = build_numeric_filters(&categories, &filters).expect_err("should fail");
+        assert_eq!(
+            err,
+            "category 'Status' is not Numeric; numeric value filters require a Numeric category"
+        );
+    }
+
+    #[test]
+    fn build_numeric_filters_rejects_malformed_decimal() {
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        let filters = ListFilters {
+            all_categories: Vec::new(),
+            any_categories: Vec::new(),
+            exclude_categories: Vec::new(),
+            value_eq: vec!["Complexity".to_string(), "abc".to_string()],
+            value_in: Vec::new(),
+            value_max: Vec::new(),
+            include_done: false,
+        };
+
+        let err = build_numeric_filters(&[complexity], &filters).expect_err("should fail");
+        assert!(err.contains("invalid decimal value 'abc'"));
+    }
+
+    #[test]
+    fn retain_items_matching_numeric_filters_handles_eq_in_max_and_missing_values() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&complexity)
+            .expect("create complexity");
+
+        let one = Item::new("One".to_string());
+        let two = Item::new("Two".to_string());
+        let five = Item::new("Five".to_string());
+        let missing = Item::new("Missing".to_string());
+        store.create_item(&one).expect("create one");
+        store.create_item(&two).expect("create two");
+        store.create_item(&five).expect("create five");
+        store.create_item(&missing).expect("create missing");
+
+        agenda
+            .assign_item_numeric_manual(
+                one.id,
+                complexity.id,
+                Decimal::new(1, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set one");
+        agenda
+            .assign_item_numeric_manual(
+                two.id,
+                complexity.id,
+                Decimal::new(2, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set two");
+        agenda
+            .assign_item_numeric_manual(
+                five.id,
+                complexity.id,
+                Decimal::new(5, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set five");
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_matching_numeric_filters(
+            &mut rows,
+            &[NumericFilter {
+                category_id: complexity.id,
+                category_name: "Complexity".to_string(),
+                predicate: NumericPredicate::Eq(Decimal::new(2, 0)),
+            }],
+        );
+        assert_eq!(
+            rows.into_iter().map(|i| i.text).collect::<Vec<_>>(),
+            vec!["Two".to_string()]
+        );
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_matching_numeric_filters(
+            &mut rows,
+            &[NumericFilter {
+                category_id: complexity.id,
+                category_name: "Complexity".to_string(),
+                predicate: NumericPredicate::Max(Decimal::new(2, 0)),
+            }],
+        );
+        let mut max_texts: Vec<String> = rows.into_iter().map(|i| i.text).collect();
+        max_texts.sort();
+        assert_eq!(max_texts, vec!["One".to_string(), "Two".to_string()]);
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_matching_numeric_filters(
+            &mut rows,
+            &[NumericFilter {
+                category_id: complexity.id,
+                category_name: "Complexity".to_string(),
+                predicate: NumericPredicate::In(vec![Decimal::new(1, 0), Decimal::new(5, 0)]),
+            }],
+        );
+        let mut in_texts: Vec<String> = rows.into_iter().map(|i| i.text).collect();
+        in_texts.sort();
+        assert_eq!(in_texts, vec!["Five".to_string(), "One".to_string()]);
+    }
+
+    #[test]
+    fn numeric_filters_compose_with_category_include_and_exclude_filters() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let project = Category::new("Aglet".to_string());
+        let done = Category::new("Complete".to_string());
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&project).expect("create project");
+        store.create_category(&done).expect("create complete");
+        store
+            .create_category(&complexity)
+            .expect("create complexity");
+
+        let include_keep = Item::new("IncludeKeep".to_string());
+        let include_drop_value = Item::new("IncludeDropValue".to_string());
+        let include_drop_excluded = Item::new("IncludeDropExcluded".to_string());
+        store
+            .create_item(&include_keep)
+            .expect("create include keep");
+        store
+            .create_item(&include_drop_value)
+            .expect("create include drop value");
+        store
+            .create_item(&include_drop_excluded)
+            .expect("create include drop excluded");
+
+        for item_id in [
+            include_keep.id,
+            include_drop_value.id,
+            include_drop_excluded.id,
+        ] {
+            agenda
+                .assign_item_manual(item_id, project.id, Some("test:assign".to_string()))
+                .expect("assign project");
+        }
+        agenda
+            .assign_item_manual(
+                include_drop_excluded.id,
+                done.id,
+                Some("test:assign".to_string()),
+            )
+            .expect("assign complete");
+        agenda
+            .assign_item_numeric_manual(
+                include_keep.id,
+                complexity.id,
+                Decimal::new(2, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set keep");
+        agenda
+            .assign_item_numeric_manual(
+                include_drop_value.id,
+                complexity.id,
+                Decimal::new(5, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set drop value");
+        agenda
+            .assign_item_numeric_manual(
+                include_drop_excluded.id,
+                complexity.id,
+                Decimal::new(2, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set excluded");
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_with_all_categories(&mut rows, &[project.id]);
+        reject_items_with_any_categories(&mut rows, &[done.id]);
+        retain_items_matching_numeric_filters(
+            &mut rows,
+            &[NumericFilter {
+                category_id: complexity.id,
+                category_name: "Complexity".to_string(),
+                predicate: NumericPredicate::Max(Decimal::new(2, 0)),
+            }],
+        );
+
+        assert_eq!(
+            rows.into_iter().map(|i| i.text).collect::<Vec<_>>(),
+            vec!["IncludeKeep".to_string()]
+        );
+    }
+
+    #[test]
+    fn multiple_numeric_filters_use_and_semantics() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&complexity)
+            .expect("create complexity");
+
+        let one = Item::new("One".to_string());
+        let two = Item::new("Two".to_string());
+        let three = Item::new("Three".to_string());
+        store.create_item(&one).expect("create one");
+        store.create_item(&two).expect("create two");
+        store.create_item(&three).expect("create three");
+        agenda
+            .assign_item_numeric_manual(
+                one.id,
+                complexity.id,
+                Decimal::new(1, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set one");
+        agenda
+            .assign_item_numeric_manual(
+                two.id,
+                complexity.id,
+                Decimal::new(2, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set two");
+        agenda
+            .assign_item_numeric_manual(
+                three.id,
+                complexity.id,
+                Decimal::new(3, 0),
+                Some("test:set".to_string()),
+            )
+            .expect("set three");
+
+        let mut rows = store.list_items().expect("list items");
+        retain_items_matching_numeric_filters(
+            &mut rows,
+            &[
+                NumericFilter {
+                    category_id: complexity.id,
+                    category_name: "Complexity".to_string(),
+                    predicate: NumericPredicate::In(vec![
+                        Decimal::new(1, 0),
+                        Decimal::new(2, 0),
+                        Decimal::new(3, 0),
+                    ]),
+                },
+                NumericFilter {
+                    category_id: complexity.id,
+                    category_name: "Complexity".to_string(),
+                    predicate: NumericPredicate::Max(Decimal::new(2, 0)),
+                },
+            ],
+        );
+        let mut texts: Vec<String> = rows.into_iter().map(|i| i.text).collect();
+        texts.sort();
+        assert_eq!(texts, vec!["One".to_string(), "Two".to_string()]);
     }
 
     #[test]
