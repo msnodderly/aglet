@@ -317,15 +317,17 @@ Practical implications:
 - Footer status/hints for `Mode::ConfirmDelete` are dynamic; if you touch
   confirm UI copy, update both delete and done-cleanup branches.
 
-## Full `cargo test` currently has known `agenda-tui` failures
+## View-Edit Tests Must Not Assume `views[0]` Is Editable (Surprising)
 
-As of 2026-03-02, running full `cargo test` in this repo can fail in
-`agenda-tui` on view-edit tests (for example `store_section_roundtrip_smoke`,
-`view_edit_esc_on_dirty_prompts_before_cancel`,
-`view_edit_navigation_keys_do_not_request_app_quit`,
-`view_picker_e_opens_view_edit`) due to current behavior around immutable
-system view handling (`All Items`), not CLI list filtering changes.
+`Store::open` includes the immutable system view `All Items`. Depending on
+ordering, `All Items` may be the first row returned by `list_views()` and the
+first element in `app.views`.
 
-For CLI-only tasks, run targeted checks like `cargo test -p agenda-cli` after
-`cargo fmt` and `cargo clippy --all-targets --all-features`, and report the
-known unrelated full-suite failures explicitly.
+Practical implications for tests:
+- Do not use `app.views[0]` or `list_views().next()` when a test needs to edit
+  or save a view.
+- Select a named mutable view explicitly (for example `TestView` or
+  `Work Board`) before calling `open_view_edit` or invoking ViewPicker edit
+  keys.
+- If a test unexpectedly stays in `Mode::ViewPicker` with an "immutable" status
+  message, verify it did not accidentally target `All Items`.

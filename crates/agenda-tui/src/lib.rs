@@ -4113,7 +4113,11 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::ViewPicker;
-        app.picker_index = 0;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "Work Board")
+            .expect("work board view should exist");
         app.handle_view_picker_key(KeyCode::Char('V'), &agenda)
             .expect("open view edit");
 
@@ -7313,8 +7317,8 @@ mod tests {
             .list_views()
             .expect("list")
             .into_iter()
-            .next()
-            .expect("view");
+            .find(|view| view.name == "TestView")
+            .expect("TestView");
         let mut updated = view.clone();
         updated.sections.push(Section {
             title: "Roundtrip".to_string(),
@@ -7331,8 +7335,8 @@ mod tests {
             .list_views()
             .expect("list")
             .into_iter()
-            .next()
-            .expect("view");
+            .find(|view| view.name == "TestView")
+            .expect("TestView");
         assert_eq!(
             saved.sections.len(),
             1,
@@ -7353,6 +7357,14 @@ mod tests {
             .create_view(&View::new("TestView".to_string()))
             .expect("create view");
         (store, db_path)
+    }
+
+    fn test_view_from_app(app: &App) -> View {
+        app.views
+            .iter()
+            .find(|view| view.name == "TestView")
+            .cloned()
+            .expect("TestView should exist")
     }
 
     fn terminal_buffer_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
@@ -7380,7 +7392,11 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
-        app.picker_index = 0;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
 
         app.handle_view_picker_key(KeyCode::Char('e'), &agenda)
             .expect("open view edit");
@@ -7610,7 +7626,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         assert_eq!(
@@ -7662,7 +7678,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         assert_eq!(
@@ -7687,7 +7703,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
@@ -7707,7 +7723,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
@@ -7748,7 +7764,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let mut view = app.views[0].clone();
+        let mut view = test_view_from_app(&app);
         view.sections.push(Section {
             title: "Old Title".to_string(),
             criteria: Query::default(),
@@ -7808,7 +7824,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         // Press 'N' to open overlay
@@ -7841,7 +7857,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         assert_eq!(
@@ -7942,7 +7958,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
@@ -8003,7 +8019,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         // Move focus to Aliases row in view details.
@@ -8070,7 +8086,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let mut view = app.views[0].clone();
+        let mut view = test_view_from_app(&app);
         view.category_aliases
             .insert(category.id, "Client".to_string());
         app.open_view_edit(view);
@@ -8121,7 +8137,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
@@ -8177,7 +8193,7 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        let view = app.views[0].clone();
+        let view = test_view_from_app(&app);
         app.open_view_edit(view);
 
         assert_eq!(
