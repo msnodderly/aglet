@@ -4860,7 +4860,7 @@ mod tests {
     }
 
     #[test]
-    fn add_item_in_generated_ready_section_assigns_ready_category() {
+    fn add_item_in_ready_section_with_no_children_assigns_ready_category() {
         let store = Store::open_memory().expect("open store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4897,7 +4897,7 @@ mod tests {
         app.refresh(&store).expect("refresh aglet board");
         assert!(matches!(
             app.slots.first().map(|slot| &slot.context),
-            Some(SlotContext::GeneratedSection { .. })
+            Some(SlotContext::Section { .. })
         ));
 
         app.open_input_panel_add_item();

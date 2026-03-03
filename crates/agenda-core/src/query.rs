@@ -175,6 +175,10 @@ fn expand_show_children_subsections(
             child_entries.push((*child_id, child.name.clone()));
         }
     }
+    if child_entries.is_empty() {
+        // No child sections to expand into; keep the base section rendering.
+        return None;
+    }
 
     let mut child_ids_in_result = HashSet::new();
     let mut subsections = Vec::with_capacity(child_entries.len() + 1);
@@ -1278,7 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_view_show_children_empty_children_has_only_parent_other() {
+    fn resolve_view_show_children_with_no_children_keeps_base_section() {
         let reference = day(2026, 2, 11);
         let parent = Uuid::new_v4();
         let categories = vec![category(parent, "Projects", None, &[])];
@@ -1293,12 +1297,10 @@ mod tests {
 
         let result = resolve_view(&view, &items, &categories, reference);
         let section_result = &result.sections[0];
-        assert!(section_result.items.is_empty());
-        assert_eq!(section_result.subsections.len(), 1);
-        assert_eq!(section_result.subsections[0].title, "Projects (Other)");
-        assert_eq!(
-            item_ids(&section_result.subsections[0].items),
-            vec![items[0].id, items[1].id]
+        assert_eq!(item_ids(&section_result.items), vec![items[0].id, items[1].id]);
+        assert!(
+            section_result.subsections.is_empty(),
+            "no child categories means no generated subsections"
         );
     }
 
