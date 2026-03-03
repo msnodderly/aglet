@@ -2218,7 +2218,11 @@ impl App {
     }
 
     pub(crate) fn render_footer(&self, _width: u16) -> Paragraph<'_> {
-        let status = self.footer_status_text();
+        let status = format!(
+            "{} | Auto-refresh:{}",
+            self.footer_status_text(),
+            self.auto_refresh_mode_label()
+        );
         let hints = self.footer_hint_text();
         let text = ratatui::text::Text::from(vec![
             ratatui::text::Line::from(status),
@@ -2315,6 +2319,10 @@ impl App {
                     self.status.clone()
                 }
             }
+            Mode::Normal => self
+                .active_transient_status_text()
+                .map(str::to_string)
+                .unwrap_or_else(|| self.status.clone()),
             _ => self.status.clone(),
         }
     }
@@ -2391,9 +2399,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Ctrl-L:reload  Esc:clear search  q:quit"
+                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Ctrl-L:reload  q:quit"
+                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }

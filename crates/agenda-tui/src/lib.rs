@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
@@ -670,6 +671,45 @@ enum SlotSortDirection {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AutoRefreshInterval {
+    Off,
+    OneSecond,
+    FiveSeconds,
+}
+
+impl AutoRefreshInterval {
+    fn next(self) -> Self {
+        match self {
+            Self::Off => Self::OneSecond,
+            Self::OneSecond => Self::FiveSeconds,
+            Self::FiveSeconds => Self::Off,
+        }
+    }
+
+    fn as_duration(self) -> Option<Duration> {
+        match self {
+            Self::Off => None,
+            Self::OneSecond => Some(Duration::from_secs(1)),
+            Self::FiveSeconds => Some(Duration::from_secs(5)),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::OneSecond => "1s",
+            Self::FiveSeconds => "5s",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TransientStatus {
+    message: String,
+    expires_at: Instant,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SlotSortColumn {
     ItemText,
     SectionColumn {
@@ -728,6 +768,9 @@ struct App {
     done_blocks_confirm: Option<DoneBlocksConfirmState>,
     board_pending_delete_column_label: Option<String>,
     note_edit_original: String,
+    auto_refresh_interval: AutoRefreshInterval,
+    auto_refresh_last_tick: Instant,
+    transient_status: Option<TransientStatus>,
 }
 
 impl Default for App {
@@ -776,6 +819,9 @@ impl Default for App {
             done_blocks_confirm: None,
             board_pending_delete_column_label: None,
             note_edit_original: String::new(),
+            auto_refresh_interval: AutoRefreshInterval::Off,
+            auto_refresh_last_tick: Instant::now(),
+            transient_status: None,
         }
     }
 }
@@ -783,7 +829,7 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
         add_capture_status_message, board_column_widths, board_item_label,
@@ -791,10 +837,11 @@ mod tests {
         compute_board_layout, first_non_reserved_category_index, input_panel,
         input_panel_popup_area, item_assignment_labels, list_scroll_for_selected_line, next_index,
         next_index_clamped, should_render_unmatched_lane, text_buffer, truncate_board_cell,
-        when_bucket_options, AddColumnDirection, App, BucketEditTarget, CategoryDirectEditAnchor,
-        CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState,
-        CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus,
-        Mode, NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
+        when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
+        CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
+        CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, Mode, NameInputContext,
+        SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4788,6 +4835,204 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_ctrl_r_cycles_auto_refresh_interval() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
+
+        app.handle_normal_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r -> 1s");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
+        assert_eq!(app.auto_refresh_mode_label(), "1s");
+
+        app.handle_normal_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r -> 5s");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
+        assert_eq!(app.auto_refresh_mode_label(), "5s");
+
+        app.handle_normal_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r -> off");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
+        assert_eq!(app.auto_refresh_mode_label(), "off");
+    }
+
+    #[test]
+    fn auto_refresh_status_toast_clears_on_next_non_ctrl_r_key() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App {
+            status: "Ready".to_string(),
+            ..App::default()
+        };
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r shows transient status");
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Auto-refresh interval: 1s"),
+            "toast should appear after cycling interval: {rendered}"
+        );
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &agenda,
+        )
+        .expect("next key clears toast");
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            !rendered.contains("Auto-refresh interval:"),
+            "toast should clear on next non-ctrl-r key: {rendered}"
+        );
+        assert!(
+            rendered.contains("Ready | Auto-refresh:1s"),
+            "footer should fall back to persistent status after toast clears: {rendered}"
+        );
+    }
+
+    #[test]
+    fn auto_refresh_status_toast_expires_after_timeout() {
+        let mut app = App {
+            status: "Ready".to_string(),
+            mode: Mode::Normal,
+            ..App::default()
+        };
+        app.cycle_auto_refresh_interval();
+        app.transient_status
+            .as_mut()
+            .expect("transient status")
+            .expires_at = Instant::now() - Duration::from_millis(1);
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            !rendered.contains("Auto-refresh interval:"),
+            "toast should disappear after timeout: {rendered}"
+        );
+        assert!(
+            rendered.contains("Ready | Auto-refresh:1s"),
+            "footer should retain persistent indicator after timeout: {rendered}"
+        );
+    }
+
+    #[test]
+    fn auto_refresh_timer_reloads_in_normal_mode_when_due() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-auto-refresh-due-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("initial refresh");
+        app.mode = Mode::Normal;
+        app.auto_refresh_interval = AutoRefreshInterval::OneSecond;
+        app.auto_refresh_last_tick = Instant::now() - Duration::from_secs(2);
+
+        let external = Item::new("Externally added by timer".to_string());
+        store.create_item(&external).expect("create external item");
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != external.id)),
+            "state should be stale before timer refresh"
+        );
+
+        app.maybe_run_auto_refresh(&store)
+            .expect("auto refresh should run");
+
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == external.id)),
+            "timer refresh should reload data in normal mode"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn auto_refresh_timer_skips_text_entry_modes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-auto-refresh-gated-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("initial refresh");
+        app.mode = Mode::InputPanel;
+        app.auto_refresh_interval = AutoRefreshInterval::OneSecond;
+        app.auto_refresh_last_tick = Instant::now() - Duration::from_secs(2);
+
+        let external = Item::new("Should remain hidden while editing".to_string());
+        store.create_item(&external).expect("create external item");
+
+        app.maybe_run_auto_refresh(&store)
+            .expect("auto refresh should be safely skipped");
+
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != external.id)),
+            "timer refresh must not reload while in text-entry mode"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn footer_shows_auto_refresh_mode_indicator() {
+        let app = App {
+            auto_refresh_interval: AutoRefreshInterval::FiveSeconds,
+            status: "Ready".to_string(),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Auto-refresh:5s"),
+            "footer should include auto-refresh mode indicator: {rendered}"
+        );
     }
 
     #[test]
