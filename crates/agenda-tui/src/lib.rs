@@ -173,6 +173,7 @@ enum Mode {
     Normal,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
+    #[allow(dead_code)]
     NoteEdit,
     ItemAssignPicker,
     ItemAssignInput,
@@ -7001,9 +7002,9 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.set_item_selection_by_id(item.id);
 
-        app.handle_normal_key(KeyCode::Char('m'), &agenda)
-            .expect("open note edit");
-        assert_eq!(app.mode, Mode::NoteEdit);
+        app.mode = Mode::NoteEdit;
+        app.note_edit_original = "seed".to_string();
+        app.set_input("seed".to_string());
 
         app.handle_note_edit_key(KeyCode::Char('!'), &agenda)
             .expect("edit note text");
