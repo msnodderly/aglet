@@ -576,6 +576,7 @@ impl App {
             focus: CategoryManagerFocus::Tree,
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
+            structure_move_prefix: None,
             details_focus: CategoryManagerDetailsFocus::Exclusive,
             details_note_category_id: selected_category_id,
             details_note: text_buffer::TextBuffer::new(initial_note),
@@ -666,6 +667,18 @@ impl App {
     ) {
         if let Some(state) = &mut self.category_manager {
             state.inline_action = action;
+        }
+    }
+
+    pub(crate) fn category_manager_structure_move_prefix(&self) -> Option<char> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.structure_move_prefix)
+    }
+
+    pub(crate) fn set_category_manager_structure_move_prefix(&mut self, prefix: Option<char>) {
+        if let Some(state) = &mut self.category_manager {
+            state.structure_move_prefix = prefix;
         }
     }
 

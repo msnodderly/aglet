@@ -2058,7 +2058,7 @@ impl App {
                 self.mode = Mode::CategoryManager;
                 self.open_category_manager_session();
                 self.status =
-                    "Category manager: Enter focuses details pane, e/i/a quick toggles, n/N create, r rename, p reparent, x delete".to_string();
+                    "Category manager: Enter focuses details pane, e/i/a quick toggles, n/N create, r rename, p reparent, x delete, << / >> shift level".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, agenda)?;
