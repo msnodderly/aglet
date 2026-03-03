@@ -11,6 +11,14 @@ Goal: break down work into items suitable for parallel coding agents, with clear
 ## Issue Tracking System
 
 This project tracks work in `aglet-features.ag` using `agenda-cli`.
+`aglet-features.ag` is the canonical PM backlog database for Aglet.
+
+Do not use `feature-requests.ag` for Aglet PM grooming, triage, or execution
+tracking. Every PM command in this doc should explicitly target:
+
+```bash
+--db aglet-features.ag
+```
 
 Use full UUIDs for item commands.
 
