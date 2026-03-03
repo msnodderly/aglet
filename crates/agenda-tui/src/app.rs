@@ -1,8 +1,42 @@
 use crate::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 impl App {
+    const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
+
+    fn is_auto_refresh_cycle_key(key: KeyEvent) -> bool {
+        key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+    }
+
+    pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
+        self.transient_status.as_ref().and_then(|transient| {
+            if Instant::now() < transient.expires_at {
+                Some(transient.message.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn clear_expired_transient_status(&mut self) {
+        if self
+            .transient_status
+            .as_ref()
+            .is_some_and(|transient| Instant::now() >= transient.expires_at)
+        {
+            self.transient_status = None;
+        }
+    }
+
+    pub(crate) fn clear_transient_status_on_key(&mut self, key: KeyEvent) {
+        if self.transient_status.is_some() && !Self::is_auto_refresh_cycle_key(key) {
+            self.transient_status = None;
+        }
+    }
+
     fn should_auto_refresh_now(&self) -> bool {
         let Some(interval) = self.auto_refresh_interval.as_duration() else {
             return false;
@@ -16,14 +50,17 @@ impl App {
 
     pub(crate) fn cycle_auto_refresh_interval(&mut self) {
         self.auto_refresh_interval = self.auto_refresh_interval.next();
-        self.auto_refresh_last_tick = std::time::Instant::now();
-        self.status = format!("Auto-refresh interval: {}", self.auto_refresh_mode_label());
+        self.auto_refresh_last_tick = Instant::now();
+        self.transient_status = Some(TransientStatus {
+            message: format!("Auto-refresh interval: {}", self.auto_refresh_mode_label()),
+            expires_at: Instant::now() + Self::AUTO_REFRESH_STATUS_TTL,
+        });
     }
 
     pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> Result<(), String> {
         if self.should_auto_refresh_now() {
             self.refresh(store)?;
-            self.auto_refresh_last_tick = std::time::Instant::now();
+            self.auto_refresh_last_tick = Instant::now();
         }
         Ok(())
     }
@@ -34,9 +71,10 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<(), String> {
         self.refresh(agenda.store())?;
-        self.auto_refresh_last_tick = std::time::Instant::now();
+        self.auto_refresh_last_tick = Instant::now();
 
         loop {
+            self.clear_expired_transient_status();
             terminal
                 .draw(|frame| self.draw(frame))
                 .map_err(|e| e.to_string())?;

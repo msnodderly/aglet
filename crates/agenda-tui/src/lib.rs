@@ -702,6 +702,12 @@ impl AutoRefreshInterval {
     }
 }
 
+#[derive(Clone, Debug)]
+struct TransientStatus {
+    message: String,
+    expires_at: Instant,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SlotSortColumn {
     ItemText,
@@ -765,6 +771,7 @@ struct App {
     input_panel_discard_confirm: bool,
     auto_refresh_interval: AutoRefreshInterval,
     auto_refresh_last_tick: Instant,
+    transient_status: Option<TransientStatus>,
 }
 
 impl Default for App {
@@ -817,6 +824,7 @@ impl Default for App {
             input_panel_discard_confirm: false,
             auto_refresh_interval: AutoRefreshInterval::Off,
             auto_refresh_last_tick: Instant::now(),
+            transient_status: None,
         }
     }
 }
@@ -4829,6 +4837,78 @@ mod tests {
         .expect("ctrl-r -> off");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
         assert_eq!(app.auto_refresh_mode_label(), "off");
+    }
+
+    #[test]
+    fn auto_refresh_status_toast_clears_on_next_non_ctrl_r_key() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App {
+            status: "Ready".to_string(),
+            ..App::default()
+        };
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r shows transient status");
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Auto-refresh interval: 1s"),
+            "toast should appear after cycling interval: {rendered}"
+        );
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &agenda,
+        )
+        .expect("next key clears toast");
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            !rendered.contains("Auto-refresh interval:"),
+            "toast should clear on next non-ctrl-r key: {rendered}"
+        );
+        assert!(
+            rendered.contains("Ready | Auto-refresh:1s"),
+            "footer should fall back to persistent status after toast clears: {rendered}"
+        );
+    }
+
+    #[test]
+    fn auto_refresh_status_toast_expires_after_timeout() {
+        let mut app = App {
+            status: "Ready".to_string(),
+            mode: Mode::Normal,
+            ..App::default()
+        };
+        app.cycle_auto_refresh_interval();
+        app.transient_status
+            .as_mut()
+            .expect("transient status")
+            .expires_at = Instant::now() - Duration::from_millis(1);
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            !rendered.contains("Auto-refresh interval:"),
+            "toast should disappear after timeout: {rendered}"
+        );
+        assert!(
+            rendered.contains("Ready | Auto-refresh:1s"),
+            "footer should retain persistent indicator after timeout: {rendered}"
+        );
     }
 
     #[test]
