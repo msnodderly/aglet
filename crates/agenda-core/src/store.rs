@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -1376,7 +1377,10 @@ impl Store {
         Ok(())
     }
 
-    fn with_category_order_transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+    pub(crate) fn with_immediate_transaction<T>(
+        &self,
+        f: impl FnOnce(&Store) -> Result<T>,
+    ) -> Result<T> {
         self.conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
         let result = f(self);
         match result {
@@ -1389,6 +1393,10 @@ impl Store {
                 Err(err)
             }
         }
+    }
+
+    fn with_category_order_transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+        self.with_immediate_transaction(f)
     }
 
     fn next_category_sort_order(&self, parent_id: Option<CategoryId>) -> Result<i64> {
@@ -1664,6 +1672,9 @@ impl Store {
         self.conn.pragma_update(None, "journal_mode", "wal")?;
         // Enable foreign key enforcement.
         self.conn.pragma_update(None, "foreign_keys", "ON")?;
+        // Allow short waits on write contention so transactional claim paths can
+        // resolve to precondition failures instead of immediate lock errors.
+        self.conn.busy_timeout(Duration::from_secs(2))?;
 
         let version: i32 = self
             .conn
