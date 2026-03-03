@@ -69,6 +69,10 @@ pub(crate) struct InputPanel {
     pub(crate) preview_context: String,
     /// Cursor position within the category list.
     pub(crate) category_cursor: usize,
+    /// Inline filter text for narrowing the categories list in add/edit panels.
+    pub(crate) category_filter: TextBuffer,
+    /// Whether category filter input is actively focused for typing.
+    pub(crate) category_filter_editing: bool,
     /// Editing buffers for assigned numeric categories.
     /// Created when a numeric category is toggled on; removed when toggled off.
     pub(crate) numeric_buffers: HashMap<CategoryId, TextBuffer>,
@@ -100,6 +104,8 @@ impl InputPanel {
             item_id: None,
             preview_context: format_section_context(section_title, on_insert_assign),
             category_cursor: 0,
+            category_filter: TextBuffer::empty(),
+            category_filter_editing: false,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
             parent_id: None,
@@ -131,6 +137,8 @@ impl InputPanel {
             item_id: Some(item_id),
             preview_context: String::new(),
             category_cursor: 0,
+            category_filter: TextBuffer::empty(),
+            category_filter_editing: false,
             numeric_buffers,
             numeric_originals,
             parent_id: None,
@@ -152,6 +160,8 @@ impl InputPanel {
             item_id: None,
             preview_context: label.to_string(),
             category_cursor: 0,
+            category_filter: TextBuffer::empty(),
+            category_filter_editing: false,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
             parent_id: None,
@@ -173,6 +183,8 @@ impl InputPanel {
             item_id: None,
             preview_context: label.to_string(),
             category_cursor: 0,
+            category_filter: TextBuffer::empty(),
+            category_filter_editing: false,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
             parent_id: None,
@@ -194,6 +206,8 @@ impl InputPanel {
             item_id: None,
             preview_context: String::new(),
             category_cursor: 0,
+            category_filter: TextBuffer::empty(),
+            category_filter_editing: false,
             numeric_buffers: HashMap::new(),
             numeric_originals: HashMap::new(),
             parent_id,

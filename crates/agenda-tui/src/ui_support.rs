@@ -812,6 +812,10 @@ pub(super) struct InputPanelPopupRegions {
     /// Bordered multi-line region for the inline category list.
     pub(super) categories: Option<Rect>,
     pub(super) categories_inner: Option<Rect>,
+    /// First inner line inside categories block for filter input.
+    pub(super) categories_filter: Option<Rect>,
+    /// Remaining inner lines inside categories block for category rows.
+    pub(super) categories_list: Option<Rect>,
     /// Type picker field (CategoryCreate only).
     pub(super) type_picker: Option<Rect>,
     pub(super) buttons: Rect,
@@ -859,6 +863,8 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
+                categories_filter: None,
+                categories_list: None,
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
@@ -886,6 +892,8 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
+                categories_filter: None,
+                categories_list: None,
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
@@ -916,6 +924,8 @@ pub(super) fn input_panel_popup_regions(
                 type_picker: Some(chunks[1]),
                 buttons: chunks[3],
                 help: chunks[4],
+                categories_filter: None,
+                categories_list: None,
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
@@ -958,6 +968,26 @@ pub(super) fn input_panel_popup_regions(
                 width: cat.width.saturating_sub(2),
                 height: cat.height.saturating_sub(2),
             };
+            let cat_filter = if cat_inner.width > 0 && cat_inner.height > 0 {
+                Some(Rect {
+                    x: cat_inner.x,
+                    y: cat_inner.y,
+                    width: cat_inner.width,
+                    height: 1,
+                })
+            } else {
+                None
+            };
+            let cat_list = if cat_inner.width > 0 && cat_inner.height > 1 {
+                Some(Rect {
+                    x: cat_inner.x,
+                    y: cat_inner.y.saturating_add(1),
+                    width: cat_inner.width,
+                    height: cat_inner.height.saturating_sub(1),
+                })
+            } else {
+                None
+            };
             Some(InputPanelPopupRegions {
                 context: None,
                 text: chunks[0],
@@ -965,6 +995,8 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: Some(note_inner),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
+                categories_filter: cat_filter,
+                categories_list: cat_list,
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],

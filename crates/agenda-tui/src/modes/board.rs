@@ -119,6 +119,127 @@ impl App {
         }
     }
 
+    fn input_panel_category_filter_text(&self) -> Option<&str> {
+        self.input_panel.as_ref().and_then(|panel| {
+            if matches!(
+                panel.kind,
+                input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+            ) {
+                Some(panel.category_filter.text())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn input_panel_visible_category_row_indices(&self) -> Vec<usize> {
+        let query = self
+            .input_panel_category_filter_text()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| query.is_empty() || row.name.to_ascii_lowercase().contains(&query))
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    pub(crate) fn input_panel_selected_category_row_index(&self) -> Option<usize> {
+        let visible_indices = self.input_panel_visible_category_row_indices();
+        let cursor = self
+            .input_panel
+            .as_ref()
+            .map(|panel| panel.category_cursor)?;
+        visible_indices.get(cursor).copied()
+    }
+
+    pub(crate) fn input_panel_selected_category_row(&self) -> Option<&CategoryListRow> {
+        let row_index = self.input_panel_selected_category_row_index()?;
+        self.category_rows.get(row_index)
+    }
+
+    fn clamp_input_panel_category_cursor(&mut self) {
+        let visible_len = self.input_panel_visible_category_row_indices().len();
+        if let Some(panel) = &mut self.input_panel {
+            panel.category_cursor = if visible_len == 0 {
+                0
+            } else {
+                panel.category_cursor.min(visible_len - 1)
+            };
+        }
+    }
+
+    fn handle_input_panel_category_filter_key(&mut self, code: KeyCode) -> bool {
+        let mut status: Option<String> = None;
+        let mut should_clamp = false;
+        let mut show_matches = false;
+        let consumed = {
+            let Some(panel) = self.input_panel.as_mut() else {
+                return false;
+            };
+            if !matches!(
+                panel.kind,
+                input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+            ) || panel.focus != input_panel::InputPanelFocus::Categories
+            {
+                return false;
+            }
+
+            if code == KeyCode::Char('/') {
+                panel.category_filter_editing = true;
+                status = Some(
+                    "Type to filter categories, Enter to keep filter, Esc clear/exit".to_string(),
+                );
+                true
+            } else if !panel.category_filter_editing {
+                false
+            } else {
+                match code {
+                    KeyCode::Enter => {
+                        panel.category_filter_editing = false;
+                        status = Some("Category filter applied".to_string());
+                        true
+                    }
+                    KeyCode::Esc => {
+                        if panel.category_filter.is_empty() {
+                            panel.category_filter_editing = false;
+                            status = Some("Category filter exited".to_string());
+                        } else {
+                            panel.category_filter.clear();
+                            status = Some("Category filter cleared".to_string());
+                            should_clamp = true;
+                        }
+                        true
+                    }
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        panel.category_filter_editing = false;
+                        false
+                    }
+                    _ => {
+                        if panel.category_filter.handle_key(code, false) {
+                            should_clamp = true;
+                            show_matches = true;
+                        }
+                        true
+                    }
+                }
+            }
+        };
+
+        if should_clamp {
+            self.clamp_input_panel_category_cursor();
+        }
+        if show_matches {
+            let matches = self.input_panel_visible_category_row_indices().len();
+            self.status = format!("Category filter matches: {matches}");
+        } else if let Some(status) = status {
+            self.status = status;
+        }
+        consumed
+    }
+
     pub(crate) fn active_category_direct_edit_row(&self) -> Option<&CategoryDirectEditRow> {
         self.category_direct_edit_state()?.active_row()
     }
@@ -3182,28 +3303,39 @@ impl App {
             return Ok(false);
         }
 
-        let Some(panel) = &mut self.input_panel else {
+        let Some(_) = &self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
             return Ok(false);
         };
 
+        if self.handle_input_panel_category_filter_key(code) {
+            return Ok(false);
+        }
+
         // Determine if the current category row is an assigned numeric category
         // (needed for key routing decisions in handle_key).
-        let current_row_is_assigned_numeric =
-            if panel.focus == input_panel::InputPanelFocus::Categories {
-                self.category_rows
-                    .get(panel.category_cursor)
-                    .map(|row| {
-                        panel.categories.contains(&row.id)
-                            && row.value_kind == agenda_core::model::CategoryValueKind::Numeric
-                    })
-                    .unwrap_or(false)
-            } else {
-                false
-            };
+        let current_row_is_assigned_numeric = self
+            .input_panel
+            .as_ref()
+            .and_then(|panel| {
+                if panel.focus != input_panel::InputPanelFocus::Categories {
+                    return Some(false);
+                }
+                self.input_panel_selected_category_row().map(|row| {
+                    panel.categories.contains(&row.id)
+                        && row.value_kind == agenda_core::model::CategoryValueKind::Numeric
+                })
+            })
+            .unwrap_or(false);
 
-        let action = panel.handle_key(code, current_row_is_assigned_numeric);
+        let action = {
+            let panel = self
+                .input_panel
+                .as_mut()
+                .expect("input panel checked above");
+            panel.handle_key(code, current_row_is_assigned_numeric)
+        };
 
         use input_panel::InputPanelAction;
         match action {
@@ -3259,12 +3391,8 @@ impl App {
                 }
             }
             InputPanelAction::ToggleCategory => {
-                let idx = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.category_cursor)
-                    .unwrap_or(0);
-                let row = self.category_rows.get(idx).cloned();
+                let idx = self.input_panel_selected_category_row_index();
+                let row = self.input_panel_selected_category_row().cloned();
                 if let Some(row) = row {
                     if !row.is_reserved {
                         let is_adding = self
@@ -3276,11 +3404,14 @@ impl App {
                             row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
                         // If adding into an exclusive parent group, clear siblings first.
                         if is_adding {
-                            let to_clear = exclusive_siblings_to_clear(&self.category_rows, idx);
-                            if let Some(panel) = &mut self.input_panel {
-                                for sibling_id in &to_clear {
-                                    panel.categories.remove(sibling_id);
-                                    panel.numeric_buffers.remove(sibling_id);
+                            if let Some(idx) = idx {
+                                let to_clear =
+                                    exclusive_siblings_to_clear(&self.category_rows, idx);
+                                if let Some(panel) = &mut self.input_panel {
+                                    for sibling_id in &to_clear {
+                                        panel.categories.remove(sibling_id);
+                                        panel.numeric_buffers.remove(sibling_id);
+                                    }
                                 }
                             }
                         }
@@ -3308,7 +3439,7 @@ impl App {
                 }
             }
             InputPanelAction::MoveCategoryCursor(delta) => {
-                let list_len = self.category_rows.len();
+                let list_len = self.input_panel_visible_category_row_indices().len();
                 if let Some(panel) = &mut self.input_panel {
                     if list_len > 0 {
                         let current = panel.category_cursor as i64;
@@ -3322,15 +3453,7 @@ impl App {
                 // If we're on Categories focus and the row is an assigned numeric,
                 // route the key to the numeric buffer.
                 if current_row_is_assigned_numeric {
-                    let cat_id = self
-                        .category_rows
-                        .get(
-                            self.input_panel
-                                .as_ref()
-                                .map(|p| p.category_cursor)
-                                .unwrap_or(0),
-                        )
-                        .map(|r| r.id);
+                    let cat_id = self.input_panel_selected_category_row().map(|r| r.id);
                     if let Some(cat_id) = cat_id {
                         if let Some(panel) = &mut self.input_panel {
                             if let Some(buf) = panel.numeric_buffers.get_mut(&cat_id) {
@@ -3356,6 +3479,11 @@ impl App {
             InputPanelAction::FocusNext
             | InputPanelAction::FocusPrev
             | InputPanelAction::Unhandled => {}
+        }
+        if let Some(panel) = &mut self.input_panel {
+            if panel.focus != input_panel::InputPanelFocus::Categories {
+                panel.category_filter_editing = false;
+            }
         }
         Ok(false)
     }
@@ -4638,5 +4766,103 @@ mod tests {
         let state = app.category_direct_edit_state().expect("state");
         assert_eq!(state.rows.len(), 2);
         assert_eq!(state.active_row, 1);
+    }
+
+    #[test]
+    fn input_panel_category_filter_narrows_rows_and_toggles_match() {
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        let gamma = Category::new("Gamma".to_string());
+
+        let mut app = App {
+            categories: vec![alpha.clone(), beta.clone(), gamma.clone()],
+            ..App::default()
+        };
+        app.category_rows = build_category_rows(&app.categories);
+        app.input_panel = Some(input_panel::InputPanel::new_add_item(
+            "Main",
+            &HashSet::new(),
+        ));
+        app.mode = Mode::InputPanel;
+        if let Some(panel) = &mut app.input_panel {
+            panel.focus = input_panel::InputPanelFocus::Categories;
+        }
+
+        app.handle_input_panel_key(KeyCode::Char('/'), &agenda)
+            .expect("open filter");
+        app.handle_input_panel_key(KeyCode::Char('b'), &agenda)
+            .expect("type filter");
+        assert_eq!(
+            app.input_panel_visible_category_row_indices().len(),
+            1,
+            "filter should narrow rows to a single match"
+        );
+        assert_eq!(
+            app.input_panel_selected_category_row()
+                .map(|row| row.name.as_str()),
+            Some("Beta")
+        );
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("finish filter editing");
+        app.handle_input_panel_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle selected category");
+
+        let panel = app.input_panel.as_ref().expect("panel");
+        assert!(panel.categories.contains(&beta.id));
+        assert!(!panel.categories.contains(&alpha.id));
+        assert!(!panel.categories.contains(&gamma.id));
+    }
+
+    #[test]
+    fn input_panel_filter_esc_clears_then_exits_without_canceling_panel() {
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        let beta = Category::new("Beta".to_string());
+        let mut app = App {
+            categories: vec![alpha, beta],
+            ..App::default()
+        };
+        app.category_rows = build_category_rows(&app.categories);
+        app.input_panel = Some(input_panel::InputPanel::new_add_item(
+            "Main",
+            &HashSet::new(),
+        ));
+        app.mode = Mode::InputPanel;
+        if let Some(panel) = &mut app.input_panel {
+            panel.focus = input_panel::InputPanelFocus::Categories;
+        }
+
+        app.handle_input_panel_key(KeyCode::Char('/'), &agenda)
+            .expect("open filter");
+        app.handle_input_panel_key(KeyCode::Char('b'), &agenda)
+            .expect("type filter");
+
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("clear filter");
+        let panel = app.input_panel.as_ref().expect("panel");
+        assert_eq!(panel.category_filter.text(), "");
+        assert!(
+            panel.category_filter_editing,
+            "first Esc should clear filter text but keep filter editing"
+        );
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("exit filter editing");
+        let panel = app.input_panel.as_ref().expect("panel");
+        assert!(!panel.category_filter_editing);
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("cancel panel");
+        assert_eq!(app.mode, Mode::Normal);
     }
 }
