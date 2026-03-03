@@ -405,6 +405,20 @@ Practical implications:
 - Preserve a regression test that asserts the `Text>` line does not contain the
   `Adding to ...` context string.
 
+## TUI Auto-Refresh Interval Is DB-Backed In `app_settings` (Surprising)
+
+TUI auto-refresh mode (`off` / `1s` / `5s`) now persists per database in
+`agenda-core` table `app_settings` under key `tui.auto_refresh_interval`.
+
+Practical implications:
+- `App::run` must load this setting at startup; do not assume `Off` default is
+  always the active runtime value.
+- `Ctrl-R` interval cycling must persist the new value immediately after
+  changing it.
+- Unknown/missing persisted values must safely fall back to `Off` (no panic,
+  no invalid state).
+- Keep coverage for migration/table-creation plus reopen roundtrip persistence.
+
 ## Normal Mode Enter On Empty Slot Opens Add Item (Behavior)
 
 In `Mode::Normal`, `Enter` on the item column has dual behavior:

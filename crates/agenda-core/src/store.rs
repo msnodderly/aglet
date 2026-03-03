@@ -15,7 +15,7 @@ use crate::model::{
     NumericFormat, Query, Section, View,
 };
 
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -110,6 +110,11 @@ CREATE INDEX IF NOT EXISTS idx_deletion_log_item ON deletion_log(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_links_item_kind ON item_links(item_id, kind);
 CREATE INDEX IF NOT EXISTS idx_item_links_other_kind ON item_links(other_item_id, kind);
 CREATE INDEX IF NOT EXISTS idx_item_links_kind ON item_links(kind);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 ";
 
 pub struct Store {
@@ -137,6 +142,29 @@ impl Store {
     /// Access the underlying connection.
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Store an application-level key/value setting.
+    pub fn set_app_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO app_settings (key, value)
+             VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve an application-level key/value setting.
+    pub fn get_app_setting(&self, key: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(AgendaError::from)
     }
 
     // ── Item CRUD ──────────────────────────────────────────────
@@ -1806,6 +1834,16 @@ impl Store {
                 "#,
             )?;
         }
+        if from_version < 8 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
 
         if from_version < 3 {
             // Inject kind field into existing columns_json.
@@ -1963,6 +2001,7 @@ mod tests {
         assert!(tables.contains(&"views".to_string()));
         assert!(tables.contains(&"deletion_log".to_string()));
         assert!(tables.contains(&"item_links".to_string()));
+        assert!(tables.contains(&"app_settings".to_string()));
     }
 
     #[test]
@@ -2123,6 +2162,46 @@ mod tests {
             legacy.category_aliases.is_empty(),
             "legacy rows default to no aliases"
         );
+    }
+
+    #[test]
+    fn test_upgrade_from_v7_creates_app_settings_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", 7).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let exists: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='app_settings'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(exists.as_deref(), Some("app_settings"));
+    }
+
+    #[test]
+    fn test_app_settings_roundtrip_persists_across_reopen() {
+        let tmp =
+            std::env::temp_dir().join(format!("agenda-core-app-settings-{}.ag", Uuid::new_v4()));
+        let store = Store::open(&tmp).expect("open temp db");
+        store
+            .set_app_setting("tui.auto_refresh_interval", "5s")
+            .expect("write setting");
+        drop(store);
+
+        let reopened = Store::open(&tmp).expect("reopen temp db");
+        let value = reopened
+            .get_app_setting("tui.auto_refresh_interval")
+            .expect("read setting");
+        assert_eq!(value.as_deref(), Some("5s"));
+
+        drop(reopened);
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]

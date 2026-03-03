@@ -2885,6 +2885,7 @@ impl App {
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
                     self.cycle_auto_refresh_interval();
+                    self.persist_auto_refresh_interval(agenda.store())?;
                     return Ok(false);
                 }
                 _ => {}
