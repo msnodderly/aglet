@@ -303,6 +303,20 @@ column. If that synthetic column is enabled, reserve one additional spacing
 slot; otherwise the synthetic column can consume the separator budget and defeat
 the minimum visible gap guarantee.
 
+## Done Toggle Blocker-Cleanup Prompt Uses `Mode::ConfirmDelete` (Surprising)
+
+The TUI prompt shown when marking an item done that currently blocks other
+items reuses `Mode::ConfirmDelete` with additional `App.done_blocks_confirm`
+state instead of introducing a separate mode.
+
+Practical implications:
+- `handle_confirm_delete_key` now multiplexes two flows:
+  item deletion (legacy) and done-with-blocker cleanup confirmation.
+- Opening delete confirm (`x`) should clear `done_blocks_confirm` first so stale
+  done-state prompts do not leak into delete behavior.
+- Footer status/hints for `Mode::ConfirmDelete` are dynamic; if you touch
+  confirm UI copy, update both delete and done-cleanup branches.
+
 ## Full `cargo test` currently has known `agenda-tui` failures
 
 As of 2026-03-02, running full `cargo test` in this repo can fail in
