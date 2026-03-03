@@ -359,3 +359,17 @@ Practical implications:
 - Clamp against the full rendered info line count (header + metadata + links +
   assignment rows/fallback line) or users will be unable to scroll to all
   info content.
+
+## Link Wizard Target List Must Be Stateful To Scroll (Surprising)
+
+In `Mode::LinkWizard`, rendering target matches with a plain `List` plus manual
+`>` markers does not keep the selected row visible when navigating deep lists.
+Selection index updates continue, but the viewport stays pinned at top rows.
+
+Practical implications:
+- Render target matches with `render_stateful_widget` and `ListState`
+  (`list_state_for`) using the selected index.
+- Keep/restore a visual selection style (`highlight_symbol`/`highlight_style`)
+  so users can see which target is active.
+- If you change this path, ensure tests cover both filtering and deep-list
+  navigation visibility in the wizard popup.
