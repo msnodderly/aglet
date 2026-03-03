@@ -3109,6 +3109,124 @@ mod tests {
     }
 
     #[test]
+    fn link_wizard_target_filter_clamps_selection_and_selects_match() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let anchor = Item::new("Anchor task".to_string());
+        let alpha = Item::new("Alpha target".to_string());
+        let beta = Item::new("Beta target".to_string());
+        let gamma = Item::new("Gamma target".to_string());
+        for item in [&anchor, &alpha, &beta, &gamma] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(anchor.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open link wizard");
+        assert_eq!(app.mode, Mode::LinkWizard);
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").focus,
+            super::LinkWizardFocus::ScopeAction
+        );
+
+        app.handle_key(KeyCode::Char('/'), &agenda)
+            .expect("focus target filter");
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").focus,
+            super::LinkWizardFocus::Target
+        );
+
+        app.handle_key(KeyCode::Down, &agenda)
+            .expect("move target cursor");
+        app.handle_key(KeyCode::Down, &agenda)
+            .expect("move target cursor");
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").target_index,
+            2
+        );
+
+        for ch in "beta".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type filter");
+        }
+
+        let state = app.link_wizard_state().expect("wizard state");
+        assert_eq!(state.target_filter.text(), "beta");
+        assert_eq!(
+            state.target_index, 0,
+            "target index should clamp after filtering"
+        );
+        let matches = app.link_wizard_target_matches();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], beta.id);
+        assert_eq!(app.link_wizard_selected_target_id(), Some(beta.id));
+        assert!(
+            !matches.contains(&anchor.id),
+            "anchor item must never appear in target matches"
+        );
+    }
+
+    #[test]
+    fn link_wizard_render_keeps_selected_target_visible_when_scrolled() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let anchor = Item::new("Anchor task".to_string());
+        store.create_item(&anchor).expect("create anchor");
+        for idx in 0..25 {
+            let item = Item::new(format!("ListTarget-{idx:02}"));
+            store.create_item(&item).expect("create target item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(anchor.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open link wizard");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("move to target focus");
+        assert_eq!(
+            app.link_wizard_state().expect("wizard state").focus,
+            super::LinkWizardFocus::Target
+        );
+
+        for _ in 0..20 {
+            app.handle_key(KeyCode::Down, &agenda)
+                .expect("move target cursor");
+        }
+        let selected_target = app
+            .link_wizard_selected_target_id()
+            .expect("selected target id");
+        let selected_text = app
+            .all_items
+            .iter()
+            .find(|item| item.id == selected_target)
+            .map(|item| item.text.clone())
+            .expect("selected target item");
+
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render");
+        let text = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            text.contains(&format!("> open | {selected_text}")),
+            "selected target row should stay visible in matches list"
+        );
+        assert!(
+            !text.contains("open | ListTarget-00"),
+            "top-of-list row should scroll off-screen after moving deep into matches"
+        );
+    }
+
+    #[test]
     fn board_column_reorder_visidata_keys_move_item_column() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
