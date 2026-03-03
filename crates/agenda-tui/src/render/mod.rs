@@ -1239,46 +1239,56 @@ impl App {
                 Some((cursor_x, cursor_y))
             }
             InputPanelFocus::Categories => {
-                // Show cursor in the numeric value field if on an assigned numeric category row.
-                let cat_rect = regions.categories?;
-                let cat_inner = regions.categories_inner?;
-                if cat_inner.width == 0 || cat_inner.height == 0 {
-                    return None;
+                if panel.category_filter_editing {
+                    let filter_rect = regions.categories_filter?;
+                    let prefix = "> Filter> ";
+                    let max_x = filter_rect
+                        .x
+                        .saturating_add(filter_rect.width.saturating_sub(1));
+                    let cursor_x =
+                        filter_rect
+                            .x
+                            .saturating_add(prefix.chars().count().min(u16::MAX as usize) as u16)
+                            .saturating_add(
+                                panel.category_filter.cursor().min(u16::MAX as usize) as u16
+                            )
+                            .min(max_x);
+                    return Some((cursor_x, filter_rect.y));
                 }
-                let row = self.category_rows.get(panel.category_cursor)?;
-                let is_assigned = panel.categories.contains(&row.id);
-                let is_numeric = row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
+
+                // Show cursor in the numeric value field if on an assigned numeric category row.
+                let cat_list = if panel.category_filter_editing {
+                    regions.categories_list?
+                } else {
+                    regions.categories_inner?
+                };
+                let selected_row = self.input_panel_selected_category_row()?;
+                let is_assigned = panel.categories.contains(&selected_row.id);
+                let is_numeric =
+                    selected_row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
                 if is_assigned && is_numeric {
-                    if let Some(buf) = panel.numeric_buffers.get(&row.id) {
+                    if let Some(buf) = panel.numeric_buffers.get(&selected_row.id) {
                         // Value field is right-aligned: "[value_]"
                         // The cursor should be positioned within that field.
                         let value_text_len = buf.text().chars().count() + 2; // "[" + text + "]"
                         let buf_cursor = buf.cursor();
                         // Position: end of inner rect - value_text_len + 1 (for "[") + buf_cursor
-                        let field_start_x = cat_inner
+                        let field_start_x = cat_list
                             .x
-                            .saturating_add(cat_inner.width)
+                            .saturating_add(cat_list.width)
                             .saturating_sub(value_text_len as u16);
                         let cursor_x = field_start_x
                             .saturating_add(1) // skip "["
                             .saturating_add(buf_cursor.min(u16::MAX as usize) as u16)
-                            .min(
-                                cat_inner
-                                    .x
-                                    .saturating_add(cat_inner.width.saturating_sub(1)),
-                            );
+                            .min(cat_list.x.saturating_add(cat_list.width.saturating_sub(1)));
                         let scroll =
-                            list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor))
+                            list_scroll_for_selected_line(cat_list, Some(panel.category_cursor))
                                 as usize;
                         let visible_row = panel.category_cursor.saturating_sub(scroll);
-                        let cursor_y = cat_inner
+                        let cursor_y = cat_list
                             .y
                             .saturating_add(visible_row.min(u16::MAX as usize) as u16)
-                            .min(
-                                cat_inner
-                                    .y
-                                    .saturating_add(cat_inner.height.saturating_sub(1)),
-                            );
+                            .min(cat_list.y.saturating_add(cat_list.height.saturating_sub(1)));
                         return Some((cursor_x, cursor_y));
                     }
                 }
@@ -2300,12 +2310,16 @@ impl App {
                     .unwrap_or(false)
                 {
                     "Enter:save  S:save  Tab:buttons  Esc:cancel"
+                } else if self.input_panel.as_ref().is_some_and(|p| {
+                    p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
+                }) {
+                    "Type:filter  Enter:keep  Esc:clear/exit  Tab:next"
                 } else if self
                     .input_panel
                     .as_ref()
                     .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
                 {
-                    "S:save  Tab:next  Space:toggle  Esc:cancel"
+                    "S:save  Tab:next  /:filter  Space:toggle  Esc:cancel"
                 } else {
                     "S:save  Tab:next  Esc:cancel"
                 }
@@ -2427,21 +2441,49 @@ impl App {
             } else {
                 Color::Blue
             };
-            let cat_title = "Categories";
-
+            let visible_indices = self.input_panel_visible_category_row_indices();
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
-            let inner_width = cat_inner.width as usize;
+            let cat_filter_rect = regions.categories_filter.unwrap_or(cat_inner);
+            let cat_list_rect = if panel.category_filter_editing {
+                regions.categories_list.unwrap_or(cat_inner)
+            } else {
+                cat_inner
+            };
+            let inner_width = cat_list_rect.width as usize;
+
+            frame.render_widget(
+                Block::default()
+                    .title("Categories")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(cat_border_color)),
+                cat_rect,
+            );
+            if panel.category_filter_editing {
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        format!("> Filter> {}", panel.category_filter.text()),
+                        Style::default().fg(Color::Cyan),
+                    ))),
+                    cat_filter_rect,
+                );
+            }
 
             let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
                 vec![Line::from(Span::styled(
                     "(no categories)",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 ))]
+            } else if visible_indices.is_empty() {
+                vec![Line::from(Span::styled(
+                    "(no matching categories)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))]
             } else {
-                self.category_rows
+                visible_indices
                     .iter()
                     .enumerate()
-                    .map(|(i, row)| {
+                    .map(|(i, row_index)| {
+                        let row = &self.category_rows[*row_index];
                         let is_assigned = panel.categories.contains(&row.id);
                         let is_numeric =
                             row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
@@ -2528,19 +2570,19 @@ impl App {
                     .collect()
             };
 
-            let cat_scroll = list_scroll_for_selected_line(cat_rect, Some(panel.category_cursor));
+            let cat_scroll =
+                list_scroll_for_selected_line(cat_list_rect, Some(panel.category_cursor));
             let item_count = lines.len();
 
-            frame.render_widget(
-                Paragraph::new(lines).scroll((cat_scroll, 0)).block(
-                    Block::default()
-                        .title(cat_title)
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(cat_border_color)),
-                ),
-                cat_rect,
-            );
-            Self::render_vertical_scrollbar(frame, cat_rect, item_count, cat_scroll as usize);
+            if cat_list_rect.width > 0 && cat_list_rect.height > 0 {
+                frame.render_widget(Paragraph::new(lines).scroll((cat_scroll, 0)), cat_list_rect);
+                Self::render_vertical_scrollbar(
+                    frame,
+                    cat_list_rect,
+                    item_count,
+                    cat_scroll as usize,
+                );
+            }
         }
 
         // Type picker (CategoryCreate only)
@@ -2590,7 +2632,10 @@ impl App {
         let help_text = match panel.kind {
             InputPanelKind::CategoryCreate => "S:save  Tab:cycle  Enter:select  Esc:cancel",
             InputPanelKind::NumericValue => "Enter:save  S:save  Esc:cancel",
-            _ => "S:save  Tab:cycle  Space:toggle  j/k:move  Esc:cancel",
+            _ if panel.focus == InputPanelFocus::Categories && panel.category_filter_editing => {
+                "Type:filter  Enter:keep  Esc:clear/exit  Tab:next"
+            }
+            _ => "S:save  Tab:cycle  /:filter  Space:toggle  j/k:move  Esc:cancel",
         };
         frame.render_widget(Paragraph::new(help_text), regions.help);
     }
