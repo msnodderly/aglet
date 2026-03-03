@@ -106,6 +106,15 @@ Surprising gotcha: the parent category name in `aglet-features.ag` may be
 command errors with `category not found`, run `category list` and use the exact
 name from that DB.
 
+## `agenda-cli show` status vs Status category (Surprising)
+
+In `aglet-features.ag`, assigning workflow categories like `Ready`,
+`In Progress`, or `Complete` does not change the top-level `status:` field shown
+by `agenda-cli show`; it can still print `status: open`.
+
+Treat the `assignments:` section as the source of truth for workflow status
+categories in this DB.
+
 ### Creating a feature request via CLI
 
 Use the create-then-assign pattern. `add` prints the UUID, then assign
