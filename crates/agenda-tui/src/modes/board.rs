@@ -2881,7 +2881,8 @@ impl App {
         if ctrl_only {
             match key.code {
                 KeyCode::Char('l') | KeyCode::Char('L') => {
-                    self.status = "Use + to add a column and H/L/gH/gL to move it".to_string();
+                    self.refresh(agenda.store())?;
+                    self.status = "Reloaded view from store".to_string();
                     return Ok(false);
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
