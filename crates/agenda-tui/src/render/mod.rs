@@ -1257,7 +1257,11 @@ impl App {
                 }
 
                 // Show cursor in the numeric value field if on an assigned numeric category row.
-                let cat_list = regions.categories_list?;
+                let cat_list = if panel.category_filter_editing {
+                    regions.categories_list?
+                } else {
+                    regions.categories_inner?
+                };
                 let selected_row = self.input_panel_selected_category_row()?;
                 let is_assigned = panel.categories.contains(&selected_row.id);
                 let is_numeric =
@@ -2440,18 +2444,12 @@ impl App {
             let visible_indices = self.input_panel_visible_category_row_indices();
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
             let cat_filter_rect = regions.categories_filter.unwrap_or(cat_inner);
-            let cat_list_rect = regions.categories_list.unwrap_or(cat_inner);
+            let cat_list_rect = if panel.category_filter_editing {
+                regions.categories_list.unwrap_or(cat_inner)
+            } else {
+                cat_inner
+            };
             let inner_width = cat_list_rect.width as usize;
-            let filter_marker = if panel.category_filter_editing {
-                "> "
-            } else {
-                "  "
-            };
-            let filter_style = if panel.category_filter_editing {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default().fg(MUTED_TEXT_COLOR)
-            };
 
             frame.render_widget(
                 Block::default()
@@ -2460,13 +2458,15 @@ impl App {
                     .border_style(Style::default().fg(cat_border_color)),
                 cat_rect,
             );
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    format!("{filter_marker}Filter> {}", panel.category_filter.text()),
-                    filter_style,
-                ))),
-                cat_filter_rect,
-            );
+            if panel.category_filter_editing {
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        format!("> Filter> {}", panel.category_filter.text()),
+                        Style::default().fg(Color::Cyan),
+                    ))),
+                    cat_filter_rect,
+                );
+            }
 
             let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
                 vec![Line::from(Span::styled(
