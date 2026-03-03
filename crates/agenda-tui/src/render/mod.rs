@@ -2091,6 +2091,8 @@ impl App {
             Line::from("Summary"),
             Line::from("f focus | j/k or J/K scroll | i info"),
             Line::from(""),
+            Line::from(format!("ID: {}", item.id)),
+            Line::from(""),
             Line::from("Note"),
         ];
 
@@ -2116,6 +2118,8 @@ impl App {
         let mut lines = vec![
             "Info".to_string(),
             "f focus | j/k or J/K scroll | i summary".to_string(),
+            String::new(),
+            format!("ID: {}", item.id),
             String::new(),
             "Metadata".to_string(),
             format!("  Done: {}", if item.is_done { "yes" } else { "no" }),
