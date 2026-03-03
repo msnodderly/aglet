@@ -2011,14 +2011,12 @@ impl App {
         frame: &mut ratatui::Frame<'_>,
         area: Rect,
     ) {
-        let mut items = vec![
-            ListItem::new(Line::from("Provenance")),
-            ListItem::new(Line::from(
-                "f focus | j/k or J/K scroll | o summary | u unassign",
-            )),
-        ];
+        let mut items: Vec<ListItem<'_>> = Vec::new();
         let mut selected_line = None;
         if let Some(item) = self.selected_item() {
+            for line in self.item_info_header_lines_for_item(item) {
+                items.push(ListItem::new(Line::from(line)));
+            }
             let rows = self.inspect_assignment_rows_for_item(item);
             if rows.is_empty() {
                 items.push(ListItem::new(Line::from("(no assignments)")));
@@ -2036,6 +2034,11 @@ impl App {
                 }
             }
         } else {
+            items.push(ListItem::new(Line::from("Info")));
+            items.push(ListItem::new(Line::from(
+                "f focus | j/k or J/K scroll | i summary | u unassign",
+            )));
+            items.push(ListItem::new(Line::from("")));
             items.push(ListItem::new(Line::from("(no selected item)")));
         }
         let item_count = items.len();
@@ -2047,7 +2050,7 @@ impl App {
                 .highlight_style(selected_row_style())
                 .block(
                     Block::default()
-                        .title("Preview: Provenance")
+                        .title("Preview: Info")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(
                             if self.normal_focus == NormalFocus::Preview {
@@ -2068,19 +2071,48 @@ impl App {
         let categories = item_assignment_labels(item, &category_names);
         let mut lines = vec![
             Line::from("Summary"),
-            Line::from("f focus | j/k or J/K scroll | o provenance"),
+            Line::from("f focus | j/k or J/K scroll | i info"),
             Line::from(""),
-            Line::from("Categories"),
+            Line::from("Note"),
         ];
 
+        match &item.note {
+            Some(note) if !note.is_empty() => {
+                for line in note.lines() {
+                    lines.push(Line::from(format!("  {}", line)));
+                }
+            }
+            _ => lines.push(Line::from("  (none)")),
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from("Categories"));
         if categories.is_empty() {
             lines.push(Line::from("  (none)"));
         } else {
             lines.push(Line::from(format!("  {}", categories.join(", "))));
         }
+        lines
+    }
 
+    pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
+        let mut lines = vec![
+            "Info".to_string(),
+            "f focus | j/k or J/K scroll | i summary | u unassign".to_string(),
+            String::new(),
+            "Metadata".to_string(),
+            format!("  Done: {}", if item.is_done { "yes" } else { "no" }),
+            format!(
+                "  When: {}",
+                item.when_date
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!("  Entry date: {}", item.entry_date),
+            format!("  Created: {}", item.created_at),
+            format!("  Modified: {}", item.modified_at),
+        ];
         if let Some(links) = self.item_links_by_item_id.get(&item.id) {
-            lines.push(Line::from(""));
+            lines.push(String::new());
             Self::push_link_summary_section(
                 &mut lines,
                 "Prereqs",
@@ -2097,28 +2129,27 @@ impl App {
                 self.item_link_preview_labels(&links.related),
             );
         }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from("Note"));
-        match &item.note {
-            Some(note) if !note.is_empty() => {
-                for line in note.lines() {
-                    lines.push(Line::from(format!("  {}", line)));
-                }
-            }
-            _ => lines.push(Line::from("  (none)")),
-        }
+        lines.push(String::new());
+        lines.push("Assignment Provenance".to_string());
         lines
     }
 
-    fn push_link_summary_section(lines: &mut Vec<Line<'_>>, label: &str, rows: Vec<String>) {
-        lines.push(Line::from(label.to_string()));
+    pub(crate) fn preview_info_line_count_for_selected_item(&self) -> usize {
+        let Some(item) = self.selected_item() else {
+            return 4;
+        };
+        let assignment_len = self.inspect_assignment_rows_for_item(item).len().max(1);
+        self.item_info_header_lines_for_item(item).len() + assignment_len
+    }
+
+    fn push_link_summary_section(lines: &mut Vec<String>, label: &str, rows: Vec<String>) {
+        lines.push(label.to_string());
         if rows.is_empty() {
-            lines.push(Line::from("  (none)"));
+            lines.push("  (none)".to_string());
             return;
         }
         for row in rows {
-            lines.push(Line::from(format!("  {row}")));
+            lines.push(format!("  {row}"));
         }
     }
 
@@ -2145,7 +2176,7 @@ impl App {
         } else {
             vec![
                 Line::from("Summary"),
-                Line::from("f focus | j/k or J/K scroll | o provenance"),
+                Line::from("f focus | j/k or J/K scroll | i info"),
                 Line::from(""),
                 Line::from("(no selected item)"),
             ]
