@@ -1346,4 +1346,10 @@ mod tests {
         item.is_done = true;
         assert_eq!(board_item_label(&item), "Buy milk");
     }
+
+    #[test]
+    fn item_indicator_glyphs_supports_all_three_indicators() {
+        let glyphs = item_indicator_glyphs(true, true, true);
+        assert_eq!(glyphs, "✓&♪");
+    }
 }
