@@ -61,12 +61,18 @@ enum Command {
     },
 
     /// Edit an existing item's text, note, and/or done state
+    #[command(
+        after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --clear-note           Remove the note entirely\n\nExamples:\n  agenda edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  agenda edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\""
+    )]
     Edit {
         item_id: String,
         /// New text (positional shorthand; also available as --text)
         text: Option<String>,
         #[arg(long)]
         note: Option<String>,
+        /// Append text to the existing note (separated by newline)
+        #[arg(long = "append-note")]
+        append_note: Option<String>,
         #[arg(long = "clear-note")]
         clear_note: bool,
         #[arg(long)]
@@ -377,9 +383,10 @@ fn run() -> Result<(), String> {
             item_id,
             text,
             note,
+            append_note,
             clear_note,
             done,
-        } => cmd_edit(&agenda, item_id, text, note, clear_note, done),
+        } => cmd_edit(&agenda, item_id, text, note, append_note, clear_note, done),
         Command::Show { item_id } => cmd_show(&store, item_id),
         Command::Claim {
             item_id,
@@ -468,15 +475,22 @@ fn cmd_edit(
     item_id_str: String,
     text: Option<String>,
     note: Option<String>,
+    append_note: Option<String>,
     clear_note: bool,
     done: Option<bool>,
 ) -> Result<(), String> {
     let item_id = parse_item_id(&item_id_str)?;
 
-    if text.is_none() && note.is_none() && !clear_note && done.is_none() {
+    if text.is_none() && note.is_none() && append_note.is_none() && !clear_note && done.is_none() {
         return Err(
-            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--clear-note] [--done <true|false>]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false".to_string()
+            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--clear-note] [--done <true|false>]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false".to_string()
         );
+    }
+
+    // Validate mutually exclusive note flags
+    let note_flag_count = note.is_some() as u8 + append_note.is_some() as u8 + clear_note as u8;
+    if note_flag_count > 1 {
+        return Err("--note, --append-note, and --clear-note are mutually exclusive".to_string());
     }
 
     if let Some(done_value) = done {
@@ -496,7 +510,7 @@ fn cmd_edit(
         .get_item(item_id)
         .map_err(|e| e.to_string())?;
 
-    if text.is_some() || note.is_some() || clear_note {
+    if text.is_some() || note.is_some() || append_note.is_some() || clear_note {
         if let Some(new_text) = text {
             if new_text.is_empty() {
                 return Err("text cannot be empty".to_string());
@@ -511,6 +525,13 @@ fn cmd_edit(
             } else {
                 Some(new_note)
             };
+        } else if let Some(extra) = append_note {
+            if !extra.is_empty() {
+                item.note = Some(match item.note {
+                    Some(existing) => format!("{}\n{}", existing, extra),
+                    None => extra,
+                });
+            }
         }
 
         item.modified_at = chrono::Utc::now();
@@ -2219,9 +2240,9 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_numeric_filters, cmd_claim, cmd_unlink, cmd_view, compare_items_by_sort_keys,
-        duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
-        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
+        build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
+        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
+        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
         reject_items_with_any_categories, retain_items_matching_numeric_filters,
         retain_items_with_all_categories, retain_items_with_any_categories,
         unknown_hashtag_feedback_line, view_category_alias_rows, Cli, CliSortDirection,
@@ -3376,6 +3397,124 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("Task B")));
         assert!(lines.iter().any(|line| line.contains("Task C")));
         assert!(lines.iter().any(|line| line.contains("Task D")));
+    }
+
+    #[test]
+    fn cmd_edit_append_note_to_empty() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            Some("first note".to_string()),
+            false,
+            None,
+        )
+        .expect("append to empty");
+
+        let updated = store.get_item(item.id).expect("get item");
+        assert_eq!(updated.note.as_deref(), Some("first note"));
+    }
+
+    #[test]
+    fn cmd_edit_append_note_to_existing() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("Test item".to_string());
+        item.note = Some("existing note".to_string());
+        store.create_item(&item).expect("create");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            Some("appended text".to_string()),
+            false,
+            None,
+        )
+        .expect("append to existing");
+
+        let updated = store.get_item(item.id).expect("get item");
+        assert_eq!(
+            updated.note.as_deref(),
+            Some("existing note\nappended text")
+        );
+    }
+
+    #[test]
+    fn cmd_edit_append_note_multiline() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("Test item".to_string());
+        item.note = Some("line one".to_string());
+        store.create_item(&item).expect("create");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            Some("line two\nline three".to_string()),
+            false,
+            None,
+        )
+        .expect("append multiline");
+
+        let updated = store.get_item(item.id).expect("get item");
+        assert_eq!(
+            updated.note.as_deref(),
+            Some("line one\nline two\nline three")
+        );
+    }
+
+    #[test]
+    fn cmd_edit_append_note_rejects_with_note_flag() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let result = cmd_edit(
+            &agenda,
+            "123e4567-e89b-12d3-a456-426614174000".to_string(),
+            None,
+            Some("replace".to_string()),
+            Some("append".to_string()),
+            false,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn cmd_edit_append_note_rejects_with_clear_note_flag() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let result = cmd_edit(
+            &agenda,
+            "123e4567-e89b-12d3-a456-426614174000".to_string(),
+            None,
+            None,
+            Some("append".to_string()),
+            true,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("mutually exclusive"));
     }
 
     #[test]
