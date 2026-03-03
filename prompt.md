@@ -9,7 +9,7 @@ Select ONE task. Complete it. Stop.
 Do not start additional tasks after completing your assigned work.
 
 > [!WARNING]
-> Work is **not complete** until commits are pushed to remote (`git push` / `git push origin HEAD:main` when explicitly requested). Unpushed work in abandoned worktrees/branches is treated as at-risk and incomplete.
+> Work is **not complete** until commits are pushed to remote (`git push` / `git push origin HEAD:main` when explicitly requested). Unpushed work in worktrees/branches is incomplete.
 
 ---
 
@@ -19,12 +19,54 @@ Do not start additional tasks after completing your assigned work.
    - `AGENTS.md`
    - `docs/` files relevant to the selected issue (for example `docs/implement_plan.md`)
 
-2. **Pick task**: run open-item listing and select the SINGLE highest-priority item that is not already in progress.
+2. **Pick task**: run open-item listing and select the SINGLE highest-priority item that is not already in progress, while respecting model complexity limits.
 
    ```bash
    git switch main
    ./scripts/list-open-project-items.sh aglet
    ```
+
+   **Query candidates by complexity (required):**
+   - Standard/unknown model lane (`1,2`):
+   ```bash
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+     --any-category Aglet \
+     --exclude-category Done \
+     --exclude-category Complete \
+     --exclude-category "In Progress" \
+     --exclude-category "Waiting/Blocked" \
+     --value-in Complexity 1,2 \
+     --sort Priority
+   ```
+   Equivalent low-lane form:
+   ```bash
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+     --any-category Aglet \
+     --exclude-category Done \
+     --exclude-category Complete \
+     --exclude-category "In Progress" \
+     --exclude-category "Waiting/Blocked" \
+     --value-max Complexity 2 \
+     --sort Priority
+   ```
+   - High-capability lane (`1,2,3,5`, only if explicitly `Codex 5.3` or `Opus 4.6`) (or higher):
+   ```bash
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+     --any-category Aglet \
+     --exclude-category Done \
+     --exclude-category Complete \
+     --exclude-category "In Progress" \
+     --exclude-category "Waiting/Blocked" \
+     --value-in Complexity 1,2,3,5 \
+     --sort Priority
+   ```
+
+   **Selection rules (priority + complexity):**
+   - Pick by **highest priority first**, but only from tasks in your allowed complexity lane.
+   - If the model explicitly knows it is `Codex 5.3` or `Opus 4.6`: allowed complexity is `1, 2, 3, 5`.
+   - Otherwise: allowed complexity is `1, 2` only.
+   - Never pick `Complexity=7` for implementation; it must be split into smaller stories first.
+   - If complexity is missing or cannot be confirmed from CLI output, skip that item and pick the next candidate.
 
    **IMPORTANT:** Skip items already categorized as `In Progress`.
 
@@ -41,13 +83,29 @@ Do not start additional tasks after completing your assigned work.
    cd ../aglet-<ITEM_ID>-<SHORT_SLUG>
    ```
 
-5. **Read item details**:
+5. **Record claim metadata in issue note** (single-line update with branch + worktree):
+
+   ```bash
+   branch_name=$(git branch --show-current)
+   worktree_path=$(pwd)
+
+   note_with_claim=$(cat <<EOF
+   <EXISTING_NOTE_TEXT>
+
+   Claimed $(date +%F): branch=${branch_name} worktree=${worktree_path}
+   EOF
+   )
+
+   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$note_with_claim"
+   ```
+
+6. **Read item details**:
 
    ```bash
    cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
    ```
 
-6. **Create plan and save as note** (append/update note with concrete implementation steps):
+7. **Create plan and save as note** (append/update note with concrete implementation steps):
 
    ```bash
    new_note=$(cat <<'PLAN'
@@ -153,6 +211,21 @@ git switch main
 # 1) List open aglet items and pick one ITEM_ID
 ./scripts/list-open-project-items.sh aglet
 
+# 1b) Query complexity-scoped candidates and choose ITEM_ID from your allowed lane
+# Standard/unknown model: complexity 1 or 2
+cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+  --any-category Aglet \
+  --exclude-category Done \
+  --exclude-category Complete \
+  --exclude-category "In Progress" \
+  --exclude-category "Waiting/Blocked" \
+  --value-in Complexity 1,2 \
+  --sort Priority
+
+# High-capability model (Codex 5.3 / Opus 4.6): complexity 1,2,3,5
+# Replace the value-in line with:
+# --value-in Complexity 1,2,3,5
+
 # 2) Claim item
 cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
 
@@ -160,10 +233,21 @@ cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
 git worktree add ../aglet-<ITEM_ID>-<SHORT_SLUG> -b codex/<ITEM_ID>-<SHORT_SLUG> main
 cd ../aglet-<ITEM_ID>-<SHORT_SLUG>
 
-# 4) Read item details
+# 4) Add claim metadata to note (branch + worktree)
+branch_name=$(git branch --show-current)
+worktree_path=$(pwd)
+note_with_claim=$(cat <<EOF
+<EXISTING_NOTE_TEXT>
+
+Claimed $(date +%F): branch=${branch_name} worktree=${worktree_path}
+EOF
+)
+cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$note_with_claim"
+
+# 5) Read item details
 cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
 
-# 5) Save implementation plan to note
+# 6) Save implementation plan to note
 new_note=$(cat <<'PLAN'
 <EXISTING_NOTE_TEXT>
 
@@ -176,19 +260,19 @@ PLAN
 )
 cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$new_note"
 
-# 6) Implement + verify
+# 7) Implement + verify
 cargo fmt
 cargo clippy --all-targets --all-features
 cargo test
 
-# 7) Commit
+# 8) Commit
 git add <FILES>
 git commit -m "<CLEAR_COMMIT_MESSAGE>"
 
-# 8) Push branch first
+# 9) Push branch first
 git push -u origin <BRANCH_NAME>
 
-# 9) Mark complete + update note (only after push succeeds)
+# 10) Mark complete + update note (only after push succeeds)
 completion_note=$(cat <<'DONE'
 <UPDATED_NOTE_WITH_PLAN_AND_IMPLEMENTATION_SUMMARY>
 DONE
@@ -196,10 +280,10 @@ DONE
 cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --note "$completion_note"
 cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
 
-# 10) Create PR unless direct-merge is explicitly requested
+# 11) Create PR unless direct-merge is explicitly requested
 # gh pr create --title "<TITLE>" --body "<BODY>"
 
-# 11) Only when explicitly requested: push directly to main
+# 12) Only when explicitly requested: push directly to main
 git fetch origin main
 git rebase origin/main
 git push origin HEAD:main
