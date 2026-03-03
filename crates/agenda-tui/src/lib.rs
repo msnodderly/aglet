@@ -701,6 +701,19 @@ impl AutoRefreshInterval {
             Self::FiveSeconds => "5s",
         }
     }
+
+    fn persisted_value(self) -> &'static str {
+        self.label()
+    }
+
+    fn from_persisted_value(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "1s" => Some(Self::OneSecond),
+            "5s" => Some(Self::FiveSeconds),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -5000,6 +5013,64 @@ mod tests {
         .expect("ctrl-r -> off");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
         assert_eq!(app.auto_refresh_mode_label(), "off");
+    }
+
+    #[test]
+    fn auto_refresh_interval_persists_across_app_instances_for_same_db() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-auto-refresh-persist-roundtrip-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.handle_normal_key_event(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &agenda,
+        )
+        .expect("ctrl-r should persist 1s interval");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
+
+        let mut reopened_app = App::default();
+        reopened_app
+            .refresh(&store)
+            .expect("refresh app after reopen");
+        reopened_app
+            .load_auto_refresh_interval(&store)
+            .expect("load persisted interval");
+        assert_eq!(
+            reopened_app.auto_refresh_interval,
+            AutoRefreshInterval::OneSecond
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn load_auto_refresh_interval_falls_back_to_off_for_missing_or_invalid_values() {
+        let store = Store::open_memory().expect("memory store");
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+
+        app.load_auto_refresh_interval(&store)
+            .expect("missing setting should load");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
+
+        store
+            .set_app_setting("tui.auto_refresh_interval", "unexpected")
+            .expect("write invalid setting");
+        app.auto_refresh_interval = AutoRefreshInterval::FiveSeconds;
+        app.load_auto_refresh_interval(&store)
+            .expect("invalid setting should load");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
     }
 
     #[test]
