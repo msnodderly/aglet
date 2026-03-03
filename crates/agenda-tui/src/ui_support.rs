@@ -683,61 +683,6 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
         .collect()
 }
 
-pub(super) fn build_reparent_options(
-    category_rows: &[CategoryListRow],
-    categories: &[Category],
-    selected_category_id: CategoryId,
-) -> Vec<ReparentOptionRow> {
-    let descendants = descendant_category_ids(categories, selected_category_id);
-    let mut options = vec![ReparentOptionRow {
-        parent_id: None,
-        label: "(root)".to_string(),
-    }];
-
-    for row in category_rows {
-        if row.id == selected_category_id {
-            continue;
-        }
-        if descendants.contains(&row.id) {
-            continue;
-        }
-        options.push(ReparentOptionRow {
-            parent_id: Some(row.id),
-            label: format!("{}{}", "  ".repeat(row.depth), row.name),
-        });
-    }
-
-    options
-}
-
-pub(super) fn descendant_category_ids(
-    categories: &[Category],
-    root_id: CategoryId,
-) -> HashSet<CategoryId> {
-    let children_by_parent: HashMap<CategoryId, Vec<CategoryId>> = categories
-        .iter()
-        .filter_map(|category| category.parent.map(|parent| (parent, category.id)))
-        .fold(HashMap::new(), |mut acc, (parent, child)| {
-            acc.entry(parent).or_default().push(child);
-            acc
-        });
-
-    let mut seen = HashSet::new();
-    let mut stack = vec![root_id];
-    while let Some(current) = stack.pop() {
-        let Some(children) = children_by_parent.get(&current) else {
-            continue;
-        };
-        for child in children {
-            if seen.insert(*child) {
-                stack.push(*child);
-            }
-        }
-    }
-
-    seen
-}
-
 pub(super) fn category_depth(
     category_id: CategoryId,
     parent_by_id: &HashMap<CategoryId, Option<CategoryId>>,
@@ -867,8 +812,6 @@ pub(super) struct InputPanelPopupRegions {
     /// Bordered multi-line region for the inline category list.
     pub(super) categories: Option<Rect>,
     pub(super) categories_inner: Option<Rect>,
-    /// Parent field (CategoryCreate only).
-    pub(super) parent: Option<Rect>,
     /// Type picker field (CategoryCreate only).
     pub(super) type_picker: Option<Rect>,
     pub(super) buttons: Rect,
@@ -916,7 +859,6 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
-                parent: None,
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
@@ -944,22 +886,20 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
-                parent: None,
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
             })
         }
         InputPanelKind::CategoryCreate => {
-            // name(1) + parent(1) + type(1) + spacer + buttons(1) + help(1) = 5 min
-            if inner.height < 5 {
+            // name(1) + type(1) + buttons(1) + help(1) = 4 min
+            if inner.height < 4 {
                 return None;
             }
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(1), // name
-                    Constraint::Length(1), // parent
                     Constraint::Length(1), // type picker
                     Constraint::Min(0),    // spacer
                     Constraint::Length(1), // buttons
@@ -973,10 +913,9 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: None,
                 categories: None,
                 categories_inner: None,
-                parent: Some(chunks[1]),
-                type_picker: Some(chunks[2]),
-                buttons: chunks[4],
-                help: chunks[5],
+                type_picker: Some(chunks[1]),
+                buttons: chunks[3],
+                help: chunks[4],
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
@@ -1026,7 +965,6 @@ pub(super) fn input_panel_popup_regions(
                 note_inner: Some(note_inner),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
-                parent: None,
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
