@@ -4168,21 +4168,40 @@ impl App {
                     return Ok(false);
                 }
 
-                let category_id = if let Some(existing) = self
+                let exact_match = self
                     .categories
                     .iter()
                     .find(|category| category.name.eq_ignore_ascii_case(&name))
-                {
-                    existing.id
+                    .map(|category| (category.id, category.name.clone()));
+                let single_visible_match = if exact_match.is_none() {
+                    let query = name.to_ascii_lowercase();
+                    let mut matching_rows = self
+                        .category_rows
+                        .iter()
+                        .filter(|row| row.name.to_ascii_lowercase().contains(&query));
+                    match (matching_rows.next(), matching_rows.next()) {
+                        (Some(row), None) => Some((row.id, row.name.clone())),
+                        _ => None,
+                    }
                 } else {
-                    let mut category = Category::new(name.clone());
-                    category.enable_implicit_string = true;
-                    agenda
-                        .store()
-                        .create_category(&category)
-                        .map_err(|e| e.to_string())?;
-                    category.id
+                    None
                 };
+
+                let (category_id, category_name) =
+                    if let Some((category_id, category_name)) = exact_match {
+                        (category_id, category_name)
+                    } else if let Some((category_id, category_name)) = single_visible_match {
+                        (category_id, category_name)
+                    } else {
+                        let mut category = Category::new(name.clone());
+                        category.enable_implicit_string = true;
+                        let category_id = category.id;
+                        agenda
+                            .store()
+                            .create_category(&category)
+                            .map_err(|e| e.to_string())?;
+                        (category_id, category.name)
+                    };
 
                 let result = agenda
                     .assign_item_manual(item_id, category_id, Some("manual:tui.assign".to_string()))
@@ -4200,7 +4219,7 @@ impl App {
                 self.clear_input();
                 self.status = format!(
                     "Assigned category {} (new_assignments={})",
-                    name,
+                    category_name,
                     result.new_assignments.len()
                 );
             }
