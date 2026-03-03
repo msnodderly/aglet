@@ -2181,10 +2181,10 @@ impl App {
             let suffix = if removed_blocker_links == 1 { "" } else { "s" };
             return match origin {
                 DoneToggleOrigin::NormalMode => format!(
-                    "Marked item done and removed {removed_blocker_links} blocker link{suffix}"
+                    "Marked item done and removed {removed_blocker_links} blocking link{suffix}"
                 ),
                 DoneToggleOrigin::ItemAssignPicker => format!(
-                    "Assigned item to category Done (marked done; removed {removed_blocker_links} blocker link{suffix})"
+                    "Assigned item to category Done (marked done; removed {removed_blocker_links} blocking link{suffix})"
                 ),
             };
         }
@@ -2258,7 +2258,7 @@ impl App {
                 });
                 self.mode = Mode::ConfirmDelete;
                 self.status = format!(
-                    "Mark done and remove {blocked_count} blocker link{suffix}? y:yes n:keep links Esc:cancel"
+                    "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
                 );
                 return Ok(());
             }
