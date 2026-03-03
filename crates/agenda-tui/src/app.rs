@@ -3,12 +3,38 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 impl App {
+    fn should_auto_refresh_now(&self) -> bool {
+        let Some(interval) = self.auto_refresh_interval.as_duration() else {
+            return false;
+        };
+        self.mode == Mode::Normal && self.auto_refresh_last_tick.elapsed() >= interval
+    }
+
+    pub(crate) fn auto_refresh_mode_label(&self) -> &'static str {
+        self.auto_refresh_interval.label()
+    }
+
+    pub(crate) fn cycle_auto_refresh_interval(&mut self) {
+        self.auto_refresh_interval = self.auto_refresh_interval.next();
+        self.auto_refresh_last_tick = std::time::Instant::now();
+        self.status = format!("Auto-refresh interval: {}", self.auto_refresh_mode_label());
+    }
+
+    pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> Result<(), String> {
+        if self.should_auto_refresh_now() {
+            self.refresh(store)?;
+            self.auto_refresh_last_tick = std::time::Instant::now();
+        }
+        Ok(())
+    }
+
     pub(crate) fn run(
         &mut self,
         terminal: &mut TuiTerminal,
         agenda: &Agenda<'_>,
     ) -> Result<(), String> {
         self.refresh(agenda.store())?;
+        self.auto_refresh_last_tick = std::time::Instant::now();
 
         loop {
             terminal
@@ -16,6 +42,7 @@ impl App {
                 .map_err(|e| e.to_string())?;
 
             if !event::poll(std::time::Duration::from_millis(200)).map_err(|e| e.to_string())? {
+                self.maybe_run_auto_refresh(agenda.store())?;
                 continue;
             }
 
@@ -38,6 +65,8 @@ impl App {
             if should_quit {
                 break;
             }
+
+            self.maybe_run_auto_refresh(agenda.store())?;
         }
 
         Ok(())
