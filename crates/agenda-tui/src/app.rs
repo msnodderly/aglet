@@ -1,5 +1,6 @@
 use crate::*;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 impl App {
     pub(crate) fn run(
@@ -162,6 +163,11 @@ impl App {
         }
 
         let active_view = self.current_view().cloned();
+        let category_names_lower_ascii: HashMap<CategoryId, String> = self
+            .categories
+            .iter()
+            .map(|category| (category.id, category.name.to_ascii_lowercase()))
+            .collect();
 
         // Apply per-slot filters and sorting.
         for (slot_index, (slot, filter)) in slots
@@ -171,7 +177,8 @@ impl App {
         {
             if let Some(needle) = filter {
                 let needle = needle.to_ascii_lowercase();
-                slot.items.retain(|item| item_text_matches(item, &needle));
+                slot.items
+                    .retain(|item| item_text_matches(item, &needle, &category_names_lower_ascii));
             }
 
             let mut sort_keys = self.slot_sort_keys[slot_index].clone();
