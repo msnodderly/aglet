@@ -116,10 +116,10 @@ categories individually with the full UUID:
 item_id=$(cargo run --bin agenda-cli -- --db aglet-features.ag add "Title here" --note "Description..." 2>&1 | awk '/^created /{print $2; exit}')
 
 # 2. Assign categories (use full UUID)
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> "Feature request" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> Aglet 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> Normal 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <uuid> Ready 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" "Feature request" 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Aglet 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
 ```
 
 Quote category names that contain spaces (e.g., `"Feature request"`,
@@ -160,8 +160,8 @@ like `be6f0754` do **not** work for item commands (for example `show`, `edit`,
 and `category assign`). Use the full UUID until prefix resolution is
 re-implemented in the CLI parser.
 
-**Create-then-assign pattern.** `agenda-cli add` prints the new ID on the last
-line. Capture it and assign categories with `&&`-chained commands:
+**Create-then-assign pattern.** Capture the ID from the `created ...` line, then
+assign categories with `&&`-chained commands:
 
 ```bash
 item_id=$(cargo run --bin agenda-cli -- --db feature-requests.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
