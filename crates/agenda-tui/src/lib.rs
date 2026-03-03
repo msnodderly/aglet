@@ -727,8 +727,6 @@ struct App {
     done_blocks_confirm: Option<DoneBlocksConfirmState>,
     board_pending_delete_column_label: Option<String>,
     note_edit_original: String,
-    note_edit_discard_confirm: bool,
-    input_panel_discard_confirm: bool,
 }
 
 impl Default for App {
@@ -777,8 +775,6 @@ impl Default for App {
             done_blocks_confirm: None,
             board_pending_delete_column_label: None,
             note_edit_original: String::new(),
-            note_edit_discard_confirm: false,
-            input_panel_discard_confirm: false,
         }
     }
 }
@@ -5412,12 +5408,8 @@ mod tests {
                 .expect("type create name");
         }
 
-        // Press Esc to cancel (panel is dirty, so we need Esc twice)
         app.handle_input_panel_key(KeyCode::Esc, &agenda)
-            .expect("start cancel");
-        // Dirty confirmation — Esc again to discard
-        app.handle_input_panel_key(KeyCode::Esc, &agenda)
-            .expect("confirm discard");
+            .expect("cancel and discard");
 
         assert_eq!(app.mode, Mode::CategoryManager);
         assert!(app.input_panel.is_none());
@@ -6991,6 +6983,49 @@ mod tests {
     }
 
     #[test]
+    fn note_edit_esc_discards_dirty_text_in_one_step() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-note-edit-esc-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut item = Item::new("Draft".to_string());
+        item.note = Some("seed".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('m'), &agenda)
+            .expect("open note edit");
+        assert_eq!(app.mode, Mode::NoteEdit);
+
+        app.handle_note_edit_key(KeyCode::Char('!'), &agenda)
+            .expect("edit note text");
+        app.handle_note_edit_key(KeyCode::Esc, &agenda)
+            .expect("discard note edit");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            store
+                .get_item(item.id)
+                .expect("reload item")
+                .note
+                .as_deref(),
+            Some("seed")
+        );
+        assert!(app.status.contains("discarded"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn text_input_editing_supports_navigation_insert_backspace_and_delete() {
         let mut app = App::default();
         app.set_input("ac".to_string());
@@ -7786,8 +7821,8 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_esc_on_dirty_prompts_before_cancel() {
-        let (store, db_path) = make_test_store_with_view("esc-dirty-confirm");
+    fn view_edit_esc_on_dirty_discards_and_closes_in_one_step() {
+        let (store, db_path) = make_test_store_with_view("esc-dirty-discard");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -7799,27 +7834,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle view display mode");
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("esc prompts");
-        assert_eq!(app.mode, Mode::ViewEdit);
-        assert!(app
-            .view_edit_state
-            .as_ref()
-            .map(|s| s.discard_confirm)
-            .unwrap_or(false));
-
-        app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("keep editing");
-        assert!(app.view_edit_state.is_some());
-        assert!(!app
-            .view_edit_state
-            .as_ref()
-            .map(|s| s.discard_confirm)
-            .unwrap_or(true));
-
-        app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("esc prompts again");
-        app.handle_view_edit_key(KeyCode::Char('y'), &agenda)
-            .expect("confirm save and close");
+            .expect("esc closes");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
 
