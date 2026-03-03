@@ -13,6 +13,12 @@ pub enum AgendaError {
     /// Attempted to modify or delete a reserved category (When, Entry, Done).
     ReservedName { name: String },
 
+    /// Prefix matches multiple items.
+    AmbiguousId {
+        prefix: String,
+        matches: Vec<String>,
+    },
+
     /// Operation not valid in current state (e.g., assigning to deleted item).
     InvalidOperation { message: String },
 
@@ -33,6 +39,13 @@ impl fmt::Display for AgendaError {
             }
             AgendaError::ReservedName { name } => {
                 write!(f, "cannot modify reserved category: {name}")
+            }
+            AgendaError::AmbiguousId { prefix, matches } => {
+                write!(
+                    f,
+                    "ambiguous id prefix '{prefix}', matches: {}",
+                    matches.join(", ")
+                )
             }
             AgendaError::InvalidOperation { message } => {
                 write!(f, "invalid operation: {message}")

@@ -167,12 +167,16 @@ cargo run --bin agenda-cli -- --db feature-requests.ag category assign be6f0754 
 cargo run --bin agenda-cli -- --db feature-requests.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
 ```
 
-## Item ID Prefix Matching (Stale Guidance)
+## Item ID Prefix Matching
 
-The CLI currently parses item IDs with `Uuid::parse_str`, so short UUID prefixes
-like `be6f0754` do **not** work for item commands (for example `show`, `edit`,
-and `category assign`). Use the full UUID until prefix resolution is
-re-implemented in the CLI parser.
+The CLI supports short UUID prefix matching for all item commands (`show`,
+`edit`, `category assign`, `claim`, `delete`, `link`, `unlink`). Any unique
+hex prefix works (e.g., `d157` resolves to `d15772e9-b608-...`).
+
+- Prefix is matched case-insensitively with hyphens stripped.
+- Ambiguous prefixes return an error listing all matching full UUIDs.
+- Full UUIDs still work unchanged.
+- Only valid hex characters are accepted in prefixes.
 
 **Create-then-assign pattern.** Capture the ID from the `created ...` line, then
 assign categories with `&&`-chained commands:

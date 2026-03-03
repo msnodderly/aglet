@@ -160,6 +160,47 @@ impl Store {
         Ok(())
     }
 
+    /// Resolve a short UUID prefix to a full ItemId.
+    ///
+    /// The prefix is matched case-insensitively against the start of stored item
+    /// UUIDs (hyphen-normalized). Returns an error if zero or multiple items match.
+    pub fn resolve_item_prefix(&self, prefix: &str) -> Result<ItemId> {
+        let normalized = prefix.to_lowercase().replace('-', "");
+        if normalized.is_empty() {
+            return Err(AgendaError::InvalidOperation {
+                message: "empty item id prefix".to_string(),
+            });
+        }
+        // Only allow valid hex characters
+        if !normalized.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(AgendaError::InvalidOperation {
+                message: format!("invalid item id prefix: {prefix}"),
+            });
+        }
+        let pattern = format!("{normalized}%");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM items WHERE REPLACE(LOWER(id), '-', '') LIKE ?1")?;
+        let matches: Vec<String> = stmt
+            .query_map(params![pattern], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        match matches.len() {
+            0 => Err(AgendaError::InvalidOperation {
+                message: format!("no item found matching prefix: {prefix}"),
+            }),
+            1 => {
+                let id = Uuid::parse_str(&matches[0]).map_err(|e| AgendaError::StorageError {
+                    source: Box::new(e),
+                })?;
+                Ok(id)
+            }
+            _ => Err(AgendaError::AmbiguousId {
+                prefix: prefix.to_string(),
+                matches,
+            }),
+        }
+    }
+
     pub fn get_item(&self, id: ItemId) -> Result<Item> {
         let mut stmt = self.conn.prepare(
             "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done
@@ -3351,5 +3392,83 @@ mod tests {
 
         let loaded_child_a = hierarchy.iter().find(|c| c.id == child_a.id).unwrap();
         assert_eq!(loaded_child_a.children, vec![grandchild.id]);
+    }
+
+    #[test]
+    fn resolve_item_prefix_unique_match() {
+        let store = Store::open(":memory:").unwrap();
+        let id = make_item(&store, "test item");
+        let prefix = &id.to_string()[..8];
+        let resolved = store.resolve_item_prefix(prefix).unwrap();
+        assert_eq!(resolved, id);
+    }
+
+    #[test]
+    fn resolve_item_prefix_full_hex_no_hyphens() {
+        let store = Store::open(":memory:").unwrap();
+        let id = make_item(&store, "test item");
+        let full_hex = id.to_string().replace('-', "");
+        let resolved = store.resolve_item_prefix(&full_hex).unwrap();
+        assert_eq!(resolved, id);
+    }
+
+    #[test]
+    fn resolve_item_prefix_case_insensitive() {
+        let store = Store::open(":memory:").unwrap();
+        let id = make_item(&store, "test item");
+        let prefix = id.to_string()[..8].to_uppercase();
+        let resolved = store.resolve_item_prefix(&prefix).unwrap();
+        assert_eq!(resolved, id);
+    }
+
+    #[test]
+    fn resolve_item_prefix_no_match() {
+        let store = Store::open(":memory:").unwrap();
+        make_item(&store, "test item");
+        let result = store.resolve_item_prefix("00000000");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("no item found"), "got: {msg}");
+    }
+
+    #[test]
+    fn resolve_item_prefix_ambiguous() {
+        let store = Store::open(":memory:").unwrap();
+        for i in 0..50 {
+            make_item(&store, &format!("item {i}"));
+        }
+        let items = store.list_items().unwrap();
+        let first_char = items[0].id.to_string().chars().next().unwrap();
+        let matching: Vec<_> = items
+            .iter()
+            .filter(|it| it.id.to_string().starts_with(first_char))
+            .collect();
+        if matching.len() >= 2 {
+            let result = store.resolve_item_prefix(&first_char.to_string());
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, AgendaError::AmbiguousId { .. }),
+                "expected AmbiguousId, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_item_prefix_invalid_hex() {
+        let store = Store::open(":memory:").unwrap();
+        let result = store.resolve_item_prefix("zzzz");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid item id prefix"), "got: {msg}");
+    }
+
+    #[test]
+    fn resolve_item_prefix_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let result = store.resolve_item_prefix("");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("empty item id prefix"), "got: {msg}");
     }
 }

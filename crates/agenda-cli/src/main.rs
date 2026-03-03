@@ -511,7 +511,7 @@ fn cmd_edit(
     clear_note: bool,
     done: Option<bool>,
 ) -> Result<(), String> {
-    let item_id = parse_item_id(&item_id_str)?;
+    let item_id = resolve_item_id(&item_id_str, agenda.store())?;
 
     if text.is_none()
         && note.is_none()
@@ -555,7 +555,11 @@ fn cmd_edit(
         .map_err(|e| e.to_string())?;
 
     let note_stdin_has_content = note_stdin.as_ref().is_some_and(|value| !value.is_empty());
-    if text.is_some() || note.is_some() || append_note.is_some() || note_stdin_has_content || clear_note
+    if text.is_some()
+        || note.is_some()
+        || append_note.is_some()
+        || note_stdin_has_content
+        || clear_note
     {
         if let Some(new_text) = text {
             if new_text.is_empty() {
@@ -604,7 +608,7 @@ fn cmd_edit(
 }
 
 fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
-    let item_id = parse_item_id(&item_id_str)?;
+    let item_id = resolve_item_id(&item_id_str, store)?;
     let item = store.get_item(item_id).map_err(|e| e.to_string())?;
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let category_names = category_name_map(&categories);
@@ -665,7 +669,7 @@ fn cmd_claim(
     claim_category_name: String,
     must_not_have_names: Vec<String>,
 ) -> Result<(), String> {
-    let item_id = parse_item_id(&item_id_str)?;
+    let item_id = resolve_item_id(&item_id_str, store)?;
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let claim_category_id = category_id_by_name(&categories, &claim_category_name)?;
     let claim_category = categories
@@ -977,7 +981,7 @@ fn cmd_search(
 }
 
 fn cmd_delete(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
-    let item_id = parse_item_id(&item_id_str)?;
+    let item_id = resolve_item_id(&item_id_str, agenda.store())?;
     agenda
         .delete_item(item_id, "user:cli")
         .map_err(|e| e.to_string())?;
@@ -1020,8 +1024,8 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             item_id,
             depends_on_item_id,
         } => {
-            let item_id = parse_item_id(&item_id)?;
-            let depends_on_item_id = parse_item_id(&depends_on_item_id)?;
+            let item_id = resolve_item_id(&item_id, agenda.store())?;
+            let depends_on_item_id = resolve_item_id(&depends_on_item_id, agenda.store())?;
             let result = agenda
                 .link_items_depends_on(item_id, depends_on_item_id)
                 .map_err(|e| e.to_string())?;
@@ -1039,8 +1043,8 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             blocker_item_id,
             blocked_item_id,
         } => {
-            let blocker_item_id = parse_item_id(&blocker_item_id)?;
-            let blocked_item_id = parse_item_id(&blocked_item_id)?;
+            let blocker_item_id = resolve_item_id(&blocker_item_id, agenda.store())?;
+            let blocked_item_id = resolve_item_id(&blocked_item_id, agenda.store())?;
             let result = agenda
                 .link_items_blocks(blocker_item_id, blocked_item_id)
                 .map_err(|e| e.to_string())?;
@@ -1058,8 +1062,8 @@ fn cmd_link(agenda: &Agenda<'_>, command: LinkCommand) -> Result<(), String> {
             item_a_id,
             item_b_id,
         } => {
-            let item_a_id = parse_item_id(&item_a_id)?;
-            let item_b_id = parse_item_id(&item_b_id)?;
+            let item_a_id = resolve_item_id(&item_a_id, agenda.store())?;
+            let item_b_id = resolve_item_id(&item_b_id, agenda.store())?;
             let result = agenda
                 .link_items_related(item_a_id, item_b_id)
                 .map_err(|e| e.to_string())?;
@@ -1095,8 +1099,8 @@ fn unlink_depends_on(
     item_id: String,
     depends_on_item_id: String,
 ) -> Result<(), String> {
-    let item_id = parse_item_id(&item_id)?;
-    let depends_on_item_id = parse_item_id(&depends_on_item_id)?;
+    let item_id = resolve_item_id(&item_id, agenda.store())?;
+    let depends_on_item_id = resolve_item_id(&depends_on_item_id, agenda.store())?;
     agenda
         .unlink_items_depends_on(item_id, depends_on_item_id)
         .map_err(|e| e.to_string())?;
@@ -1109,8 +1113,8 @@ fn unlink_blocks(
     blocker_item_id: String,
     blocked_item_id: String,
 ) -> Result<(), String> {
-    let blocker_item_id = parse_item_id(&blocker_item_id)?;
-    let blocked_item_id = parse_item_id(&blocked_item_id)?;
+    let blocker_item_id = resolve_item_id(&blocker_item_id, agenda.store())?;
+    let blocked_item_id = resolve_item_id(&blocked_item_id, agenda.store())?;
     agenda
         .unlink_items_blocks(blocker_item_id, blocked_item_id)
         .map_err(|e| e.to_string())?;
@@ -1119,8 +1123,8 @@ fn unlink_blocks(
 }
 
 fn unlink_related(agenda: &Agenda<'_>, item_a_id: String, item_b_id: String) -> Result<(), String> {
-    let item_a_id = parse_item_id(&item_a_id)?;
-    let item_b_id = parse_item_id(&item_b_id)?;
+    let item_a_id = resolve_item_id(&item_a_id, agenda.store())?;
+    let item_b_id = resolve_item_id(&item_b_id, agenda.store())?;
     agenda
         .unlink_items_related(item_a_id, item_b_id)
         .map_err(|e| e.to_string())?;
@@ -1458,7 +1462,7 @@ fn cmd_category(
             item_id,
             category_name,
         } => {
-            let item_id = parse_item_id(&item_id)?;
+            let item_id = resolve_item_id(&item_id, store)?;
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &category_name)?;
             let category = categories
@@ -1495,7 +1499,7 @@ fn cmd_category(
             category_name,
             value,
         } => {
-            let item_id = parse_item_id(&item_id)?;
+            let item_id = resolve_item_id(&item_id, store)?;
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &category_name)?;
             let numeric_value = parse_decimal_value(&value)?;
@@ -1520,7 +1524,7 @@ fn cmd_category(
             item_id,
             category_name,
         } => {
-            let item_id = parse_item_id(&item_id)?;
+            let item_id = resolve_item_id(&item_id, store)?;
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &category_name)?;
 
@@ -1639,8 +1643,13 @@ fn resolve_db_path(db_opt: Option<PathBuf>) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn parse_item_id(input: &str) -> Result<ItemId, String> {
-    ItemId::parse_str(input).map_err(|e| format!("invalid item id: {e}"))
+fn resolve_item_id(input: &str, store: &Store) -> Result<ItemId, String> {
+    // Try full UUID parse first
+    if let Ok(id) = ItemId::parse_str(input) {
+        return Ok(id);
+    }
+    // Fall back to prefix resolution
+    store.resolve_item_prefix(input).map_err(|e| e.to_string())
 }
 
 fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
