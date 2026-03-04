@@ -479,3 +479,14 @@ Practical implications:
 - Expect `SlotContext::Section` (not `GeneratedSection`) in this case.
 - Add-item flows still apply section criteria assignments (for example `Ready`)
   through the normal section insert path.
+
+## Normal Mode Preview Hint Must Be In Footer (Discoverability)
+
+`p` already toggles item preview in `Mode::Normal`, but discoverability depends
+on `footer_hint_text()` in `crates/agenda-tui/src/render/mod.rs`.
+
+Practical implications:
+- Keep `p:preview` in both normal footer variants:
+  with section filters (`Esc:clear search`) and without filters.
+- If you edit normal footer hints, preserve preview discoverability and update
+  rendering tests that assert `p:preview` is visible.

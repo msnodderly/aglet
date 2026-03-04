@@ -5292,6 +5292,38 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_footer_hints_include_preview_shortcut() {
+        let mut app = App {
+            mode: Mode::Normal,
+            status: "Ready".to_string(),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("p:preview"),
+            "normal footer hints should include preview shortcut: {rendered}"
+        );
+
+        app.section_filters = vec![Some("ready".to_string())];
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Esc:clear search"),
+            "footer should advertise clear-search when a section filter is active: {rendered}"
+        );
+        assert!(
+            rendered.contains("p:preview"),
+            "filtered footer hints should include preview shortcut: {rendered}"
+        );
+    }
+
+    #[test]
     fn normal_mode_jk_scrolls_preview_when_preview_is_focused() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
