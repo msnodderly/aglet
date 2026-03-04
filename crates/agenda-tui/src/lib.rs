@@ -338,6 +338,7 @@ enum ViewEditInlineInput {
 #[derive(Clone)]
 struct ViewEditState {
     draft: View,
+    is_new_view: bool,
     region: ViewEditRegion,
     pane_focus: ViewEditPaneFocus,
     criteria_index: usize,
@@ -4451,7 +4452,7 @@ mod tests {
     }
 
     #[test]
-    fn view_create_name_save_opens_view_edit_directly_with_first_section_editing() {
+    fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() {
         let (store, db_path) = make_test_store_with_view("picker-create-direct-editor");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4479,6 +4480,10 @@ mod tests {
         let state = app.view_edit_state.as_ref().expect("view edit state");
         assert_eq!(state.region, ViewEditRegion::Sections);
         assert_eq!(state.draft.name, "Mixed");
+        assert!(
+            state.is_new_view,
+            "newly-created wizard draft should not be persisted until save"
+        );
         assert_eq!(state.draft.criteria.criteria.len(), 0);
         assert_eq!(state.draft.sections.len(), 1);
         assert!(matches!(
@@ -4486,11 +4491,99 @@ mod tests {
             Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
         ));
 
+        let persisted = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Mixed");
+        assert!(
+            persisted.is_none(),
+            "view should not be stored until ViewEdit save"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_create_wizard_esc_discards_unsaved_view() {
+        let (store, db_path) = make_test_store_with_view("picker-create-esc-cancel");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("open create name input");
+        for ch in "Scratch".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save button");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("open wizard");
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        // First Esc exits inline section-title editing.
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("exit inline section title");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        // Second Esc cancels the unsaved new-view wizard.
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("cancel wizard");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+
+        let persisted = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Scratch");
+        assert!(
+            persisted.is_none(),
+            "Esc cancel should not persist a partially-created view"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_create_wizard_s_save_persists_view() {
+        let (store, db_path) = make_test_store_with_view("picker-create-save");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("open create name input");
+        for ch in "Roadmap".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save button");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("open wizard");
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        // Exit initial inline section-title input before using global save key.
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("exit inline section title");
+        app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
+            .expect("save new view");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+
         let created = store
             .list_views()
             .expect("list views")
             .into_iter()
-            .find(|view| view.name == "Mixed")
+            .find(|view| view.name == "Roadmap")
             .expect("created view");
         assert_eq!(created.criteria.criteria.len(), 0);
         assert_eq!(created.sections.len(), 1);
