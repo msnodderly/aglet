@@ -2432,7 +2432,18 @@ impl App {
             "{text_marker}{text_label}> {}",
             panel.text.text()
         ))];
-        frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
+        let text_style = if panel.focus == InputPanelFocus::Text {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(text_spans)).style(text_style),
+            regions.text,
+        );
 
         if panel.kind == InputPanelKind::NumericValue && !panel.preview_context.is_empty() {
             if let Some(context_rect) = regions.context {
@@ -2447,28 +2458,49 @@ impl App {
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
             let note_focused = panel.focus == InputPanelFocus::Note;
-            let note_border_color = if note_focused {
-                Color::Cyan
+            let note_border_style = if note_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Color::Blue
+                Style::default().fg(Color::Blue)
             };
             let mut note_widget = panel.note.widget().clone();
+            if note_focused {
+                note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+                note_widget.set_cursor_style(
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
             note_widget.set_block(
                 Block::default()
-                    .title("Note")
+                    .title(if note_focused { "> Note" } else { "Note" })
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(note_border_color)),
+                    .border_style(note_border_style),
             );
             frame.render_widget(&note_widget, note_rect);
+            let note_scroll =
+                list_scroll_for_selected_line(note_rect, Some(panel.note.line_col().0));
+            Self::render_vertical_scrollbar(
+                frame,
+                note_rect,
+                panel.note.text().lines().count().max(1),
+                note_scroll as usize,
+            );
         }
 
         // Inline categories list (bordered, scrollable)
         if let Some(cat_rect) = regions.categories {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
-            let cat_border_color = if cat_focused {
-                Color::Cyan
+            let cat_border_style = if cat_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Color::Blue
+                Style::default().fg(Color::Blue)
             };
             let visible_indices = self.input_panel_visible_category_row_indices();
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
@@ -2482,9 +2514,13 @@ impl App {
 
             frame.render_widget(
                 Block::default()
-                    .title("Categories")
+                    .title(if cat_focused {
+                        "> Categories"
+                    } else {
+                        "Categories"
+                    })
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(cat_border_color)),
+                    .border_style(cat_border_style),
                 cat_rect,
             );
             if panel.category_filter_editing {
@@ -3145,6 +3181,15 @@ impl App {
                 let note_rect = details_chunks[2];
                 if let Some(state) = self.category_manager.as_ref() {
                     let mut note_widget = state.details_note.widget().clone();
+                    if note_editing {
+                        note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+                        note_widget.set_cursor_style(
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        );
+                    }
                     note_widget.set_block(
                         Block::default()
                             .title(if note_block_focus {
@@ -3162,6 +3207,16 @@ impl App {
                             })),
                     );
                     frame.render_widget(&note_widget, note_rect);
+                    let note_scroll = list_scroll_for_selected_line(
+                        note_rect,
+                        Some(state.details_note.line_col().0),
+                    );
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        note_rect,
+                        state.details_note.text().lines().count().max(1),
+                        note_scroll as usize,
+                    );
                 } else {
                     frame.render_widget(
                         Paragraph::new("").block(
