@@ -175,6 +175,7 @@ impl App {
         let mut status: Option<String> = None;
         let mut should_clamp = false;
         let mut show_matches = false;
+        let text_key = self.text_key_event(code);
         let consumed = {
             let Some(panel) = self.input_panel.as_mut() else {
                 return false;
@@ -211,7 +212,7 @@ impl App {
                         false
                     }
                     _ => {
-                        if panel.category_filter.handle_key(code, false) {
+                        if panel.category_filter.handle_key_event(text_key, false) {
                             should_clamp = true;
                             show_matches = true;
                         }
@@ -1404,6 +1405,7 @@ impl App {
             parent_name: meta.parent_name.clone(),
             item_id: meta.item_id,
             item_label: meta.item_label,
+            item_preview_scroll: 0,
             is_exclusive,
             filter: text_buffer::TextBuffer::empty(),
             focus: CategoryColumnPickerFocus::FilterInput,
@@ -1462,6 +1464,25 @@ impl App {
             let cur = state.list_index.min(len - 1);
             state.list_index = (cur as i64 + delta as i64).rem_euclid(len as i64) as usize;
             state.focus = CategoryColumnPickerFocus::List;
+        }
+    }
+
+    fn scroll_category_column_picker_item_preview(&mut self, delta: i32) {
+        let Some(state) = self.category_column_picker_state_mut() else {
+            return;
+        };
+        match delta.cmp(&0) {
+            std::cmp::Ordering::Greater => {
+                state.item_preview_scroll = state
+                    .item_preview_scroll
+                    .saturating_add(delta.unsigned_abs() as u16);
+            }
+            std::cmp::Ordering::Less => {
+                state.item_preview_scroll = state
+                    .item_preview_scroll
+                    .saturating_sub(delta.unsigned_abs() as u16);
+            }
+            std::cmp::Ordering::Equal => {}
         }
     }
 
@@ -1696,6 +1717,14 @@ impl App {
                 self.move_category_column_picker_list(1);
                 return Ok(false);
             }
+            KeyCode::PageUp => {
+                self.scroll_category_column_picker_item_preview(-1);
+                return Ok(false);
+            }
+            KeyCode::PageDown => {
+                self.scroll_category_column_picker_item_preview(1);
+                return Ok(false);
+            }
             KeyCode::Char('k')
                 if !matches!(
                     self.category_column_picker_state().map(|s| &s.focus),
@@ -1722,9 +1751,10 @@ impl App {
         }
 
         let mut edited = false;
+        let text_key = self.text_key_event(code);
         if let Some(state) = self.category_column_picker_state_mut() {
             if matches!(state.focus, CategoryColumnPickerFocus::FilterInput) {
-                edited = state.filter.handle_key(code, false);
+                edited = state.filter.handle_key_event(text_key, false);
                 if edited {
                     state.create_confirm_name = None;
                 }
@@ -2773,8 +2803,9 @@ impl App {
                         .link_wizard_state()
                         .is_some_and(|wizard| wizard.focus == LinkWizardFocus::Target)
                 {
+                    let text_key = self.text_key_event(code);
                     let consumed = if let Some(wizard) = self.link_wizard_state_mut() {
-                        wizard.target_filter.handle_key(code, false)
+                        wizard.target_filter.handle_key_event(text_key, false)
                     } else {
                         false
                     };
@@ -2911,8 +2942,9 @@ impl App {
             _ => {}
         }
 
+        let text_key = self.text_key_event(code);
         if let Some(state) = self.board_add_column_state_mut() {
-            if state.input.handle_key(code, false) {
+            if state.input.handle_key_event(text_key, false) {
                 state.create_confirm_name = None;
                 self.update_board_add_column_suggestions();
             }
@@ -3078,8 +3110,9 @@ impl App {
                     self.active_category_direct_edit_focus(),
                     Some(CategoryDirectEditFocus::Input)
                 ) {
+                    let text_key = self.text_key_event(code);
                     if let Some(row) = self.active_category_direct_edit_row_mut() {
-                        row.input.handle_key(code, false);
+                        row.input.handle_key_event(text_key, false);
                         row.category_id = None;
                     }
                     self.sync_category_direct_edit_input_mirror();
@@ -3217,12 +3250,13 @@ impl App {
             })
             .unwrap_or(false);
 
+        let input_key = self.text_key_event(code);
         let action = {
             let panel = self
                 .input_panel
                 .as_mut()
                 .expect("input panel checked above");
-            panel.handle_key(code, current_row_is_assigned_numeric)
+            panel.handle_key_event(input_key, current_row_is_assigned_numeric)
         };
 
         use input_panel::InputPanelAction;
@@ -3341,9 +3375,10 @@ impl App {
                 if current_row_is_assigned_numeric {
                     let cat_id = self.input_panel_selected_category_row().map(|r| r.id);
                     if let Some(cat_id) = cat_id {
+                        let input_key = self.text_key_event(code);
                         if let Some(panel) = &mut self.input_panel {
                             if let Some(buf) = panel.numeric_buffers.get_mut(&cat_id) {
-                                buf.handle_key(code, false);
+                                buf.handle_key_event(input_key, false);
                             }
                         }
                     }
@@ -3632,35 +3667,23 @@ impl App {
                     return Ok(());
                 }
                 let name = input_text.clone();
+                if self
+                    .views
+                    .iter()
+                    .any(|view| view.name.eq_ignore_ascii_case(&name))
+                {
+                    self.status = format!("View \"{name}\" already exists");
+                    return Ok(());
+                }
                 let mut view = View::new(name.clone());
                 if view.sections.is_empty() {
                     view.sections.push(Self::view_edit_default_section(
                         Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
                     ));
                 }
-
-                match agenda.store().create_view(&view) {
-                    Ok(()) => {
-                        let view_name = view.name.clone();
-                        self.refresh(agenda.store())?;
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        if let Some(new_view) =
-                            self.views.iter().find(|v| v.name == view_name).cloned()
-                        {
-                            self.open_view_edit_new_view_focus_first_section(new_view);
-                        } else {
-                            self.mode = Mode::ViewPicker;
-                            self.status = format!("Created view {view_name}");
-                        }
-                    }
-                    Err(err) => {
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.mode = Mode::ViewPicker;
-                        self.status = format!("View create failed: {err}");
-                    }
-                }
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.open_view_edit_new_view_focus_first_section(view);
             }
             Some(NameInputContext::ViewRename) => {
                 if input_text.is_empty() {
@@ -4218,7 +4241,10 @@ impl App {
                 self.mode = Mode::Normal; // keep filter active
             }
             _ => {
-                if self.search_buffer.handle_key(code, false) {
+                if self
+                    .search_buffer
+                    .handle_key_event(self.text_key_event(code), false)
+                {
                     self.apply_search_filter();
                     self.refresh(agenda.store())?;
                 }

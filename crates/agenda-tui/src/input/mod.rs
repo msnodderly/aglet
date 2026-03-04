@@ -8,13 +8,16 @@ impl App {
     ) -> Result<bool, String> {
         self.clear_expired_transient_status();
         self.clear_transient_status_on_key(key);
-        match self.mode {
+        self.current_key_modifiers = key.modifiers;
+        let handled = match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
             _ => {
                 self.normal_mode_prefix = None;
                 self.handle_key(key.code, agenda)
             }
-        }
+        };
+        self.current_key_modifiers = KeyModifiers::NONE;
+        handled
     }
 
     pub(crate) fn handle_key(
@@ -61,7 +64,12 @@ impl App {
     }
 
     pub(crate) fn handle_text_input_key(&mut self, code: KeyCode) -> bool {
-        self.input.handle_key(code, false)
+        self.input
+            .handle_key_event(self.text_key_event(code), false)
+    }
+
+    pub(crate) fn text_key_event(&self, code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, self.current_key_modifiers)
     }
 
     pub(crate) fn selected_category_is_reserved(&self) -> bool {

@@ -1297,7 +1297,10 @@ mod tests {
 
         let result = resolve_view(&view, &items, &categories, reference);
         let section_result = &result.sections[0];
-        assert_eq!(item_ids(&section_result.items), vec![items[0].id, items[1].id]);
+        assert_eq!(
+            item_ids(&section_result.items),
+            vec![items[0].id, items[1].id]
+        );
         assert!(
             section_result.subsections.is_empty(),
             "no child categories means no generated subsections"
