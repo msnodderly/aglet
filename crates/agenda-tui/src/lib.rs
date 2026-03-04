@@ -8388,8 +8388,8 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_esc_on_dirty_discards_and_closes_in_one_step() {
-        let (store, db_path) = make_test_store_with_view("esc-dirty-discard");
+    fn view_edit_esc_on_dirty_prompts_save_confirm() {
+        let (store, db_path) = make_test_store_with_view("esc-dirty-confirm");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -8400,8 +8400,27 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle view display mode");
+
+        // Esc on dirty state should show confirm dialog, not close
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("esc closes");
+            .expect("esc shows confirm");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.as_ref().unwrap().discard_confirm);
+
+        // Esc again cancels the dialog (keep editing)
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc cancels confirm");
+        assert!(!app.view_edit_state.as_ref().unwrap().discard_confirm);
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        // Esc again re-opens confirm
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc shows confirm again");
+        assert!(app.view_edit_state.as_ref().unwrap().discard_confirm);
+
+        // 'n' discards and closes
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("n discards");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
 
