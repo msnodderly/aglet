@@ -294,8 +294,9 @@ impl App {
                     return Ok(false);
                 }
                 _ => {
+                    let text_key = self.text_key_event(code);
                     if let Some(buf) = self.category_manager_details_note_edit_mut() {
-                        if buf.handle_key(code, true) {
+                        if buf.handle_key_event(text_key, true) {
                             self.recompute_category_manager_details_note_dirty();
                             return Ok(true);
                         }
@@ -311,8 +312,9 @@ impl App {
         {
             self.start_category_manager_details_note_edit();
             if self.category_manager_details_note_editing() {
+                let text_key = self.text_key_event(code);
                 if let Some(buf) = self.category_manager_details_note_edit_mut() {
-                    if buf.handle_key(code, true) {
+                    if buf.handle_key_event(text_key, true) {
                         self.recompute_category_manager_details_note_dirty();
                     }
                 }
@@ -575,7 +577,7 @@ impl App {
                         }
                     }
                     _ => {
-                        if buf.handle_key(code, false) {
+                        if buf.handle_key_event(self.text_key_event(code), false) {
                             self.set_category_manager_inline_action(Some(
                                 CategoryInlineAction::Rename {
                                     category_id,
@@ -638,8 +640,9 @@ impl App {
                     self.set_category_manager_filter_editing(false);
                 }
                 _ => {
+                    let text_key = self.text_key_event(code);
                     if let Some(filter) = self.category_manager_filter_mut() {
-                        if filter.handle_key(code, false) {
+                        if filter.handle_key_event(text_key, false) {
                             self.rebuild_category_manager_visible_rows();
                             let count = self
                                 .category_manager_visible_row_indices()

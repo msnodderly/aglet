@@ -821,7 +821,6 @@ pub(super) struct InputPanelPopupRegions {
     pub(super) text: Rect,
     /// Present for AddItem / EditItem; absent for NameInput.
     pub(super) note: Option<Rect>,
-    pub(super) note_inner: Option<Rect>,
     /// Bordered multi-line region for the inline category list.
     pub(super) categories: Option<Rect>,
     pub(super) categories_inner: Option<Rect>,
@@ -873,7 +872,6 @@ pub(super) fn input_panel_popup_regions(
                 context: None,
                 text: chunks[0],
                 note: None,
-                note_inner: None,
                 categories: None,
                 categories_inner: None,
                 categories_filter: None,
@@ -902,7 +900,6 @@ pub(super) fn input_panel_popup_regions(
                 context: Some(chunks[0]),
                 text: chunks[1],
                 note: None,
-                note_inner: None,
                 categories: None,
                 categories_inner: None,
                 categories_filter: None,
@@ -931,7 +928,6 @@ pub(super) fn input_panel_popup_regions(
                 context: None,
                 text: chunks[0],
                 note: None,
-                note_inner: None,
                 categories: None,
                 categories_inner: None,
                 type_picker: Some(chunks[1]),
@@ -969,12 +965,6 @@ pub(super) fn input_panel_popup_regions(
                 .split(middle);
 
             let note = halves[0];
-            let note_inner = Rect {
-                x: note.x.saturating_add(1),
-                y: note.y.saturating_add(1),
-                width: note.width.saturating_sub(2),
-                height: note.height.saturating_sub(2),
-            };
             let cat = halves[1];
             let cat_inner = Rect {
                 x: cat.x.saturating_add(1),
@@ -1006,7 +996,6 @@ pub(super) fn input_panel_popup_regions(
                 context: Some(chunks[1]),
                 text: chunks[0],
                 note: Some(note),
-                note_inner: Some(note_inner),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
                 categories_filter: cat_filter,

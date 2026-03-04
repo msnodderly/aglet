@@ -1,6 +1,74 @@
 use crate::*;
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
+const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
+
+fn clip_text_for_row(
+    text: &str,
+    cursor: usize,
+    width: usize,
+    around_cursor: bool,
+) -> (String, usize) {
+    if width == 0 {
+        return (String::new(), 0);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let cursor = cursor.min(len);
+    if len <= width {
+        return (text.to_string(), cursor);
+    }
+    if width == 1 {
+        return ("…".to_string(), 0);
+    }
+    if !around_cursor {
+        let keep = width.saturating_sub(1);
+        let prefix: String = chars.iter().take(keep).collect();
+        return (format!("{prefix}…"), cursor.min(keep.saturating_sub(1)));
+    }
+
+    let mut left = cursor
+        .saturating_sub(width / 2)
+        .min(len.saturating_sub(width));
+    let mut right = (left + width).min(len);
+    if cursor >= right {
+        right = (cursor + 1).min(len);
+        left = right.saturating_sub(width);
+    }
+
+    let left_ellipsis = left > 0;
+    let right_ellipsis = right < len;
+    let mut inner_width = width;
+    if left_ellipsis {
+        inner_width = inner_width.saturating_sub(1);
+    }
+    if right_ellipsis {
+        inner_width = inner_width.saturating_sub(1);
+    }
+
+    let mut inner_left = left.min(len.saturating_sub(inner_width));
+    if cursor < inner_left {
+        inner_left = cursor;
+    }
+    if cursor >= inner_left.saturating_add(inner_width) {
+        inner_left = cursor.saturating_add(1).saturating_sub(inner_width);
+    }
+    let inner_right = (inner_left + inner_width).min(len);
+
+    let mut out = String::new();
+    if left_ellipsis {
+        out.push('…');
+    }
+    out.extend(chars[inner_left..inner_right].iter());
+    if right_ellipsis {
+        out.push('…');
+    }
+    let cursor_visible = (if left_ellipsis { 1 } else { 0 })
+        + cursor
+            .saturating_sub(inner_left)
+            .min(inner_width.saturating_sub(1));
+    (out, cursor_visible)
+}
 
 impl App {
     fn list_state_for(area: Rect, selected_line: Option<usize>) -> ListState {
@@ -814,8 +882,9 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),
+                Constraint::Length(5),
                 Constraint::Length(3),
-                Constraint::Min(6),
+                Constraint::Min(4),
                 Constraint::Length(2),
             ])
             .split(inner);
@@ -833,19 +902,27 @@ impl App {
         };
         frame.render_widget(
             Paragraph::new(format!(
-                "Column: {}  Item: {}\nSelected: {}  Mode: {}",
+                "Column: {}  Mode: {}\nSelected: {}",
                 state.parent_name,
-                truncate_board_cell(&state.item_label, 28),
-                truncate_board_cell(&selected_display, 28),
                 if state.is_exclusive {
                     "single"
                 } else {
                     "multi"
-                }
+                },
+                truncate_board_cell(&selected_display, 56),
             ))
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
             chunks[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new(state.item_label.clone())
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .block(Block::default().borders(Borders::ALL).title("Item Context"))
+                .wrap(Wrap { trim: false })
+                .scroll((state.item_preview_scroll, 0)),
+            chunks[1],
         );
 
         let input_border = if state.focus == CategoryColumnPickerFocus::FilterInput {
@@ -864,13 +941,13 @@ impl App {
                     .title("Filter")
                     .border_style(input_border),
             ),
-            chunks[1],
+            chunks[2],
         );
 
         if let Some(name) = state.create_confirm_name.as_deref() {
             self.render_category_create_confirm_panel(
                 frame,
-                chunks[2],
+                chunks[3],
                 name,
                 "as a new child category in this column?",
             );
@@ -913,7 +990,7 @@ impl App {
             } else {
                 Some(state.list_index.min(matches.len() - 1))
             };
-            let mut list_state = Self::list_state_for(chunks[2], selected);
+            let mut list_state = Self::list_state_for(chunks[3], selected);
             frame.render_stateful_widget(
                 List::new(items)
                     .block(
@@ -928,12 +1005,12 @@ impl App {
                     )
                     .highlight_symbol("> ")
                     .highlight_style(selected_row_style()),
-                chunks[2],
+                chunks[3],
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(
                 frame,
-                chunks[2],
+                chunks[3],
                 matches.len().max(1),
                 list_state.offset(),
             );
@@ -941,11 +1018,11 @@ impl App {
 
         frame.render_widget(
             Paragraph::new(
-                "Type filter | j/k or Up/Down move | Space toggle | Enter save | Esc cancel",
+                "Type filter | j/k or Up/Down move | PgUp/PgDn item | Space toggle | Enter save | Esc cancel",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
-            chunks[3],
+            chunks[4],
         );
     }
 
@@ -967,12 +1044,13 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),
+                Constraint::Length(5),
                 Constraint::Length(3),
-                Constraint::Min(6),
+                Constraint::Min(4),
                 Constraint::Length(2),
             ])
             .split(inner);
-        let input_area = chunks[1];
+        let input_area = chunks[2];
         let input_x = input_area.x.saturating_add(1);
         let input_y = input_area.y.saturating_add(1);
         let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
@@ -1257,7 +1335,13 @@ impl App {
                     _ => "  Text> ",
                 };
                 let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
-                let input_chars = panel.text.cursor().min(u16::MAX as usize) as u16;
+                let (_, visible_cursor) = clip_text_for_row(
+                    panel.text.text(),
+                    panel.text.cursor(),
+                    (regions.text.width as usize).saturating_sub(prefix_len as usize),
+                    true,
+                );
+                let input_chars = visible_cursor.min(u16::MAX as usize) as u16;
                 let max_x = regions
                     .text
                     .x
@@ -1270,31 +1354,7 @@ impl App {
                     .min(max_x);
                 Some((cursor_x, regions.text.y))
             }
-            InputPanelFocus::Note => {
-                let note_inner = regions.note_inner?;
-                if note_inner.width == 0 || note_inner.height == 0 {
-                    return None;
-                }
-                let note_rect = regions.note?;
-                let (line, col) = panel.note.line_col();
-                let scroll = list_scroll_for_selected_line(note_rect, Some(line)) as usize;
-                let visible_line = line.saturating_sub(scroll);
-                let max_x = note_inner
-                    .x
-                    .saturating_add(note_inner.width.saturating_sub(1));
-                let max_y = note_inner
-                    .y
-                    .saturating_add(note_inner.height.saturating_sub(1));
-                let cursor_x = note_inner
-                    .x
-                    .saturating_add(col.min(u16::MAX as usize) as u16)
-                    .min(max_x);
-                let cursor_y = note_inner
-                    .y
-                    .saturating_add(visible_line.min(u16::MAX as usize) as u16)
-                    .min(max_y);
-                Some((cursor_x, cursor_y))
-            }
+            InputPanelFocus::Note => None,
             InputPanelFocus::Categories => {
                 if panel.category_filter_editing {
                     let filter_rect = regions.categories_filter?;
@@ -2405,9 +2465,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
@@ -2433,8 +2493,13 @@ impl App {
         };
         let block = Block::default()
             .title(title)
+            .title_style(Style::default().fg(Color::White))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
         frame.render_widget(block, area);
 
         let Some(regions) = input_panel_popup_regions(area, panel.kind) else {
@@ -2452,10 +2517,25 @@ impl App {
             InputPanelKind::NumericValue => "Value",
             _ => "Text",
         };
-        let text_spans = vec![Span::raw(format!(
-            "{text_marker}{text_label}> {}",
-            panel.text.text()
-        ))];
+        let text_prefix = format!("{text_marker}{text_label}> ");
+        let text_width = regions.text.width as usize;
+        let (visible_value, _) = clip_text_for_row(
+            panel.text.text(),
+            panel.text.cursor(),
+            text_width.saturating_sub(text_prefix.chars().count()),
+            panel.focus == InputPanelFocus::Text,
+        );
+        let text_prefix_style = if panel.focus == InputPanelFocus::Text {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let text_spans = vec![
+            Span::styled(text_prefix, text_prefix_style),
+            Span::raw(visible_value),
+        ];
         frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
 
         if panel.kind == InputPanelKind::NumericValue && !panel.preview_context.is_empty() {
@@ -2470,32 +2550,36 @@ impl App {
 
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
-            let note_lines: Vec<Line<'_>> = if panel.note.is_empty() {
-                vec![Line::from("")]
-            } else {
-                panel.note.text().lines().map(Line::from).collect()
-            };
             let note_focused = panel.focus == InputPanelFocus::Note;
-            let note_border_color = if note_focused {
-                Color::Cyan
+            let note_border_style = if note_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Color::Blue
+                Style::default().fg(Color::Cyan)
             };
-            let note_title = "Note";
-            let note_cursor_line = panel.note.line_col().0;
-            let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
-            frame.render_widget(
-                Paragraph::new(note_lines)
-                    .scroll((note_scroll, 0))
-                    .block(
-                        Block::default()
-                            .title(note_title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(note_border_color)),
-                    )
-                    .wrap(Wrap { trim: false }),
-                note_rect,
+            let mut note_widget = panel.note.widget().clone();
+            note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
+            note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+            note_widget.set_style(Style::default());
+            if note_focused {
+                note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+                note_widget.set_cursor_style(
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            note_widget.set_block(
+                Block::default()
+                    .title(if note_focused { "> Note" } else { "Note" })
+                    .borders(Borders::ALL)
+                    .border_style(note_border_style),
             );
+            frame.render_widget(&note_widget, note_rect);
+            let note_scroll =
+                list_scroll_for_selected_line(note_rect, Some(panel.note.line_col().0));
             Self::render_vertical_scrollbar(
                 frame,
                 note_rect,
@@ -2507,10 +2591,12 @@ impl App {
         // Inline categories list (bordered, scrollable)
         if let Some(cat_rect) = regions.categories {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
-            let cat_border_color = if cat_focused {
-                Color::Cyan
+            let cat_border_style = if cat_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Color::Blue
+                Style::default().fg(Color::Cyan)
             };
             let visible_indices = self.input_panel_visible_category_row_indices();
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
@@ -2524,16 +2610,21 @@ impl App {
 
             frame.render_widget(
                 Block::default()
-                    .title("Categories")
+                    .title(if cat_focused {
+                        "> Categories"
+                    } else {
+                        "Categories"
+                    })
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(cat_border_color)),
+                    .style(Style::default())
+                    .border_style(cat_border_style),
                 cat_rect,
             );
             if panel.category_filter_editing {
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         format!("> Filter> {}", panel.category_filter.text()),
-                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::Yellow),
                     ))),
                     cat_filter_rect,
                 );
@@ -2573,7 +2664,9 @@ impl App {
                         let base_style = if is_cursor {
                             Style::default().fg(Color::Black).bg(Color::Cyan)
                         } else if row.is_reserved {
-                            Style::default().fg(MUTED_TEXT_COLOR)
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::DIM)
                         } else {
                             Style::default()
                         };
@@ -2615,9 +2708,9 @@ impl App {
                                     " ".to_string()
                                 };
                                 let value_style = if is_cursor {
-                                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                                    Style::default().fg(Color::Black).bg(Color::LightCyan)
                                 } else {
-                                    Style::default().fg(Color::Yellow)
+                                    Style::default().fg(Color::Cyan)
                                 };
                                 let mut spans = vec![Span::styled(main_prefix, base_style)];
                                 if !type_suffix.is_empty() {
@@ -2694,19 +2787,57 @@ impl App {
         } else {
             "[Cancel]"
         };
+        let save_style = if panel.focus == InputPanelFocus::SaveButton {
+            selected_row_style().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let cancel_style = if panel.focus == InputPanelFocus::CancelButton {
+            selected_row_style().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let actions_focused = matches!(
+            panel.focus,
+            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton
+        );
+        let actions_prefix = if actions_focused { "> " } else { "  " };
+        let actions_prefix_style = if actions_focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
         frame.render_widget(
-            Paragraph::new(format!("  {save_button}  {cancel_button}")),
+            Paragraph::new(Line::from(vec![
+                Span::styled(actions_prefix, actions_prefix_style),
+                Span::styled(save_button, save_style),
+                Span::raw("  "),
+                Span::styled(cancel_button, cancel_style),
+            ])),
             regions.buttons,
         );
 
         // Help row
-        let base_help = match panel.kind {
-            InputPanelKind::CategoryCreate => "S:save  Tab:cycle  Enter:select  Esc:cancel",
-            InputPanelKind::NumericValue => "Enter:save  S:save  Esc:cancel",
-            _ if panel.focus == InputPanelFocus::Categories && panel.category_filter_editing => {
-                "Type:filter  Enter:keep  Esc:done  Tab:next"
+        let base_help = match panel.focus {
+            InputPanelFocus::Text => match panel.kind {
+                InputPanelKind::NumericValue => "Type value  Enter:save  Tab:actions  Esc:cancel",
+                InputPanelKind::NameInput | InputPanelKind::CategoryCreate => {
+                    "Type name  Tab:next  S:save  Esc:cancel"
+                }
+                _ => "Type title  Tab:note  S:save  Esc:cancel",
+            },
+            InputPanelFocus::Note => {
+                "Type note  Enter:new line  Tab:categories  S:save  Esc:cancel"
             }
-            _ => "S:save  Tab:cycle  /:filter  Space:toggle  j/k:move  Esc:cancel",
+            InputPanelFocus::Categories if panel.category_filter_editing => {
+                "Type filter  Enter:keep  Esc:done  Tab:next"
+            }
+            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:actions  S:save",
+            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:actions",
+            InputPanelFocus::SaveButton => "Enter save  Tab:cancel  Shift-Tab:categories",
+            InputPanelFocus::CancelButton => "Enter cancel  Tab:text  Shift-Tab:save",
         };
         let help_text =
             if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
@@ -3074,9 +3205,6 @@ impl App {
                     .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
                 let note_editing = self.category_manager_details_note_editing();
                 let note_dirty = self.category_manager_details_note_dirty();
-                let note_text = self
-                    .category_manager_details_note_text()
-                    .unwrap_or_default();
 
                 let mut parent_name = "(root)".to_string();
                 let mut child_count = 0usize;
@@ -3188,51 +3316,57 @@ impl App {
                     "Note"
                 };
                 let note_rect = details_chunks[2];
-                let note_inner = Rect {
-                    x: note_rect.x.saturating_add(1),
-                    y: note_rect.y.saturating_add(1),
-                    width: note_rect.width.saturating_sub(2),
-                    height: note_rect.height.saturating_sub(2),
-                };
-                let note_lines: Vec<Line<'_>> = if note_text.is_empty() {
-                    vec![Line::from("")]
+                if let Some(state) = self.category_manager.as_ref() {
+                    let mut note_widget = state.details_note.widget().clone();
+                    note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
+                    note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+                    if note_editing {
+                        note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+                        note_widget.set_cursor_style(
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        );
+                    }
+                    note_widget.set_block(
+                        Block::default()
+                            .title(if note_block_focus {
+                                format!("> {note_title}")
+                            } else {
+                                note_title.to_string()
+                            })
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(if note_editing {
+                                Color::Yellow
+                            } else if note_block_focus {
+                                Color::LightCyan
+                            } else {
+                                pane_idle
+                            })),
+                    );
+                    frame.render_widget(&note_widget, note_rect);
+                    let note_scroll = list_scroll_for_selected_line(
+                        note_rect,
+                        Some(state.details_note.line_col().0),
+                    );
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        note_rect,
+                        state.details_note.text().lines().count().max(1),
+                        note_scroll as usize,
+                    );
                 } else {
-                    note_text.lines().map(Line::from).collect()
-                };
-                let note_cursor_line = self
-                    .category_manager
-                    .as_ref()
-                    .map(|state| state.details_note.line_col().0)
-                    .unwrap_or(0);
-                let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
-                frame.render_widget(
-                    Paragraph::new(note_lines)
-                        .scroll((note_scroll, 0))
-                        .wrap(Wrap { trim: false })
-                        .block(
+                    frame.render_widget(
+                        Paragraph::new("").block(
                             Block::default()
-                                .title(if note_block_focus {
-                                    format!("> {note_title}")
-                                } else {
-                                    note_title.to_string()
-                                })
+                                .title(note_title)
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(if note_editing {
-                                    Color::Yellow
-                                } else if note_block_focus {
-                                    Color::LightCyan
-                                } else {
-                                    pane_idle
-                                })),
+                                .border_style(Style::default().fg(pane_idle)),
                         ),
-                    note_rect,
-                );
-                Self::render_vertical_scrollbar(
-                    frame,
-                    note_rect,
-                    note_text.lines().count().max(1),
-                    note_scroll as usize,
-                );
+                        note_rect,
+                    );
+                }
 
                 let details_hint = if note_editing {
                     "Type to edit  Tab/Esc: save and leave note"
@@ -3255,30 +3389,6 @@ impl App {
                     }
                 };
                 frame.render_widget(Paragraph::new(details_hint), details_chunks[3]);
-
-                if note_editing && note_inner.width > 0 && note_inner.height > 0 {
-                    let (line, col) = self
-                        .category_manager
-                        .as_ref()
-                        .map(|state| state.details_note.line_col())
-                        .unwrap_or((0, 0));
-                    let visible_line = line.saturating_sub(note_scroll as usize);
-                    let max_x = note_inner
-                        .x
-                        .saturating_add(note_inner.width.saturating_sub(1));
-                    let max_y = note_inner
-                        .y
-                        .saturating_add(note_inner.height.saturating_sub(1));
-                    let cursor_x = note_inner
-                        .x
-                        .saturating_add(col.min(u16::MAX as usize) as u16)
-                        .min(max_x);
-                    let cursor_y = note_inner
-                        .y
-                        .saturating_add(visible_line.min(u16::MAX as usize) as u16)
-                        .min(max_y);
-                    frame.set_cursor_position((cursor_x, cursor_y));
-                }
             } else {
                 frame.render_widget(
                     Paragraph::new(vec![

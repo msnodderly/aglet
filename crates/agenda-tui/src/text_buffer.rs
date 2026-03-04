@@ -1,21 +1,23 @@
-use crossterm::event::KeyCode;
-use tui_textarea::{CursorMove, TextArea};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tui_textarea::{CursorMove, TextArea, WrapMode};
 
-/// A text buffer with a cursor position for single-line and multi-line editing.
-///
-/// `cursor` is a char offset into `text`. It may transiently exceed the text
-/// length; all public accessors clamp it on read.
-#[derive(Clone, Default, Debug)]
+/// Persistent text-edit buffer backed by `tui-textarea-2`.
+#[derive(Clone, Debug)]
 pub(crate) struct TextBuffer {
     text: String,
-    cursor: usize,
+    textarea: TextArea<'static>,
+}
+
+impl Default for TextBuffer {
+    fn default() -> Self {
+        Self::new(String::new())
+    }
 }
 
 impl TextBuffer {
     /// New buffer with the given text; cursor placed at end.
     pub(crate) fn new(text: String) -> Self {
-        let cursor = text.chars().count();
-        Self { text, cursor }
+        Self::build(text, None)
     }
 
     /// Empty buffer with cursor at 0.
@@ -27,23 +29,17 @@ impl TextBuffer {
     /// The cursor is clamped to the text length on construction.
     #[cfg(test)]
     pub(crate) fn with_cursor(text: String, cursor: usize) -> Self {
-        let len = text.chars().count();
-        Self {
-            cursor: cursor.min(len),
-            text,
-        }
+        Self::build(text, Some(cursor))
     }
 
     /// Replace the text and move the cursor to the end.
     pub(crate) fn set(&mut self, text: String) {
-        self.cursor = text.chars().count();
-        self.text = text;
+        *self = Self::new(text);
     }
 
     /// Clear the text and reset cursor to 0.
     pub(crate) fn clear(&mut self) {
-        self.text.clear();
-        self.cursor = 0;
+        self.set(String::new());
     }
 
     /// The buffer's text contents.
@@ -51,12 +47,14 @@ impl TextBuffer {
         &self.text
     }
 
-    /// Cursor position as a char offset, clamped to text length.
+    /// Cursor position as a char offset in the full text.
     pub(crate) fn cursor(&self) -> usize {
-        self.cursor.min(self.len_chars())
+        let (row, col) = self.textarea.cursor();
+        char_index_from_line_col(&self.text, row, col)
     }
 
     /// Number of Unicode characters in the buffer.
+    #[cfg(test)]
     pub(crate) fn len_chars(&self) -> usize {
         self.text.chars().count()
     }
@@ -72,147 +70,108 @@ impl TextBuffer {
     }
 
     /// For multi-line buffers: (line_index, col_index) of the cursor.
-    /// Used by render code to position the terminal cursor.
     pub(crate) fn line_col(&self) -> (usize, usize) {
-        cursor_line_col(&self.text, self.cursor())
+        self.textarea.cursor()
     }
 
-    /// Dispatch a key event into the buffer.
+    /// Access the backing textarea widget for rendering.
+    pub(crate) fn widget(&self) -> &TextArea<'static> {
+        &self.textarea
+    }
+
+    /// Dispatch a full key event into the buffer.
     ///
-    /// When `multiline` is true, `Enter` inserts a newline and `Up`/`Down`
-    /// move between lines. When false, those keys are not consumed.
-    ///
-    /// Returns `true` if the key was consumed, `false` if it was ignored.
+    /// When `multiline` is true, Enter and vertical motion are enabled.
+    /// When false, those keys are not consumed.
+    pub(crate) fn handle_key_event(&mut self, key: KeyEvent, multiline: bool) -> bool {
+        if !multiline && blocks_single_line(key) {
+            return false;
+        }
+
+        let before_cursor = self.textarea.cursor();
+        let modified = self.textarea.input(key);
+        if modified {
+            self.sync_text_from_textarea();
+        }
+        modified
+            || self.textarea.cursor() != before_cursor
+            || non_mutating_text_key_consumed(key, multiline)
+    }
+
+    /// Compatibility shim for callsites/tests that only pass `KeyCode`.
+    #[cfg(test)]
     pub(crate) fn handle_key(&mut self, code: KeyCode, multiline: bool) -> bool {
-        if multiline {
-            self.with_textarea(true, |textarea| match code {
-                KeyCode::Left => {
-                    textarea.move_cursor(CursorMove::Back);
-                    true
-                }
-                KeyCode::Right => {
-                    textarea.move_cursor(CursorMove::Forward);
-                    true
-                }
-                KeyCode::Up => {
-                    textarea.move_cursor(CursorMove::Up);
-                    true
-                }
-                KeyCode::Down => {
-                    textarea.move_cursor(CursorMove::Down);
-                    true
-                }
-                KeyCode::Home => {
-                    textarea.move_cursor(CursorMove::Head);
-                    true
-                }
-                KeyCode::End => {
-                    textarea.move_cursor(CursorMove::End);
-                    true
-                }
-                KeyCode::Backspace => {
-                    let _ = textarea.delete_char();
-                    true
-                }
-                KeyCode::Delete => {
-                    let _ = textarea.delete_next_char();
-                    true
-                }
-                KeyCode::Enter => {
-                    textarea.insert_newline();
-                    true
-                }
-                KeyCode::Char(c) if !c.is_control() => {
-                    textarea.insert_char(c);
-                    true
-                }
-                _ => false,
-            })
-        } else {
-            self.with_textarea(false, |textarea| match code {
-                KeyCode::Left => {
-                    textarea.move_cursor(CursorMove::Back);
-                    true
-                }
-                KeyCode::Right => {
-                    textarea.move_cursor(CursorMove::Forward);
-                    true
-                }
-                KeyCode::Home => {
-                    textarea.move_cursor(CursorMove::Head);
-                    true
-                }
-                KeyCode::End => {
-                    textarea.move_cursor(CursorMove::End);
-                    true
-                }
-                KeyCode::Backspace => {
-                    let _ = textarea.delete_char();
-                    true
-                }
-                KeyCode::Delete => {
-                    let _ = textarea.delete_next_char();
-                    true
-                }
-                KeyCode::Char(c) if !c.is_control() => {
-                    textarea.insert_char(c);
-                    true
-                }
-                _ => false,
-            })
-        }
+        self.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE), multiline)
     }
 
-    // ── Internal helpers ──────────────────────────────────────────────────────
+    fn build(text: String, cursor: Option<usize>) -> Self {
+        let mut textarea = TextArea::new(split_lines_preserve_trailing_newline(&text));
+        textarea.set_wrap_mode(WrapMode::WordOrGlyph);
 
-    /// Create a TextArea pre-loaded with the buffer's text and cursor, apply
-    /// `edit`, then write the result back. Returns whatever `edit` returns.
-    fn with_textarea<F>(&mut self, multiline: bool, edit: F) -> bool
-    where
-        F: FnOnce(&mut TextArea<'static>) -> bool,
+        if let Some(cursor_chars) = cursor {
+            let clamped = cursor_chars.min(text.chars().count());
+            let (line, col) = line_col_from_char_index(&text, clamped);
+            let row = line.min(u16::MAX as usize) as u16;
+            let col = col.min(u16::MAX as usize) as u16;
+            textarea.move_cursor(CursorMove::Jump(row, col));
+        } else {
+            textarea.move_cursor(CursorMove::Jump(u16::MAX, u16::MAX));
+        }
+
+        Self { text, textarea }
+    }
+
+    fn sync_text_from_textarea(&mut self) {
+        self.text = self.textarea.lines().join("\n");
+    }
+}
+
+fn blocks_single_line(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::Enter)
+        || (key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M')))
+}
+
+fn non_mutating_text_key_consumed(key: KeyEvent, multiline: bool) -> bool {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
     {
-        let cursor = self.cursor();
-        let mut textarea = if multiline {
-            build_multiline_textarea(&self.text, cursor)
-        } else {
-            build_single_line_textarea(&self.text, cursor)
-        };
-
-        let consumed = edit(&mut textarea);
-
-        if consumed {
-            let (new_text, new_cursor) = extract_value_and_cursor(textarea);
-            self.text = new_text;
-            self.cursor = new_cursor.min(self.text.chars().count());
-        }
-
-        consumed
+        return matches!(
+            key.code,
+            KeyCode::Char(_)
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::Delete
+                | KeyCode::Backspace
+                | KeyCode::Tab
+                | KeyCode::BackTab
+        );
     }
+
+    matches!(
+        key.code,
+        KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Delete
+            | KeyCode::Backspace
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+    ) || (multiline && matches!(key.code, KeyCode::Up | KeyCode::Down))
 }
 
-// ── Free helpers (used by TextBuffer internals) ───────────────────────────────
-
-fn build_single_line_textarea(text: &str, cursor: usize) -> TextArea<'static> {
-    let mut textarea = TextArea::new(vec![text.to_string()]);
-    let col = cursor.min(text.chars().count()).min(u16::MAX as usize) as u16;
-    textarea.move_cursor(CursorMove::Jump(0, col));
-    textarea
-}
-
-fn build_multiline_textarea(text: &str, cursor: usize) -> TextArea<'static> {
-    let mut textarea = TextArea::new(text.split('\n').map(str::to_string).collect());
-    let (line, col) = cursor_line_col(text, cursor.min(text.chars().count()));
-    let row = line.min(u16::MAX as usize) as u16;
-    let col = col.min(u16::MAX as usize) as u16;
-    textarea.move_cursor(CursorMove::Jump(row, col));
-    textarea
-}
-
-fn extract_value_and_cursor(textarea: TextArea<'static>) -> (String, usize) {
-    let (row, col) = textarea.cursor();
-    let value = textarea.into_lines().join("\n");
-    let cursor = char_index_from_line_col(&value, row, col);
-    (value, cursor)
+fn split_lines_preserve_trailing_newline(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 fn char_index_from_line_col(text: &str, row: usize, col: usize) -> usize {
@@ -231,21 +190,7 @@ fn char_index_from_line_col(text: &str, row: usize, col: usize) -> usize {
     line_start + col.min(line_end.saturating_sub(line_start))
 }
 
-/// Char offsets where each line starts (line 0 always starts at 0).
-fn line_start_chars(text: &str) -> Vec<usize> {
-    let mut starts = vec![0usize];
-    let mut idx = 0usize;
-    for c in text.chars() {
-        idx += 1;
-        if c == '\n' {
-            starts.push(idx);
-        }
-    }
-    starts
-}
-
-/// Convert a char-offset cursor into (line, col) for multi-line display.
-fn cursor_line_col(text: &str, cursor_chars: usize) -> (usize, usize) {
+fn line_col_from_char_index(text: &str, cursor_chars: usize) -> (usize, usize) {
     let mut line = 0usize;
     let mut col = 0usize;
     for c in text.chars().take(cursor_chars) {
@@ -259,14 +204,22 @@ fn cursor_line_col(text: &str, cursor_chars: usize) -> (usize, usize) {
     (line, col)
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+/// Char offsets where each line starts (line 0 always starts at 0).
+fn line_start_chars(text: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    let mut idx = 0usize;
+    for c in text.chars() {
+        idx += 1;
+        if c == '\n' {
+            starts.push(idx);
+        }
+    }
+    starts
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyCode;
-
-    // ── Construction ──────────────────────────────────────────────────────────
 
     #[test]
     fn empty_buffer_has_zero_cursor() {
@@ -281,6 +234,12 @@ mod tests {
         let buf = TextBuffer::new("hello".to_string());
         assert_eq!(buf.cursor(), 5);
         assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn with_cursor_clamps_to_text_len() {
+        let buf = TextBuffer::with_cursor("hi".to_string(), 99);
+        assert_eq!(buf.cursor(), 2);
     }
 
     #[test]
@@ -299,20 +258,9 @@ mod tests {
         assert_eq!(buf.cursor(), 0);
     }
 
-    // ── Cursor clamping ───────────────────────────────────────────────────────
-
-    #[test]
-    fn cursor_is_clamped_after_text_shrinks() {
-        let mut buf = TextBuffer::new("hello".to_string()); // cursor=5
-        buf.text = "hi".to_string(); // shrink without moving cursor
-        assert_eq!(buf.cursor(), 2); // clamped
-    }
-
-    // ── Single-line ops ───────────────────────────────────────────────────────
-
     #[test]
     fn left_right_move_cursor_single_line() {
-        let mut buf = TextBuffer::new("abc".to_string()); // cursor=3
+        let mut buf = TextBuffer::new("abc".to_string());
         buf.handle_key(KeyCode::Left, false);
         assert_eq!(buf.cursor(), 2);
         buf.handle_key(KeyCode::Right, false);
@@ -320,8 +268,16 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_a_moves_cursor_to_line_head() {
+        let mut buf = TextBuffer::new("abc".to_string());
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(buf.handle_key_event(key, false));
+        assert_eq!(buf.cursor(), 0);
+    }
+
+    #[test]
     fn home_end_move_cursor_to_boundaries() {
-        let mut buf = TextBuffer::new("abc".to_string()); // cursor=3
+        let mut buf = TextBuffer::new("abc".to_string());
         buf.handle_key(KeyCode::Home, false);
         assert_eq!(buf.cursor(), 0);
         buf.handle_key(KeyCode::End, false);
@@ -331,7 +287,7 @@ mod tests {
     #[test]
     fn insert_char_advances_cursor() {
         let mut buf = TextBuffer::new("ac".to_string());
-        buf.handle_key(KeyCode::Left, false); // cursor=1
+        buf.handle_key(KeyCode::Left, false);
         buf.handle_key(KeyCode::Char('b'), false);
         assert_eq!(buf.text(), "abc");
         assert_eq!(buf.cursor(), 2);
@@ -371,13 +327,6 @@ mod tests {
     }
 
     #[test]
-    fn insert_control_char_is_ignored() {
-        let mut buf = TextBuffer::empty();
-        buf.handle_key(KeyCode::Char('\x01'), false); // Ctrl-A
-        assert_eq!(buf.text(), "");
-    }
-
-    #[test]
     fn unhandled_key_returns_false() {
         let mut buf = TextBuffer::empty();
         assert!(!buf.handle_key(KeyCode::F(1), false));
@@ -398,21 +347,17 @@ mod tests {
         assert!(!buf.handle_key(KeyCode::Down, false));
     }
 
-    // ── Multi-line ops ────────────────────────────────────────────────────────
-
     #[test]
     fn enter_inserts_newline_in_multiline_mode() {
         let mut buf = TextBuffer::new("ab".to_string());
         buf.handle_key(KeyCode::Home, true);
         buf.handle_key(KeyCode::Enter, true);
-        // "ab" with cursor at 0, insert newline → "\nab"
         assert!(buf.text().contains('\n'));
     }
 
     #[test]
     fn up_down_move_between_lines() {
         let mut buf = TextBuffer::new("line1\nline2".to_string());
-        // cursor is at end of line2; move up should go to line1
         buf.handle_key(KeyCode::Up, true);
         let (line, _) = buf.line_col();
         assert_eq!(line, 0);
@@ -424,10 +369,9 @@ mod tests {
     #[test]
     fn line_col_returns_correct_position() {
         let buf = TextBuffer::new("hello\nworld".to_string());
-        // cursor at end = char index 11
         let (line, col) = buf.line_col();
         assert_eq!(line, 1);
-        assert_eq!(col, 5); // "world" has 5 chars
+        assert_eq!(col, 5);
     }
 
     #[test]
@@ -435,8 +379,6 @@ mod tests {
         let buf = TextBuffer::new("abc".to_string());
         assert_eq!(buf.line_col(), (0, 3));
     }
-
-    // ── Accessors ─────────────────────────────────────────────────────────────
 
     #[test]
     fn trimmed_strips_whitespace() {
@@ -446,7 +388,7 @@ mod tests {
 
     #[test]
     fn len_chars_counts_unicode() {
-        let buf = TextBuffer::new("héllo".to_string()); // é is one char
+        let buf = TextBuffer::new("héllo".to_string());
         assert_eq!(buf.len_chars(), 5);
     }
 }
