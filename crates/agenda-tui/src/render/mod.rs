@@ -1,7 +1,6 @@
 use crate::*;
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
-const FOCUSED_PANE_BG: Color = Color::Rgb(38, 44, 60);
 const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
 
 fn clip_text_for_row(
@@ -2519,8 +2518,7 @@ impl App {
         let text_style = if panel.focus == InputPanelFocus::Text {
             Style::default()
                 .fg(Color::Cyan)
-                .bg(FOCUSED_PANE_BG)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -2552,19 +2550,11 @@ impl App {
             let mut note_widget = panel.note.widget().clone();
             note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
             note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
-            note_widget.set_style(if note_focused {
-                Style::default().bg(FOCUSED_PANE_BG)
-            } else {
-                Style::default()
-            });
+            note_widget.set_style(Style::default());
             if note_focused {
-                note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
-                note_widget.set_cursor_style(
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                );
+                note_widget
+                    .set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+                note_widget.set_cursor_style(selected_row_style().add_modifier(Modifier::BOLD));
             }
             note_widget.set_block(
                 Block::default()
@@ -2611,11 +2601,7 @@ impl App {
                         "Categories"
                     })
                     .borders(Borders::ALL)
-                    .style(if cat_focused {
-                        Style::default().bg(FOCUSED_PANE_BG)
-                    } else {
-                        Style::default()
-                    })
+                    .style(Style::default())
                     .border_style(cat_border_style),
                 cat_rect,
             );
@@ -2787,24 +2773,30 @@ impl App {
             "[Cancel]"
         };
         let save_style = if panel.focus == InputPanelFocus::SaveButton {
-            Style::default()
-                .fg(Color::Cyan)
-                .bg(FOCUSED_PANE_BG)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            selected_row_style().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
         let cancel_style = if panel.focus == InputPanelFocus::CancelButton {
+            selected_row_style().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let actions_focused = matches!(
+            panel.focus,
+            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton
+        );
+        let actions_prefix = if actions_focused { "> " } else { "  " };
+        let actions_prefix_style = if actions_focused {
             Style::default()
                 .fg(Color::Cyan)
-                .bg(FOCUSED_PANE_BG)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::raw("  "),
+                Span::styled(actions_prefix, actions_prefix_style),
                 Span::styled(save_button, save_style),
                 Span::raw("  "),
                 Span::styled(cancel_button, cancel_style),
@@ -2829,8 +2821,8 @@ impl App {
             }
             InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:actions  S:save",
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:actions",
-            InputPanelFocus::SaveButton => "Enter/Space save  Tab:cancel  Shift-Tab:categories",
-            InputPanelFocus::CancelButton => "Enter/Space cancel  Tab:text  Shift-Tab:save",
+            InputPanelFocus::SaveButton => "Enter save  Tab:cancel  Shift-Tab:categories",
+            InputPanelFocus::CancelButton => "Enter cancel  Tab:text  Shift-Tab:save",
         };
         let help_text =
             if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
