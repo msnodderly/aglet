@@ -490,3 +490,16 @@ Practical implications:
   with section filters (`Esc:clear search`) and without filters.
 - If you edit normal footer hints, preserve preview discoverability and update
   rendering tests that assert `p:preview` is visible.
+
+## Implicit String Match Scope Is Stored As A Category Condition (Surprising)
+
+Auto-match note/body behavior is controlled by a per-category override condition
+`Condition::ImplicitStringMatchScope { scope }` in `Category.conditions`, not a
+separate DB column.
+
+Practical implications:
+- Default behavior remains title-only (`scope=title`) unless an override is set.
+- `scope=title_or_note` checks title first, then note/body only when title does
+  not match.
+- If you edit category conditions directly, preserve at most one
+  `ImplicitStringMatchScope` entry per category to avoid ambiguous overrides.
