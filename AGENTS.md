@@ -308,6 +308,17 @@ If you add or refactor Category Manager render code, explicitly position the
 terminal cursor for these Action/Filter editing states; otherwise text editing
 still works but the caret appears missing/intermittent.
 
+## InputPanel Note Cursor Requires Explicit Position (Surprising)
+
+`Mode::InputPanel` note editing (`InputPanelFocus::Note`) does not automatically
+show a terminal caret unless `render` sets cursor coordinates explicitly.
+
+Practical implications:
+- Keep `input_panel_cursor_position()` returning a cursor position for Note
+  focus (line/column mapped into the note viewport with scroll clamp).
+- If you only style the `tui-textarea` cursor but do not set terminal cursor
+  position, cursor visibility can appear inconsistent across text-entry panes.
+
 ## Category Create Parent Defaults (Surprising)
 
 CategoryCreate (`Mode::InputPanel` with `NameInputContext::CategoryCreate`) no
