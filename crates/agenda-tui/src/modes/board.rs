@@ -175,6 +175,7 @@ impl App {
         let mut status: Option<String> = None;
         let mut should_clamp = false;
         let mut show_matches = false;
+        let text_key = self.text_key_event(code);
         let consumed = {
             let Some(panel) = self.input_panel.as_mut() else {
                 return false;
@@ -211,7 +212,7 @@ impl App {
                         false
                     }
                     _ => {
-                        if panel.category_filter.handle_key(code, false) {
+                        if panel.category_filter.handle_key_event(text_key, false) {
                             should_clamp = true;
                             show_matches = true;
                         }
@@ -1722,9 +1723,10 @@ impl App {
         }
 
         let mut edited = false;
+        let text_key = self.text_key_event(code);
         if let Some(state) = self.category_column_picker_state_mut() {
             if matches!(state.focus, CategoryColumnPickerFocus::FilterInput) {
-                edited = state.filter.handle_key(code, false);
+                edited = state.filter.handle_key_event(text_key, false);
                 if edited {
                     state.create_confirm_name = None;
                 }
@@ -2773,8 +2775,9 @@ impl App {
                         .link_wizard_state()
                         .is_some_and(|wizard| wizard.focus == LinkWizardFocus::Target)
                 {
+                    let text_key = self.text_key_event(code);
                     let consumed = if let Some(wizard) = self.link_wizard_state_mut() {
-                        wizard.target_filter.handle_key(code, false)
+                        wizard.target_filter.handle_key_event(text_key, false)
                     } else {
                         false
                     };
@@ -2911,8 +2914,9 @@ impl App {
             _ => {}
         }
 
+        let text_key = self.text_key_event(code);
         if let Some(state) = self.board_add_column_state_mut() {
-            if state.input.handle_key(code, false) {
+            if state.input.handle_key_event(text_key, false) {
                 state.create_confirm_name = None;
                 self.update_board_add_column_suggestions();
             }
@@ -3078,8 +3082,9 @@ impl App {
                     self.active_category_direct_edit_focus(),
                     Some(CategoryDirectEditFocus::Input)
                 ) {
+                    let text_key = self.text_key_event(code);
                     if let Some(row) = self.active_category_direct_edit_row_mut() {
-                        row.input.handle_key(code, false);
+                        row.input.handle_key_event(text_key, false);
                         row.category_id = None;
                     }
                     self.sync_category_direct_edit_input_mirror();
@@ -3217,12 +3222,13 @@ impl App {
             })
             .unwrap_or(false);
 
+        let input_key = self.text_key_event(code);
         let action = {
             let panel = self
                 .input_panel
                 .as_mut()
                 .expect("input panel checked above");
-            panel.handle_key(code, current_row_is_assigned_numeric)
+            panel.handle_key_event(input_key, current_row_is_assigned_numeric)
         };
 
         use input_panel::InputPanelAction;
@@ -3341,9 +3347,10 @@ impl App {
                 if current_row_is_assigned_numeric {
                     let cat_id = self.input_panel_selected_category_row().map(|r| r.id);
                     if let Some(cat_id) = cat_id {
+                        let input_key = self.text_key_event(code);
                         if let Some(panel) = &mut self.input_panel {
                             if let Some(buf) = panel.numeric_buffers.get_mut(&cat_id) {
-                                buf.handle_key(code, false);
+                                buf.handle_key_event(input_key, false);
                             }
                         }
                     }
@@ -4218,7 +4225,10 @@ impl App {
                 self.mode = Mode::Normal; // keep filter active
             }
             _ => {
-                if self.search_buffer.handle_key(code, false) {
+                if self
+                    .search_buffer
+                    .handle_key_event(self.text_key_event(code), false)
+                {
                     self.apply_search_filter();
                     self.refresh(agenda.store())?;
                 }

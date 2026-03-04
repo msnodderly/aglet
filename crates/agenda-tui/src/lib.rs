@@ -783,6 +783,7 @@ struct App {
     auto_refresh_interval: AutoRefreshInterval,
     auto_refresh_last_tick: Instant,
     transient_status: Option<TransientStatus>,
+    current_key_modifiers: KeyModifiers,
 }
 
 impl Default for App {
@@ -834,6 +835,7 @@ impl Default for App {
             auto_refresh_interval: AutoRefreshInterval::Off,
             auto_refresh_last_tick: Instant::now(),
             transient_status: None,
+            current_key_modifiers: KeyModifiers::NONE,
         }
     }
 }
