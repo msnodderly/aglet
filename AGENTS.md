@@ -56,6 +56,15 @@ items that have either category.
 For example, `agenda-cli list --exclude-category Complete` removes completed
 status/category matches from results.
 
+Dependency-state filtering is available via derived flags (not assignable
+categories):
+- `agenda-cli list --blocked` / `--not-blocked`
+- `agenda-cli search <query> --blocked` / `--not-blocked`
+- `agenda-cli view show "<name>" --blocked` / `--not-blocked`
+
+`blocked` means the item has at least one unresolved `depends-on` prerequisite.
+This state is computed from links + done state at query time.
+
 ## Category Assignment in Items
 
 When viewing items, the categories list includes both the assigned category and
