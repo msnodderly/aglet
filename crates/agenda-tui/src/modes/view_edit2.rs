@@ -49,6 +49,72 @@ impl App {
         }
     }
 
+    fn toggle_view_edit_section_show_children(&mut self, section_index: usize) {
+        if let Some(state) = &mut self.view_edit_state {
+            if let Some(section) = state.draft.sections.get_mut(section_index) {
+                section.show_children = !section.show_children;
+                state.dirty = true;
+                state.discard_confirm = false;
+            }
+        }
+    }
+
+    pub(crate) fn view_edit_section_layout_value(&self, section: &Section) -> String {
+        if section.show_children {
+            if self
+                .view_edit_section_split_unavailable_reason(section)
+                .is_some()
+            {
+                "Split by direct child category (inactive)".to_string()
+            } else {
+                "Split by direct child category".to_string()
+            }
+        } else {
+            "Flat (single section)".to_string()
+        }
+    }
+
+    pub(crate) fn view_edit_section_split_unavailable_reason(
+        &self,
+        section: &Section,
+    ) -> Option<String> {
+        if !section.criteria.virtual_include.is_empty()
+            || !section.criteria.virtual_exclude.is_empty()
+            || section.criteria.text_search.is_some()
+        {
+            return Some("Split unavailable: remove date/text filters.".to_string());
+        }
+
+        let and_ids: Vec<CategoryId> = section.criteria.and_category_ids().collect();
+        if and_ids.len() != 1 {
+            return Some("Split unavailable: requires exactly one Include category.".to_string());
+        }
+
+        if section.criteria.not_category_ids().count() > 0
+            || section.criteria.or_category_ids().count() > 0
+        {
+            return Some("Split unavailable: remove Exclude/Match-any criteria.".to_string());
+        }
+
+        let parent_id = and_ids[0];
+        let Some(parent) = self
+            .categories
+            .iter()
+            .find(|category| category.id == parent_id)
+        else {
+            return Some("Split unavailable: selected category no longer exists.".to_string());
+        };
+
+        if parent.children.is_empty() {
+            return Some(format!(
+                "Split unavailable: \"{}\" has no child categories.",
+                parent.name
+            ));
+        }
+
+        None
+    }
+
     fn begin_view_edit_section_title_input(&mut self, section_index: usize) {
         if let Some(state) = &mut self.view_edit_state {
             if let Some(section) = state.draft.sections.get(section_index) {
@@ -1108,6 +1174,11 @@ impl App {
 
     fn handle_view_edit_section_details_key(&mut self, code: KeyCode) -> Result<bool, String> {
         let field_count = 7usize;
+        let section_index = self
+            .view_edit_state
+            .as_ref()
+            .map(|s| s.section_index)
+            .unwrap_or(0);
         let current_index = self
             .view_edit_state
             .as_ref()
@@ -1136,12 +1207,16 @@ impl App {
                     2 => Some(KeyCode::Char('c')),
                     3 => Some(KeyCode::Char('a')),
                     4 => Some(KeyCode::Char('r')),
-                    5 => Some(KeyCode::Char('h')),
+                    5 => None,
                     6 => Some(KeyCode::Char('m')),
                     _ => None,
                 };
                 if let Some(mapped) = mapped {
                     return self.handle_view_edit_sections_key(mapped);
+                }
+                if current_index == 5 {
+                    self.toggle_view_edit_section_show_children(section_index);
+                    return Ok(true);
                 }
             }
             _ => {
@@ -1361,20 +1436,6 @@ impl App {
                     self.status =
                         "Edit on-remove unassign: j/k select  Space/Enter:toggle  Esc:done"
                             .to_string();
-                }
-            }
-            KeyCode::Char('h') => {
-                if selecting_view_row {
-                    return Ok(true);
-                }
-                if idx < len {
-                    if let Some(state) = &mut self.view_edit_state {
-                        if let Some(section) = state.draft.sections.get_mut(idx) {
-                            section.show_children = !section.show_children;
-                            state.dirty = true;
-                            state.discard_confirm = false;
-                        }
-                    }
                 }
             }
             KeyCode::Char('m') | KeyCode::Char('M') => {

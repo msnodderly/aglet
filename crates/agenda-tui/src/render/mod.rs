@@ -3525,7 +3525,11 @@ impl App {
                         when_include,
                         width = pad
                     )))
-                    .style(style_for_unmatched_field(0, &items, &mut selected_line)),
+                    .style(style_for_unmatched_field(
+                        0,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
@@ -3534,7 +3538,11 @@ impl App {
                         when_exclude,
                         width = pad
                     )))
-                    .style(style_for_unmatched_field(1, &items, &mut selected_line)),
+                    .style(style_for_unmatched_field(
+                        1,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 // ── Separator ──
@@ -3551,7 +3559,11 @@ impl App {
                         display_mode_label,
                         width = pad
                     )))
-                    .style(style_for_unmatched_field(2, &items, &mut selected_line)),
+                    .style(style_for_unmatched_field(
+                        2,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 let alias_count = state
@@ -3572,7 +3584,11 @@ impl App {
                         alias_summary,
                         width = pad
                     )))
-                    .style(style_for_unmatched_field(5, &items, &mut selected_line)),
+                    .style(style_for_unmatched_field(
+                        5,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 // ── Separator ──
@@ -3594,7 +3610,11 @@ impl App {
                         unmatched_value,
                         width = pad
                     )))
-                    .style(style_for_unmatched_field(3, &items, &mut selected_line)),
+                    .style(style_for_unmatched_field(
+                        3,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 let unmatched_label_text = if matches!(
@@ -3612,7 +3632,11 @@ impl App {
                         unmatched_label_text,
                         width = pad
                     )))
-                    .style(style_for_unmatched_field(4, &items, &mut selected_line)),
+                    .style(style_for_unmatched_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
@@ -3653,7 +3677,11 @@ impl App {
                         title_text,
                         width = pad
                     )))
-                    .style(style_for_section_field(0, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        0,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
@@ -3669,7 +3697,11 @@ impl App {
                         criteria_value,
                         width = pad
                     )))
-                    .style(style_for_section_field(1, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        1,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 // ── Separator ──
@@ -3701,7 +3733,11 @@ impl App {
                         columns_summary,
                         width = pad
                     )))
-                    .style(style_for_section_field(2, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        2,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
                 let mode_label = match section.board_display_mode_override {
                     None => "(use view default)".to_string(),
@@ -3715,7 +3751,11 @@ impl App {
                         mode_label,
                         width = pad
                     )))
-                    .style(style_for_section_field(6, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        6,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
 
                 // ── Separator ──
@@ -3732,7 +3772,11 @@ impl App {
                         summarize_category_set(&section.on_insert_assign),
                         width = pad
                     )))
-                    .style(style_for_section_field(3, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        3,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
@@ -3741,24 +3785,45 @@ impl App {
                         summarize_category_set(&section.on_remove_unassign),
                         width = pad
                     )))
-                    .style(style_for_section_field(4, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
                         "  {:<width$}{}",
-                        "Expand sub-categories",
-                        if section.show_children { "yes" } else { "no" },
+                        "Section layout",
+                        self.view_edit_section_layout_value(section),
                         width = pad
                     )))
-                    .style(style_for_section_field(5, &items, &mut selected_line)),
+                    .style(style_for_section_field(
+                        5,
+                        &items,
+                        &mut selected_line,
+                    )),
                 );
                 if details_focused
                     && state.region == ViewEditRegion::Sections
                     && state.section_details_field_index == 5
                 {
+                    let help_style = Style::default().fg(Color::Rgb(170, 178, 198));
                     items.push(ListItem::new(Line::from(Span::styled(
-                        "    Split this section into sub-groups based on child categories",
-                        Style::default().fg(Color::DarkGray),
+                        "    Behavior:",
+                        help_style,
+                    ))));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    - Flat: keeps one section",
+                        help_style,
+                    ))));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    - Split: creates child lanes + \"(Other)\"",
+                        help_style,
+                    ))));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    Requirements: single Include parent, no Exclude/Any/Text/Date filters.",
+                        help_style,
                     ))));
                 }
             } else {
@@ -4072,11 +4137,9 @@ impl App {
                                 let query = match target {
                                     CategoryEditTarget::ViewCriteria => Some(&state.draft.criteria),
                                     CategoryEditTarget::ViewAliases => None,
-                                    CategoryEditTarget::SectionCriteria => state
-                                        .draft
-                                        .sections
-                                        .get(section_index)
-                                        .map(|s| &s.criteria),
+                                    CategoryEditTarget::SectionCriteria => {
+                                        state.draft.sections.get(section_index).map(|s| &s.criteria)
+                                    }
                                     _ => None,
                                 };
                                 query.and_then(|q| q.mode_for(row.id))

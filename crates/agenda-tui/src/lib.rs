@@ -9039,6 +9039,133 @@ mod tests {
     }
 
     #[test]
+    fn view_edit_section_layout_space_toggles_split_mode() {
+        let (store, db_path) = make_test_store_with_view("section-layout-space-toggle");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to sections");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select section");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to details");
+
+        for _ in 0..5 {
+            app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+                .expect("move to section layout field");
+        }
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .expect("view edit state")
+                .section_details_field_index,
+            5
+        );
+        assert!(
+            !app.view_edit_state
+                .as_ref()
+                .expect("view edit state")
+                .draft
+                .sections[0]
+                .show_children
+        );
+
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle section layout");
+        assert!(
+            app.view_edit_state
+                .as_ref()
+                .expect("view edit state")
+                .draft
+                .sections[0]
+                .show_children
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_h_does_not_toggle_section_layout() {
+        let (store, db_path) = make_test_store_with_view("section-layout-no-h-shortcut");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut view = app
+            .views
+            .iter()
+            .find(|v| v.name == "TestView")
+            .cloned()
+            .expect("TestView should exist");
+        view.sections.push(Section {
+            title: "Alpha".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to sections");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("select section");
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("to details");
+
+        for _ in 0..5 {
+            app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+                .expect("move to section layout field");
+        }
+        assert_eq!(
+            app.view_edit_state
+                .as_ref()
+                .expect("view edit state")
+                .section_details_field_index,
+            5
+        );
+
+        app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
+            .expect("h should be ignored");
+        assert!(
+            !app.view_edit_state
+                .as_ref()
+                .expect("view edit state")
+                .draft
+                .sections[0]
+                .show_children,
+            "h shortcut should not toggle section layout"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
         let (store, db_path) = make_test_store_with_view("section-x-delete-confirm");
         let classifier = SubstringClassifier;
