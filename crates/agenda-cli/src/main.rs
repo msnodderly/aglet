@@ -105,7 +105,7 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Numeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Shorthand examples:\n  agenda list --project Aglet --open-ready --sort Priority\n  agenda list --project Aglet --project NeoNV --open-ready\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  --project is shorthand for repeated --any-category values.\n  --open-ready excludes Done, Complete, In Progress, and Waiting/Blocked.\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
         #[arg(long)]
@@ -116,9 +116,15 @@ enum Command {
         /// OR-category filter (repeat for OR). Item must have AT LEAST ONE specified category.
         #[arg(long = "any-category")]
         any_category: Vec<String>,
+        /// Project shorthand (repeat for OR). Equivalent to `--any-category`.
+        #[arg(long = "project")]
+        project: Vec<String>,
         /// Exclude-category filter (repeat for OR). Item must have NONE of the specified categories.
         #[arg(long = "exclude-category")]
         exclude_category: Vec<String>,
+        /// Open-queue shorthand. Excludes Done, Complete, In Progress, and Waiting/Blocked.
+        #[arg(long = "open-ready")]
+        open_ready: bool,
         /// Numeric equality filter (repeat for AND): category value must equal VALUE.
         #[arg(
             long = "value-eq",
@@ -364,7 +370,9 @@ fn run() -> Result<(), String> {
         view: None,
         category: Vec::new(),
         any_category: Vec::new(),
+        project: Vec::new(),
         exclude_category: Vec::new(),
+        open_ready: false,
         value_eq: Vec::new(),
         value_in: Vec::new(),
         value_max: Vec::new(),
@@ -419,7 +427,9 @@ fn run() -> Result<(), String> {
             view,
             category,
             any_category,
+            project,
             exclude_category,
+            open_ready,
             value_eq,
             value_in,
             value_max,
@@ -432,7 +442,9 @@ fn run() -> Result<(), String> {
             ListFilters {
                 all_categories: category,
                 any_categories: any_category,
+                project_categories: project,
                 exclude_categories: exclude_category,
+                open_ready,
                 value_eq,
                 value_in,
                 value_max,
@@ -723,10 +735,13 @@ fn unknown_hashtag_feedback_line(unknown_hashtags: &[String]) -> Option<String> 
     ))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ListFilters {
     all_categories: Vec<String>,
     any_categories: Vec<String>,
+    project_categories: Vec<String>,
     exclude_categories: Vec<String>,
+    open_ready: bool,
     value_eq: Vec<String>,
     value_in: Vec<String>,
     value_max: Vec<String>,
@@ -750,10 +765,12 @@ struct NumericFilter {
 fn cmd_list(
     store: &Store,
     view_name: Option<String>,
-    filters: ListFilters,
+    mut filters: ListFilters,
     sort_args: Vec<String>,
     output_format: OutputFormatArg,
 ) -> Result<(), String> {
+    apply_list_shorthand_filters(&mut filters);
+
     let mut items = store.list_items().map_err(|e| e.to_string())?;
     if !filters.include_done {
         items.retain(|item| !item.is_done);
@@ -817,6 +834,32 @@ fn cmd_list(
         print_item_table(&items, &category_names, &sort_keys, &categories);
     }
     Ok(())
+}
+
+const OPEN_READY_EXCLUDE_CATEGORIES: [&str; 4] =
+    ["Done", "Complete", "In Progress", "Waiting/Blocked"];
+
+fn push_case_insensitive_unique(values: &mut Vec<String>, value: &str) {
+    if values
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(value))
+    {
+        return;
+    }
+    values.push(value.to_string());
+}
+
+fn apply_list_shorthand_filters(filters: &mut ListFilters) {
+    let projects = std::mem::take(&mut filters.project_categories);
+    for project in projects {
+        push_case_insensitive_unique(&mut filters.any_categories, &project);
+    }
+
+    if filters.open_ready {
+        for category in OPEN_READY_EXCLUDE_CATEGORIES {
+            push_case_insensitive_unique(&mut filters.exclude_categories, category);
+        }
+    }
 }
 
 fn retain_items_with_all_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
@@ -2299,10 +2342,10 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
-        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        read_note_from_stdin, reject_items_with_any_categories,
+        apply_list_shorthand_filters, build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink,
+        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
+        item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
+        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
         Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, ListFilters,
@@ -2701,6 +2744,32 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_repeated_project_flags() {
+        let cli =
+            Cli::try_parse_from(["agenda", "list", "--project", "Aglet", "--project", "NeoNV"])
+                .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { project, .. }) => {
+                assert_eq!(project, vec!["Aglet".to_string(), "NeoNV".to_string()]);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_open_ready_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--open-ready"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { open_ready, .. }) => {
+                assert!(open_ready);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_list_with_repeated_exclude_category_flags() {
         let cli = Cli::try_parse_from([
             "agenda",
@@ -2822,9 +2891,45 @@ mod tests {
             .find_subcommand_mut("list")
             .expect("list subcommand should exist");
         let help = list_cmd.render_help().to_string();
+        assert!(help.contains("--project Aglet --open-ready"));
+        assert!(
+            help.contains("--open-ready excludes Done, Complete, In Progress, and Waiting/Blocked")
+        );
         assert!(help.contains("Numeric value filter examples:"));
         assert!(help.contains("--value-in Complexity 1,2"));
         assert!(help.contains("--value-max Complexity 2"));
+    }
+
+    #[test]
+    fn apply_list_shorthand_filters_matches_equivalent_long_form_filter_chain() {
+        let mut shorthand = ListFilters {
+            all_categories: Vec::new(),
+            any_categories: vec!["Core".to_string()],
+            project_categories: vec!["Aglet".to_string(), "NeoNV".to_string()],
+            exclude_categories: vec!["Done".to_string()],
+            open_ready: true,
+            value_eq: Vec::new(),
+            value_in: Vec::new(),
+            value_max: Vec::new(),
+            include_done: false,
+        };
+
+        apply_list_shorthand_filters(&mut shorthand);
+
+        assert!(shorthand.project_categories.is_empty());
+        assert_eq!(
+            shorthand.any_categories,
+            vec!["Core".to_string(), "Aglet".to_string(), "NeoNV".to_string()]
+        );
+        assert_eq!(
+            shorthand.exclude_categories,
+            vec![
+                "Done".to_string(),
+                "Complete".to_string(),
+                "In Progress".to_string(),
+                "Waiting/Blocked".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -3099,7 +3204,9 @@ mod tests {
         let filters = ListFilters {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
+            project_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            open_ready: false,
             value_eq: vec!["Nope".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3116,7 +3223,9 @@ mod tests {
         let filters = ListFilters {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
+            project_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            open_ready: false,
             value_eq: vec!["Status".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3137,7 +3246,9 @@ mod tests {
         let filters = ListFilters {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
+            project_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            open_ready: false,
             value_eq: vec!["Complexity".to_string(), "abc".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),

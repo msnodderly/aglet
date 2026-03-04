@@ -56,6 +56,13 @@ items that have either category.
 For example, `agenda-cli list --exclude-category Complete` removes completed
 status/category matches from results.
 
+`agenda-cli list --project` is shorthand for repeated `--any-category` filters.
+For example, `agenda-cli list --project Aglet --project NeoNV` returns items
+that have either project category.
+
+`agenda-cli list --open-ready` is shorthand for excluding `Done`, `Complete`,
+`In Progress`, and `Waiting/Blocked` in one flag.
+
 ## Category Assignment in Items
 
 When viewing items, the categories list includes both the assigned category and

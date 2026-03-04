@@ -16,16 +16,30 @@ Single project category:
 cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Priority
 ```
 
+Equivalent shorthand:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag list --project neonv --open-ready --sort Priority
+```
+
 OR across multiple project categories:
 
 ```bash
 cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category aglet --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Priority
 ```
 
+Equivalent shorthand:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag list --project aglet --project neonv --open-ready --sort Priority
+```
+
 You can combine both styles:
 - `--category <name>`: AND semantics (must match all)
 - `--any-category <name>`: OR semantics (must match at least one)
+- `--project <name>`: OR semantics shorthand for `--any-category`
 - `--exclude-category <name>`: NOT semantics (must match none)
+- `--open-ready`: shorthand to exclude `Done`, `Complete`, `In Progress`, and `Waiting/Blocked`
 
 ## Reusable script
 
