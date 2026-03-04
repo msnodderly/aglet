@@ -3667,35 +3667,23 @@ impl App {
                     return Ok(());
                 }
                 let name = input_text.clone();
+                if self
+                    .views
+                    .iter()
+                    .any(|view| view.name.eq_ignore_ascii_case(&name))
+                {
+                    self.status = format!("View \"{name}\" already exists");
+                    return Ok(());
+                }
                 let mut view = View::new(name.clone());
                 if view.sections.is_empty() {
                     view.sections.push(Self::view_edit_default_section(
                         Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
                     ));
                 }
-
-                match agenda.store().create_view(&view) {
-                    Ok(()) => {
-                        let view_name = view.name.clone();
-                        self.refresh(agenda.store())?;
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        if let Some(new_view) =
-                            self.views.iter().find(|v| v.name == view_name).cloned()
-                        {
-                            self.open_view_edit_new_view_focus_first_section(new_view);
-                        } else {
-                            self.mode = Mode::ViewPicker;
-                            self.status = format!("Created view {view_name}");
-                        }
-                    }
-                    Err(err) => {
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.mode = Mode::ViewPicker;
-                        self.status = format!("View create failed: {err}");
-                    }
-                }
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.open_view_edit_new_view_focus_first_section(view);
             }
             Some(NameInputContext::ViewRename) => {
                 if input_text.is_empty() {
