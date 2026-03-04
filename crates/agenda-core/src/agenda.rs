@@ -2189,4 +2189,128 @@ mod tests {
         assert_eq!(links.blocks, vec![c]);
         assert_eq!(links.related, vec![d]);
     }
+
+    // ── normalize_related_pair ─────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_related_pair_returns_lexicographic_order() {
+        use uuid::Uuid;
+        let a: ItemId = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let b: ItemId = Uuid::parse_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
+
+        // a < b lexicographically, so (a, b) should be unchanged.
+        let (lo, hi) = Agenda::normalize_related_pair(a, b);
+        assert_eq!(lo, a);
+        assert_eq!(hi, b);
+
+        // Reversed input should also produce (a, b).
+        let (lo2, hi2) = Agenda::normalize_related_pair(b, a);
+        assert_eq!(lo2, a);
+        assert_eq!(hi2, b);
+    }
+
+    #[test]
+    fn normalize_related_pair_is_idempotent() {
+        use uuid::Uuid;
+        let a: ItemId = Uuid::parse_str("aaaaaaaa-0000-0000-0000-000000000000").unwrap();
+        let b: ItemId = Uuid::parse_str("bbbbbbbb-0000-0000-0000-000000000000").unwrap();
+
+        let first = Agenda::normalize_related_pair(a, b);
+        let second = Agenda::normalize_related_pair(first.0, first.1);
+        assert_eq!(first, second);
+    }
+
+    // ── ensure_not_self_link ───────────────────────────────────────────────────
+
+    #[test]
+    fn ensure_not_self_link_rejects_identical_ids() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let id = make_item(&store, "Task");
+
+        let result = agenda.ensure_not_self_link(id, id, "depends-on");
+        assert!(
+            result.is_err(),
+            "self-link should be rejected"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("self-link"), "error message should mention self-link, got: {msg}");
+    }
+
+    #[test]
+    fn ensure_not_self_link_accepts_distinct_ids() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "Task A");
+        let b = make_item(&store, "Task B");
+
+        assert!(
+            agenda.ensure_not_self_link(a, b, "depends-on").is_ok(),
+            "distinct ids should be accepted"
+        );
+    }
+
+    // ── ensure_depends_on_no_cycle ─────────────────────────────────────────────
+
+    #[test]
+    fn ensure_depends_on_no_cycle_detects_direct_cycle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+
+        // A depends-on B
+        agenda.link_items_depends_on(a, b).unwrap();
+
+        // Trying to make B depend-on A would create A→B→A cycle.
+        let result = agenda.ensure_depends_on_no_cycle(b, a);
+        assert!(
+            result.is_err(),
+            "direct cycle A→B→A should be detected"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("cycle"), "error should mention cycle, got: {msg}");
+    }
+
+    #[test]
+    fn ensure_depends_on_no_cycle_detects_transitive_cycle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+
+        // A→B, B→C
+        agenda.link_items_depends_on(a, b).unwrap();
+        agenda.link_items_depends_on(b, c).unwrap();
+
+        // Trying to make C depend-on A would create A→B→C→A cycle.
+        let result = agenda.ensure_depends_on_no_cycle(c, a);
+        assert!(
+            result.is_err(),
+            "transitive cycle A→B→C→A should be detected"
+        );
+    }
+
+    #[test]
+    fn ensure_depends_on_no_cycle_allows_non_cyclic_dependency() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+
+        agenda.link_items_depends_on(a, b).unwrap();
+
+        // C→A is fine; there's no path from A back to C.
+        assert!(
+            agenda.ensure_depends_on_no_cycle(c, a).is_ok(),
+            "non-cyclic dependency should be accepted"
+        );
+    }
 }

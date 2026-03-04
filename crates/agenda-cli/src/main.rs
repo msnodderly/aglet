@@ -372,7 +372,9 @@ enum ViewCommand {
 
     /// Clone a view into a new mutable view
     Clone {
+        /// Name of the view to clone.
         source_name: String,
+        /// Name for the new cloned view.
         new_name: String,
     },
 
@@ -2600,10 +2602,10 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
-        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        read_note_from_stdin, reject_items_with_any_categories,
+        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_link, cmd_unlink,
+        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
+        item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
+        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
         write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
@@ -4284,5 +4286,165 @@ mod tests {
             .list_dependency_ids_for_item(a.id)
             .expect("list dependencies")
             .is_empty());
+    }
+
+    // ── cmd_link ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cmd_link_depends_on_creates_dependency() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("cmd_link DependsOn should succeed");
+
+        let deps = store.list_dependency_ids_for_item(a.id).expect("list");
+        assert!(deps.contains(&b.id), "a should depend-on b");
+    }
+
+    #[test]
+    fn cmd_link_blocks_creates_inverse_dependency() {
+        // "A blocks B" means B depends-on A.
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Blocker".to_string());
+        let b = Item::new("Blocked".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::Blocks {
+                blocker_item_id: a.id.to_string(),
+                blocked_item_id: b.id.to_string(),
+            },
+        )
+        .expect("cmd_link Blocks should succeed");
+
+        // "A blocks B" is stored as "B depends-on A"
+        let deps = store.list_dependency_ids_for_item(b.id).expect("list");
+        assert!(deps.contains(&a.id), "b should depend-on a after 'a blocks b'");
+    }
+
+    #[test]
+    fn cmd_link_related_creates_symmetric_link() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::Related {
+                item_a_id: a.id.to_string(),
+                item_b_id: b.id.to_string(),
+            },
+        )
+        .expect("cmd_link Related should succeed");
+
+        // Related links are symmetric — both items should report the other.
+        let related_a = store.list_related_ids_for_item(a.id).expect("list a");
+        let related_b = store.list_related_ids_for_item(b.id).expect("list b");
+        assert!(related_a.contains(&b.id), "a should see b as related");
+        assert!(related_b.contains(&a.id), "b should see a as related");
+    }
+
+    #[test]
+    fn cmd_link_depends_on_self_returns_error() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        store.create_item(&a).expect("create a");
+
+        let result = cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: a.id.to_string(),
+            },
+        );
+        assert!(result.is_err(), "self depends-on link should be rejected");
+    }
+
+    #[test]
+    fn cmd_link_depends_on_cycle_returns_error() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("A".to_string());
+        let b = Item::new("B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        // A depends-on B
+        cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("first link should succeed");
+
+        // B depends-on A would create a cycle
+        let result = cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: b.id.to_string(),
+                depends_on_item_id: a.id.to_string(),
+            },
+        );
+        assert!(result.is_err(), "cyclic dependency should be rejected");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("cycle"), "error should mention cycle, got: {msg}");
+    }
+
+    #[test]
+    fn cmd_link_depends_on_is_idempotent() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        let cmd = || {
+            cmd_link(
+                &agenda,
+                LinkCommand::DependsOn {
+                    item_id: a.id.to_string(),
+                    depends_on_item_id: b.id.to_string(),
+                },
+            )
+        };
+
+        cmd().expect("first link");
+        cmd().expect("second link — should not error");
+
+        let deps = store.list_dependency_ids_for_item(a.id).expect("list");
+        assert_eq!(deps.len(), 1, "only one dependency should exist");
     }
 }
