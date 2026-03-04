@@ -38,6 +38,18 @@ To show items with different mutually exclusive values:
 - Create separate views for each value
 - Or use sections (TUI feature, not yet exposed in CLI)
 
+## `agenda-cli view clone` Semantics
+
+`agenda-cli view clone "<source>" "<new name>"` creates a new mutable view by
+copying the source view configuration (criteria, sections, unmatched settings,
+aliases, and display metadata) with a fresh ID.
+
+Practical implications:
+- Cloning **does not mutate** the source view (including immutable system views
+  like `All Items`).
+- Target-name validation still uses create rules; reserved system target names
+  (for example `All Items`) are rejected.
+
 ## CLI Default Behavior
 
 Running `agenda-cli list` without arguments shows a default view, which may be
