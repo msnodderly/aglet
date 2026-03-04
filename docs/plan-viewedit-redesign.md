@@ -25,25 +25,25 @@ The current ViewEdit screen (view manager) is clunky and cryptic. Labels like "O
 **After:**
 ```
 ── DETAILS: Ready ──────────────────────────
-  Title                    Ready
-  Filter                   Include: Ready
+  Title: Ready
+  Filter: Include: Ready
   ─────────────────────────────────────────
-  Columns                  Issue type, Area, Priority, Complexity
-  Display mode             (use view default)
+  Columns: Issue type, Area, Priority, Complexity
+  Display mode: (use view default)
   ─────────────────────────────────────────
-  Auto-assign on add       (none)
-  Auto-unassign on remove  (none)
-  Expand sub-categories    yes
+  Auto-assign on add: (none)
+  Auto-unassign on remove: (none)
+  Expand sub-categories: yes
 ```
 
 Changes:
 - **7 fields** (down from 8): removed "Expand in Sections list" entirely
-- **Fixed column alignment**: labels padded to longest in group, values start at consistent column
 - **Renamed labels**: Criteria→Filter, On insert assign→Auto-assign on add, On remove unassign→Auto-unassign on remove, Show children→Expand sub-categories, Display override→Display mode
 - **Display mode values**: `inherit`→`(use view default)`, keep `single-line`/`multi-line`
 - **Columns**: names only, no width numbers
 - **Grouped** with thin `─` separator lines (DarkGray) between: [Title,Filter] / [Columns,Display mode] / [Auto-assign,Auto-unassign,Expand sub-categories]
 - **Removed**: tip line, block title shows section name instead of number
+- **Kept**: colon-separated label format
 
 ### View Details (right pane) — Before → After
 
@@ -65,23 +65,22 @@ Changes:
 **After:**
 ```
 ── DETAILS: View ───────────────────────────
-  Name                     Aglet
+  Name: Aglet
   ─────────────────────────────────────────
-  Filter criteria
+  Filter criteria:
     Include: Ready
   ─────────────────────────────────────────
-  Date range (include)     (all)
-  Date range (exclude)     (none)
+  Date range (include): (all)
+  Date range (exclude): (none)
   ─────────────────────────────────────────
-  Display mode             single-line
-  Aliases                  (none)
+  Display mode: single-line
+  Aliases: (none)
   ─────────────────────────────────────────
-  Show unmatched           yes, as "Other"
-  Unmatched label          "Other"
+  Show unmatched: yes, as "Other"
+  Unmatched label: "Other"
 ```
 
 Changes:
-- **Fixed column alignment**: labels padded, values at consistent column
 - **Removed** "(r)" shortcut from Name label
 - **Renamed**: Criteria→Filter criteria, When include→Date range (include), When exclude→Date range (exclude), Unmatched visible→Show unmatched
 - **Show unmatched** combined display: `yes, as "Other"` or `hidden`
