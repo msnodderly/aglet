@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ratatui = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_28"] }
 crossterm = "0.28"
 agenda-core = { path = "../agenda-core" }
 chrono = "0.4"
-tui-textarea = "0.7"
+tui_textarea = { package = "tui-textarea-2", version = "0.10.0", default-features = false, features = ["crossterm_0_28"] }
 rust_decimal = "1"

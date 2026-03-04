@@ -766,10 +766,11 @@ impl App {
             }
             _ => {
                 let mut filter_status: Option<String> = None;
+                let text_key = self.text_key_event(code);
                 if let Some(state) = &mut self.view_edit_state {
                     match inline {
                         Some(ViewEditInlineInput::SectionsFilter) => {
-                            state.sections_filter_buf.handle_key(code, false);
+                            state.sections_filter_buf.handle_key_event(text_key, false);
                             filter_status = Some(if Self::view_edit_filter_is_active(state) {
                                 format!("Section filter: {}", state.sections_filter_buf.text())
                             } else {
@@ -777,7 +778,7 @@ impl App {
                             });
                         }
                         _ => {
-                            state.inline_buf.handle_key(code, false);
+                            state.inline_buf.handle_key_event(text_key, false);
                         }
                     }
                 }
@@ -865,8 +866,9 @@ impl App {
                     }
                     _ => {
                         let mut consumed = false;
+                        let text_key = self.text_key_event(code);
                         if let Some(state) = &mut self.view_edit_state {
-                            consumed = state.overlay_filter_buf.handle_key(code, false);
+                            consumed = state.overlay_filter_buf.handle_key_event(text_key, false);
                         }
                         if consumed {
                             let filtered = self

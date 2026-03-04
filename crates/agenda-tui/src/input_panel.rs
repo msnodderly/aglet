@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use agenda_core::model::{CategoryId, CategoryValueKind, ItemId};
-use crossterm::event::KeyCode;
+#[cfg(test)]
+use crossterm::event::KeyModifiers;
+use crossterm::event::{KeyCode, KeyEvent};
 use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
@@ -250,14 +252,15 @@ impl InputPanel {
         }
     }
 
-    /// Handle a keypress. Returns the action the caller should perform.
-    /// Handle a keypress. `current_row_is_assigned_numeric` tells whether the
+    /// Handle a key event. Returns the action the caller should perform.
+    /// `current_row_is_assigned_numeric` tells whether the
     /// category row at the cursor is an assigned numeric category (for key routing).
-    pub(crate) fn handle_key(
+    pub(crate) fn handle_key_event(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
+        let code = key.code;
         if let Some(action) = self.handle_focus_navigation(code, current_row_is_assigned_numeric) {
             return action;
         }
@@ -266,7 +269,7 @@ impl InputPanel {
             InputPanelFocus::Text | InputPanelFocus::Note => {
                 let multiline = self.focus == InputPanelFocus::Note;
                 let buffer = self.active_buffer_mut();
-                if buffer.handle_key(code, multiline) {
+                if buffer.handle_key_event(key, multiline) {
                     InputPanelAction::Handled
                 } else {
                     InputPanelAction::Unhandled
@@ -384,6 +387,18 @@ impl InputPanel {
             InputPanelFocus::Note => &mut self.note,
             _ => &mut self.text,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handle_key(
+        &mut self,
+        code: KeyCode,
+        current_row_is_assigned_numeric: bool,
+    ) -> InputPanelAction {
+        self.handle_key_event(
+            KeyEvent::new(code, KeyModifiers::NONE),
+            current_row_is_assigned_numeric,
+        )
     }
 
     fn cycle_focus_forward(&mut self) {

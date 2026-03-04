@@ -1270,31 +1270,7 @@ impl App {
                     .min(max_x);
                 Some((cursor_x, regions.text.y))
             }
-            InputPanelFocus::Note => {
-                let note_inner = regions.note_inner?;
-                if note_inner.width == 0 || note_inner.height == 0 {
-                    return None;
-                }
-                let note_rect = regions.note?;
-                let (line, col) = panel.note.line_col();
-                let scroll = list_scroll_for_selected_line(note_rect, Some(line)) as usize;
-                let visible_line = line.saturating_sub(scroll);
-                let max_x = note_inner
-                    .x
-                    .saturating_add(note_inner.width.saturating_sub(1));
-                let max_y = note_inner
-                    .y
-                    .saturating_add(note_inner.height.saturating_sub(1));
-                let cursor_x = note_inner
-                    .x
-                    .saturating_add(col.min(u16::MAX as usize) as u16)
-                    .min(max_x);
-                let cursor_y = note_inner
-                    .y
-                    .saturating_add(visible_line.min(u16::MAX as usize) as u16)
-                    .min(max_y);
-                Some((cursor_x, cursor_y))
-            }
+            InputPanelFocus::Note => None,
             InputPanelFocus::Categories => {
                 if panel.category_filter_editing {
                     let filter_rect = regions.categories_filter?;
@@ -2470,38 +2446,20 @@ impl App {
 
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
-            let note_lines: Vec<Line<'_>> = if panel.note.is_empty() {
-                vec![Line::from("")]
-            } else {
-                panel.note.text().lines().map(Line::from).collect()
-            };
             let note_focused = panel.focus == InputPanelFocus::Note;
             let note_border_color = if note_focused {
                 Color::Cyan
             } else {
                 Color::Blue
             };
-            let note_title = "Note";
-            let note_cursor_line = panel.note.line_col().0;
-            let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
-            frame.render_widget(
-                Paragraph::new(note_lines)
-                    .scroll((note_scroll, 0))
-                    .block(
-                        Block::default()
-                            .title(note_title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(note_border_color)),
-                    )
-                    .wrap(Wrap { trim: false }),
-                note_rect,
+            let mut note_widget = panel.note.widget().clone();
+            note_widget.set_block(
+                Block::default()
+                    .title("Note")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(note_border_color)),
             );
-            Self::render_vertical_scrollbar(
-                frame,
-                note_rect,
-                panel.note.text().lines().count().max(1),
-                note_scroll as usize,
-            );
+            frame.render_widget(&note_widget, note_rect);
         }
 
         // Inline categories list (bordered, scrollable)
@@ -3074,9 +3032,6 @@ impl App {
                     .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
                 let note_editing = self.category_manager_details_note_editing();
                 let note_dirty = self.category_manager_details_note_dirty();
-                let note_text = self
-                    .category_manager_details_note_text()
-                    .unwrap_or_default();
 
                 let mut parent_name = "(root)".to_string();
                 let mut child_count = 0usize;
@@ -3188,51 +3143,36 @@ impl App {
                     "Note"
                 };
                 let note_rect = details_chunks[2];
-                let note_inner = Rect {
-                    x: note_rect.x.saturating_add(1),
-                    y: note_rect.y.saturating_add(1),
-                    width: note_rect.width.saturating_sub(2),
-                    height: note_rect.height.saturating_sub(2),
-                };
-                let note_lines: Vec<Line<'_>> = if note_text.is_empty() {
-                    vec![Line::from("")]
+                if let Some(state) = self.category_manager.as_ref() {
+                    let mut note_widget = state.details_note.widget().clone();
+                    note_widget.set_block(
+                        Block::default()
+                            .title(if note_block_focus {
+                                format!("> {note_title}")
+                            } else {
+                                note_title.to_string()
+                            })
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(if note_editing {
+                                Color::Yellow
+                            } else if note_block_focus {
+                                Color::LightCyan
+                            } else {
+                                pane_idle
+                            })),
+                    );
+                    frame.render_widget(&note_widget, note_rect);
                 } else {
-                    note_text.lines().map(Line::from).collect()
-                };
-                let note_cursor_line = self
-                    .category_manager
-                    .as_ref()
-                    .map(|state| state.details_note.line_col().0)
-                    .unwrap_or(0);
-                let note_scroll = list_scroll_for_selected_line(note_rect, Some(note_cursor_line));
-                frame.render_widget(
-                    Paragraph::new(note_lines)
-                        .scroll((note_scroll, 0))
-                        .wrap(Wrap { trim: false })
-                        .block(
+                    frame.render_widget(
+                        Paragraph::new("").block(
                             Block::default()
-                                .title(if note_block_focus {
-                                    format!("> {note_title}")
-                                } else {
-                                    note_title.to_string()
-                                })
+                                .title(note_title)
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(if note_editing {
-                                    Color::Yellow
-                                } else if note_block_focus {
-                                    Color::LightCyan
-                                } else {
-                                    pane_idle
-                                })),
+                                .border_style(Style::default().fg(pane_idle)),
                         ),
-                    note_rect,
-                );
-                Self::render_vertical_scrollbar(
-                    frame,
-                    note_rect,
-                    note_text.lines().count().max(1),
-                    note_scroll as usize,
-                );
+                        note_rect,
+                    );
+                }
 
                 let details_hint = if note_editing {
                     "Type to edit  Tab/Esc: save and leave note"
@@ -3255,30 +3195,6 @@ impl App {
                     }
                 };
                 frame.render_widget(Paragraph::new(details_hint), details_chunks[3]);
-
-                if note_editing && note_inner.width > 0 && note_inner.height > 0 {
-                    let (line, col) = self
-                        .category_manager
-                        .as_ref()
-                        .map(|state| state.details_note.line_col())
-                        .unwrap_or((0, 0));
-                    let visible_line = line.saturating_sub(note_scroll as usize);
-                    let max_x = note_inner
-                        .x
-                        .saturating_add(note_inner.width.saturating_sub(1));
-                    let max_y = note_inner
-                        .y
-                        .saturating_add(note_inner.height.saturating_sub(1));
-                    let cursor_x = note_inner
-                        .x
-                        .saturating_add(col.min(u16::MAX as usize) as u16)
-                        .min(max_x);
-                    let cursor_y = note_inner
-                        .y
-                        .saturating_add(visible_line.min(u16::MAX as usize) as u16)
-                        .min(max_y);
-                    frame.set_cursor_position((cursor_x, cursor_y));
-                }
             } else {
                 frame.render_widget(
                     Paragraph::new(vec![
