@@ -2349,7 +2349,9 @@ impl App {
             Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
-                    if state.pane_focus == ViewEditPaneFocus::Sections {
+                    if state.discard_confirm {
+                        "y:save & close  n:discard  Esc:keep editing"
+                    } else if state.pane_focus == ViewEditPaneFocus::Sections {
                         "S:save  n:new  x:del  Enter:details  Tab:pane  Esc:close"
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
                         "S:save  p:hide  Tab:pane  Esc:close"
@@ -3750,6 +3752,15 @@ impl App {
                     )))
                     .style(style_for_section_field(5, &items, &mut selected_line)),
                 );
+                if details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 5
+                {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    Split this section into sub-groups based on child categories",
+                        Style::default().fg(Color::DarkGray),
+                    ))));
+                }
             } else {
                 items.push(ListItem::new(Line::from("  No selection")));
             }
