@@ -224,8 +224,9 @@ impl App {
     }
 
     fn view_details_aux_field_count() -> usize {
-        // when include, when exclude, display mode, unmatched visible, unmatched label, aliases
-        6
+        // when include, when exclude, display mode, unmatched visible,
+        // hide dependent items, unmatched label, aliases
+        7
     }
 
     fn view_edit_showing_view_details(state: &ViewEditState) -> bool {
@@ -1161,7 +1162,7 @@ impl App {
         let first = first_non_reserved_category_index(&self.category_rows);
         if let Some(state) = &mut self.view_edit_state {
             state.region = ViewEditRegion::Unmatched;
-            state.unmatched_field_index = 5;
+            state.unmatched_field_index = 6;
             state.overlay = Some(ViewEditOverlay::CategoryPicker {
                 target: CategoryEditTarget::ViewAliases,
             });
@@ -1516,11 +1517,19 @@ impl App {
             KeyCode::Char('l') => {
                 if let Some(state) = &mut self.view_edit_state {
                     let current = state.draft.unmatched_label.clone();
-                    state.unmatched_field_index = 4;
+                    state.unmatched_field_index = 5;
                     state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                     state.inline_buf = text_buffer::TextBuffer::new(current);
                 }
                 self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+            }
+            KeyCode::Char('d') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.unmatched_field_index = 4;
+                    state.draft.hide_dependent_items = !state.draft.hide_dependent_items;
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
             }
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.open_view_edit_alias_picker();
@@ -1593,11 +1602,18 @@ impl App {
                             state.discard_confirm = false;
                         }
                     }
+                    4 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.hide_dependent_items = !state.draft.hide_dependent_items;
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
                     _ => {
-                        if target == 4 {
+                        if target == 5 {
                             if let Some(state) = &mut self.view_edit_state {
                                 let current = state.draft.unmatched_label.clone();
-                                state.unmatched_field_index = 4;
+                                state.unmatched_field_index = 5;
                                 state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                                 state.inline_buf = text_buffer::TextBuffer::new(current);
                             }

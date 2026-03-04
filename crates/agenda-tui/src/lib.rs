@@ -8611,14 +8611,14 @@ mod tests {
         );
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("unmatched visible -> unmatched label");
+            .expect("unmatched visible -> hide dependent");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
             4
         );
 
         app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-            .expect("unmatched label -> unmatched visible");
+            .expect("hide dependent -> unmatched visible");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
             3
@@ -8698,9 +8698,11 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("move to unmatched label row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("move past hide dependent to unmatched label row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            4
+            5
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -8728,13 +8730,13 @@ mod tests {
         app.open_view_edit(view);
 
         // Move focus to Aliases row in view details.
-        for _ in 0..6 {
+        for _ in 0..7 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move details selection");
         }
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            5
+            6
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -11518,5 +11520,74 @@ mod tests {
         store.update_item(&a).expect("update a");
         app.refresh(&store).expect("refresh");
         assert!(!app.is_item_blocked(b.id));
+    }
+
+    #[test]
+    fn hide_dependent_items_view_setting_filters_blocked_items_from_slots() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        let mut view = View::new("Focused".to_string());
+        view.hide_dependent_items = true;
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Focused");
+        app.refresh(&store).expect("refresh focused");
+
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocker.id)),
+            "unblocked item should remain visible"
+        );
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != blocked.id)),
+            "blocked item should be hidden when view.hide_dependent_items=true"
+        );
+    }
+
+    #[test]
+    fn header_shows_hide_dependent_indicator_when_enabled() {
+        let mut view = View::new("Focus".to_string());
+        view.hide_dependent_items = true;
+
+        let app = App {
+            views: vec![view],
+            view_index: 0,
+            mode: Mode::Normal,
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("dep:hidden"),
+            "header should indicate hide-dependent mode: {rendered}"
+        );
     }
 }

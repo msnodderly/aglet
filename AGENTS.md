@@ -274,6 +274,18 @@ Do not apply these aliases to category identity, query/filter behavior, section
 titles, generated subsection labels, or board column headings unless a separate
 feature explicitly requests that behavior.
 
+## View `hide_dependent_items` Semantics
+
+View-level hide-dependent mode is persisted in `views.hide_dependent_items`
+(`View.hide_dependent_items`, default `false`).
+
+Practical implications:
+- "Dependent/blocked" means an item has at least one unresolved `depends-on`
+  link to an item that is **not done**.
+- Done dependencies do not block.
+- Current filtering is applied in CLI/TUI view rendering paths using link data;
+  if you add another view consumer, wire this filter there too.
+
 ## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
 
 In the rewritten category manager (`c` / `F9`), the Details pane uses `j/k` for

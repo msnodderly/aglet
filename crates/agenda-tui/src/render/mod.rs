@@ -1408,8 +1408,8 @@ impl App {
     }
 
     pub(crate) fn render_header(&self) -> Paragraph<'_> {
-        let view_name = self
-            .current_view()
+        let current_view = self.current_view();
+        let view_name = current_view
             .map(|view| view.name.as_str())
             .unwrap_or("(none)");
         let mode = format!("{:?}", self.mode);
@@ -1419,13 +1419,23 @@ impl App {
         } else {
             String::new()
         };
+        let view_flags = if current_view
+            .map(|view| view.hide_dependent_items)
+            .unwrap_or(false)
+        {
+            " dep:hidden"
+        } else {
+            ""
+        };
 
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "Agenda Reborn",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("  view:{view_name}  mode:{mode}{filter}")),
+            Span::raw(format!(
+                "  view:{view_name}{view_flags}  mode:{mode}{filter}"
+            )),
         ]))
     }
 
@@ -3685,7 +3695,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
@@ -3717,6 +3727,25 @@ impl App {
                     )),
                 );
 
+                let hide_dependent_value = if state.draft.hide_dependent_items {
+                    "yes".to_string()
+                } else {
+                    "no".to_string()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Hide dependent",
+                        hide_dependent_value,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
                 let unmatched_label_text = if matches!(
                     state.inline_input,
                     Some(ViewEditInlineInput::UnmatchedLabel)
@@ -3733,7 +3762,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -4147,6 +4176,14 @@ impl App {
                     "hidden"
                 },
                 unmatched_count
+            ))));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Dependent items: {}",
+                if state.draft.hide_dependent_items {
+                    "hidden"
+                } else {
+                    "shown"
+                }
             ))));
 
             let selected_preview_row = if preview_items.is_empty() {
