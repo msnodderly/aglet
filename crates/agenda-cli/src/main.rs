@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
@@ -999,8 +999,24 @@ fn cmd_search(
 
 fn cmd_export(store: &Store, view_name: Option<String>, include_links: bool) -> Result<(), String> {
     let body = build_markdown_export(store, view_name.as_deref(), include_links)?;
-    print!("{body}");
+    write_stdout_allow_broken_pipe(&body)?;
     Ok(())
+}
+
+fn write_stdout_allow_broken_pipe(body: &str) -> Result<(), String> {
+    let mut stdout = io::stdout().lock();
+    write_output_allow_broken_pipe(&mut stdout, body)
+}
+
+fn write_output_allow_broken_pipe<W: Write>(writer: &mut W, body: &str) -> Result<(), String> {
+    match writer
+        .write_all(body.as_bytes())
+        .and_then(|_| writer.flush())
+    {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(err) => Err(format!("failed writing to stdout: {err}")),
+    }
 }
 
 fn cmd_delete(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
@@ -2495,8 +2511,9 @@ mod tests {
         read_note_from_stdin, reject_items_with_any_categories,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
+        CliSortField, CliSortKey, Command, LinkCommand, ListFilters, NumericFilter,
+        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2506,7 +2523,7 @@ mod tests {
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
-    use std::io::Cursor;
+    use std::io::{self, Cursor, Write};
     use uuid::Uuid;
 
     #[test]
@@ -3102,6 +3119,57 @@ mod tests {
         assert!(help.contains("--view <VIEW>"));
         assert!(help.contains("--include-links"));
         assert!(help.contains("agenda export --view \"All Items\""));
+    }
+
+    struct AlwaysBrokenPipeWriter;
+
+    impl Write for AlwaysBrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn write_stdout_allow_broken_pipe_treats_broken_pipe_as_success() {
+        let mut writer = AlwaysBrokenPipeWriter;
+        let result = write_output_allow_broken_pipe(&mut writer, "test");
+        assert!(result.is_ok(), "broken pipe should be handled as success");
+    }
+
+    struct AlwaysPermissionDeniedWriter;
+
+    impl Write for AlwaysPermissionDeniedWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "permission denied",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn write_stdout_allow_broken_pipe_preserves_non_broken_pipe_errors() {
+        let mut writer = AlwaysPermissionDeniedWriter;
+        let err = write_output_allow_broken_pipe(&mut writer, "test")
+            .expect_err("non-broken-pipe errors must be returned");
+        assert!(
+            err.contains("failed writing to stdout"),
+            "error should include output context"
+        );
+    }
+
+    #[test]
+    fn write_stdout_allow_broken_pipe_handles_real_stdout_path() {
+        let result = write_stdout_allow_broken_pipe("");
+        assert!(result.is_ok(), "empty stdout write should succeed");
     }
 
     #[test]
