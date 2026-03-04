@@ -1350,4 +1350,61 @@ mod tests {
         assert!(second.new_assignments.is_empty());
         assert!(second.deferred_removals.is_empty());
     }
+
+    // ── run_in_savepoint ───────────────────────────────────────────────────────
+
+    #[test]
+    fn run_in_savepoint_rolls_back_db_mutations_on_error() {
+        use super::run_in_savepoint;
+
+        let store = Store::open_memory().unwrap();
+        let tag = category("Tag", false);
+        create_category(&store, &tag);
+        let item = create_item(&store, "some task");
+
+        // Run a closure that assigns the item to `tag` and then returns an
+        // error.  The savepoint must roll back so the assignment is NOT
+        // persisted.
+        let result: Result<(), AgendaError> = run_in_savepoint(&store, || {
+            store
+                .assign_item(item.id, tag.id, &manual_assignment())
+                .unwrap();
+            Err(AgendaError::InvalidOperation {
+                message: "deliberate test error".to_string(),
+            })
+        });
+
+        assert!(result.is_err(), "closure error should propagate");
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&tag.id),
+            "assignment made inside the failing closure must be rolled back"
+        );
+    }
+
+    #[test]
+    fn run_in_savepoint_commits_db_mutations_on_success() {
+        use super::run_in_savepoint;
+
+        let store = Store::open_memory().unwrap();
+        let tag = category("Tag", false);
+        create_category(&store, &tag);
+        let item = create_item(&store, "some task");
+
+        let result: Result<(), AgendaError> = run_in_savepoint(&store, || {
+            store
+                .assign_item(item.id, tag.id, &manual_assignment())
+                .unwrap();
+            Ok(())
+        });
+
+        assert!(result.is_ok(), "successful closure should commit");
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&tag.id),
+            "assignment made inside a successful savepoint should be persisted"
+        );
+    }
 }

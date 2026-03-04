@@ -3653,4 +3653,156 @@ mod tests {
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("empty item id prefix"), "got: {msg}");
     }
+
+    // ── column_exists ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn column_exists_returns_true_for_existing_column() {
+        let store = Store::open_memory().unwrap();
+        assert!(
+            store.column_exists("categories", "is_actionable").unwrap(),
+            "is_actionable should exist on categories table"
+        );
+    }
+
+    #[test]
+    fn column_exists_returns_false_for_nonexistent_column() {
+        let store = Store::open_memory().unwrap();
+        assert!(
+            !store.column_exists("categories", "does_not_exist").unwrap(),
+            "does_not_exist should not be present"
+        );
+    }
+
+    // ── v3 columns_json kind migration ────────────────────────────────────────
+
+    #[test]
+    fn upgrade_from_v2_injects_kind_into_existing_columns_json() {
+        // Build a database that looks like a v2 store: all current tables exist
+        // (SCHEMA_SQL is idempotent), but the views already have columns_json
+        // rows without a "kind" field.  After init() the migration must inject
+        // "kind": "When" for columns whose heading matches the When category ID
+        // and "kind": "Standard" for all others.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+
+        // Insert the When category so the migration can identify it.
+        let when_id = Uuid::new_v4();
+        conn.execute(
+            "INSERT INTO categories
+             (id, name, is_exclusive, is_actionable, enable_implicit_string,
+              conditions_json, actions_json, sort_order, created_at, modified_at,
+              value_kind, numeric_format_json)
+             VALUES (?1, 'When', 0, 0, 0, '[]', '[]', 0,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+                     'Tag', 'null')",
+            params![when_id.to_string()],
+        )
+        .unwrap();
+
+        // Insert a view whose columns_json has entries without a "kind" field.
+        // First column heading matches the When category ID; second does not.
+        let view_id = Uuid::new_v4();
+        let columns_without_kind = serde_json::json!([
+            {"heading": when_id.to_string()},
+            {"heading": "SomeStandardHeading"}
+        ])
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO views
+             (id, name, criteria_json, sections_json, columns_json,
+              show_unmatched, unmatched_label, remove_from_view_unassign_json,
+              category_aliases_json, board_display_mode)
+             VALUES (?1, 'TestView', '{}', '[]', ?2, 1, 'Unassigned', '[]', '{}',
+                     '\"SingleLine\"')",
+            params![view_id.to_string(), columns_without_kind],
+        )
+        .unwrap();
+
+        // Stamp as v2 so init() will call apply_migrations(2).
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        // Read back raw columns_json from the DB.
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT columns_json FROM views WHERE id = ?1",
+                params![view_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let columns: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(columns.len(), 2);
+
+        let kind0 = columns[0]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let kind1 = columns[1]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        assert_eq!(
+            kind0, "When",
+            "column whose heading matches When category id should get kind=When"
+        );
+        assert_eq!(
+            kind1, "Standard",
+            "column with unrecognised heading should get kind=Standard"
+        );
+    }
+
+    #[test]
+    fn upgrade_from_v2_skips_columns_that_already_have_kind() {
+        // If a column already has a "kind" field (e.g. from a partial migration),
+        // the migration must leave it unchanged.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+
+        let view_id = Uuid::new_v4();
+        let already_has_kind = serde_json::json!([
+            {"heading": "SomeHeading", "kind": "Standard"}
+        ])
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO views
+             (id, name, criteria_json, sections_json, columns_json,
+              show_unmatched, unmatched_label, remove_from_view_unassign_json,
+              category_aliases_json, board_display_mode)
+             VALUES (?1, 'PreMigrated', '{}', '[]', ?2, 1, 'Unassigned', '[]', '{}',
+                     '\"SingleLine\"')",
+            params![view_id.to_string(), already_has_kind],
+        )
+        .unwrap();
+
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT columns_json FROM views WHERE id = ?1",
+                params![view_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let columns: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(columns.len(), 1);
+        // kind must still be "Standard" — not duplicated or overwritten.
+        let kind = columns[0]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert_eq!(kind, "Standard");
+    }
 }
