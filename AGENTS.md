@@ -480,6 +480,19 @@ Practical implications:
 - Add-item flows still apply section criteria assignments (for example `Ready`)
   through the normal section insert path.
 
+## CLI Output Piped To `head` Can Panic With Broken Pipe (Surprising)
+
+Some `agenda-cli` commands that emit large stdout payloads (for example markdown
+export output) can panic with:
+`failed printing to stdout: Broken pipe (os error 32)` when downstream closes
+early (`| head -n ...`).
+
+Practical implications:
+- Prefer non-terminating consumers when sampling output in scripts (for example
+  `sed -n '1,40p'`) to avoid early pipe close.
+- If you do use `head`, treat a broken-pipe panic as an artifact of the pipe
+  close, not necessarily a logic failure in the command.
+
 ## Normal Mode Preview Hint Must Be In Footer (Discoverability)
 
 `p` already toggles item preview in `Mode::Normal`, but discoverability depends

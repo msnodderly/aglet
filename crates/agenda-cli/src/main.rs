@@ -161,6 +161,19 @@ enum Command {
         include_done: bool,
     },
 
+    /// Export items as Markdown
+    #[command(
+        after_help = "Examples:\n  agenda export\n  agenda export --view \"All Items\"\n  agenda export --view \"Backlog\" --include-links"
+    )]
+    Export {
+        /// Optional view scope (case-insensitive view name).
+        #[arg(long)]
+        view: Option<String>,
+        /// Include prereq/dependent/related link details for each item.
+        #[arg(long = "include-links")]
+        include_links: bool,
+    },
+
     /// Delete an item (writes deletion log)
     Delete { item_id: String },
 
@@ -446,6 +459,10 @@ fn run() -> Result<(), String> {
             format,
             include_done,
         } => cmd_search(&store, query, format, include_done),
+        Command::Export {
+            view,
+            include_links,
+        } => cmd_export(&store, view, include_links),
         Command::Delete { item_id } => cmd_delete(&agenda, item_id),
         Command::Deleted => cmd_deleted(&store),
         Command::Restore { log_id } => cmd_restore(&store, log_id),
@@ -977,6 +994,12 @@ fn cmd_search(
     } else {
         print_item_table(&matched_items, &category_names, &[], &categories);
     }
+    Ok(())
+}
+
+fn cmd_export(store: &Store, view_name: Option<String>, include_links: bool) -> Result<(), String> {
+    let body = build_markdown_export(store, view_name.as_deref(), include_links)?;
+    print!("{body}");
     Ok(())
 }
 
@@ -1885,6 +1908,173 @@ fn rows_to_json(
         .collect()
 }
 
+fn markdown_sorted_rows(items: &[Item]) -> Vec<&Item> {
+    let mut rows: Vec<&Item> = items.iter().collect();
+    rows.sort_by(|left, right| {
+        left.text
+            .to_ascii_lowercase()
+            .cmp(&right.text.to_ascii_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    rows
+}
+
+fn append_markdown_items(
+    out: &mut String,
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    store: &Store,
+    include_links: bool,
+    heading_prefix: &str,
+) -> Result<(), String> {
+    let rows = markdown_sorted_rows(items);
+    if rows.is_empty() {
+        out.push_str("(no items)\n");
+        return Ok(());
+    }
+
+    for (index, item) in rows.into_iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("{heading_prefix} {}\n", item.text));
+        out.push_str(&format!("- ID: `{}`\n", item.id));
+        out.push_str(&format!(
+            "- Status: `{}`\n",
+            if item.is_done { "done" } else { "open" }
+        ));
+        out.push_str(&format!(
+            "- When: `{}`\n",
+            item.when_date
+                .map(|dt| dt.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        out.push_str(&format!("- Entry Date: `{}`\n", item.entry_date));
+
+        let categories = item_categories(item, category_names);
+        if categories.is_empty() {
+            out.push_str("- Categories: (none)\n");
+        } else {
+            out.push_str(&format!("- Categories: {}\n", categories.join(", ")));
+        }
+
+        if let Some(note) = &item.note {
+            out.push_str("- Note:\n");
+            out.push_str("```text\n");
+            out.push_str(note);
+            if !note.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("```\n");
+        } else {
+            out.push_str("- Note: (none)\n");
+        }
+
+        if include_links {
+            let link_lines = item_link_section_lines(store, item.id)?;
+            out.push_str("- Links:\n");
+            out.push_str("```text\n");
+            for line in link_lines {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str("```\n");
+        }
+    }
+
+    Ok(())
+}
+
+fn build_markdown_export(
+    store: &Store,
+    view_name: Option<&str>,
+    include_links: bool,
+) -> Result<String, String> {
+    let items = store.list_items().map_err(|e| e.to_string())?;
+    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let category_names = category_name_map(&categories);
+    let mut out = String::new();
+
+    if let Some(name) = view_name {
+        let view = view_by_name(store, name)?;
+        out.push_str(&format!("# {}\n\n", view.name));
+
+        let reference_date = Local::now().date_naive();
+        let result = resolve_view(&view, &items, &categories, reference_date);
+        let mut rendered_any = false;
+
+        for section in result.sections {
+            out.push_str(&format!("## {}\n\n", section.title));
+            if section.subsections.is_empty() {
+                append_markdown_items(
+                    &mut out,
+                    &section.items,
+                    &category_names,
+                    store,
+                    include_links,
+                    "###",
+                )?;
+                out.push('\n');
+                rendered_any = true;
+                continue;
+            }
+
+            for subsection in section.subsections {
+                out.push_str(&format!("### {}\n\n", subsection.title));
+                append_markdown_items(
+                    &mut out,
+                    &subsection.items,
+                    &category_names,
+                    store,
+                    include_links,
+                    "####",
+                )?;
+                out.push('\n');
+                rendered_any = true;
+            }
+        }
+
+        if let Some(unmatched) = result.unmatched {
+            if !unmatched.is_empty() {
+                let heading = result
+                    .unmatched_label
+                    .unwrap_or_else(|| "Unassigned".to_string());
+                out.push_str(&format!("## {}\n\n", heading));
+                append_markdown_items(
+                    &mut out,
+                    &unmatched,
+                    &category_names,
+                    store,
+                    include_links,
+                    "###",
+                )?;
+                out.push('\n');
+                rendered_any = true;
+            }
+        }
+
+        if !rendered_any {
+            out.push_str("(no items)\n");
+        }
+    } else {
+        out.push_str("# Items\n\n");
+        append_markdown_items(
+            &mut out,
+            &items,
+            &category_names,
+            store,
+            include_links,
+            "##",
+        )?;
+        out.push('\n');
+    }
+
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 fn print_items_json(
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
@@ -2299,7 +2489,7 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
+        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
         compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
         parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
         read_note_from_stdin, reject_items_with_any_categories,
@@ -2310,7 +2500,7 @@ mod tests {
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
-    use agenda_core::model::{Category, CategoryValueKind, Item, View};
+    use agenda_core::model::{Category, CategoryValueKind, CriterionMode, Item, View};
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
@@ -2882,6 +3072,131 @@ mod tests {
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn clap_parses_export_with_view_and_include_links() {
+        let cli =
+            Cli::try_parse_from(["agenda", "export", "--view", "All Items", "--include-links"])
+                .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Export {
+                view,
+                include_links,
+            }) => {
+                assert_eq!(view.as_deref(), Some("All Items"));
+                assert!(include_links);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn export_help_includes_examples_and_link_flag() {
+        let mut cmd = Cli::command();
+        let export_cmd = cmd
+            .find_subcommand_mut("export")
+            .expect("export subcommand should exist");
+        let help = export_cmd.render_help().to_string();
+        assert!(help.contains("--view <VIEW>"));
+        assert!(help.contains("--include-links"));
+        assert!(help.contains("agenda export --view \"All Items\""));
+    }
+
+    #[test]
+    fn markdown_export_full_db_is_deterministic_and_includes_metadata() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let topic = Category::new("Topic".to_string());
+        store.create_category(&topic).expect("create category");
+
+        let mut beta = Item::new("beta item".to_string());
+        beta.note = Some("second note".to_string());
+        let mut alpha = Item::new("Alpha item".to_string());
+        alpha.note = Some("first note".to_string());
+        store.create_item(&beta).expect("create beta");
+        store.create_item(&alpha).expect("create alpha");
+        agenda
+            .assign_item_manual(alpha.id, topic.id, Some("test:assign".to_string()))
+            .expect("assign topic");
+
+        let output = build_markdown_export(&store, None, false).expect("export markdown");
+        assert!(output.starts_with("# Items\n"));
+        assert!(output.contains("- ID: `"));
+        assert!(output.contains("- Status: `open`"));
+        assert!(output.contains("- Categories: Topic"));
+        assert!(output.contains("```text\nfirst note\n```"));
+
+        let alpha_idx = output.find("## Alpha item").expect("alpha section");
+        let beta_idx = output.find("## beta item").expect("beta section");
+        assert!(alpha_idx < beta_idx, "items should sort by text then id");
+    }
+
+    #[test]
+    fn markdown_export_view_scope_limits_results() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+        let mut ready = Category::new("Ready".to_string());
+        ready.parent = Some(status.id);
+        store.create_category(&ready).expect("create ready");
+        let mut deferred = Category::new("Deferred".to_string());
+        deferred.parent = Some(status.id);
+        store.create_category(&deferred).expect("create deferred");
+
+        let ready_item = Item::new("Ready task".to_string());
+        let deferred_item = Item::new("Deferred task".to_string());
+        store.create_item(&ready_item).expect("create ready item");
+        store
+            .create_item(&deferred_item)
+            .expect("create deferred item");
+        agenda
+            .assign_item_manual(ready_item.id, ready.id, Some("test:assign".to_string()))
+            .expect("assign ready");
+        agenda
+            .assign_item_manual(
+                deferred_item.id,
+                deferred.id,
+                Some("test:assign".to_string()),
+            )
+            .expect("assign deferred");
+
+        let mut view = View::new("Ready Only".to_string());
+        view.criteria.set_criterion(CriterionMode::And, ready.id);
+        store.create_view(&view).expect("create view");
+
+        let output =
+            build_markdown_export(&store, Some("Ready Only"), false).expect("export markdown");
+        assert!(output.starts_with("# Ready Only\n"));
+        assert!(output.contains("Ready task"));
+        assert!(!output.contains("Deferred task"));
+    }
+
+    #[test]
+    fn markdown_export_include_links_adds_relationship_sections() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+        agenda
+            .link_items_depends_on(a.id, b.id)
+            .expect("create dependency");
+
+        let output = build_markdown_export(&store, None, true).expect("export markdown");
+        assert!(output.contains("- Links:"));
+        assert!(output.contains("prereqs:"));
+        assert!(output.contains("Task B"));
     }
 
     #[test]
