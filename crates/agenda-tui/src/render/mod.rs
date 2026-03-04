@@ -2487,7 +2487,7 @@ impl App {
             .borders(Borders::ALL)
             .border_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             );
         frame.render_widget(block, area);
@@ -2518,7 +2518,7 @@ impl App {
         let text_spans = vec![Span::raw(format!("{text_prefix}{visible_value}"))];
         let text_style = if panel.focus == InputPanelFocus::Text {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .bg(FOCUSED_PANE_BG)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
@@ -2544,7 +2544,7 @@ impl App {
             let note_focused = panel.focus == InputPanelFocus::Note;
             let note_border_style = if note_focused {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
@@ -2562,7 +2562,7 @@ impl App {
                 note_widget.set_cursor_style(
                     Style::default()
                         .fg(Color::Black)
-                        .bg(Color::Yellow)
+                        .bg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 );
             }
@@ -2588,7 +2588,7 @@ impl App {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
             let cat_border_style = if cat_focused {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
@@ -2707,9 +2707,9 @@ impl App {
                                     " ".to_string()
                                 };
                                 let value_style = if is_cursor {
-                                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                                    Style::default().fg(Color::Black).bg(Color::LightCyan)
                                 } else {
-                                    Style::default().fg(Color::Yellow)
+                                    Style::default().fg(Color::Cyan)
                                 };
                                 let mut spans = vec![Span::styled(main_prefix, base_style)];
                                 if !type_suffix.is_empty() {
@@ -2786,13 +2786,9 @@ impl App {
         } else {
             "[Cancel]"
         };
-        let buttons_focused = matches!(
-            panel.focus,
-            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton
-        );
         let save_style = if panel.focus == InputPanelFocus::SaveButton {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .bg(FOCUSED_PANE_BG)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
@@ -2800,18 +2796,11 @@ impl App {
         };
         let cancel_style = if panel.focus == InputPanelFocus::CancelButton {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .bg(FOCUSED_PANE_BG)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
             Style::default()
-        };
-        let hint_style = if buttons_focused {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(MUTED_TEXT_COLOR)
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -2819,8 +2808,6 @@ impl App {
                 Span::styled(save_button, save_style),
                 Span::raw("  "),
                 Span::styled(cancel_button, cancel_style),
-                Span::raw("  "),
-                Span::styled("Enter/Space", hint_style),
             ])),
             regions.buttons,
         );
