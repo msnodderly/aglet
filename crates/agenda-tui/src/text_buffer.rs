@@ -70,7 +70,6 @@ impl TextBuffer {
     }
 
     /// For multi-line buffers: (line_index, col_index) of the cursor.
-    #[cfg(test)]
     pub(crate) fn line_col(&self) -> (usize, usize) {
         self.textarea.cursor()
     }
