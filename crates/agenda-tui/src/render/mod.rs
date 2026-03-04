@@ -2483,6 +2483,7 @@ impl App {
         };
         let block = Block::default()
             .title(title)
+            .title_style(Style::default().fg(Color::White))
             .borders(Borders::ALL)
             .border_style(
                 Style::default()
@@ -2514,18 +2515,18 @@ impl App {
             text_width.saturating_sub(text_prefix.chars().count()),
             panel.focus == InputPanelFocus::Text,
         );
-        let text_spans = vec![Span::raw(format!("{text_prefix}{visible_value}"))];
-        let text_style = if panel.focus == InputPanelFocus::Text {
+        let text_prefix_style = if panel.focus == InputPanelFocus::Text {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
-        frame.render_widget(
-            Paragraph::new(Line::from(text_spans)).style(text_style),
-            regions.text,
-        );
+        let text_spans = vec![
+            Span::styled(text_prefix, text_prefix_style),
+            Span::raw(visible_value),
+        ];
+        frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
 
         if panel.kind == InputPanelKind::NumericValue && !panel.preview_context.is_empty() {
             if let Some(context_rect) = regions.context {
@@ -2542,7 +2543,7 @@ impl App {
             let note_focused = panel.focus == InputPanelFocus::Note;
             let note_border_style = if note_focused {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Cyan)
@@ -2552,9 +2553,13 @@ impl App {
             note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
             note_widget.set_style(Style::default());
             if note_focused {
-                note_widget
-                    .set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-                note_widget.set_cursor_style(selected_row_style().add_modifier(Modifier::BOLD));
+                note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+                note_widget.set_cursor_style(
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
             }
             note_widget.set_block(
                 Block::default()
@@ -2578,7 +2583,7 @@ impl App {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
             let cat_border_style = if cat_focused {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Cyan)
@@ -2609,7 +2614,7 @@ impl App {
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         format!("> Filter> {}", panel.category_filter.text()),
-                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::Yellow),
                     ))),
                     cat_filter_rect,
                 );
