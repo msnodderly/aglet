@@ -15,7 +15,7 @@ use crate::model::{
     NumericFormat, Query, Section, View,
 };
 
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS views (
     remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
     category_aliases_json       TEXT NOT NULL DEFAULT '{}',
     item_column_label           TEXT,
-    board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
+    board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
+    hide_dependent_items        INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS deletion_log (
@@ -750,8 +751,9 @@ impl Store {
                 "INSERT INTO views (
                     id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    category_aliases_json, item_column_label, board_display_mode
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    category_aliases_json, item_column_label, board_display_mode,
+                    hide_dependent_items
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     view.id.to_string(),
                     view.name,
@@ -765,6 +767,7 @@ impl Store {
                     view.item_column_label,
                     serde_json::to_string(&view.board_display_mode)
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
+                    view.hide_dependent_items as i32,
                 ],
             )
             .map_err(|err| Self::map_view_write_error(err, &view.name))?;
@@ -776,7 +779,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    category_aliases_json, item_column_label, board_display_mode
+                    category_aliases_json, item_column_label, board_display_mode,
+                    hide_dependent_items
              FROM views WHERE id = ?1",
         )?;
         stmt.query_row(params![id.to_string()], Self::row_to_view)
@@ -836,8 +840,9 @@ impl Store {
                      remove_from_view_unassign_json = ?7,
                      category_aliases_json = ?8,
                      item_column_label = ?9,
-                     board_display_mode = ?10
-                 WHERE id = ?11",
+                     board_display_mode = ?10,
+                     hide_dependent_items = ?11
+                 WHERE id = ?12",
                 params![
                     view.name,
                     criteria_json,
@@ -850,6 +855,7 @@ impl Store {
                     view.item_column_label,
                     serde_json::to_string(&view.board_display_mode)
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
+                    view.hide_dependent_items as i32,
                     view.id.to_string(),
                 ],
             )
@@ -867,7 +873,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                    category_aliases_json, item_column_label, board_display_mode
+                    category_aliases_json, item_column_label, board_display_mode,
+                    hide_dependent_items
              FROM views
              ORDER BY name COLLATE NOCASE ASC",
         )?;
@@ -1013,6 +1020,7 @@ impl Store {
         let category_aliases_json: Option<String> = row.get(8)?;
         let item_column_label: Option<String> = row.get(9)?;
         let board_display_mode_json: Option<String> = row.get(10)?;
+        let hide_dependent_items: Option<i32> = row.get(11)?;
 
         let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
         let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
@@ -1036,6 +1044,7 @@ impl Store {
             category_aliases,
             item_column_label,
             board_display_mode,
+            hide_dependent_items: hide_dependent_items.unwrap_or(0) != 0,
         })
     }
 
@@ -1796,6 +1805,11 @@ impl Store {
                 "ALTER TABLE views ADD COLUMN category_aliases_json TEXT NOT NULL DEFAULT '{}';",
             )?;
         }
+        if !self.column_exists("views", "hide_dependent_items")? {
+            self.conn.execute_batch(
+                "ALTER TABLE views ADD COLUMN hide_dependent_items INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
         if !self.column_exists("categories", "value_kind")? {
             self.conn.execute_batch(
                 "ALTER TABLE categories ADD COLUMN value_kind TEXT NOT NULL DEFAULT 'Tag';",
@@ -2182,6 +2196,41 @@ mod tests {
             .optional()
             .unwrap();
         assert_eq!(exists.as_deref(), Some("app_settings"));
+    }
+
+    #[test]
+    fn test_upgrade_from_v8_adds_hide_dependent_items_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE views (
+                id                          TEXT PRIMARY KEY,
+                name                        TEXT NOT NULL UNIQUE,
+                criteria_json               TEXT NOT NULL DEFAULT '{}',
+                sections_json               TEXT NOT NULL DEFAULT '[]',
+                columns_json                TEXT NOT NULL DEFAULT '[]',
+                show_unmatched              INTEGER NOT NULL DEFAULT 1,
+                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
+                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
+                item_column_label           TEXT,
+                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
+            );
+            "#,
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let hide_dependent_column_exists = store
+            .column_exists("views", "hide_dependent_items")
+            .unwrap();
+        assert!(
+            hide_dependent_column_exists,
+            "migration should add hide_dependent_items column"
+        );
     }
 
     #[test]
@@ -3194,6 +3243,7 @@ mod tests {
         view.unmatched_label = "Other".to_string();
         view.remove_from_view_unassign.insert(when_category);
         view.category_aliases = BTreeMap::from([(when_category, "Due".to_string())]);
+        view.hide_dependent_items = true;
 
         store.create_view(&view).unwrap();
 
@@ -3214,6 +3264,7 @@ mod tests {
             view.remove_from_view_unassign
         );
         assert_eq!(loaded.category_aliases, view.category_aliases);
+        assert!(loaded.hide_dependent_items);
     }
 
     #[test]
@@ -3274,6 +3325,7 @@ mod tests {
         view.unmatched_label = "Unsectioned".to_string();
         view.remove_from_view_unassign.insert(category_id);
         view.category_aliases = BTreeMap::from([(category_id, "Today".to_string())]);
+        view.hide_dependent_items = true;
 
         store.update_view(&view).unwrap();
 
@@ -3294,6 +3346,7 @@ mod tests {
             loaded.category_aliases,
             BTreeMap::from([(category_id, "Today".to_string())])
         );
+        assert!(loaded.hide_dependent_items);
     }
 
     #[test]
