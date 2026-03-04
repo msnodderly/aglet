@@ -312,6 +312,12 @@ enum ViewCommand {
         hide_unmatched: bool,
     },
 
+    /// Clone a view into a new mutable view
+    Clone {
+        source_name: String,
+        new_name: String,
+    },
+
     /// Rename a view
     Rename { name: String, new_name: String },
 
@@ -1651,6 +1657,17 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             println!("created view {}", view.name);
             Ok(())
         }
+        ViewCommand::Clone {
+            source_name,
+            new_name,
+        } => {
+            let source = view_by_name(store, &source_name)?;
+            let cloned = store
+                .clone_view(source.id, new_name)
+                .map_err(|e| e.to_string())?;
+            println!("cloned view {} -> {}", source_name, cloned.name);
+            Ok(())
+        }
         ViewCommand::Rename { name, new_name } => {
             let mut view = view_by_name(store, &name)?;
             view.name = new_name.clone();
@@ -2517,12 +2534,14 @@ mod tests {
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
-    use agenda_core::model::{Category, CategoryValueKind, CriterionMode, Item, View};
+    use agenda_core::model::{
+        Category, CategoryValueKind, CriterionMode, Item, Query, Section, View,
+    };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::io::{self, Cursor, Write};
     use uuid::Uuid;
 
@@ -3110,6 +3129,26 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_view_clone_command() {
+        let cli = Cli::try_parse_from(["agenda", "view", "clone", "Source", "Target"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command:
+                    ViewCommand::Clone {
+                        source_name,
+                        new_name,
+                    },
+            }) => {
+                assert_eq!(source_name, "Source");
+                assert_eq!(new_name, "Target");
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn export_help_includes_examples_and_link_flag() {
         let mut cmd = Cli::command();
         let export_cmd = cmd
@@ -3265,6 +3304,57 @@ mod tests {
         assert!(output.contains("- Links:"));
         assert!(output.contains("prereqs:"));
         assert!(output.contains("Task B"));
+    }
+
+    #[test]
+    fn cmd_view_clone_copies_source_configuration() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let category = Category::new("Area".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut source = View::new("Planning".to_string());
+        source
+            .criteria
+            .set_criterion(CriterionMode::And, category.id);
+        source.show_unmatched = false;
+        source.unmatched_label = "Other".to_string();
+        source.sections.push(Section {
+            title: "Area".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::from([category.id]),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&source).expect("create source");
+
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Clone {
+                source_name: "Planning".to_string(),
+                new_name: "Planning Copy".to_string(),
+            },
+        )
+        .expect("clone view");
+
+        let source_after = store.get_view(source.id).expect("source still exists");
+        assert_eq!(source_after.name, "Planning");
+        let cloned = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Planning Copy")
+            .expect("clone exists");
+        assert_ne!(cloned.id, source.id);
+        assert_eq!(cloned.criteria.criteria, source.criteria.criteria);
+        assert_eq!(cloned.show_unmatched, source.show_unmatched);
+        assert_eq!(cloned.unmatched_label, source.unmatched_label);
+        assert_eq!(cloned.sections.len(), source.sections.len());
     }
 
     #[test]

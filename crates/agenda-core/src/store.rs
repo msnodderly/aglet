@@ -725,6 +725,14 @@ impl Store {
         self.insert_view(view)
     }
 
+    pub fn clone_view(&self, source_id: Uuid, new_name: String) -> Result<View> {
+        let mut cloned = self.get_view(source_id)?;
+        cloned.id = Uuid::new_v4();
+        cloned.name = new_name;
+        self.create_view(&cloned)?;
+        Ok(cloned)
+    }
+
     fn insert_view(&self, view: &View) -> Result<()> {
         let criteria_json =
             serde_json::to_string(&view.criteria).map_err(|err| AgendaError::StorageError {
@@ -3244,6 +3252,101 @@ mod tests {
     fn test_create_view_reserved_system_name_rejected() {
         let store = Store::open_memory().unwrap();
         let result = store.create_view(&new_view("all items"));
+        assert!(matches!(
+            result,
+            Err(AgendaError::InvalidOperation { message })
+            if message.contains("cannot create system view")
+        ));
+    }
+
+    #[test]
+    fn test_clone_view_copies_configuration_and_is_independent() {
+        let store = Store::open_memory().unwrap();
+        let area = make_category(&store, "Area");
+        let mut child_category = new_category("CLI");
+        child_category.parent = Some(area);
+        let child = child_category.id;
+        store.create_category(&child_category).unwrap();
+
+        let mut source = new_view("Source");
+        source.criteria.set_criterion(CriterionMode::And, area);
+        source.show_unmatched = false;
+        source.unmatched_label = "Other".to_string();
+        source.remove_from_view_unassign = HashSet::from([area]);
+        source.category_aliases = BTreeMap::from([(area, "Team".to_string())]);
+        source.item_column_label = Some("Task".to_string());
+        source.board_display_mode = BoardDisplayMode::MultiLine;
+        let mut section_criteria = Query::default();
+        section_criteria.set_criterion(CriterionMode::And, child);
+        source.sections.push(Section {
+            title: "Section One".to_string(),
+            criteria: section_criteria,
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area,
+                width: 24,
+            }],
+            item_column_index: 1,
+            on_insert_assign: HashSet::from([child]),
+            on_remove_unassign: HashSet::from([area]),
+            show_children: true,
+            board_display_mode_override: Some(BoardDisplayMode::SingleLine),
+        });
+        store.create_view(&source).unwrap();
+
+        let cloned = store
+            .clone_view(source.id, "Source Copy".to_string())
+            .expect("clone view");
+        assert_ne!(cloned.id, source.id);
+        assert_eq!(cloned.name, "Source Copy");
+        assert_eq!(cloned.criteria.criteria, source.criteria.criteria);
+        assert_eq!(cloned.sections.len(), source.sections.len());
+        assert_eq!(cloned.sections[0].title, source.sections[0].title);
+        assert_eq!(
+            cloned.sections[0].criteria.criteria,
+            source.sections[0].criteria.criteria
+        );
+        assert_eq!(cloned.sections[0].columns.len(), 1);
+        assert_eq!(cloned.sections[0].columns[0].heading, area);
+        assert_eq!(cloned.sections[0].columns[0].width, 24);
+        assert_eq!(cloned.sections[0].item_column_index, 1);
+        assert_eq!(
+            cloned.sections[0].on_insert_assign,
+            source.sections[0].on_insert_assign
+        );
+        assert_eq!(
+            cloned.sections[0].on_remove_unassign,
+            source.sections[0].on_remove_unassign
+        );
+        assert!(cloned.sections[0].show_children);
+        assert_eq!(
+            cloned.sections[0].board_display_mode_override,
+            Some(BoardDisplayMode::SingleLine)
+        );
+        assert_eq!(cloned.show_unmatched, source.show_unmatched);
+        assert_eq!(cloned.unmatched_label, source.unmatched_label);
+        assert_eq!(
+            cloned.remove_from_view_unassign,
+            source.remove_from_view_unassign
+        );
+        assert_eq!(cloned.category_aliases, source.category_aliases);
+        assert_eq!(cloned.item_column_label, source.item_column_label);
+        assert_eq!(cloned.board_display_mode, source.board_display_mode);
+
+        let mut edited_clone = store.get_view(cloned.id).expect("load clone");
+        edited_clone.unmatched_label = "Changed".to_string();
+        store.update_view(&edited_clone).expect("update clone");
+        let reloaded_source = store.get_view(source.id).expect("reload source");
+        assert_eq!(reloaded_source.unmatched_label, "Other");
+    }
+
+    #[test]
+    fn test_clone_view_rejects_reserved_target_name() {
+        let store = Store::open_memory().unwrap();
+        let source = new_view("Source");
+        store.create_view(&source).unwrap();
+
+        let result = store.clone_view(source.id, "All Items".to_string());
         assert!(matches!(
             result,
             Err(AgendaError::InvalidOperation { message })
