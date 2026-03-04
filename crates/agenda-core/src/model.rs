@@ -120,7 +120,21 @@ impl Default for NumericFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
     ImplicitString,
-    Profile { criteria: Box<Query> },
+    ImplicitStringMatchScope {
+        #[serde(default)]
+        scope: ImplicitStringScope,
+    },
+    Profile {
+        criteria: Box<Query>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImplicitStringScope {
+    #[default]
+    Title,
+    TitleOrNote,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,6 +414,24 @@ impl Category {
             numeric_format: None,
         }
     }
+
+    pub fn implicit_string_scope(&self) -> ImplicitStringScope {
+        self.conditions
+            .iter()
+            .rev()
+            .find_map(|condition| match condition {
+                Condition::ImplicitStringMatchScope { scope } => Some(*scope),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn set_implicit_string_scope(&mut self, scope: ImplicitStringScope) {
+        self.conditions
+            .retain(|condition| !matches!(condition, Condition::ImplicitStringMatchScope { .. }));
+        self.conditions
+            .push(Condition::ImplicitStringMatchScope { scope });
+    }
 }
 
 impl View {
@@ -421,7 +453,7 @@ impl View {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemLinkKind, View};
+    use super::{Category, ImplicitStringScope, ItemLinkKind, View};
     use serde_json::Value;
     use uuid::Uuid;
 
@@ -471,5 +503,20 @@ mod tests {
                 .map(String::as_str),
             Some("Customer")
         );
+    }
+
+    #[test]
+    fn category_implicit_string_scope_defaults_to_title() {
+        let category = Category::new("Review".to_string());
+        assert_eq!(category.implicit_string_scope(), ImplicitStringScope::Title);
+    }
+
+    #[test]
+    fn category_implicit_string_scope_override_is_replaced_not_duplicated() {
+        let mut category = Category::new("Review".to_string());
+        category.set_implicit_string_scope(ImplicitStringScope::TitleOrNote);
+        category.set_implicit_string_scope(ImplicitStringScope::Title);
+        assert_eq!(category.implicit_string_scope(), ImplicitStringScope::Title);
+        assert_eq!(category.conditions.len(), 1);
     }
 }

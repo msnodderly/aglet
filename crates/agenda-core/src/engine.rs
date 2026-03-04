@@ -5,7 +5,8 @@ use chrono::Utc;
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, ItemId, Query,
+    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, ImplicitStringScope,
+    ItemId, Query,
 };
 use crate::store::Store;
 
@@ -36,6 +37,12 @@ pub struct EvaluateAllItemsResult {
 struct PassResult {
     new_assignments: HashSet<CategoryId>,
     deferred_removals: Vec<DeferredRemoval>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ItemText<'a> {
+    title: &'a str,
+    note: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -111,7 +118,10 @@ fn process_item_inner(
             store,
             classifier,
             item_id,
-            &item.text,
+            ItemText {
+                title: &item.text,
+                note: item.note.as_deref(),
+            },
             &categories,
             &mut assignments,
             &mut seen_pairs,
@@ -142,7 +152,7 @@ fn run_hierarchy_pass(
     store: &Store,
     classifier: &dyn Classifier,
     item_id: ItemId,
-    item_text: &str,
+    item_text: ItemText<'_>,
     categories: &[Category],
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
@@ -154,8 +164,13 @@ fn run_hierarchy_pass(
         .collect();
 
     for category in categories {
-        let Some(reason) = evaluate_category_match(category, item_text, assignments, classifier)
-        else {
+        let Some(reason) = evaluate_category_match(
+            category,
+            item_text.title,
+            item_text.note,
+            assignments,
+            classifier,
+        ) else {
             continue;
         };
 
@@ -206,11 +221,19 @@ fn run_hierarchy_pass(
 fn evaluate_category_match(
     category: &Category,
     item_text: &str,
+    item_note: Option<&str>,
     assignments: &HashMap<CategoryId, Assignment>,
     classifier: &dyn Classifier,
 ) -> Option<MatchReason> {
-    if category.enable_implicit_string && classifier.classify(item_text, &category.name).is_some() {
-        return Some(MatchReason::ImplicitString);
+    if category.enable_implicit_string {
+        if classifier.classify(item_text, &category.name).is_some() {
+            return Some(MatchReason::ImplicitString);
+        }
+        if category.implicit_string_scope() == ImplicitStringScope::TitleOrNote
+            && item_note.is_some_and(|note| classifier.classify(note, &category.name).is_some())
+        {
+            return Some(MatchReason::ImplicitString);
+        }
     }
 
     let profile_match = category
@@ -218,7 +241,7 @@ fn evaluate_category_match(
         .iter()
         .filter_map(|condition| match condition {
             Condition::Profile { criteria } => Some(criteria),
-            Condition::ImplicitString => None,
+            Condition::ImplicitString | Condition::ImplicitStringMatchScope { .. } => None,
         })
         .any(|criteria| profile_matches(criteria, assignments));
 
@@ -485,15 +508,16 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex;
 
     use chrono::Utc;
 
     use super::{evaluate_all_items, process_item, run_hierarchy_pass};
     use crate::error::AgendaError;
-    use crate::matcher::SubstringClassifier;
+    use crate::matcher::{Classifier, SubstringClassifier};
     use crate::model::{
-        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, CriterionMode, Item,
-        ItemId, Query,
+        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, CriterionMode,
+        ImplicitStringScope, Item, ItemId, Query,
     };
     use crate::store::Store;
 
@@ -512,6 +536,32 @@ mod tests {
         item.text = text.to_string();
         item.modified_at = Utc::now();
         store.update_item(&item).unwrap();
+    }
+
+    fn set_item_note(store: &Store, item_id: ItemId, note: Option<&str>) {
+        let mut item = store.get_item(item_id).unwrap();
+        item.note = note.map(ToString::to_string);
+        item.modified_at = Utc::now();
+        store.update_item(&item).unwrap();
+    }
+
+    #[derive(Default)]
+    struct RecordingClassifier {
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl Classifier for RecordingClassifier {
+        fn classify(&self, text: &str, category_name: &str) -> Option<f32> {
+            self.calls.lock().unwrap().push(text.to_string());
+            if text
+                .to_ascii_lowercase()
+                .contains(&category_name.to_ascii_lowercase())
+            {
+                Some(1.0)
+            } else {
+                None
+            }
+        }
     }
 
     fn manual_assignment() -> Assignment {
@@ -568,6 +618,75 @@ mod tests {
 
         assert!(result.new_assignments.contains(&sarah.id));
         assert!(result.deferred_removals.is_empty());
+    }
+
+    #[test]
+    fn implicit_string_default_title_scope_does_not_match_note_text() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let review = Category::new("Review".to_string());
+        create_category(&store, &review);
+
+        let item = create_item(&store, "General task");
+        set_item_note(&store, item.id, Some("Need Review by Friday"));
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&review.id),
+            "title-only scope should not auto-match from note text"
+        );
+    }
+
+    #[test]
+    fn implicit_string_title_or_note_scope_matches_note_text() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut review = Category::new("Review".to_string());
+        review.set_implicit_string_scope(ImplicitStringScope::TitleOrNote);
+        create_category(&store, &review);
+
+        let item = create_item(&store, "General task");
+        set_item_note(&store, item.id, Some("Need Review by Friday"));
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments
+                .get(&review.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::AutoMatch)
+        );
+    }
+
+    #[test]
+    fn implicit_string_checks_title_before_note_when_note_scope_is_enabled() {
+        let store = Store::open_memory().unwrap();
+        let classifier = RecordingClassifier::default();
+
+        let mut review = Category::new("Review".to_string());
+        review.set_implicit_string_scope(ImplicitStringScope::TitleOrNote);
+        create_category(&store, &review);
+
+        let item = create_item(&store, "Review roadmap");
+        set_item_note(&store, item.id, Some("also mention review in note"));
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let calls = classifier.calls.lock().unwrap();
+        assert!(
+            !calls.is_empty(),
+            "classifier should be invoked at least once for title matching"
+        );
+        assert_eq!(calls[0], "Review roadmap");
+        assert!(
+            calls.iter().all(|call| call == "Review roadmap"),
+            "note text should not be evaluated when title already matches: {calls:?}"
+        );
     }
 
     #[test]
@@ -772,7 +891,10 @@ mod tests {
             &store,
             &classifier,
             item.id,
-            &item.text,
+            super::ItemText {
+                title: &item.text,
+                note: item.note.as_deref(),
+            },
             &categories,
             &mut assignments,
             &mut seen_pairs,

@@ -9,7 +9,8 @@ use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, CriterionMode, Item, ItemId, Query, View,
+    Category, CategoryId, CategoryValueKind, CriterionMode, ImplicitStringScope, Item, ItemId,
+    Query, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -42,6 +43,21 @@ impl CategoryTypeArg {
         match self {
             Self::Tag => CategoryValueKind::Tag,
             Self::Numeric => CategoryValueKind::Numeric,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+enum ImplicitStringScopeArg {
+    Title,
+    TitleOrNote,
+}
+
+impl ImplicitStringScopeArg {
+    fn into_model(self) -> ImplicitStringScope {
+        match self {
+            Self::Title => ImplicitStringScope::Title,
+            Self::TitleOrNote => ImplicitStringScope::TitleOrNote,
         }
     }
 }
@@ -215,6 +231,8 @@ enum CategoryCommand {
         exclusive: bool,
         #[arg(long = "disable-implicit-string")]
         disable_implicit_string: bool,
+        #[arg(long = "implicit-string-scope", value_enum)]
+        implicit_string_scope: Option<ImplicitStringScopeArg>,
         #[arg(long = "type", value_enum)]
         category_type: Option<CategoryTypeArg>,
     },
@@ -243,6 +261,8 @@ enum CategoryCommand {
         actionable: Option<bool>,
         #[arg(long = "implicit-string")]
         implicit_string: Option<bool>,
+        #[arg(long = "implicit-string-scope", value_enum)]
+        implicit_string_scope: Option<ImplicitStringScopeArg>,
         #[arg(long)]
         note: Option<String>,
         #[arg(long = "clear-note")]
@@ -1228,6 +1248,10 @@ fn cmd_category(
             println!("exclusive:       {}", category.is_exclusive);
             println!("actionable:      {}", category.is_actionable);
             println!("implicit_string: {}", category.enable_implicit_string);
+            println!(
+                "implicit_scope:  {}",
+                implicit_string_scope_label(category.implicit_string_scope())
+            );
             if category.value_kind == CategoryValueKind::Numeric {
                 if let Some(format) = &category.numeric_format {
                     println!("numeric.decimals: {}", format.decimal_places);
@@ -1258,6 +1282,12 @@ fn cmd_category(
                     match condition {
                         agenda_core::model::Condition::ImplicitString => {
                             println!("  - ImplicitString");
+                        }
+                        agenda_core::model::Condition::ImplicitStringMatchScope { scope } => {
+                            println!(
+                                "  - ImplicitStringMatchScope ({})",
+                                implicit_string_scope_label(*scope)
+                            );
                         }
                         agenda_core::model::Condition::Profile { criteria } => {
                             let and_names: Vec<&str> = criteria
@@ -1312,6 +1342,7 @@ fn cmd_category(
             parent,
             exclusive,
             disable_implicit_string,
+            implicit_string_scope,
             category_type,
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
@@ -1323,6 +1354,9 @@ fn cmd_category(
                 .transpose()?;
             category.is_exclusive = exclusive;
             category.enable_implicit_string = !disable_implicit_string;
+            if let Some(scope) = implicit_string_scope {
+                category.set_implicit_string_scope(scope.into_model());
+            }
             if let Some(category_type) = category_type {
                 category.value_kind = category_type.into_model();
             }
@@ -1406,6 +1440,7 @@ fn cmd_category(
             exclusive,
             actionable,
             implicit_string,
+            implicit_string_scope,
             note,
             clear_note,
             category_type,
@@ -1416,11 +1451,12 @@ fn cmd_category(
             if exclusive.is_none()
                 && actionable.is_none()
                 && implicit_string.is_none()
+                && implicit_string_scope.is_none()
                 && note.is_none()
                 && !clear_note
                 && category_type.is_none()
             {
-                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --type, --note, or --clear-note".to_string());
+                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --implicit-string-scope, --type, --note, or --clear-note".to_string());
             }
             if let Some(val) = exclusive {
                 category.is_exclusive = val;
@@ -1430,6 +1466,9 @@ fn cmd_category(
             }
             if let Some(val) = implicit_string {
                 category.enable_implicit_string = val;
+            }
+            if let Some(scope) = implicit_string_scope {
+                category.set_implicit_string_scope(scope.into_model());
             }
             if clear_note {
                 category.note = None;
@@ -1447,12 +1486,13 @@ fn cmd_category(
                 .update_category(&category)
                 .map_err(|e| e.to_string())?;
             println!(
-                "updated {} (type={}, exclusive={}, actionable={}, implicit_string={}, processed_items={}, affected_items={})",
+                "updated {} (type={}, exclusive={}, actionable={}, implicit_string={}, implicit_scope={}, processed_items={}, affected_items={})",
                 category.name,
                 category_value_kind_label(category.value_kind),
                 category.is_exclusive,
                 category.is_actionable,
                 category.enable_implicit_string,
+                implicit_string_scope_label(category.implicit_string_scope()),
                 result.processed_items,
                 result.affected_items
             );
@@ -1707,6 +1747,13 @@ fn category_value_kind_label(kind: CategoryValueKind) -> &'static str {
     match kind {
         CategoryValueKind::Tag => "Tag",
         CategoryValueKind::Numeric => "Numeric",
+    }
+}
+
+fn implicit_string_scope_label(scope: ImplicitStringScope) -> &'static str {
+    match scope {
+        ImplicitStringScope::Title => "title",
+        ImplicitStringScope::TitleOrNote => "title_or_note",
     }
 }
 
@@ -2305,8 +2352,9 @@ mod tests {
         read_note_from_stdin, reject_items_with_any_categories,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        CategoryCommand, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
+        ImplicitStringScopeArg, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
+        OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -2485,6 +2533,61 @@ mod tests {
         assert!(help.contains("Examples:"));
         assert!(help.contains("agenda claim <ITEM_ID>"));
         assert!(help.contains("--must-not-have"));
+    }
+
+    #[test]
+    fn clap_parses_category_create_with_implicit_string_scope() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "category",
+            "create",
+            "Review",
+            "--implicit-string-scope",
+            "title-or-note",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Category {
+                command:
+                    CategoryCommand::Create {
+                        implicit_string_scope,
+                        ..
+                    },
+            }) => {
+                assert_eq!(
+                    implicit_string_scope,
+                    Some(ImplicitStringScopeArg::TitleOrNote)
+                );
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_category_update_with_implicit_string_scope() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "category",
+            "update",
+            "Review",
+            "--implicit-string-scope",
+            "title",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Category {
+                command:
+                    CategoryCommand::Update {
+                        implicit_string_scope,
+                        ..
+                    },
+            }) => {
+                assert_eq!(implicit_string_scope, Some(ImplicitStringScopeArg::Title));
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
     }
 
     #[test]
