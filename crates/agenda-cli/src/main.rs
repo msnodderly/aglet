@@ -56,7 +56,9 @@ enum OutputFormatArg {
 enum Command {
     /// Add a new item
     Add {
+        /// Item title/text.
         text: String,
+        /// Optional note/body text stored with the item.
         #[arg(long)]
         note: Option<String>,
     },
@@ -66,9 +68,11 @@ enum Command {
         after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --note-stdin           Replace the entire note with stdin content\n  --clear-note           Remove the note entirely\n\nExamples:\n  agenda edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  agenda edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin"
     )]
     Edit {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
         /// New text (positional shorthand; also available as --text)
         text: Option<String>,
+        /// Replace the entire note. Mutually exclusive with other note flags.
         #[arg(long)]
         note: Option<String>,
         /// Append text to the existing note (separated by newline)
@@ -77,20 +81,26 @@ enum Command {
         /// Replace the note with stdin content
         #[arg(long = "note-stdin")]
         note_stdin: bool,
+        /// Remove the note entirely. Mutually exclusive with other note flags.
         #[arg(long = "clear-note")]
         clear_note: bool,
+        /// Mark item done (`true`) or not done (`false`).
         #[arg(long)]
         done: Option<bool>,
     },
 
     /// Show a single item with its assignments
-    Show { item_id: String },
+    Show {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
 
     /// Atomically claim an item for active work
     #[command(
         after_help = "Defaults (`agenda claim <ITEM_ID>`):\n  --claim-category \"In Progress\"\n  --must-not-have \"In Progress\"\n  --must-not-have \"Complete\"\n\nSetup:\n  Create an `In Progress` category (or sub-category) before claiming.\n\n  Feature DB example (`aglet-features.ag`):\n  agenda category create Status --exclusive\n  agenda category create Ready --parent Status\n  agenda category create \"In Progress\" --parent Status\n  agenda category create \"Waiting/Blocked\" --parent Status\n  agenda category create Complete --parent Status\n\nExamples:\n  agenda claim <ITEM_ID>\n  agenda claim <ITEM_ID> --must-not-have \"In Progress\" --must-not-have \"Complete\"\n  agenda claim <ITEM_ID> --claim-category \"In Progress\" --must-not-have \"Waiting/Blocked\""
     )]
     Claim {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
         /// Category to assign on successful claim.
         #[arg(long = "claim-category", default_value = "In Progress")]
@@ -105,9 +115,10 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Numeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
+        /// View to render. If omitted, uses the first stored view when present.
         #[arg(long)]
         view: Option<String>,
         /// Category filter (repeat for AND). Item must have ALL specified categories.
@@ -147,28 +158,37 @@ enum Command {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Include done items (default excludes them).
         #[arg(long)]
         include_done: bool,
     },
 
     /// Search item text and note
     Search {
+        /// Text query matched against item text and note.
         query: String,
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Include done items in search results (default excludes them).
         #[arg(long)]
         include_done: bool,
     },
 
     /// Delete an item (writes deletion log)
-    Delete { item_id: String },
+    Delete {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
 
     /// List deletion log entries
     Deleted,
 
     /// Restore an item from deletion log by log entry id
-    Restore { log_id: String },
+    Restore {
+        /// Deletion log entry id to restore.
+        log_id: String,
+    },
 
     /// Launch the interactive TUI
     Tui,
@@ -204,69 +224,102 @@ enum CategoryCommand {
     List,
 
     /// Show detailed info for a category
-    Show { name: String },
+    Show {
+        /// Category name (case-insensitive).
+        name: String,
+    },
 
     /// Create a category
     Create {
+        /// New category name.
         name: String,
+        /// Parent category name (case-insensitive).
         #[arg(long)]
         parent: Option<String>,
+        /// Mark this category as exclusive among siblings.
         #[arg(long)]
         exclusive: bool,
+        /// Disable implicit string matching for this category.
         #[arg(long = "disable-implicit-string")]
         disable_implicit_string: bool,
+        /// Category value type (`tag` or `numeric`).
         #[arg(long = "type", value_enum)]
         category_type: Option<CategoryTypeArg>,
     },
 
     /// Delete a category by name
-    Delete { name: String },
+    Delete {
+        /// Category name (case-insensitive).
+        name: String,
+    },
 
     /// Rename a category
-    Rename { name: String, new_name: String },
+    Rename {
+        /// Existing category name (case-insensitive).
+        name: String,
+        /// New category name.
+        new_name: String,
+    },
 
     /// Reparent a category (use --root to make top-level)
     Reparent {
+        /// Category name to move.
         name: String,
+        /// New parent category name.
         #[arg(long)]
         parent: Option<String>,
+        /// Move category to root (top-level).
         #[arg(long)]
         root: bool,
     },
 
     /// Update category flags
     Update {
+        /// Category name (case-insensitive).
         name: String,
+        /// Set exclusive mode (`true`/`false`).
         #[arg(long)]
         exclusive: Option<bool>,
+        /// Set actionable mode (`true`/`false`).
         #[arg(long)]
         actionable: Option<bool>,
+        /// Set implicit string matching (`true`/`false`).
         #[arg(long = "implicit-string")]
         implicit_string: Option<bool>,
+        /// Replace note text (empty string clears note).
         #[arg(long)]
         note: Option<String>,
+        /// Clear note text.
         #[arg(long = "clear-note")]
         clear_note: bool,
+        /// Set category value type (`tag` or `numeric`).
         #[arg(long = "type", value_enum)]
         category_type: Option<CategoryTypeArg>,
     },
 
     /// Assign an item to a category by id/name
     Assign {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
+        /// Category name (case-insensitive).
         category_name: String,
     },
 
     /// Set a numeric value assignment for a numeric category
     SetValue {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
+        /// Numeric category name (case-insensitive).
         category_name: String,
+        /// Numeric value to assign.
         value: String,
     },
 
     /// Unassign an item from a category
     Unassign {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
+        /// Category name (case-insensitive).
         category_name: String,
     },
 }
@@ -278,6 +331,7 @@ enum ViewCommand {
 
     /// Show the contents of a view
     Show {
+        /// View name (case-insensitive).
         name: String,
         /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
         /// Optional suffix `:asc` or `:desc` (default: asc).
@@ -290,20 +344,32 @@ enum ViewCommand {
 
     /// Create a basic view from include/exclude categories
     Create {
+        /// New view name.
         name: String,
+        /// Include-category criterion (repeat for AND semantics).
         #[arg(long = "include")]
         include: Vec<String>,
+        /// Exclude-category criterion (repeat for NOT semantics).
         #[arg(long = "exclude")]
         exclude: Vec<String>,
+        /// Hide items that do not match any section.
         #[arg(long = "hide-unmatched")]
         hide_unmatched: bool,
     },
 
     /// Rename a view
-    Rename { name: String, new_name: String },
+    Rename {
+        /// Existing view name (case-insensitive).
+        name: String,
+        /// New view name.
+        new_name: String,
+    },
 
     /// Delete a view by name
-    Delete { name: String },
+    Delete {
+        /// View name (case-insensitive).
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -311,19 +377,25 @@ enum LinkCommand {
     /// Create a dependency link: ITEM depends on DEPENDS_ON_ITEM
     #[command(name = "depends-on")]
     DependsOn {
+        /// Item id that depends on another item.
         item_id: String,
+        /// Item id that is required by `item_id`.
         depends_on_item_id: String,
     },
 
     /// Create inverse dependency vocabulary: BLOCKER blocks BLOCKED
     Blocks {
+        /// Blocking item id.
         blocker_item_id: String,
+        /// Blocked item id.
         blocked_item_id: String,
     },
 
     /// Create a bidirectional related link
     Related {
+        /// First item id.
         item_a_id: String,
+        /// Second item id.
         item_b_id: String,
     },
 }
@@ -332,20 +404,26 @@ enum LinkCommand {
 enum UnlinkCommand {
     /// Remove inverse dependency vocabulary: BLOCKER no longer blocks BLOCKED
     Blocks {
+        /// Blocking item id.
         blocker_item_id: String,
+        /// Blocked item id.
         blocked_item_id: String,
     },
 
     /// Remove a dependency link: ITEM no longer depends on DEPENDS_ON_ITEM
     #[command(name = "depends-on")]
     DependsOn {
+        /// Item id that currently depends on another item.
         item_id: String,
+        /// Item id currently depended on by `item_id`.
         depends_on_item_id: String,
     },
 
     /// Remove a related link
     Related {
+        /// First item id.
         item_a_id: String,
+        /// Second item id.
         item_b_id: String,
     },
 }
@@ -2319,6 +2397,42 @@ mod tests {
     use std::io::Cursor;
     use uuid::Uuid;
 
+    fn assert_help_docs_for_command_tree(cmd: &clap::Command) {
+        if cmd.get_name() != "agenda" {
+            let about = cmd
+                .get_about()
+                .or(cmd.get_long_about())
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            assert!(
+                !about.trim().is_empty(),
+                "command '{}' is missing help/description text",
+                cmd.get_name()
+            );
+        }
+
+        for arg in cmd.get_arguments() {
+            if arg.get_id().as_str() == "help" {
+                continue;
+            }
+            let help = arg
+                .get_help()
+                .or(arg.get_long_help())
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            assert!(
+                !help.trim().is_empty(),
+                "argument '{}' on command '{}' is missing help text",
+                arg.get_id(),
+                cmd.get_name()
+            );
+        }
+
+        for subcommand in cmd.get_subcommands() {
+            assert_help_docs_for_command_tree(subcommand);
+        }
+    }
+
     #[test]
     fn duplicate_category_error_includes_assign_guidance_and_parent_context() {
         let id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").expect("valid uuid");
@@ -2822,9 +2936,16 @@ mod tests {
             .find_subcommand_mut("list")
             .expect("list subcommand should exist");
         let help = list_cmd.render_help().to_string();
+        assert!(help.contains("If `--view` is omitted"));
         assert!(help.contains("Numeric value filter examples:"));
         assert!(help.contains("--value-in Complexity 1,2"));
         assert!(help.contains("--value-max Complexity 2"));
+    }
+
+    #[test]
+    fn clap_help_docs_cover_all_commands_and_arguments() {
+        let cmd = Cli::command();
+        assert_help_docs_for_command_tree(&cmd);
     }
 
     #[test]
