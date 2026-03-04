@@ -566,6 +566,7 @@ struct CategoryColumnPickerState {
     parent_name: String,
     item_id: ItemId,
     item_label: String,
+    item_preview_scroll: u16,
     is_exclusive: bool,
     filter: text_buffer::TextBuffer,
     focus: CategoryColumnPickerFocus,
@@ -2465,6 +2466,68 @@ mod tests {
         assert_eq!(state.create_confirm_name, None);
         assert_eq!(state.filter.text(), "NewTag");
         assert_eq!(app.mode, Mode::CategoryColumnPicker);
+    }
+
+    #[test]
+    fn category_column_picker_renders_wrapped_full_item_text_context() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut area = Category::new("Area".to_string());
+        let mut cli = Category::new("CLI".to_string());
+        cli.parent = Some(area.id);
+        area.children = vec![cli.id];
+        for cat in [&area, &cli] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let long_title =
+            "Board picker context should include wrapped text and tail token UNIQUEENDTOKEN";
+        let item = Item::new(long_title.to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open picker");
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+
+        let backend = TestBackend::new(92, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render picker");
+
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Item Context"),
+            "picker should render item context block: {rendered}"
+        );
+        assert!(
+            rendered.contains("UNIQUEENDTOKEN"),
+            "picker should render full wrapped item text without truncating tail token: {rendered}"
+        );
     }
 
     #[test]
