@@ -2349,15 +2349,17 @@ impl App {
             Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
-                    if state.pane_focus == ViewEditPaneFocus::Sections {
-                        "S:save  n:new  x:delete  Enter:details  Tab:pane  Esc:cancel"
+                    if state.discard_confirm {
+                        "y:save & close  n:discard  Esc:keep editing"
+                    } else if state.pane_focus == ViewEditPaneFocus::Sections {
+                        "S:save  n:new  x:del  Enter:details  Tab:pane  Esc:close"
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
-                        "S:save  p:hide  Tab:pane  Esc:cancel"
+                        "S:save  p:hide  Tab:pane  Esc:close"
                     } else {
-                        "S:save  n:new  x:delete  Space:toggle  Tab:pane  Esc:cancel"
+                        "S:save  n:new  x:del  Space:toggle  Tab:pane  Esc:close"
                     }
                 } else {
-                    "S:save  Tab:pane  Esc:cancel"
+                    "S:save  Tab:pane  Esc:close"
                 }
             }
             Mode::ItemAssignPicker => "Space:toggle  n:new  Enter:done  Esc:cancel",
@@ -3389,12 +3391,15 @@ impl App {
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
             let title = if show_view_details {
-                format!(
-                    " DETAILS  View Properties  matches:{} ",
-                    state.preview_count
-                )
+                format!(" DETAILS: View  matches:{} ", state.preview_count)
             } else {
-                format!(" DETAILS  Section {} ", state.section_index + 1)
+                let section_name = state
+                    .draft
+                    .sections
+                    .get(state.section_index)
+                    .map(|s| s.title.as_str())
+                    .unwrap_or("?");
+                format!(" DETAILS: {} ", section_name)
             };
 
             if show_view_details {
@@ -3403,6 +3408,26 @@ impl App {
                     BoardDisplayMode::MultiLine => "multi-line",
                 };
 
+                let separator_style = Style::default().fg(Color::DarkGray);
+                let pad = 26; // column alignment width
+
+                // Helper: style + track selected_line for unmatched-region fields
+                let style_for_unmatched_field =
+                    |field_index: usize,
+                     items: &[ListItem<'_>],
+                     selected_line_ref: &mut Option<usize>| {
+                        if details_focused
+                            && state.region == ViewEditRegion::Unmatched
+                            && state.unmatched_field_index == field_index
+                        {
+                            *selected_line_ref = Some(items.len());
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        }
+                    };
+
+                // ── Name ──
                 let editing_view_name =
                     matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
                 let view_name_text = if editing_view_name {
@@ -3417,10 +3442,23 @@ impl App {
                     Style::default()
                 };
                 items.push(
-                    ListItem::new(Line::from(format!("  Name (r): {view_name_text}")))
-                        .style(view_name_style),
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Name",
+                        view_name_text,
+                        width = pad
+                    )))
+                    .style(view_name_style),
                 );
-                items.push(ListItem::new(Line::from("  Criteria:")));
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Filter criteria ──
+                items.push(ListItem::new(Line::from("  Filter criteria:")));
 
                 let criteria_row_start = items.len();
                 let criteria_lines = summarize_query(&state.draft.criteria);
@@ -3452,8 +3490,15 @@ impl App {
                     }
                 }
 
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Date range ──
                 let when_include = if state.draft.criteria.virtual_include.is_empty() {
-                    "(none)".to_string()
+                    "(all)".to_string()
                 } else {
                     when_bucket_options()
                         .iter()
@@ -3473,96 +3518,40 @@ impl App {
                         .join(", ")
                 };
 
-                let when_include_row = items.len();
-                let when_include_style = if details_focused
-                    && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 0
-                {
-                    selected_line = Some(when_include_row);
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!("  When include: {when_include}")))
-                        .style(when_include_style),
-                );
-
-                let when_exclude_row = items.len();
-                let when_exclude_style = if details_focused
-                    && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 1
-                {
-                    selected_line = Some(when_exclude_row);
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!("  When exclude: {when_exclude}")))
-                        .style(when_exclude_style),
-                );
-
-                let display_mode_row = items.len();
-                let display_mode_style = if details_focused
-                    && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 2
-                {
-                    selected_line = Some(display_mode_row);
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!("  Display mode: {display_mode_label}")))
-                        .style(display_mode_style),
-                );
-
-                let unmatched_visible_row = items.len();
-                let unmatched_visible_style = if details_focused
-                    && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 3
-                {
-                    selected_line = Some(unmatched_visible_row);
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Unmatched visible: {}",
-                        if state.draft.show_unmatched {
-                            "yes"
-                        } else {
-                            "no"
-                        }
+                        "  {:<width$}{}",
+                        "Date range (include)",
+                        when_include,
+                        width = pad
                     )))
-                    .style(unmatched_visible_style),
+                    .style(style_for_unmatched_field(0, &items, &mut selected_line)),
                 );
-
-                let unmatched_label_row = items.len();
-                let unmatched_label_text = if matches!(
-                    state.inline_input,
-                    Some(ViewEditInlineInput::UnmatchedLabel)
-                ) {
-                    format!("◀ {}", state.inline_buf.text())
-                } else {
-                    format!("\"{}\"", state.draft.unmatched_label)
-                };
-                let unmatched_label_style = if details_focused
-                    && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 4
-                {
-                    selected_line = Some(unmatched_label_row);
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Unmatched label: {unmatched_label_text}"
+                        "  {:<width$}{}",
+                        "Date range (exclude)",
+                        when_exclude,
+                        width = pad
                     )))
-                    .style(unmatched_label_style),
+                    .style(style_for_unmatched_field(1, &items, &mut selected_line)),
+                );
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Display ──
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Display mode",
+                        display_mode_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(2, &items, &mut selected_line)),
                 );
 
                 let alias_count = state
@@ -3576,24 +3565,55 @@ impl App {
                 } else {
                     format!("{alias_count} configured")
                 };
-                let aliases_row = items.len();
-                let aliases_style = if details_focused
-                    && state.region == ViewEditRegion::Unmatched
-                    && state.unmatched_field_index == 5
-                {
-                    selected_line = Some(aliases_row);
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
                 items.push(
-                    ListItem::new(Line::from(format!("  Aliases: {alias_summary}")))
-                        .style(aliases_style),
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Aliases",
+                        alias_summary,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(5, &items, &mut selected_line)),
                 );
 
-                items.push(ListItem::new(Line::from(
-                    "  View keys: n:add  x:remove  Enter:pick/edit field  Space:cycle criterion mode  ]/[:when  m:display  t/l/a:unmatched",
-                )));
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Unmatched ──
+                let unmatched_value = if state.draft.show_unmatched {
+                    format!("yes, as \"{}\"", state.draft.unmatched_label)
+                } else {
+                    "hidden".to_string()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Show unmatched",
+                        unmatched_value,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(3, &items, &mut selected_line)),
+                );
+
+                let unmatched_label_text = if matches!(
+                    state.inline_input,
+                    Some(ViewEditInlineInput::UnmatchedLabel)
+                ) {
+                    format!("◀ {}", state.inline_buf.text())
+                } else {
+                    format!("\"{}\"", state.draft.unmatched_label)
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Unmatched label",
+                        unmatched_label_text,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(4, &items, &mut selected_line)),
+                );
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
                     state.inline_input,
@@ -3605,38 +3625,60 @@ impl App {
                 } else {
                     section.title.clone()
                 };
-                let title_style = if details_focused && state.region == ViewEditRegion::Sections {
-                    selected_line = Some(state.section_details_field_index.min(7));
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
+
+                let separator_style = Style::default().fg(Color::DarkGray);
+                let pad = 26; // column alignment width
+
+                // Helper: style + track selected_line for a given field index
+                let style_for_section_field =
+                    |field_index: usize,
+                     items: &[ListItem<'_>],
+                     selected_line_ref: &mut Option<usize>| {
+                        if details_focused
+                            && state.region == ViewEditRegion::Sections
+                            && state.section_details_field_index == field_index
+                        {
+                            *selected_line_ref = Some(items.len());
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        }
+                    };
+
+                // ── Group 1: Identity ──
                 items.push(
-                    ListItem::new(Line::from(format!("  Title: {title_text}"))).style(title_style),
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Title",
+                        title_text,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(0, &items, &mut selected_line)),
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
-                let criteria_style = if details_focused
-                    && state.region == ViewEditRegion::Sections
-                    && state.section_details_field_index == 1
-                {
-                    selected_line = Some(1);
-                    Style::default().add_modifier(Modifier::REVERSED)
+                let criteria_value = if criteria_lines.is_empty() {
+                    "(none)".to_string()
                 } else {
-                    Style::default()
+                    criteria_lines.join("; ")
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Criteria: {}",
-                        if criteria_lines.is_empty() {
-                            "(none)".to_string()
-                        } else {
-                            criteria_lines.join("; ")
-                        }
+                        "  {:<width$}{}",
+                        "Filter",
+                        criteria_value,
+                        width = pad
                     )))
-                    .style(criteria_style),
+                    .style(style_for_section_field(1, &items, &mut selected_line)),
                 );
 
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Group 2: Display ──
                 let columns_summary = if section.columns.is_empty() {
                     "(none)".to_string()
                 } else {
@@ -3644,75 +3686,81 @@ impl App {
                         .columns
                         .iter()
                         .map(|column| {
-                            let name = category_names
+                            category_names
                                 .get(&column.heading)
                                 .cloned()
-                                .unwrap_or_else(|| "(deleted)".to_string());
-                            format!("{name}[w:{}]", column.width)
+                                .unwrap_or_else(|| "(deleted)".to_string())
                         })
                         .collect::<Vec<String>>()
                         .join(", ")
                 };
-                let style_for_section_field =
-                    |field_index: usize, selected_line_ref: &mut Option<usize>| {
-                        if details_focused
-                            && state.region == ViewEditRegion::Sections
-                            && state.section_details_field_index == field_index
-                        {
-                            *selected_line_ref = Some(field_index);
-                            Style::default().add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        }
-                    };
-                items.push(
-                    ListItem::new(Line::from(format!("  Columns: {columns_summary}")))
-                        .style(style_for_section_field(2, &mut selected_line)),
-                );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  On insert assign: {}",
-                        summarize_category_set(&section.on_insert_assign)
+                        "  {:<width$}{}",
+                        "Columns",
+                        columns_summary,
+                        width = pad
                     )))
-                    .style(style_for_section_field(3, &mut selected_line)),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "  On remove unassign: {}",
-                        summarize_category_set(&section.on_remove_unassign)
-                    )))
-                    .style(style_for_section_field(4, &mut selected_line)),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "  Show children: {}",
-                        if section.show_children { "yes" } else { "no" }
-                    )))
-                    .style(style_for_section_field(5, &mut selected_line)),
+                    .style(style_for_section_field(2, &items, &mut selected_line)),
                 );
                 let mode_label = match section.board_display_mode_override {
-                    None => "inherit".to_string(),
+                    None => "(use view default)".to_string(),
                     Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
                     Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
                 };
                 items.push(
-                    ListItem::new(Line::from(format!("  Display override: {mode_label}")))
-                        .style(style_for_section_field(6, &mut selected_line)),
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Display mode",
+                        mode_label,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(6, &items, &mut selected_line)),
+                );
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Group 3: Automation / Behavior ──
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Auto-assign on add",
+                        summarize_category_set(&section.on_insert_assign),
+                        width = pad
+                    )))
+                    .style(style_for_section_field(3, &items, &mut selected_line)),
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  Expand in Sections list: {}",
-                        if state.section_expanded == Some(state.section_index) {
-                            "yes"
-                        } else {
-                            "no"
-                        }
+                        "  {:<width$}{}",
+                        "Auto-unassign on remove",
+                        summarize_category_set(&section.on_remove_unassign),
+                        width = pad
                     )))
-                    .style(style_for_section_field(7, &mut selected_line)),
+                    .style(style_for_section_field(4, &items, &mut selected_line)),
                 );
-                items.push(ListItem::new(Line::from(
-                    "  Tip: Enter/Space edits selected field (J/K or [/] reorder; shortcuts optional)",
-                )));
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Expand sub-categories",
+                        if section.show_children { "yes" } else { "no" },
+                        width = pad
+                    )))
+                    .style(style_for_section_field(5, &items, &mut selected_line)),
+                );
+                if details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 5
+                {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    Split this section into sub-groups based on child categories",
+                        Style::default().fg(Color::DarkGray),
+                    ))));
+                }
             } else {
                 items.push(ListItem::new(Line::from("  No selection")));
             }
@@ -3836,9 +3884,6 @@ impl App {
                     } else {
                         " "
                     };
-                    let is_expanded = state.section_expanded == Some(i);
-                    let expand_icon = if is_expanded { "▾" } else { "▸" };
-
                     let title = if inline_editing_section == Some(i) {
                         format!(
                             "{}  {}. {} ◀ editing",
@@ -3847,7 +3892,7 @@ impl App {
                             state.inline_buf.text()
                         )
                     } else {
-                        format!("{} {} {}. {}", cursor, expand_icon, i + 1, section.title)
+                        format!("{} {}. {}", cursor, i + 1, section.title)
                     };
 
                     let style = if i == state.section_index
@@ -3860,31 +3905,6 @@ impl App {
                         Style::default()
                     };
                     items.push(ListItem::new(Line::from(title)).style(style));
-
-                    if is_expanded {
-                        let criteria_count = section.criteria.criteria.len();
-                        let columns_count = section.columns.len();
-                        let mode_label = match section.board_display_mode_override {
-                            None => "inherit".to_string(),
-                            Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
-                            Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
-                        };
-                        items.push(ListItem::new(Line::from(format!(
-                            "     criteria:{}  columns:{}  children:{}  display:{}",
-                            if criteria_count == 0 {
-                                "none".to_string()
-                            } else {
-                                criteria_count.to_string()
-                            },
-                            if columns_count == 0 {
-                                "none".to_string()
-                            } else {
-                                columns_count.to_string()
-                            },
-                            if section.show_children { "yes" } else { "no" },
-                            mode_label,
-                        ))));
-                    }
                 }
             }
 
@@ -4035,7 +4055,7 @@ impl App {
                             filtered_indices.len()
                         )
                     };
-                    let section_expanded = state.section_expanded.unwrap_or(0);
+                    let section_index = state.section_index;
                     let items: Vec<ListItem<'_>> = self
                         .category_rows
                         .iter()
@@ -4055,7 +4075,7 @@ impl App {
                                     CategoryEditTarget::SectionCriteria => state
                                         .draft
                                         .sections
-                                        .get(section_expanded)
+                                        .get(section_index)
                                         .map(|s| &s.criteria),
                                     _ => None,
                                 };
@@ -4100,7 +4120,7 @@ impl App {
                                     CategoryEditTarget::SectionColumns => state
                                         .draft
                                         .sections
-                                        .get(section_expanded)
+                                        .get(section_index)
                                         .map(|section| {
                                             section.columns.iter().any(|col| col.heading == row.id)
                                         })
@@ -4108,13 +4128,13 @@ impl App {
                                     CategoryEditTarget::SectionOnInsertAssign => state
                                         .draft
                                         .sections
-                                        .get(section_expanded)
+                                        .get(section_index)
                                         .map(|section| section.on_insert_assign.contains(&row.id))
                                         .unwrap_or(false),
                                     CategoryEditTarget::SectionOnRemoveUnassign => state
                                         .draft
                                         .sections
-                                        .get(section_expanded)
+                                        .get(section_index)
                                         .map(|section| section.on_remove_unassign.contains(&row.id))
                                         .unwrap_or(false),
                                     _ => false,

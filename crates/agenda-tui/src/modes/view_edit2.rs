@@ -57,7 +57,6 @@ impl App {
                 state.section_index = section_index;
                 state.sections_view_row_selected = false;
                 state.section_details_field_index = 0;
-                state.section_expanded = Some(section_index);
                 state.inline_input = Some(ViewEditInlineInput::SectionTitle { section_index });
                 state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
                 state.discard_confirm = false;
@@ -109,11 +108,6 @@ impl App {
                 idx,
                 Self::view_edit_default_section(Self::DEFAULT_VIEW_EDIT_SECTION_TITLE),
             );
-            if let Some(expanded_index) = state.section_expanded {
-                if expanded_index >= idx {
-                    state.section_expanded = Some(expanded_index + 1);
-                }
-            }
             state.section_index = idx;
             state.sections_view_row_selected = false;
             state.section_details_field_index = 0;
@@ -137,7 +131,6 @@ impl App {
             section_index: 0,
             sections_view_row_selected: false,
             section_details_field_index: 0,
-            section_expanded: None,
             overlay: None,
             inline_input: None,
             inline_buf: text_buffer::TextBuffer::empty(),
@@ -431,13 +424,6 @@ impl App {
                 state.sections_view_row_selected = true;
                 state.section_details_field_index = 0;
             }
-            if state.section_expanded == Some(idx) {
-                state.section_expanded = None;
-            } else if let Some(expanded) = state.section_expanded {
-                if expanded > idx {
-                    state.section_expanded = Some(expanded - 1);
-                }
-            }
             state.dirty = true;
             state.discard_confirm = false;
         }
@@ -457,7 +443,7 @@ impl App {
     fn toggle_category_picker_selection(
         &mut self,
         target: CategoryEditTarget,
-        section_expanded: usize,
+        section_index: usize,
         cat_id: CategoryId,
     ) {
         if let Some(state) = &mut self.view_edit_state {
@@ -467,12 +453,12 @@ impl App {
                 }
                 CategoryEditTarget::ViewAliases => {}
                 CategoryEditTarget::SectionCriteria => {
-                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                    if let Some(section) = state.draft.sections.get_mut(section_index) {
                         Self::cycle_criterion_mode(&mut section.criteria, cat_id);
                     }
                 }
                 CategoryEditTarget::SectionColumns => {
-                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                    if let Some(section) = state.draft.sections.get_mut(section_index) {
                         if let Some(existing_index) =
                             section.columns.iter().position(|col| col.heading == cat_id)
                         {
@@ -487,14 +473,14 @@ impl App {
                     }
                 }
                 CategoryEditTarget::SectionOnInsertAssign => {
-                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                    if let Some(section) = state.draft.sections.get_mut(section_index) {
                         if !section.on_insert_assign.remove(&cat_id) {
                             section.on_insert_assign.insert(cat_id);
                         }
                     }
                 }
                 CategoryEditTarget::SectionOnRemoveUnassign => {
-                    if let Some(section) = state.draft.sections.get_mut(section_expanded) {
+                    if let Some(section) = state.draft.sections.get_mut(section_index) {
                         if !section.on_remove_unassign.remove(&cat_id) {
                             section.on_remove_unassign.insert(cat_id);
                         }
@@ -544,6 +530,17 @@ impl App {
             return Ok(false);
         }
 
+        // Layer 3b: discard confirmation intercepts before pane/global keys.
+        if self
+            .view_edit_state
+            .as_ref()
+            .map(|s| s.discard_confirm)
+            .unwrap_or(false)
+        {
+            self.handle_view_edit_discard_confirm_key(code, agenda)?;
+            return Ok(false);
+        }
+
         // Layer 4: global and region keys.
         self.handle_view_edit_region_key(code, agenda)?;
         Ok(false)
@@ -560,6 +557,34 @@ impl App {
             KeyCode::Esc => {
                 if let Some(state) = &mut self.view_edit_state {
                     state.section_delete_confirm = None;
+                }
+                self.status = Self::view_edit_default_status();
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn handle_view_edit_discard_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') => {
+                // Save and close
+                self.handle_view_edit_save(agenda)?;
+            }
+            KeyCode::Char('n') => {
+                // Discard changes and close
+                self.view_edit_state = None;
+                self.mode = Mode::ViewPicker;
+                self.status = "View edit canceled; unsaved changes discarded".to_string();
+            }
+            KeyCode::Esc => {
+                // Cancel — keep editing
+                if let Some(state) = &mut self.view_edit_state {
+                    state.discard_confirm = false;
                 }
                 self.status = Self::view_edit_default_status();
             }
@@ -709,7 +734,7 @@ impl App {
         };
         let overlay = state.overlay.clone();
         let picker_index = state.picker_index;
-        let section_expanded = state.section_expanded.unwrap_or(0);
+        let section_index = state.section_index;
 
         match overlay {
             Some(ViewEditOverlay::CategoryPicker { target }) => {
@@ -763,7 +788,7 @@ impl App {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
                                 self.toggle_category_picker_selection(
                                     target,
-                                    section_expanded,
+                                    section_index,
                                     row.id,
                                 );
                             }
@@ -859,18 +884,22 @@ impl App {
                     self.clear_view_edit_section_filter();
                     return Ok(true);
                 }
-                let was_dirty = self
+                let is_dirty = self
                     .view_edit_state
                     .as_ref()
                     .map(|s| s.dirty)
                     .unwrap_or(false);
-                self.view_edit_state = None;
-                self.mode = Mode::ViewPicker;
-                self.status = if was_dirty {
-                    "View edit canceled; unsaved changes discarded".to_string()
+                if is_dirty {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.discard_confirm = true;
+                    }
+                    self.status =
+                        "Save changes? y:save and close  n:discard  Esc:keep editing".to_string();
                 } else {
-                    "View edit canceled".to_string()
-                };
+                    self.view_edit_state = None;
+                    self.mode = Mode::ViewPicker;
+                    self.status = "View edit closed".to_string();
+                }
                 return Ok(true);
             }
             KeyCode::Tab => {
@@ -1078,7 +1107,7 @@ impl App {
     // -------------------------------------------------------------------------
 
     fn handle_view_edit_section_details_key(&mut self, code: KeyCode) -> Result<bool, String> {
-        let field_count = 8usize;
+        let field_count = 7usize;
         let current_index = self
             .view_edit_state
             .as_ref()
@@ -1109,7 +1138,6 @@ impl App {
                     4 => Some(KeyCode::Char('r')),
                     5 => Some(KeyCode::Char('h')),
                     6 => Some(KeyCode::Char('m')),
-                    7 => Some(KeyCode::Enter),
                     _ => None,
                 };
                 if let Some(mapped) = mapped {
@@ -1254,12 +1282,8 @@ impl App {
                 }
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < len {
-                        if state.section_expanded == Some(idx) {
-                            state.section_expanded = None;
-                        } else {
-                            state.section_expanded = Some(idx);
-                        }
-                        state.section_details_field_index = 7;
+                        state.pane_focus = ViewEditPaneFocus::Details;
+                        state.section_details_field_index = 0;
                     }
                 }
             }
@@ -1283,7 +1307,6 @@ impl App {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionCriteria,
                         });
-                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                     self.status = "Section criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done"
@@ -1300,7 +1323,6 @@ impl App {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionOnInsertAssign,
                         });
-                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                     self.status = "Edit on-insert assign: j/k select  Space/Enter:toggle  Esc:done"
@@ -1317,7 +1339,6 @@ impl App {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionColumns,
                         });
-                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                     self.status = "Edit section columns: j/k select  Space/Enter:toggle  Esc:done  (leaf tags hidden)"
@@ -1335,7 +1356,6 @@ impl App {
                         state.overlay = Some(ViewEditOverlay::CategoryPicker {
                             target: CategoryEditTarget::SectionOnRemoveUnassign,
                         });
-                        state.section_expanded = Some(idx);
                         state.picker_index = first;
                     }
                     self.status =
@@ -1351,7 +1371,6 @@ impl App {
                     if let Some(state) = &mut self.view_edit_state {
                         if let Some(section) = state.draft.sections.get_mut(idx) {
                             section.show_children = !section.show_children;
-                            state.section_expanded = Some(idx);
                             state.dirty = true;
                             state.discard_confirm = false;
                         }
@@ -1369,7 +1388,6 @@ impl App {
                                 Self::cycle_section_board_display_mode_override(
                                     section.board_display_mode_override,
                                 );
-                            state.section_expanded = Some(idx);
                             state.dirty = true;
                             state.discard_confirm = false;
                         }
