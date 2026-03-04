@@ -2545,7 +2545,7 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(Color::Cyan)
             };
             let mut note_widget = panel.note.widget().clone();
             note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
@@ -2581,7 +2581,7 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(Color::Cyan)
             };
             let visible_indices = self.input_panel_visible_category_row_indices();
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
