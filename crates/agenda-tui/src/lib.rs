@@ -345,7 +345,6 @@ struct ViewEditState {
     section_index: usize,
     sections_view_row_selected: bool,
     section_details_field_index: usize,
-    section_expanded: Option<usize>,
     overlay: Option<ViewEditOverlay>,
     inline_input: Option<ViewEditInlineInput>,
     inline_buf: text_buffer::TextBuffer,
@@ -8389,8 +8388,8 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_esc_on_dirty_discards_and_closes_in_one_step() {
-        let (store, db_path) = make_test_store_with_view("esc-dirty-discard");
+    fn view_edit_esc_on_dirty_prompts_save_confirm() {
+        let (store, db_path) = make_test_store_with_view("esc-dirty-confirm");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -8401,8 +8400,27 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle view display mode");
+
+        // Esc on dirty state should show confirm dialog, not close
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("esc closes");
+            .expect("esc shows confirm");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.as_ref().unwrap().discard_confirm);
+
+        // Esc again cancels the dialog (keep editing)
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc cancels confirm");
+        assert!(!app.view_edit_state.as_ref().unwrap().discard_confirm);
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        // Esc again re-opens confirm
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("esc shows confirm again");
+        assert!(app.view_edit_state.as_ref().unwrap().discard_confirm);
+
+        // 'n' discards and closes
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("n discards");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
 
@@ -8875,8 +8893,8 @@ mod tests {
     }
 
     #[test]
-    fn view_edit_section_details_enter_toggles_expanded_row() {
-        let (store, db_path) = make_test_store_with_view("section-details-expand-row");
+    fn view_edit_section_details_field_count_is_seven() {
+        let (store, db_path) = make_test_store_with_view("section-details-field-count");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -8910,12 +8928,9 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().pane_focus,
             ViewEditPaneFocus::Details
         );
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
-        );
 
-        for _ in 0..7 {
+        // Navigate to the last field (index 6 with 7 fields)
+        for _ in 0..10 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("advance details field");
         }
@@ -8924,20 +8939,9 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .section_details_field_index,
-            7
+            6,
+            "max section details field index should be 6 (7 fields: 0-6)"
         );
-        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
-
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("toggle expanded from details row");
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().section_expanded,
-            Some(0)
-        );
-
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("toggle expanded off from details row");
-        assert_eq!(app.view_edit_state.as_ref().unwrap().section_expanded, None);
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -9340,10 +9344,6 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().draft.sections.len(),
             1
         );
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().section_expanded,
-            Some(0)
-        );
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().inline_input,
             Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
@@ -9353,10 +9353,6 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Char('f'), &agenda)
             .expect("open section criteria picker");
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().section_expanded,
-            Some(0)
-        );
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().overlay,
             Some(super::ViewEditOverlay::CategoryPicker {
