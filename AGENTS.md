@@ -492,19 +492,17 @@ Practical implications:
 - Add-item flows still apply section criteria assignments (for example `Ready`)
   through the normal section insert path.
 
-## CLI Output Piped To `head` Can Panic With Broken Pipe (Surprising)
+## Clap `--help` Coverage Requires Per-Arg Doc Comments (Surprising)
 
-Some `agenda-cli` commands that emit large stdout payloads (for example markdown
-export output) can panic with:
-`failed printing to stdout: Broken pipe (os error 32)` when downstream closes
-early (`| head -n ...`).
+In `agenda-cli`, Clap renders blank lines for options/arguments that have no
+doc comment/help string, even when the command itself is documented.
 
 Practical implications:
-- Prefer non-terminating consumers when sampling output in scripts (for example
-  `sed -n '1,40p'`) to avoid early pipe close.
-- If you do use `head`, treat a broken-pipe panic as an artifact of the pipe
-  close, not necessarily a logic failure in the command.
-
+- Add explicit doc comments for every user-facing option and positional arg in
+  parser enums (`Command`, `CategoryCommand`, `ViewCommand`, etc.).
+- Keep a parser regression test that walks the command tree and fails when any
+  non-`help` argument lacks help text (current test:
+  `clap_help_docs_cover_all_commands_and_arguments`).
 ## Normal Mode Preview Hint Must Be In Footer (Discoverability)
 
 `p` already toggles item preview in `Mode::Normal`, but discoverability depends
