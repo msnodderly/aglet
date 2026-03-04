@@ -479,3 +479,15 @@ Practical implications:
 - Expect `SlotContext::Section` (not `GeneratedSection`) in this case.
 - Add-item flows still apply section criteria assignments (for example `Ready`)
   through the normal section insert path.
+
+## Clap `--help` Coverage Requires Per-Arg Doc Comments (Surprising)
+
+In `agenda-cli`, Clap renders blank lines for options/arguments that have no
+doc comment/help string, even when the command itself is documented.
+
+Practical implications:
+- Add explicit doc comments for every user-facing option and positional arg in
+  parser enums (`Command`, `CategoryCommand`, `ViewCommand`, etc.).
+- Keep a parser regression test that walks the command tree and fails when any
+  non-`help` argument lacks help text (current test:
+  `clap_help_docs_cover_all_commands_and_arguments`).
