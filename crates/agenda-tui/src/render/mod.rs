@@ -2434,9 +2434,8 @@ impl App {
         ))];
         let text_style = if panel.focus == InputPanelFocus::Text {
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
             Style::default()
         };
@@ -2688,8 +2687,19 @@ impl App {
         } else {
             "[Cancel]"
         };
+        let buttons_focused = matches!(
+            panel.focus,
+            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton
+        );
+        let buttons_style = if buttons_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
         frame.render_widget(
-            Paragraph::new(format!("  {save_button}  {cancel_button}")),
+            Paragraph::new(format!("  {save_button}  {cancel_button}")).style(buttons_style),
             regions.buttons,
         );
 
