@@ -1405,6 +1405,7 @@ impl App {
             parent_name: meta.parent_name.clone(),
             item_id: meta.item_id,
             item_label: meta.item_label,
+            item_preview_scroll: 0,
             is_exclusive,
             filter: text_buffer::TextBuffer::empty(),
             focus: CategoryColumnPickerFocus::FilterInput,
@@ -1463,6 +1464,25 @@ impl App {
             let cur = state.list_index.min(len - 1);
             state.list_index = (cur as i64 + delta as i64).rem_euclid(len as i64) as usize;
             state.focus = CategoryColumnPickerFocus::List;
+        }
+    }
+
+    fn scroll_category_column_picker_item_preview(&mut self, delta: i32) {
+        let Some(state) = self.category_column_picker_state_mut() else {
+            return;
+        };
+        match delta.cmp(&0) {
+            std::cmp::Ordering::Greater => {
+                state.item_preview_scroll = state
+                    .item_preview_scroll
+                    .saturating_add(delta.unsigned_abs() as u16);
+            }
+            std::cmp::Ordering::Less => {
+                state.item_preview_scroll = state
+                    .item_preview_scroll
+                    .saturating_sub(delta.unsigned_abs() as u16);
+            }
+            std::cmp::Ordering::Equal => {}
         }
     }
 
@@ -1695,6 +1715,14 @@ impl App {
             }
             KeyCode::Down => {
                 self.move_category_column_picker_list(1);
+                return Ok(false);
+            }
+            KeyCode::PageUp => {
+                self.scroll_category_column_picker_item_preview(-1);
+                return Ok(false);
+            }
+            KeyCode::PageDown => {
+                self.scroll_category_column_picker_item_preview(1);
                 return Ok(false);
             }
             KeyCode::Char('k')
