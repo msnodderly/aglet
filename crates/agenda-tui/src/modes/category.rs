@@ -277,6 +277,10 @@ impl App {
                     self.save_category_manager_details_note(agenda)?;
                     return Ok(true);
                 }
+                KeyCode::Char('s') if self.current_key_modifiers.contains(KeyModifiers::SHIFT) => {
+                    self.save_category_manager_details_note(agenda)?;
+                    return Ok(true);
+                }
                 KeyCode::Esc => {
                     if self.category_manager_details_note_dirty() {
                         self.reload_category_manager_details_note_from_selected();
