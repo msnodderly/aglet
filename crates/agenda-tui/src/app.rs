@@ -186,17 +186,16 @@ impl App {
             if self.mode == Mode::Normal {
                 self.status = "No views configured; showing fallback item list".to_string();
             }
-            self.view_index = 0;
-            self.picker_index = 0;
+            self.set_active_view_index(0);
         } else {
-            self.view_index = self.view_index.min(self.views.len().saturating_sub(1));
+            self.set_active_view_index(self.view_index);
             let view = self
                 .current_view()
                 .cloned()
                 .ok_or("No active view".to_string())?;
             let reference_date = Local::now().date_naive();
             let mut result = resolve_view(&view, &items, &self.categories, reference_date);
-            if view.hide_dependent_items {
+            if self.effective_hide_dependent_items() {
                 for section in &mut result.sections {
                     section.items.retain(|item| !self.is_item_blocked(item.id));
                     for subsection in &mut section.subsections {
@@ -665,6 +664,34 @@ impl App {
         self.views.get(self.view_index)
     }
 
+    pub(crate) fn effective_hide_dependent_items(&self) -> bool {
+        self.session_hide_dependent_items_override
+            .unwrap_or_else(|| {
+                self.current_view()
+                    .map(|view| view.hide_dependent_items)
+                    .unwrap_or(false)
+            })
+    }
+
+    fn set_active_view_index(&mut self, index: usize) {
+        if self.views.is_empty() {
+            self.view_index = 0;
+            self.picker_index = 0;
+            self.active_view_name = None;
+            self.session_hide_dependent_items_override = None;
+            return;
+        }
+
+        let next_index = index.min(self.views.len().saturating_sub(1));
+        let next_view_name = self.views.get(next_index).map(|view| view.name.clone());
+        if self.active_view_name != next_view_name {
+            self.session_hide_dependent_items_override = None;
+        }
+        self.view_index = next_index;
+        self.picker_index = next_index;
+        self.active_view_name = next_view_name;
+    }
+
     pub(crate) fn selected_category_row(&self) -> Option<&CategoryListRow> {
         self.category_rows.get(self.category_index)
     }
@@ -695,6 +722,7 @@ impl App {
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
             structure_move_prefix: None,
+            discard_confirm: false,
             details_focus: CategoryManagerDetailsFocus::Exclusive,
             details_note_category_id: selected_category_id,
             details_note: text_buffer::TextBuffer::new(initial_note),
@@ -827,6 +855,19 @@ impl App {
 
     pub(crate) fn category_manager_focus(&self) -> Option<CategoryManagerFocus> {
         self.category_manager.as_ref().map(|state| state.focus)
+    }
+
+    pub(crate) fn category_manager_discard_confirm(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.discard_confirm)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_category_manager_discard_confirm(&mut self, discard_confirm: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.discard_confirm = discard_confirm;
+        }
     }
 
     pub(crate) fn set_category_manager_focus(&mut self, focus: CategoryManagerFocus) {
@@ -1035,8 +1076,7 @@ impl App {
             .iter()
             .position(|view| view.name.eq_ignore_ascii_case(view_name))
         {
-            self.view_index = index;
-            self.picker_index = index;
+            self.set_active_view_index(index);
         }
     }
 
@@ -1045,8 +1085,8 @@ impl App {
             self.status = "No views available".to_string();
             return Ok(());
         }
-        self.view_index = next_index(self.view_index, self.views.len(), delta);
-        self.picker_index = self.view_index;
+        let next_view_index = next_index(self.view_index, self.views.len(), delta);
+        self.set_active_view_index(next_view_index);
         self.slot_index = 0;
         self.item_index = 0;
         self.slot_sort_keys.clear();
@@ -1069,8 +1109,7 @@ impl App {
             self.status = "All Items view not found".to_string();
             return Ok(());
         };
-        self.view_index = index;
-        self.picker_index = index;
+        self.set_active_view_index(index);
         self.slot_index = 0;
         self.item_index = 0;
         self.slot_sort_keys.clear();

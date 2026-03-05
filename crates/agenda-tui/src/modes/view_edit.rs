@@ -86,6 +86,23 @@ impl App {
                     self.status = "No views available".to_string();
                 }
             }
+            KeyCode::Char('c') => {
+                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    self.view_pending_clone_id = Some(view.id);
+                    self.input_panel = Some(input_panel::InputPanel::new_name_input(
+                        "",
+                        &format!("Clone view '{}'", view.name),
+                    ));
+                    self.name_input_context = Some(NameInputContext::ViewClone);
+                    self.mode = Mode::InputPanel;
+                    self.status = format!(
+                        "Clone view '{}': type new name, Enter to confirm, Esc to cancel",
+                        view.name
+                    );
+                } else {
+                    self.status = "No selected view to clone".to_string();
+                }
+            }
             KeyCode::Char('x') => {
                 if let Some(view) = self.views.get(self.picker_index) {
                     if is_immutable_view(view) {
