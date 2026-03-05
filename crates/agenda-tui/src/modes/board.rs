@@ -3676,9 +3676,9 @@ impl App {
     /// Returns the mode to return to when a NameInput panel is canceled or completed.
     fn name_input_return_mode(&self) -> Mode {
         match self.name_input_context {
-            Some(NameInputContext::ViewCreate) | Some(NameInputContext::ViewRename) => {
-                Mode::ViewPicker
-            }
+            Some(NameInputContext::ViewCreate)
+            | Some(NameInputContext::ViewRename)
+            | Some(NameInputContext::ViewClone) => Mode::ViewPicker,
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
@@ -3760,6 +3760,44 @@ impl App {
                 self.input_panel = None;
                 self.name_input_context = None;
                 self.open_view_edit_new_view_focus_first_section(view);
+            }
+            Some(NameInputContext::ViewClone) => {
+                if input_text.is_empty() {
+                    self.status = "Name cannot be empty".to_string();
+                    return Ok(());
+                }
+                let name = input_text.clone();
+                if self
+                    .views
+                    .iter()
+                    .any(|view| view.name.eq_ignore_ascii_case(&name))
+                {
+                    self.status = format!("View \"{name}\" already exists");
+                    return Ok(());
+                }
+                let Some(source_id) = self.view_pending_clone_id.take() else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::ViewPicker;
+                    self.status = "Clone failed: no source view".to_string();
+                    return Ok(());
+                };
+                match agenda.store().clone_view(source_id, name.clone()) {
+                    Ok(_cloned) => {
+                        self.refresh(agenda.store())?;
+                        self.set_view_selection_by_name(&name);
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("Cloned view as '{name}'");
+                    }
+                    Err(err) => {
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.mode = Mode::ViewPicker;
+                        self.status = format!("Clone failed: {err}");
+                    }
+                }
             }
             Some(NameInputContext::ViewRename) => {
                 if input_text.is_empty() {

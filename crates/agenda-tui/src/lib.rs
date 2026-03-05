@@ -27,6 +27,7 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
+use uuid::Uuid;
 
 mod app;
 mod input;
@@ -312,6 +313,8 @@ struct LinkWizardState {
 enum NameInputContext {
     ViewCreate,
     ViewRename,
+    /// Cloning an existing view with a new name.
+    ViewClone,
     /// Editing a numeric cell value in the board.
     NumericValueEdit,
     /// Editing a When datetime value in the board.
@@ -787,6 +790,7 @@ struct App {
     view_index: usize,
     picker_index: usize,
     view_pending_edit_name: Option<String>,
+    view_pending_clone_id: Option<Uuid>,
     view_edit_state: Option<ViewEditState>,
     numeric_edit_target: Option<NumericEditTarget>,
     when_edit_target: Option<WhenEditTarget>,
@@ -841,6 +845,7 @@ impl Default for App {
             view_index: 0,
             picker_index: 0,
             view_pending_edit_name: None,
+            view_pending_clone_id: None,
             view_edit_state: None,
             numeric_edit_target: None,
             when_edit_target: None,
@@ -4889,6 +4894,158 @@ mod tests {
         assert_eq!(app.mode, Mode::InputPanel);
         assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
 
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_c_opens_clone_name_input() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone name input");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::ViewClone));
+        assert!(app.view_pending_clone_id.is_some());
+        assert!(app.status.contains("Clone"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_clone_creates_new_view() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-save");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone");
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        for ch in "Cloned View".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type clone name");
+        }
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save clone");
+
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("Cloned view as 'Cloned View'"));
+        assert!(store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "Cloned View"));
+        assert!(store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "TestView"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_clone_rejects_duplicate_name() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-dup");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone");
+
+        for ch in "TestView".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type duplicate name");
+        }
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save clone with dup name");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.status.contains("already exists"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_clone_rejects_empty_name() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-empty");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone");
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save clone with empty name");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.status.contains("cannot be empty"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_c_with_no_views_shows_status() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-clone-no-views-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App {
+            mode: Mode::ViewPicker,
+            ..Default::default()
+        };
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c with no views");
+
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("No selected view to clone"));
+
+        drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
