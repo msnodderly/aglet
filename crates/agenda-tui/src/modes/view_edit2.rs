@@ -185,11 +185,11 @@ impl App {
         new_index
     }
 
-    /// Open the unified ViewEdit screen for `view`.
-    pub(crate) fn open_view_edit(&mut self, view: View) {
+    fn open_view_edit_with_mode(&mut self, view: View, is_new_view: bool) {
         let preview_count = self.preview_count_for_query(&view.criteria);
         self.view_edit_state = Some(ViewEditState {
             draft: view,
+            is_new_view,
             region: ViewEditRegion::Criteria,
             pane_focus: ViewEditPaneFocus::Details,
             criteria_index: 0,
@@ -214,8 +214,13 @@ impl App {
         self.status = Self::view_edit_default_status();
     }
 
+    /// Open the unified ViewEdit screen for an existing persisted `view`.
+    pub(crate) fn open_view_edit(&mut self, view: View) {
+        self.open_view_edit_with_mode(view, false);
+    }
+
     pub(crate) fn open_view_edit_new_view_focus_first_section(&mut self, view: View) {
-        self.open_view_edit(view);
+        self.open_view_edit_with_mode(view, true);
         self.begin_view_edit_section_title_input(0);
     }
 
@@ -644,9 +649,18 @@ impl App {
             }
             KeyCode::Char('n') => {
                 // Discard changes and close
+                let is_new_view = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(|s| s.is_new_view)
+                    .unwrap_or(false);
                 self.view_edit_state = None;
                 self.mode = Mode::ViewPicker;
-                self.status = "View edit canceled; unsaved changes discarded".to_string();
+                self.status = if is_new_view {
+                    "View creation canceled; unsaved draft discarded".to_string()
+                } else {
+                    "View edit canceled; unsaved changes discarded".to_string()
+                };
             }
             KeyCode::Esc => {
                 // Cancel — keep editing
@@ -965,9 +979,18 @@ impl App {
                     self.status =
                         "Save changes? y:save and close  n:discard  Esc:keep editing".to_string();
                 } else {
+                    let is_new_view = self
+                        .view_edit_state
+                        .as_ref()
+                        .map(|s| s.is_new_view)
+                        .unwrap_or(false);
                     self.view_edit_state = None;
                     self.mode = Mode::ViewPicker;
-                    self.status = "View edit closed".to_string();
+                    self.status = if is_new_view {
+                        "View creation canceled".to_string()
+                    } else {
+                        "View edit closed".to_string()
+                    };
                 }
                 return Ok(true);
             }
@@ -1021,19 +1044,32 @@ impl App {
     }
 
     fn handle_view_edit_save(&mut self, agenda: &Agenda<'_>) -> Result<bool, String> {
-        let Some(draft) = self.view_edit_state.as_ref().map(|s| s.draft.clone()) else {
+        let Some((draft, is_new_view)) = self
+            .view_edit_state
+            .as_ref()
+            .map(|s| (s.draft.clone(), s.is_new_view))
+        else {
             self.status = "View edit failed: no draft".to_string();
             return Ok(false);
         };
         let view_name = draft.name.clone();
-        match agenda.store().update_view(&draft) {
+        let save_result = if is_new_view {
+            agenda.store().create_view(&draft)
+        } else {
+            agenda.store().update_view(&draft)
+        };
+        match save_result {
             Ok(()) => {
                 self.refresh(agenda.store())?;
                 self.set_view_selection_by_name(&view_name);
                 self.reset_section_filters();
                 self.view_edit_state = None;
                 self.mode = Mode::ViewPicker;
-                self.status = format!("Saved view \"{view_name}\"");
+                self.status = if is_new_view {
+                    format!("Created view \"{view_name}\"")
+                } else {
+                    format!("Saved view \"{view_name}\"")
+                };
             }
             Err(err) => {
                 self.status = format!("View save failed: {err}");

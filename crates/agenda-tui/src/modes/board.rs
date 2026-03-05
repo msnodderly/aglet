@@ -717,6 +717,7 @@ impl App {
         self.collect_assigned_child_categories_for_parent(item, meta.parent_id)
     }
 
+    // TODO(feature): inline column direct-edit not yet triggered; see open_category_direct_edit
     #[allow(dead_code)]
     fn build_current_column_direct_edit_rows(&self) -> Vec<CategoryDirectEditRow> {
         let assigned_child_ids = self.current_column_assigned_child_ids();
@@ -1328,6 +1329,7 @@ impl App {
         Ok(())
     }
 
+    // TODO(feature): inline direct-edit for board columns not yet invoked from key handler
     #[allow(dead_code)]
     pub(crate) fn open_category_direct_edit(&mut self) {
         let Some(meta) = self.current_category_direct_edit_column_meta() else {
@@ -1405,6 +1407,7 @@ impl App {
             parent_name: meta.parent_name.clone(),
             item_id: meta.item_id,
             item_label: meta.item_label,
+            item_preview_scroll: 0,
             is_exclusive,
             filter: text_buffer::TextBuffer::empty(),
             focus: CategoryColumnPickerFocus::FilterInput,
@@ -1463,6 +1466,25 @@ impl App {
             let cur = state.list_index.min(len - 1);
             state.list_index = (cur as i64 + delta as i64).rem_euclid(len as i64) as usize;
             state.focus = CategoryColumnPickerFocus::List;
+        }
+    }
+
+    fn scroll_category_column_picker_item_preview(&mut self, delta: i32) {
+        let Some(state) = self.category_column_picker_state_mut() else {
+            return;
+        };
+        match delta.cmp(&0) {
+            std::cmp::Ordering::Greater => {
+                state.item_preview_scroll = state
+                    .item_preview_scroll
+                    .saturating_add(delta.unsigned_abs() as u16);
+            }
+            std::cmp::Ordering::Less => {
+                state.item_preview_scroll = state
+                    .item_preview_scroll
+                    .saturating_sub(delta.unsigned_abs() as u16);
+            }
+            std::cmp::Ordering::Equal => {}
         }
     }
 
@@ -1695,6 +1717,14 @@ impl App {
             }
             KeyCode::Down => {
                 self.move_category_column_picker_list(1);
+                return Ok(false);
+            }
+            KeyCode::PageUp => {
+                self.scroll_category_column_picker_item_preview(-1);
+                return Ok(false);
+            }
+            KeyCode::PageDown => {
+                self.scroll_category_column_picker_item_preview(1);
                 return Ok(false);
             }
             KeyCode::Char('k')
@@ -3639,35 +3669,23 @@ impl App {
                     return Ok(());
                 }
                 let name = input_text.clone();
+                if self
+                    .views
+                    .iter()
+                    .any(|view| view.name.eq_ignore_ascii_case(&name))
+                {
+                    self.status = format!("View \"{name}\" already exists");
+                    return Ok(());
+                }
                 let mut view = View::new(name.clone());
                 if view.sections.is_empty() {
                     view.sections.push(Self::view_edit_default_section(
                         Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
                     ));
                 }
-
-                match agenda.store().create_view(&view) {
-                    Ok(()) => {
-                        let view_name = view.name.clone();
-                        self.refresh(agenda.store())?;
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        if let Some(new_view) =
-                            self.views.iter().find(|v| v.name == view_name).cloned()
-                        {
-                            self.open_view_edit_new_view_focus_first_section(new_view);
-                        } else {
-                            self.mode = Mode::ViewPicker;
-                            self.status = format!("Created view {view_name}");
-                        }
-                    }
-                    Err(err) => {
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.mode = Mode::ViewPicker;
-                        self.status = format!("View create failed: {err}");
-                    }
-                }
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.open_view_edit_new_view_focus_first_section(view);
             }
             Some(NameInputContext::ViewRename) => {
                 if input_text.is_empty() {

@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
@@ -56,7 +56,9 @@ enum OutputFormatArg {
 enum Command {
     /// Add a new item
     Add {
+        /// Item title/text.
         text: String,
+        /// Optional note/body text stored with the item.
         #[arg(long)]
         note: Option<String>,
     },
@@ -66,9 +68,11 @@ enum Command {
         after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --note-stdin           Replace the entire note with stdin content\n  --clear-note           Remove the note entirely\n\nExamples:\n  agenda edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  agenda edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin"
     )]
     Edit {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
         /// New text (positional shorthand; also available as --text)
         text: Option<String>,
+        /// Replace the entire note. Mutually exclusive with other note flags.
         #[arg(long)]
         note: Option<String>,
         /// Append text to the existing note (separated by newline)
@@ -77,20 +81,26 @@ enum Command {
         /// Replace the note with stdin content
         #[arg(long = "note-stdin")]
         note_stdin: bool,
+        /// Remove the note entirely. Mutually exclusive with other note flags.
         #[arg(long = "clear-note")]
         clear_note: bool,
+        /// Mark item done (`true`) or not done (`false`).
         #[arg(long)]
         done: Option<bool>,
     },
 
     /// Show a single item with its assignments
-    Show { item_id: String },
+    Show {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
 
     /// Atomically claim an item for active work
     #[command(
         after_help = "Defaults (`agenda claim <ITEM_ID>`):\n  --claim-category \"In Progress\"\n  --must-not-have \"In Progress\"\n  --must-not-have \"Complete\"\n\nSetup:\n  Create an `In Progress` category (or sub-category) before claiming.\n\n  Feature DB example (`aglet-features.ag`):\n  agenda category create Status --exclusive\n  agenda category create Ready --parent Status\n  agenda category create \"In Progress\" --parent Status\n  agenda category create \"Waiting/Blocked\" --parent Status\n  agenda category create Complete --parent Status\n\nExamples:\n  agenda claim <ITEM_ID>\n  agenda claim <ITEM_ID> --must-not-have \"In Progress\" --must-not-have \"Complete\"\n  agenda claim <ITEM_ID> --claim-category \"In Progress\" --must-not-have \"Waiting/Blocked\""
     )]
     Claim {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
         /// Category to assign on successful claim.
         #[arg(long = "claim-category", default_value = "In Progress")]
@@ -105,9 +115,10 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Numeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nDependency-state filter examples:\n  agenda list --blocked\n  agenda list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
+        /// View to render. If omitted, uses the first stored view when present.
         #[arg(long)]
         view: Option<String>,
         /// Category filter (repeat for AND). Item must have ALL specified categories.
@@ -119,6 +130,12 @@ enum Command {
         /// Exclude-category filter (repeat for OR). Item must have NONE of the specified categories.
         #[arg(long = "exclude-category")]
         exclude_category: Vec<String>,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
         /// Numeric equality filter (repeat for AND): category value must equal VALUE.
         #[arg(
             long = "value-eq",
@@ -147,28 +164,56 @@ enum Command {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Include done items (default excludes them).
         #[arg(long)]
         include_done: bool,
     },
 
     /// Search item text and note
     Search {
+        /// Text query matched against item text and note.
         query: String,
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
+        /// Include done items in search results (default excludes them).
         #[arg(long)]
         include_done: bool,
     },
 
+    /// Export items as Markdown
+    #[command(
+        after_help = "Examples:\n  agenda export\n  agenda export --view \"All Items\"\n  agenda export --view \"Backlog\" --include-links"
+    )]
+    Export {
+        /// Optional view scope (case-insensitive view name).
+        #[arg(long)]
+        view: Option<String>,
+        /// Include prereq/dependent/related link details for each item.
+        #[arg(long = "include-links")]
+        include_links: bool,
+    },
+
     /// Delete an item (writes deletion log)
-    Delete { item_id: String },
+    Delete {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
 
     /// List deletion log entries
     Deleted,
 
     /// Restore an item from deletion log by log entry id
-    Restore { log_id: String },
+    Restore {
+        /// Deletion log entry id to restore.
+        log_id: String,
+    },
 
     /// Launch the interactive TUI
     Tui,
@@ -204,69 +249,102 @@ enum CategoryCommand {
     List,
 
     /// Show detailed info for a category
-    Show { name: String },
+    Show {
+        /// Category name (case-insensitive).
+        name: String,
+    },
 
     /// Create a category
     Create {
+        /// New category name.
         name: String,
+        /// Parent category name (case-insensitive).
         #[arg(long)]
         parent: Option<String>,
+        /// Mark this category as exclusive among siblings.
         #[arg(long)]
         exclusive: bool,
+        /// Disable implicit string matching for this category.
         #[arg(long = "disable-implicit-string")]
         disable_implicit_string: bool,
+        /// Category value type (`tag` or `numeric`).
         #[arg(long = "type", value_enum)]
         category_type: Option<CategoryTypeArg>,
     },
 
     /// Delete a category by name
-    Delete { name: String },
+    Delete {
+        /// Category name (case-insensitive).
+        name: String,
+    },
 
     /// Rename a category
-    Rename { name: String, new_name: String },
+    Rename {
+        /// Existing category name (case-insensitive).
+        name: String,
+        /// New category name.
+        new_name: String,
+    },
 
     /// Reparent a category (use --root to make top-level)
     Reparent {
+        /// Category name to move.
         name: String,
+        /// New parent category name.
         #[arg(long)]
         parent: Option<String>,
+        /// Move category to root (top-level).
         #[arg(long)]
         root: bool,
     },
 
     /// Update category flags
     Update {
+        /// Category name (case-insensitive).
         name: String,
+        /// Set exclusive mode (`true`/`false`).
         #[arg(long)]
         exclusive: Option<bool>,
+        /// Set actionable mode (`true`/`false`).
         #[arg(long)]
         actionable: Option<bool>,
+        /// Set implicit string matching (`true`/`false`).
         #[arg(long = "implicit-string")]
         implicit_string: Option<bool>,
+        /// Replace note text (empty string clears note).
         #[arg(long)]
         note: Option<String>,
+        /// Clear note text.
         #[arg(long = "clear-note")]
         clear_note: bool,
+        /// Set category value type (`tag` or `numeric`).
         #[arg(long = "type", value_enum)]
         category_type: Option<CategoryTypeArg>,
     },
 
     /// Assign an item to a category by id/name
     Assign {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
+        /// Category name (case-insensitive).
         category_name: String,
     },
 
     /// Set a numeric value assignment for a numeric category
     SetValue {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
+        /// Numeric category name (case-insensitive).
         category_name: String,
+        /// Numeric value to assign.
         value: String,
     },
 
     /// Unassign an item from a category
     Unassign {
+        /// Item id (full UUID or unique hex prefix).
         item_id: String,
+        /// Category name (case-insensitive).
         category_name: String,
     },
 }
@@ -278,6 +356,7 @@ enum ViewCommand {
 
     /// Show the contents of a view
     Show {
+        /// View name (case-insensitive).
         name: String,
         /// Sort key(s): item, when, or category name. Repeat for multi-key sorting.
         /// Optional suffix `:asc` or `:desc` (default: asc).
@@ -286,15 +365,25 @@ enum ViewCommand {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
     },
 
     /// Create a basic view from include/exclude categories
     Create {
+        /// New view name.
         name: String,
+        /// Include-category criterion (repeat for AND semantics).
         #[arg(long = "include")]
         include: Vec<String>,
+        /// Exclude-category criterion (repeat for NOT semantics).
         #[arg(long = "exclude")]
         exclude: Vec<String>,
+        /// Hide items that do not match any section.
         #[arg(long = "hide-unmatched")]
         hide_unmatched: bool,
         #[arg(long = "hide-dependent-items")]
@@ -310,11 +399,27 @@ enum ViewCommand {
         hide_dependent_items: Option<bool>,
     },
 
+    /// Clone a view into a new mutable view
+    Clone {
+        /// Name of the view to clone.
+        source_name: String,
+        /// Name for the new cloned view.
+        new_name: String,
+    },
+
     /// Rename a view
-    Rename { name: String, new_name: String },
+    Rename {
+        /// Existing view name (case-insensitive).
+        name: String,
+        /// New view name.
+        new_name: String,
+    },
 
     /// Delete a view by name
-    Delete { name: String },
+    Delete {
+        /// View name (case-insensitive).
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -322,19 +427,25 @@ enum LinkCommand {
     /// Create a dependency link: ITEM depends on DEPENDS_ON_ITEM
     #[command(name = "depends-on")]
     DependsOn {
+        /// Item id that depends on another item.
         item_id: String,
+        /// Item id that is required by `item_id`.
         depends_on_item_id: String,
     },
 
     /// Create inverse dependency vocabulary: BLOCKER blocks BLOCKED
     Blocks {
+        /// Blocking item id.
         blocker_item_id: String,
+        /// Blocked item id.
         blocked_item_id: String,
     },
 
     /// Create a bidirectional related link
     Related {
+        /// First item id.
         item_a_id: String,
+        /// Second item id.
         item_b_id: String,
     },
 }
@@ -343,20 +454,26 @@ enum LinkCommand {
 enum UnlinkCommand {
     /// Remove inverse dependency vocabulary: BLOCKER no longer blocks BLOCKED
     Blocks {
+        /// Blocking item id.
         blocker_item_id: String,
+        /// Blocked item id.
         blocked_item_id: String,
     },
 
     /// Remove a dependency link: ITEM no longer depends on DEPENDS_ON_ITEM
     #[command(name = "depends-on")]
     DependsOn {
+        /// Item id that currently depends on another item.
         item_id: String,
+        /// Item id currently depended on by `item_id`.
         depends_on_item_id: String,
     },
 
     /// Remove a related link
     Related {
+        /// First item id.
         item_a_id: String,
+        /// Second item id.
         item_b_id: String,
     },
 }
@@ -376,6 +493,8 @@ fn run() -> Result<(), String> {
         category: Vec::new(),
         any_category: Vec::new(),
         exclude_category: Vec::new(),
+        blocked: false,
+        not_blocked: false,
         value_eq: Vec::new(),
         value_in: Vec::new(),
         value_max: Vec::new(),
@@ -431,6 +550,8 @@ fn run() -> Result<(), String> {
             category,
             any_category,
             exclude_category,
+            blocked,
+            not_blocked,
             value_eq,
             value_in,
             value_max,
@@ -444,6 +565,7 @@ fn run() -> Result<(), String> {
                 all_categories: category,
                 any_categories: any_category,
                 exclude_categories: exclude_category,
+                dependency_state_filter: dependency_state_filter_from_flags(blocked, not_blocked),
                 value_eq,
                 value_in,
                 value_max,
@@ -455,8 +577,20 @@ fn run() -> Result<(), String> {
         Command::Search {
             query,
             format,
+            blocked,
+            not_blocked,
             include_done,
-        } => cmd_search(&store, query, format, include_done),
+        } => cmd_search(
+            &store,
+            query,
+            format,
+            dependency_state_filter_from_flags(blocked, not_blocked),
+            include_done,
+        ),
+        Command::Export {
+            view,
+            include_links,
+        } => cmd_export(&store, view, include_links),
         Command::Delete { item_id } => cmd_delete(&agenda, item_id),
         Command::Deleted => cmd_deleted(&store),
         Command::Restore { log_id } => cmd_restore(&store, log_id),
@@ -738,10 +872,30 @@ struct ListFilters {
     all_categories: Vec<String>,
     any_categories: Vec<String>,
     exclude_categories: Vec<String>,
+    dependency_state_filter: Option<DependencyStateFilter>,
     value_eq: Vec<String>,
     value_in: Vec<String>,
     value_max: Vec<String>,
     include_done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DependencyStateFilter {
+    Blocked,
+    NotBlocked,
+}
+
+fn dependency_state_filter_from_flags(
+    blocked: bool,
+    not_blocked: bool,
+) -> Option<DependencyStateFilter> {
+    if blocked {
+        Some(DependencyStateFilter::Blocked)
+    } else if not_blocked {
+        Some(DependencyStateFilter::NotBlocked)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -803,6 +957,9 @@ fn cmd_list(
     }
     if !numeric_filters.is_empty() {
         retain_items_matching_numeric_filters(&mut items, &numeric_filters);
+    }
+    if let Some(filter) = filters.dependency_state_filter {
+        retain_items_by_dependency_state(store, &mut items, filter)?;
     }
 
     let resolved_view = if let Some(view_name) = view_name {
@@ -982,10 +1139,44 @@ fn retain_items_matching_numeric_filters(items: &mut Vec<Item>, numeric_filters:
     });
 }
 
+fn item_is_dependency_blocked(store: &Store, item_id: ItemId) -> Result<bool, String> {
+    let dependency_ids = store
+        .list_dependency_ids_for_item(item_id)
+        .map_err(|e| e.to_string())?;
+    for dependency_id in dependency_ids {
+        let dependency = store.get_item(dependency_id).map_err(|e| e.to_string())?;
+        if !dependency.is_done {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn retain_items_by_dependency_state(
+    store: &Store,
+    items: &mut Vec<Item>,
+    filter: DependencyStateFilter,
+) -> Result<(), String> {
+    let mut retained = Vec::with_capacity(items.len());
+    for item in std::mem::take(items) {
+        let is_blocked = item_is_dependency_blocked(store, item.id)?;
+        let keep = match filter {
+            DependencyStateFilter::Blocked => is_blocked,
+            DependencyStateFilter::NotBlocked => !is_blocked,
+        };
+        if keep {
+            retained.push(item);
+        }
+    }
+    *items = retained;
+    Ok(())
+}
+
 fn cmd_search(
     store: &Store,
     query: String,
     output_format: OutputFormatArg,
+    dependency_state_filter: Option<DependencyStateFilter>,
     include_done: bool,
 ) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
@@ -1003,13 +1194,38 @@ fn cmd_search(
     let reference_date = Local::now().date_naive();
     let matches = evaluate_query(&q, &items, reference_date);
 
-    let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
+    let mut matched_items: Vec<Item> = matches.into_iter().cloned().collect();
+    if let Some(filter) = dependency_state_filter {
+        retain_items_by_dependency_state(store, &mut matched_items, filter)?;
+    }
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
     } else {
         print_item_table(&matched_items, &category_names, &[], &categories);
     }
     Ok(())
+}
+
+fn cmd_export(store: &Store, view_name: Option<String>, include_links: bool) -> Result<(), String> {
+    let body = build_markdown_export(store, view_name.as_deref(), include_links)?;
+    write_stdout_allow_broken_pipe(&body)?;
+    Ok(())
+}
+
+fn write_stdout_allow_broken_pipe(body: &str) -> Result<(), String> {
+    let mut stdout = io::stdout().lock();
+    write_output_allow_broken_pipe(&mut stdout, body)
+}
+
+fn write_output_allow_broken_pipe<W: Write>(writer: &mut W, body: &str) -> Result<(), String> {
+    match writer
+        .write_all(body.as_bytes())
+        .and_then(|_| writer.flush())
+    {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(err) => Err(format!("failed writing to stdout: {err}")),
+    }
 }
 
 fn cmd_delete(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
@@ -1609,11 +1825,21 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
             Ok(())
         }
-        ViewCommand::Show { name, sort, format } => {
+        ViewCommand::Show {
+            name,
+            sort,
+            format,
+            blocked,
+            not_blocked,
+        } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
-            let items = store.list_items().map_err(|e| e.to_string())?;
-            let blocked_item_ids = blocked_item_ids(&items, store)?;
+            let all_items = store.list_items().map_err(|e| e.to_string())?;
+            let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+            let mut items = all_items;
+            if let Some(filter) = dependency_state_filter_from_flags(blocked, not_blocked) {
+                retain_items_by_dependency_state(store, &mut items, filter)?;
+            }
             let view = view_by_name(store, &name)?;
             let sort_keys = parse_sort_specs(&sort, &categories)?;
             print_items_for_view(
@@ -1673,6 +1899,17 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             }
             store.update_view(&view).map_err(|e| e.to_string())?;
             println!("updated view {}", view.name);
+            Ok(())
+        }
+        ViewCommand::Clone {
+            source_name,
+            new_name,
+        } => {
+            let source = view_by_name(store, &source_name)?;
+            let cloned = store
+                .clone_view(source.id, new_name)
+                .map_err(|e| e.to_string())?;
+            println!("cloned view {} -> {}", source_name, cloned.name);
             Ok(())
         }
         ViewCommand::Rename { name, new_name } => {
@@ -1947,6 +2184,173 @@ fn rows_to_json(
         .into_iter()
         .map(|item| item_row(item, category_names))
         .collect()
+}
+
+fn markdown_sorted_rows(items: &[Item]) -> Vec<&Item> {
+    let mut rows: Vec<&Item> = items.iter().collect();
+    rows.sort_by(|left, right| {
+        left.text
+            .to_ascii_lowercase()
+            .cmp(&right.text.to_ascii_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    rows
+}
+
+fn append_markdown_items(
+    out: &mut String,
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    store: &Store,
+    include_links: bool,
+    heading_prefix: &str,
+) -> Result<(), String> {
+    let rows = markdown_sorted_rows(items);
+    if rows.is_empty() {
+        out.push_str("(no items)\n");
+        return Ok(());
+    }
+
+    for (index, item) in rows.into_iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("{heading_prefix} {}\n", item.text));
+        out.push_str(&format!("- ID: `{}`\n", item.id));
+        out.push_str(&format!(
+            "- Status: `{}`\n",
+            if item.is_done { "done" } else { "open" }
+        ));
+        out.push_str(&format!(
+            "- When: `{}`\n",
+            item.when_date
+                .map(|dt| dt.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        out.push_str(&format!("- Entry Date: `{}`\n", item.entry_date));
+
+        let categories = item_categories(item, category_names);
+        if categories.is_empty() {
+            out.push_str("- Categories: (none)\n");
+        } else {
+            out.push_str(&format!("- Categories: {}\n", categories.join(", ")));
+        }
+
+        if let Some(note) = &item.note {
+            out.push_str("- Note:\n");
+            out.push_str("```text\n");
+            out.push_str(note);
+            if !note.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("```\n");
+        } else {
+            out.push_str("- Note: (none)\n");
+        }
+
+        if include_links {
+            let link_lines = item_link_section_lines(store, item.id)?;
+            out.push_str("- Links:\n");
+            out.push_str("```text\n");
+            for line in link_lines {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str("```\n");
+        }
+    }
+
+    Ok(())
+}
+
+fn build_markdown_export(
+    store: &Store,
+    view_name: Option<&str>,
+    include_links: bool,
+) -> Result<String, String> {
+    let items = store.list_items().map_err(|e| e.to_string())?;
+    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let category_names = category_name_map(&categories);
+    let mut out = String::new();
+
+    if let Some(name) = view_name {
+        let view = view_by_name(store, name)?;
+        out.push_str(&format!("# {}\n\n", view.name));
+
+        let reference_date = Local::now().date_naive();
+        let result = resolve_view(&view, &items, &categories, reference_date);
+        let mut rendered_any = false;
+
+        for section in result.sections {
+            out.push_str(&format!("## {}\n\n", section.title));
+            if section.subsections.is_empty() {
+                append_markdown_items(
+                    &mut out,
+                    &section.items,
+                    &category_names,
+                    store,
+                    include_links,
+                    "###",
+                )?;
+                out.push('\n');
+                rendered_any = true;
+                continue;
+            }
+
+            for subsection in section.subsections {
+                out.push_str(&format!("### {}\n\n", subsection.title));
+                append_markdown_items(
+                    &mut out,
+                    &subsection.items,
+                    &category_names,
+                    store,
+                    include_links,
+                    "####",
+                )?;
+                out.push('\n');
+                rendered_any = true;
+            }
+        }
+
+        if let Some(unmatched) = result.unmatched {
+            if !unmatched.is_empty() {
+                let heading = result
+                    .unmatched_label
+                    .unwrap_or_else(|| "Unassigned".to_string());
+                out.push_str(&format!("## {}\n\n", heading));
+                append_markdown_items(
+                    &mut out,
+                    &unmatched,
+                    &category_names,
+                    store,
+                    include_links,
+                    "###",
+                )?;
+                out.push('\n');
+                rendered_any = true;
+            }
+        }
+
+        if !rendered_any {
+            out.push_str("(no items)\n");
+        }
+    } else {
+        out.push_str("# Items\n\n");
+        append_markdown_items(
+            &mut out,
+            &items,
+            &category_names,
+            store,
+            include_links,
+            "##",
+        )?;
+        out.push('\n');
+    }
+
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 fn print_items_json(
@@ -2381,25 +2785,65 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_item_ids, build_numeric_filters, cmd_claim, cmd_edit, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
-        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parsed_when_feedback_line,
-        read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        Cli, CliSortDirection, CliSortField, CliSortKey, Command, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_link, cmd_unlink,
+        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
+        item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
+        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
+        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
+        retain_items_with_all_categories, retain_items_with_any_categories,
+        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
+        write_stdout_allow_broken_pipe, blocked_item_ids, Cli, CliSortDirection, CliSortField,
+        CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
+        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
-    use agenda_core::model::{Category, CategoryValueKind, Item, View};
+    use agenda_core::model::{
+        Category, CategoryValueKind, CriterionMode, Item, Query, Section, View,
+    };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
-    use std::collections::HashMap;
-    use std::io::Cursor;
+    use std::collections::{HashMap, HashSet};
+    use std::io::{self, Cursor, Write};
     use uuid::Uuid;
+
+    fn assert_help_docs_for_command_tree(cmd: &clap::Command) {
+        if cmd.get_name() != "agenda" {
+            let about = cmd
+                .get_about()
+                .or(cmd.get_long_about())
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            assert!(
+                !about.trim().is_empty(),
+                "command '{}' is missing help/description text",
+                cmd.get_name()
+            );
+        }
+
+        for arg in cmd.get_arguments() {
+            if arg.get_id().as_str() == "help" {
+                continue;
+            }
+            let help = arg
+                .get_help()
+                .or(arg.get_long_help())
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            assert!(
+                !help.trim().is_empty(),
+                "argument '{}' on command '{}' is missing help text",
+                arg.get_id(),
+                cmd.get_name()
+            );
+        }
+
+        for subcommand in cmd.get_subcommands() {
+            assert_help_docs_for_command_tree(subcommand);
+        }
+    }
 
     #[test]
     fn duplicate_category_error_includes_assign_guidance_and_parent_context() {
@@ -2808,6 +3252,26 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--blocked"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { blocked, .. }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_not_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--not-blocked"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { not_blocked, .. }) => assert!(not_blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_list_with_repeated_value_eq_flags() {
         let cli = Cli::try_parse_from([
             "agenda",
@@ -2904,9 +3368,16 @@ mod tests {
             .find_subcommand_mut("list")
             .expect("list subcommand should exist");
         let help = list_cmd.render_help().to_string();
+        assert!(help.contains("If `--view` is omitted"));
         assert!(help.contains("Numeric value filter examples:"));
         assert!(help.contains("--value-in Complexity 1,2"));
         assert!(help.contains("--value-max Complexity 2"));
+    }
+
+    #[test]
+    fn clap_help_docs_cover_all_commands_and_arguments() {
+        let cmd = Cli::command();
+        assert_help_docs_for_command_tree(&cmd);
     }
 
     #[test]
@@ -2916,7 +3387,10 @@ mod tests {
 
         match cli.command {
             Some(Command::View {
-                command: ViewCommand::Show { name, sort, format },
+                command:
+                    ViewCommand::Show {
+                        name, sort, format, ..
+                    },
             }) => {
                 assert_eq!(name, "All Items");
                 assert_eq!(sort, vec!["when".to_string()]);
@@ -2947,6 +3421,29 @@ mod tests {
             Some(Command::Search { format, .. }) => {
                 assert_eq!(format, OutputFormatArg::Json);
             }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_search_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "search", "foo", "--blocked"]).expect("parse");
+
+        match cli.command {
+            Some(Command::Search { blocked, .. }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_show_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--blocked"])
+            .expect("parse");
+
+        match cli.command {
+            Some(Command::View {
+                command: ViewCommand::Show { blocked, .. },
+            }) => assert!(blocked),
             other => panic!("unexpected parse result: {other:?}"),
         }
     }
@@ -2996,6 +3493,24 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_export_with_view_and_include_links() {
+        let cli =
+            Cli::try_parse_from(["agenda", "export", "--view", "All Items", "--include-links"])
+                .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Export {
+                view,
+                include_links,
+            }) => {
+                assert_eq!(view.as_deref(), Some("All Items"));
+                assert!(include_links);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_view_edit_with_hide_dependent_items_option() {
         let cli = Cli::try_parse_from([
             "agenda",
@@ -3021,6 +3536,235 @@ mod tests {
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn clap_parses_view_clone_command() {
+        let cli = Cli::try_parse_from(["agenda", "view", "clone", "Source", "Target"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command:
+                    ViewCommand::Clone {
+                        source_name,
+                        new_name,
+                    },
+            }) => {
+                assert_eq!(source_name, "Source");
+                assert_eq!(new_name, "Target");
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn export_help_includes_examples_and_link_flag() {
+        let mut cmd = Cli::command();
+        let export_cmd = cmd
+            .find_subcommand_mut("export")
+            .expect("export subcommand should exist");
+        let help = export_cmd.render_help().to_string();
+        assert!(help.contains("--view <VIEW>"));
+        assert!(help.contains("--include-links"));
+        assert!(help.contains("agenda export --view \"All Items\""));
+    }
+
+    struct AlwaysBrokenPipeWriter;
+
+    impl Write for AlwaysBrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn write_stdout_allow_broken_pipe_treats_broken_pipe_as_success() {
+        let mut writer = AlwaysBrokenPipeWriter;
+        let result = write_output_allow_broken_pipe(&mut writer, "test");
+        assert!(result.is_ok(), "broken pipe should be handled as success");
+    }
+
+    struct AlwaysPermissionDeniedWriter;
+
+    impl Write for AlwaysPermissionDeniedWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "permission denied",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn write_stdout_allow_broken_pipe_preserves_non_broken_pipe_errors() {
+        let mut writer = AlwaysPermissionDeniedWriter;
+        let err = write_output_allow_broken_pipe(&mut writer, "test")
+            .expect_err("non-broken-pipe errors must be returned");
+        assert!(
+            err.contains("failed writing to stdout"),
+            "error should include output context"
+        );
+    }
+
+    #[test]
+    fn write_stdout_allow_broken_pipe_handles_real_stdout_path() {
+        let result = write_stdout_allow_broken_pipe("");
+        assert!(result.is_ok(), "empty stdout write should succeed");
+    }
+
+    #[test]
+    fn markdown_export_full_db_is_deterministic_and_includes_metadata() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let topic = Category::new("Topic".to_string());
+        store.create_category(&topic).expect("create category");
+
+        let mut beta = Item::new("beta item".to_string());
+        beta.note = Some("second note".to_string());
+        let mut alpha = Item::new("Alpha item".to_string());
+        alpha.note = Some("first note".to_string());
+        store.create_item(&beta).expect("create beta");
+        store.create_item(&alpha).expect("create alpha");
+        agenda
+            .assign_item_manual(alpha.id, topic.id, Some("test:assign".to_string()))
+            .expect("assign topic");
+
+        let output = build_markdown_export(&store, None, false).expect("export markdown");
+        assert!(output.starts_with("# Items\n"));
+        assert!(output.contains("- ID: `"));
+        assert!(output.contains("- Status: `open`"));
+        assert!(output.contains("- Categories: Topic"));
+        assert!(output.contains("```text\nfirst note\n```"));
+
+        let alpha_idx = output.find("## Alpha item").expect("alpha section");
+        let beta_idx = output.find("## beta item").expect("beta section");
+        assert!(alpha_idx < beta_idx, "items should sort by text then id");
+    }
+
+    #[test]
+    fn markdown_export_view_scope_limits_results() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+        let mut ready = Category::new("Ready".to_string());
+        ready.parent = Some(status.id);
+        store.create_category(&ready).expect("create ready");
+        let mut deferred = Category::new("Deferred".to_string());
+        deferred.parent = Some(status.id);
+        store.create_category(&deferred).expect("create deferred");
+
+        let ready_item = Item::new("Ready task".to_string());
+        let deferred_item = Item::new("Deferred task".to_string());
+        store.create_item(&ready_item).expect("create ready item");
+        store
+            .create_item(&deferred_item)
+            .expect("create deferred item");
+        agenda
+            .assign_item_manual(ready_item.id, ready.id, Some("test:assign".to_string()))
+            .expect("assign ready");
+        agenda
+            .assign_item_manual(
+                deferred_item.id,
+                deferred.id,
+                Some("test:assign".to_string()),
+            )
+            .expect("assign deferred");
+
+        let mut view = View::new("Ready Only".to_string());
+        view.criteria.set_criterion(CriterionMode::And, ready.id);
+        store.create_view(&view).expect("create view");
+
+        let output =
+            build_markdown_export(&store, Some("Ready Only"), false).expect("export markdown");
+        assert!(output.starts_with("# Ready Only\n"));
+        assert!(output.contains("Ready task"));
+        assert!(!output.contains("Deferred task"));
+    }
+
+    #[test]
+    fn markdown_export_include_links_adds_relationship_sections() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+        agenda
+            .link_items_depends_on(a.id, b.id)
+            .expect("create dependency");
+
+        let output = build_markdown_export(&store, None, true).expect("export markdown");
+        assert!(output.contains("- Links:"));
+        assert!(output.contains("prereqs:"));
+        assert!(output.contains("Task B"));
+    }
+
+    #[test]
+    fn cmd_view_clone_copies_source_configuration() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let category = Category::new("Area".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut source = View::new("Planning".to_string());
+        source
+            .criteria
+            .set_criterion(CriterionMode::And, category.id);
+        source.show_unmatched = false;
+        source.unmatched_label = "Other".to_string();
+        source.sections.push(Section {
+            title: "Area".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::from([category.id]),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&source).expect("create source");
+
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Clone {
+                source_name: "Planning".to_string(),
+                new_name: "Planning Copy".to_string(),
+            },
+        )
+        .expect("clone view");
+
+        let source_after = store.get_view(source.id).expect("source still exists");
+        assert_eq!(source_after.name, "Planning");
+        let cloned = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Planning Copy")
+            .expect("clone exists");
+        assert_ne!(cloned.id, source.id);
+        assert_eq!(cloned.criteria.criteria, source.criteria.criteria);
+        assert_eq!(cloned.show_unmatched, source.show_unmatched);
+        assert_eq!(cloned.unmatched_label, source.unmatched_label);
+        assert_eq!(cloned.sections.len(), source.sections.len());
     }
 
     #[test]
@@ -3269,6 +4013,45 @@ mod tests {
     }
 
     #[test]
+    fn dependency_state_filter_transitions_when_links_are_added_or_removed() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+
+        let mut rows = store.list_items().expect("list initial");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter initial blocked");
+        assert!(rows.is_empty(), "no links means nothing is blocked");
+
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+        let mut rows = store.list_items().expect("list linked");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter linked blocked");
+        assert_eq!(
+            rows.into_iter().map(|item| item.text).collect::<Vec<_>>(),
+            vec!["Blocked".to_string()]
+        );
+
+        agenda
+            .unlink_items_depends_on(blocked.id, blocker.id)
+            .expect("unlink depends-on");
+        let mut rows = store.list_items().expect("list unlinked");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter unlinked blocked");
+        assert!(
+            rows.is_empty(),
+            "removing dependency link clears blocked state"
+        );
+    }
+
+    #[test]
     fn parse_csv_decimals_rejects_empty_value_token() {
         let err = parse_csv_decimals("1,,2", "Complexity").expect_err("should fail");
         assert_eq!(
@@ -3284,6 +4067,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Nope".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3301,6 +4085,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Status".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3322,6 +4107,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Complexity".to_string(), "abc".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3874,5 +4660,165 @@ mod tests {
             .list_dependency_ids_for_item(a.id)
             .expect("list dependencies")
             .is_empty());
+    }
+
+    // ── cmd_link ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cmd_link_depends_on_creates_dependency() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("cmd_link DependsOn should succeed");
+
+        let deps = store.list_dependency_ids_for_item(a.id).expect("list");
+        assert!(deps.contains(&b.id), "a should depend-on b");
+    }
+
+    #[test]
+    fn cmd_link_blocks_creates_inverse_dependency() {
+        // "A blocks B" means B depends-on A.
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Blocker".to_string());
+        let b = Item::new("Blocked".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::Blocks {
+                blocker_item_id: a.id.to_string(),
+                blocked_item_id: b.id.to_string(),
+            },
+        )
+        .expect("cmd_link Blocks should succeed");
+
+        // "A blocks B" is stored as "B depends-on A"
+        let deps = store.list_dependency_ids_for_item(b.id).expect("list");
+        assert!(deps.contains(&a.id), "b should depend-on a after 'a blocks b'");
+    }
+
+    #[test]
+    fn cmd_link_related_creates_symmetric_link() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::Related {
+                item_a_id: a.id.to_string(),
+                item_b_id: b.id.to_string(),
+            },
+        )
+        .expect("cmd_link Related should succeed");
+
+        // Related links are symmetric — both items should report the other.
+        let related_a = store.list_related_ids_for_item(a.id).expect("list a");
+        let related_b = store.list_related_ids_for_item(b.id).expect("list b");
+        assert!(related_a.contains(&b.id), "a should see b as related");
+        assert!(related_b.contains(&a.id), "b should see a as related");
+    }
+
+    #[test]
+    fn cmd_link_depends_on_self_returns_error() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        store.create_item(&a).expect("create a");
+
+        let result = cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: a.id.to_string(),
+            },
+        );
+        assert!(result.is_err(), "self depends-on link should be rejected");
+    }
+
+    #[test]
+    fn cmd_link_depends_on_cycle_returns_error() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("A".to_string());
+        let b = Item::new("B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        // A depends-on B
+        cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("first link should succeed");
+
+        // B depends-on A would create a cycle
+        let result = cmd_link(
+            &agenda,
+            LinkCommand::DependsOn {
+                item_id: b.id.to_string(),
+                depends_on_item_id: a.id.to_string(),
+            },
+        );
+        assert!(result.is_err(), "cyclic dependency should be rejected");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("cycle"), "error should mention cycle, got: {msg}");
+    }
+
+    #[test]
+    fn cmd_link_depends_on_is_idempotent() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        let cmd = || {
+            cmd_link(
+                &agenda,
+                LinkCommand::DependsOn {
+                    item_id: a.id.to_string(),
+                    depends_on_item_id: b.id.to_string(),
+                },
+            )
+        };
+
+        cmd().expect("first link");
+        cmd().expect("second link — should not error");
+
+        let deps = store.list_dependency_ids_for_item(a.id).expect("list");
+        assert_eq!(deps.len(), 1, "only one dependency should exist");
     }
 }

@@ -4,8 +4,40 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
+/// Names of the three built-in categories that are always present and cannot
+/// be renamed or deleted.
+pub const RESERVED_CATEGORY_NAME_WHEN: &str = "When";
+pub const RESERVED_CATEGORY_NAME_ENTRY: &str = "Entry";
+pub const RESERVED_CATEGORY_NAME_DONE: &str = "Done";
+pub const RESERVED_CATEGORY_NAMES: [&str; 3] = [
+    RESERVED_CATEGORY_NAME_WHEN,
+    RESERVED_CATEGORY_NAME_ENTRY,
+    RESERVED_CATEGORY_NAME_DONE,
+];
+
 pub type CategoryId = Uuid;
 pub type ItemId = Uuid;
+
+/// Canonical `origin` string constants used in [`Assignment::origin`] and [`ItemLink::origin`].
+///
+/// These are stored as-is in the database, so changing a value here is a breaking
+/// change that requires a migration. For subsumption origins, the category name is
+/// appended: `format!("{}:{category_name}", ORIGIN_SUBSUMPTION)`.
+pub mod origin {
+    /// Explicit user assignment (generic).
+    pub const MANUAL: &str = "manual";
+    /// User marked the item done.
+    pub const MANUAL_DONE: &str = "manual:done";
+    /// User entered a numeric value for a category.
+    pub const MANUAL_NUMERIC: &str = "manual:numeric";
+    /// User created an item link.
+    pub const MANUAL_LINK: &str = "manual:link";
+    /// NLP date parser inferred a When date.
+    pub const NLP_DATE: &str = "nlp:date";
+    /// Engine auto-assigned via category hierarchy subsumption.
+    /// Full value: `format!("{}:{category_name}", SUBSUMPTION)`.
+    pub const SUBSUMPTION: &str = "subsumption";
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ItemLinkKind {
@@ -24,6 +56,7 @@ pub struct ItemLink {
     pub other_item_id: ItemId,
     pub kind: ItemLinkKind,
     pub created_at: DateTime<Utc>,
+    /// How this link was created. See [`origin`] for canonical values.
     pub origin: Option<String>,
 }
 
@@ -53,6 +86,7 @@ pub struct Assignment {
     pub source: AssignmentSource,
     pub assigned_at: DateTime<Utc>,
     pub sticky: bool,
+    /// How this assignment was created. See [`origin`] for canonical values.
     pub origin: Option<String>,
     #[serde(default)]
     pub numeric_value: Option<Decimal>,

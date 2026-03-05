@@ -1025,4 +1025,81 @@ mod tests {
 
         assert_eq!(parser.parse("May I ask", date(2026, 2, 16)), None);
     }
+
+    // ── Year-boundary edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn yesterday_on_jan_1_wraps_to_previous_year() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("yesterday", date(2026, 1, 1))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2025, 12, 31, 0, 0));
+    }
+
+    #[test]
+    fn tomorrow_on_dec_31_wraps_to_next_year() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("tomorrow", date(2025, 12, 31))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 1, 1, 0, 0));
+    }
+
+    #[test]
+    fn this_weekday_crossing_year_boundary() {
+        // 2026-12-28 is a Monday; "this Sunday" is 6 days later = 2027-01-03.
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("this Sunday", date(2026, 12, 28))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2027, 1, 3, 0, 0));
+    }
+
+    #[test]
+    fn next_weekday_crossing_year_boundary_strict() {
+        // 2026-12-28 is a Monday; "next Sunday" (StrictNextWeek) is 13 days
+        // later = 2027-01-10.
+        let parser = parser_with_policy(WeekdayDisambiguationPolicy::StrictNextWeek);
+        let parsed = parser
+            .parse("next Sunday", date(2026, 12, 28))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2027, 1, 10, 0, 0));
+    }
+
+    // ── Leap-year edge cases ───────────────────────────────────────────────────
+
+    #[test]
+    fn feb_29_parses_on_leap_year() {
+        // 2024 is a leap year; Feb 29 should be accepted.
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("February 29", date(2024, 1, 1))
+            .expect("expected parse on leap year");
+        assert_eq!(parsed.datetime, datetime(2024, 2, 29, 0, 0));
+    }
+
+    #[test]
+    fn feb_29_on_non_leap_year_is_rejected() {
+        // 2026 is not a leap year; Feb 29 2026 is not a valid date.
+        let parser = BasicDateParser::default();
+        assert_eq!(
+            parser.parse("February 29", date(2026, 1, 1)),
+            None,
+            "Feb 29 should not parse in a non-leap year"
+        );
+    }
+
+    #[test]
+    fn feb_29_rolls_forward_past_reference_date_returns_none_when_next_year_is_not_leap() {
+        // Reference is 2024-03-01, which is after Feb 29 2024.
+        // resolve_month_day_without_year only tries this_year + 1 (= 2025),
+        // which is not a leap year, so Feb 29 is invalid → None.
+        let parser = BasicDateParser::default();
+        assert_eq!(
+            parser.parse("February 29", date(2024, 3, 1)),
+            None,
+            "when next year is not a leap year, Feb 29 roll-forward should return None"
+        );
+    }
 }
