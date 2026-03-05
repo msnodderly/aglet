@@ -174,6 +174,7 @@ enum Mode {
     Normal,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
+    // TODO(feature): inline note editor not yet implemented
     #[allow(dead_code)]
     NoteEdit,
     ItemAssignPicker,
@@ -189,6 +190,7 @@ enum Mode {
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
+    // TODO(feature): confirmation dialog before creating a category not yet implemented
     #[allow(dead_code)]
     CategoryCreateConfirm {
         name: String,
@@ -437,12 +439,14 @@ struct CategoryManagerState {
 
 #[derive(Clone, Debug)]
 struct CategorySuggestState {
+    // TODO(feature): not yet used in rendering; reserved for keyboard-driven suggestion navigation
     #[allow(dead_code)]
     suggest_index: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AddColumnDirection {
+    // TODO(feature): inserting a column to the left not yet wired up
     #[allow(dead_code)]
     Left,
     Right,
@@ -538,6 +542,7 @@ struct CategoryDirectEditRow {
 
 #[derive(Clone)]
 struct CategoryDirectEditState {
+    // TODO(feature): anchor position not yet used in layout calculation
     #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
@@ -561,6 +566,7 @@ enum CategoryColumnPickerFocus {
 
 #[derive(Clone)]
 struct CategoryColumnPickerState {
+    // TODO(feature): anchor position not yet used in layout calculation
     #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
@@ -584,6 +590,7 @@ impl CategoryDirectEditRow {
         }
     }
 
+    // TODO(feature): pre-populate input with a resolved category name (e.g. from suggestion)
     #[allow(dead_code)]
     fn resolved(category_id: CategoryId, name: String) -> Self {
         Self {
