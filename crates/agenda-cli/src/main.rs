@@ -2783,16 +2783,16 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_link, cmd_unlink,
-        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
-        item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
-        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
-        retain_items_with_all_categories, retain_items_with_any_categories,
-        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
-        write_stdout_allow_broken_pipe, blocked_item_ids, Cli, CliSortDirection, CliSortField,
-        CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit,
+        cmd_link, cmd_unlink, cmd_view, compare_items_by_sort_keys,
+        duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
+        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
+        reject_items_with_any_categories, retain_items_by_dependency_state,
+        retain_items_matching_numeric_filters, retain_items_with_all_categories,
+        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
+        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
+        CliSortField, CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters,
+        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4791,6 +4791,41 @@ mod tests {
             },
         );
         assert!(result.is_err(), "cyclic dependency should be rejected");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("cycle"),
+            "error should mention cycle, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn cmd_link_blocks_cycle_returns_error() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("A".to_string());
+        let b = Item::new("B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::Blocks {
+                blocker_item_id: a.id.to_string(),
+                blocked_item_id: b.id.to_string(),
+            },
+        )
+        .expect("first blocks link should succeed");
+
+        let result = cmd_link(
+            &agenda,
+            LinkCommand::Blocks {
+                blocker_item_id: b.id.to_string(),
+                blocked_item_id: a.id.to_string(),
+            },
+        );
+        assert!(result.is_err(), "cyclic blocks link should be rejected");
         let msg = result.unwrap_err();
         assert!(
             msg.contains("cycle"),

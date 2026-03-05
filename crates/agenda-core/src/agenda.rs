@@ -619,8 +619,7 @@ impl<'a> Agenda<'a> {
             if current == dependent_id {
                 return Err(AgendaError::InvalidOperation {
                     message: format!(
-                        "adding dependency would create a cycle: {} depends-on ... depends-on {}",
-                        dependency_id, dependent_id
+                        "cannot create depends-on link {dependent_id} -> {dependency_id}: cycle detected"
                     ),
                 });
             }
@@ -2303,6 +2302,34 @@ mod tests {
         agenda.link_items_depends_on(a, b).unwrap();
         agenda.link_items_depends_on(b, c).unwrap();
         let err = agenda.link_items_depends_on(c, a).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn link_items_blocks_rejects_direct_cycle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+
+        agenda.link_items_blocks(a, b).unwrap();
+        let err = agenda.link_items_blocks(b, a).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn link_items_blocks_rejects_longer_cycle() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let a = make_item(&store, "A");
+        let b = make_item(&store, "B");
+        let c = make_item(&store, "C");
+
+        agenda.link_items_blocks(a, b).unwrap();
+        agenda.link_items_blocks(b, c).unwrap();
+        let err = agenda.link_items_blocks(c, a).unwrap_err();
         assert!(matches!(err, AgendaError::InvalidOperation { .. }));
     }
 
