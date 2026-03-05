@@ -4,6 +4,17 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
+/// Names of the three built-in categories that are always present and cannot
+/// be renamed or deleted.
+pub const RESERVED_CATEGORY_NAME_WHEN: &str = "When";
+pub const RESERVED_CATEGORY_NAME_ENTRY: &str = "Entry";
+pub const RESERVED_CATEGORY_NAME_DONE: &str = "Done";
+pub const RESERVED_CATEGORY_NAMES: [&str; 3] = [
+    RESERVED_CATEGORY_NAME_WHEN,
+    RESERVED_CATEGORY_NAME_ENTRY,
+    RESERVED_CATEGORY_NAME_DONE,
+];
+
 pub type CategoryId = Uuid;
 pub type ItemId = Uuid;
 

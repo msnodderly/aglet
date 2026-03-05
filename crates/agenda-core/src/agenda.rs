@@ -9,7 +9,8 @@ use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
     Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Item, ItemId, ItemLink,
-    ItemLinkKind, ItemLinksForItem, Section, View,
+    ItemLinkKind, ItemLinksForItem, Section, View, RESERVED_CATEGORY_NAME_DONE,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 
@@ -613,7 +614,7 @@ impl<'a> Agenda<'a> {
     }
 
     fn assign_when_provenance(&self, item_id: ItemId) -> Result<()> {
-        let when_category_id = self.category_id_by_name("When")?;
+        let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
         let assignment = Assignment {
             source: AssignmentSource::AutoMatch,
             assigned_at: Utc::now(),
@@ -626,7 +627,7 @@ impl<'a> Agenda<'a> {
     }
 
     fn done_category_id(&self) -> Result<CategoryId> {
-        self.category_id_by_name("Done")
+        self.category_id_by_name(RESERVED_CATEGORY_NAME_DONE)
     }
 
     fn item_is_actionable(&self, item_id: ItemId) -> Result<bool> {
@@ -675,6 +676,7 @@ mod tests {
     use crate::model::{
         Action, Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Condition,
         CriterionMode, Item, ItemId, ItemLinkKind, Query, Section, View, WhenBucket,
+        RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
     };
     use crate::query::{resolve_view, resolve_when_bucket};
     use crate::store::Store;
@@ -731,7 +733,7 @@ mod tests {
             .get_hierarchy()
             .expect("hierarchy available")
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .find(|category| category.name.eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_WHEN))
             .expect("reserved When category exists")
             .id
     }
@@ -1916,7 +1918,7 @@ mod tests {
             .get_hierarchy()
             .unwrap()
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case("Done"))
+            .find(|category| category.name.eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_DONE))
             .expect("Done category exists")
             .id;
         let assignments = store.get_assignments_for_item(item.id).unwrap();
@@ -1976,7 +1978,7 @@ mod tests {
             .get_hierarchy()
             .unwrap()
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case("Done"))
+            .find(|category| category.name.eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_DONE))
             .expect("Done category exists")
             .id;
         let assignments = store.get_assignments_for_item(item.id).unwrap();
