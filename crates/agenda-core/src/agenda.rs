@@ -8,9 +8,9 @@ use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, Pr
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Item, ItemId, ItemLink,
-    ItemLinkKind, ItemLinksForItem, Section, View, RESERVED_CATEGORY_NAME_DONE,
-    RESERVED_CATEGORY_NAME_WHEN,
+    origin as origin_const, Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind,
+    Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section, View,
+    RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 
@@ -124,7 +124,7 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Utc::now(),
             sticky: true,
-            origin: origin.or_else(|| Some("manual".to_string())),
+            origin: origin.or_else(|| Some(origin_const::MANUAL.to_string())),
             numeric_value: None,
         };
 
@@ -180,7 +180,7 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Utc::now(),
             sticky: true,
-            origin: origin.or_else(|| Some("manual:numeric".to_string())),
+            origin: origin.or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
             numeric_value: Some(numeric_value),
         };
 
@@ -284,7 +284,7 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: now,
             sticky: true,
-            origin: Some("manual:done".to_string()),
+            origin: Some(origin_const::MANUAL_DONE.to_string()),
             numeric_value: None,
         };
         self.store
@@ -487,7 +487,7 @@ impl<'a> Agenda<'a> {
                     source: AssignmentSource::Subsumption,
                     assigned_at: Utc::now(),
                     sticky: true,
-                    origin: Some(format!("subsumption:{parent_name}")),
+                    origin: Some(format!("{}:{parent_name}", origin_const::SUBSUMPTION)),
                     numeric_value: None,
                 };
                 self.store.assign_item(item_id, parent_id, &assignment)?;
@@ -559,7 +559,7 @@ impl<'a> Agenda<'a> {
             other_item_id,
             kind,
             created_at: Utc::now(),
-            origin: Some("manual:link".to_string()),
+            origin: Some(origin_const::MANUAL_LINK.to_string()),
         }
     }
 
@@ -619,7 +619,7 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::AutoMatch,
             assigned_at: Utc::now(),
             sticky: true,
-            origin: Some("nlp:date".to_string()),
+            origin: Some(origin_const::NLP_DATE.to_string()),
             numeric_value: None,
         };
         self.store
