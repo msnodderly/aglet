@@ -977,6 +977,7 @@ impl App {
                 kind,
                 heading: category_id,
                 width: 12,
+                summary_fn: None,
             },
         );
         let inserted_board_index_before = match add_state.anchor.direction {
@@ -4674,6 +4675,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: HashSet::new(),
@@ -4743,6 +4745,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent_id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: HashSet::new(),
@@ -4812,6 +4815,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent_id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: HashSet::new(),

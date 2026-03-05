@@ -1910,68 +1910,49 @@ impl App {
                         .collect()
                 };
 
-                // Append SUM/AVG footer rows for sections with numeric columns.
-                let has_numeric_columns = layout
-                    .columns
-                    .iter()
-                    .any(|c| c.heading_value_kind == CategoryValueKind::Numeric);
+                // Append a configured aggregate footer row for numeric columns.
+                let has_summary_columns = layout.columns.iter().any(|c| {
+                    c.heading_value_kind == CategoryValueKind::Numeric
+                        && c.summary_fn != SummaryFn::None
+                });
                 let mut rows = rows;
-                if has_numeric_columns && !slot.items.is_empty() {
+                if has_summary_columns && !slot.items.is_empty() {
                     let item_refs: Vec<&Item> = slot.items.iter().collect();
                     let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
                     let footer_style = Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD);
-
-                    for (label, extract_value) in [
-                        (
-                            "SUM",
-                            Box::new(|agg: &NumericAggregate| Some(agg.sum))
-                                as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>,
-                        ),
-                        (
-                            "AVG",
-                            Box::new(|agg: &NumericAggregate| agg.avg())
-                                as Box<dyn Fn(&NumericAggregate) -> Option<rust_decimal::Decimal>>,
-                        ),
-                    ] {
-                        let mut footer_cells =
-                            vec![Cell::from(String::new()), Cell::from(String::new())];
-                        let category_footer_cells: Vec<Cell<'_>> = aggregates
-                            .iter()
-                            .enumerate()
-                            .map(|(col_idx, agg_opt)| {
-                                let text = agg_opt
-                                    .as_ref()
-                                    .and_then(|agg| {
-                                        if agg.count == 0 {
-                                            None
-                                        } else {
-                                            extract_value(agg)
-                                        }
-                                    })
-                                    .map(|v| {
-                                        right_pad_cell(
-                                            &format_numeric_cell(Some(v), None),
-                                            layout.columns[col_idx].width,
-                                        )
-                                    })
-                                    .unwrap_or_default();
-                                Cell::from(text).style(footer_style)
-                            })
-                            .collect();
-                        let mut left_cats: Vec<Cell<'_>> =
-                            category_footer_cells[..item_board_column_index].to_vec();
-                        let right_cats: Vec<Cell<'_>> =
-                            category_footer_cells[item_board_column_index..].to_vec();
-                        footer_cells.append(&mut left_cats);
-                        footer_cells.push(Cell::from(format!("  {label}")).style(footer_style));
-                        footer_cells.extend(right_cats);
-                        if synthetic_categories_width > 0 {
-                            footer_cells.push(Cell::from(String::new()));
-                        }
-                        rows.push(Row::new(footer_cells));
+                    let mut footer_cells =
+                        vec![Cell::from(String::new()), Cell::from(String::new())];
+                    let category_footer_cells: Vec<Cell<'_>> = aggregates
+                        .iter()
+                        .enumerate()
+                        .map(|(col_idx, agg_opt)| {
+                            let summary_fn = layout.columns[col_idx].summary_fn;
+                            let text = agg_opt
+                                .as_ref()
+                                .and_then(|agg| agg.value_for(summary_fn))
+                                .map(|v| {
+                                    right_pad_cell(
+                                        &format_numeric_cell(Some(v), None),
+                                        layout.columns[col_idx].width,
+                                    )
+                                })
+                                .unwrap_or_default();
+                            Cell::from(text).style(footer_style)
+                        })
+                        .collect();
+                    let mut left_cats: Vec<Cell<'_>> =
+                        category_footer_cells[..item_board_column_index].to_vec();
+                    let right_cats: Vec<Cell<'_>> =
+                        category_footer_cells[item_board_column_index..].to_vec();
+                    footer_cells.append(&mut left_cats);
+                    footer_cells.push(Cell::from("  SUMMARY").style(footer_style));
+                    footer_cells.extend(right_cats);
+                    if synthetic_categories_width > 0 {
+                        footer_cells.push(Cell::from(String::new()));
                     }
+                    rows.push(Row::new(footer_cells));
                 }
 
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);

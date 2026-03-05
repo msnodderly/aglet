@@ -540,6 +540,7 @@ impl App {
                                 kind: column_kind_for_heading(cat),
                                 heading: cat_id,
                                 width: 12,
+                                summary_fn: None,
                             });
                         }
                     }

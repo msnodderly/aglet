@@ -7,7 +7,7 @@ use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
-    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, View, WhenBucket,
+    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SummaryFn, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -897,7 +897,8 @@ mod tests {
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
-        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, View, WhenBucket,
+        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
+        WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -949,6 +950,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1039,6 +1041,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1173,6 +1176,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1257,6 +1261,7 @@ mod tests {
                         kind: ColumnKind::Standard,
                         heading: parent.id,
                         width: 12,
+                        summary_fn: None,
                     }],
                     item_column_index: 0,
                     on_insert_assign: std::collections::HashSet::new(),
@@ -1321,6 +1326,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1450,6 +1456,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1515,6 +1522,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1579,6 +1587,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1634,6 +1643,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1704,6 +1714,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1769,6 +1780,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1843,6 +1855,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -1926,6 +1939,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2014,6 +2028,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2064,6 +2079,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: status.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2127,6 +2143,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2204,6 +2221,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2271,6 +2289,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: status.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2348,6 +2367,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2421,6 +2441,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2474,6 +2495,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2532,6 +2554,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: area.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2588,11 +2611,13 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: a.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: b.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 0,
@@ -2637,6 +2662,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: cat.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -2676,6 +2702,7 @@ mod tests {
                         kind: ColumnKind::When,
                         heading: when_cat.id,
                         width: 12,
+                        summary_fn: None,
                     }],
                     item_column_index: 0,
                     on_insert_assign: std::collections::HashSet::new(),
@@ -2745,6 +2772,7 @@ mod tests {
                 kind: ColumnKind::When,
                 heading: when_id,
                 width: 19,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -3018,11 +3046,13 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: a.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: b.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 2,
@@ -3087,11 +3117,13 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: priority.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: status.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 2,
@@ -3165,6 +3197,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: priority.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -3236,6 +3269,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: status.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -3299,6 +3333,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: base.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -3373,6 +3408,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: base.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -3443,11 +3479,13 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: base.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: status.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 0,
@@ -3523,6 +3561,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: base.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -3835,11 +3874,13 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: a.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: b.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 1,
@@ -3897,16 +3938,19 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: a.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: b.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: c.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 1,
@@ -3988,11 +4032,13 @@ mod tests {
                     kind: ColumnKind::Standard,
                     heading: a.id,
                     width: 12,
+                    summary_fn: None,
                 },
                 Column {
                     kind: ColumnKind::Standard,
                     heading: b.id,
                     width: 12,
+                    summary_fn: None,
                 },
             ],
             item_column_index: 1,
@@ -4056,11 +4102,13 @@ mod tests {
                         kind: ColumnKind::Standard,
                         heading: a.id,
                         width: 12,
+                        summary_fn: None,
                     },
                     Column {
                         kind: ColumnKind::Standard,
                         heading: b.id,
                         width: 12,
+                        summary_fn: None,
                     },
                 ],
                 item_column_index: 0,
@@ -8314,11 +8362,13 @@ mod tests {
                 kind: ColumnKind::When,
                 heading: parent.id,
                 width: 24,
+                summary_fn: None,
             },
             Column {
                 kind: ColumnKind::Standard,
                 heading: parent.id,
                 width: 24,
+                summary_fn: None,
             },
         ];
 
@@ -8544,6 +8594,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: status.id,
                 width: 8,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -8633,6 +8684,7 @@ mod tests {
                 kind: ColumnKind::When,
                 heading: when_id,
                 width: 16,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -8741,6 +8793,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: complexity.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -11660,6 +11713,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: priority.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -11746,6 +11800,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: cost.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -11797,6 +11852,113 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
+    #[test]
+    fn board_render_summary_row_supports_all_summary_functions() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-summary-row-all-fns-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item_a = Item::new("A".to_string());
+        let item_b = Item::new("B".to_string());
+        let item_c = Item::new("C".to_string());
+        store.create_item(&item_a).expect("create item a");
+        store.create_item(&item_b).expect("create item b");
+        store.create_item(&item_c).expect("create item c");
+        agenda
+            .assign_item_numeric_manual(
+                item_a.id,
+                cost.id,
+                rust_decimal::Decimal::new(100, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign item a");
+        agenda
+            .assign_item_numeric_manual(
+                item_b.id,
+                cost.id,
+                rust_decimal::Decimal::new(250, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign item b");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 10,
+                    summary_fn: Some(SummaryFn::Sum),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 10,
+                    summary_fn: Some(SummaryFn::Avg),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 10,
+                    summary_fn: Some(SummaryFn::Min),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 10,
+                    summary_fn: Some(SummaryFn::Max),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 10,
+                    summary_fn: Some(SummaryFn::Count),
+                },
+            ],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(220, 24);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("SUMMARY"),
+            "summary label missing: {rendered}"
+        );
+        assert!(rendered.contains("350.00"), "sum missing: {rendered}");
+        assert!(rendered.contains("175.00"), "avg missing: {rendered}");
+        assert!(rendered.contains("100.00"), "min missing: {rendered}");
+        assert!(rendered.contains("250.00"), "max missing: {rendered}");
+        assert!(rendered.contains("2.00"), "count missing: {rendered}");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
     // --- Phase 6: Numeric cell editing tests ---
 
     /// Helper: create a store with a numeric "Cost" category, a view with the Cost column,
@@ -11837,6 +11999,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: cost.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),
@@ -12047,6 +12210,7 @@ mod tests {
                 kind: ColumnKind::Standard,
                 heading: cost.id,
                 width: 12,
+                summary_fn: None,
             }],
             item_column_index: 0,
             on_insert_assign: std::collections::HashSet::new(),

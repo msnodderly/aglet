@@ -212,12 +212,26 @@ pub enum ColumnKind {
     Standard,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryFn {
+    #[default]
+    None,
+    Sum,
+    Avg,
+    Min,
+    Max,
+    Count,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
     #[serde(default)]
     pub kind: ColumnKind,
     pub heading: CategoryId,
     pub width: u16,
+    #[serde(default)]
+    pub summary_fn: Option<SummaryFn>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -457,7 +471,7 @@ impl View {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemLinkKind, View};
+    use super::{Column, ItemLinkKind, SummaryFn, View};
     use serde_json::Value;
     use uuid::Uuid;
 
@@ -514,5 +528,33 @@ mod tests {
                 .map(String::as_str),
             Some("Customer")
         );
+    }
+
+    #[test]
+    fn column_serde_defaults_missing_summary_fn_to_none() {
+        let mut json = serde_json::json!({
+            "kind": "Standard",
+            "heading": Uuid::new_v4(),
+            "width": 24
+        });
+        json.as_object_mut()
+            .expect("column object")
+            .remove("summary_fn");
+
+        let parsed: Column = serde_json::from_value(json).expect("deserialize column");
+        assert_eq!(parsed.summary_fn, None);
+    }
+
+    #[test]
+    fn summary_fn_serde_names_are_stable() {
+        assert_eq!(serde_json::to_string(&SummaryFn::Sum).unwrap(), "\"sum\"");
+        assert_eq!(serde_json::to_string(&SummaryFn::Avg).unwrap(), "\"avg\"");
+        assert_eq!(serde_json::to_string(&SummaryFn::Min).unwrap(), "\"min\"");
+        assert_eq!(serde_json::to_string(&SummaryFn::Max).unwrap(), "\"max\"");
+        assert_eq!(
+            serde_json::to_string(&SummaryFn::Count).unwrap(),
+            "\"count\""
+        );
+        assert_eq!(serde_json::to_string(&SummaryFn::None).unwrap(), "\"none\"");
     }
 }
