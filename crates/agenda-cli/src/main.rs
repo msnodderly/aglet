@@ -386,6 +386,17 @@ enum ViewCommand {
         /// Hide items that do not match any section.
         #[arg(long = "hide-unmatched")]
         hide_unmatched: bool,
+        #[arg(long = "hide-dependent-items")]
+        hide_dependent_items: bool,
+    },
+
+    /// Edit mutable view properties
+    Edit {
+        name: String,
+        #[arg(long = "hide-unmatched")]
+        hide_unmatched: Option<bool>,
+        #[arg(long = "hide-dependent-items")]
+        hide_dependent_items: Option<bool>,
     },
 
     /// Clone a view into a new mutable view
@@ -908,7 +919,9 @@ fn cmd_list(
     sort_args: Vec<String>,
     output_format: OutputFormatArg,
 ) -> Result<(), String> {
-    let mut items = store.list_items().map_err(|e| e.to_string())?;
+    let all_items = store.list_items().map_err(|e| e.to_string())?;
+    let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+    let mut items = all_items.clone();
     if !filters.include_done {
         items.retain(|item| !item.is_done);
     }
@@ -967,6 +980,7 @@ fn cmd_list(
             &category_names,
             &sort_keys,
             output_format,
+            &blocked_item_ids,
         )?;
     } else if output_format == OutputFormatArg::Json {
         print_items_json(&items, &category_names, &sort_keys, &categories)?;
@@ -974,6 +988,24 @@ fn cmd_list(
         print_item_table(&items, &category_names, &sort_keys, &categories);
     }
     Ok(())
+}
+
+fn blocked_item_ids(items: &[Item], store: &Store) -> Result<HashSet<ItemId>, String> {
+    let done_by_item_id: HashMap<ItemId, bool> =
+        items.iter().map(|item| (item.id, item.is_done)).collect();
+    let mut blocked = HashSet::new();
+    for item in items {
+        let dependency_ids = store
+            .list_dependency_ids_for_item(item.id)
+            .map_err(|e| e.to_string())?;
+        let is_blocked = dependency_ids
+            .iter()
+            .any(|dep_id| !done_by_item_id.get(dep_id).copied().unwrap_or(false));
+        if is_blocked {
+            blocked.insert(item.id);
+        }
+    }
+    Ok(blocked)
 }
 
 fn retain_items_with_all_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
@@ -1781,12 +1813,13 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             }
             for view in views {
                 println!(
-                    "{} (sections={}, and={}, not={}, or={})",
+                    "{} (sections={}, and={}, not={}, or={}, hide_dependent_items={})",
                     view.name,
                     view.sections.len(),
                     view.criteria.and_category_ids().count(),
                     view.criteria.not_category_ids().count(),
-                    view.criteria.or_category_ids().count()
+                    view.criteria.or_category_ids().count(),
+                    view.hide_dependent_items
                 );
             }
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
@@ -1801,7 +1834,9 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
-            let mut items = store.list_items().map_err(|e| e.to_string())?;
+            let all_items = store.list_items().map_err(|e| e.to_string())?;
+            let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+            let mut items = all_items;
             if let Some(filter) = dependency_state_filter_from_flags(blocked, not_blocked) {
                 retain_items_by_dependency_state(store, &mut items, filter)?;
             }
@@ -1814,6 +1849,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                 &category_names,
                 &sort_keys,
                 format,
+                &blocked_item_ids,
             )?;
             Ok(())
         }
@@ -1822,10 +1858,12 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             include,
             exclude,
             hide_unmatched,
+            hide_dependent_items,
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let mut view = View::new(name);
             view.show_unmatched = !hide_unmatched;
+            view.hide_dependent_items = hide_dependent_items;
             for id in names_to_category_ids(&categories, &include)? {
                 view.criteria.set_criterion(CriterionMode::And, id);
             }
@@ -1835,6 +1873,32 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
 
             store.create_view(&view).map_err(|e| e.to_string())?;
             println!("created view {}", view.name);
+            Ok(())
+        }
+        ViewCommand::Edit {
+            name,
+            hide_unmatched,
+            hide_dependent_items,
+        } => {
+            let mut view = view_by_name(store, &name)?;
+            let mut changed = false;
+            if let Some(hide_unmatched) = hide_unmatched {
+                let next_show_unmatched = !hide_unmatched;
+                changed = changed || view.show_unmatched != next_show_unmatched;
+                view.show_unmatched = next_show_unmatched;
+            }
+            if let Some(hide_dependent_items) = hide_dependent_items {
+                changed = changed || view.hide_dependent_items != hide_dependent_items;
+                view.hide_dependent_items = hide_dependent_items;
+            }
+            if !changed {
+                return Err(
+                    "no editable view changes requested (pass --hide-unmatched and/or --hide-dependent-items)"
+                        .to_string(),
+                );
+            }
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!("updated view {}", view.name);
             Ok(())
         }
         ViewCommand::Clone {
@@ -2058,6 +2122,7 @@ struct JsonViewCategoryAliasOutput {
 #[derive(Serialize)]
 struct JsonViewOutput {
     view: String,
+    hide_dependent_items: bool,
     category_aliases: Vec<JsonViewCategoryAliasOutput>,
     sections: Vec<JsonViewSectionOutput>,
     unmatched_label: Option<String>,
@@ -2346,9 +2411,25 @@ fn print_items_for_view(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     output_format: OutputFormatArg,
+    blocked_item_ids: &HashSet<ItemId>,
 ) -> Result<(), String> {
     let reference_date = Local::now().date_naive();
-    let result = resolve_view(view, items, categories, reference_date);
+    let mut result = resolve_view(view, items, categories, reference_date);
+    if view.hide_dependent_items {
+        for section in &mut result.sections {
+            section
+                .items
+                .retain(|item| !blocked_item_ids.contains(&item.id));
+            for subsection in &mut section.subsections {
+                subsection
+                    .items
+                    .retain(|item| !blocked_item_ids.contains(&item.id));
+            }
+        }
+        if let Some(unmatched) = &mut result.unmatched {
+            unmatched.retain(|item| !blocked_item_ids.contains(&item.id));
+        }
+    }
     let has_sections = !result.sections.is_empty();
     let alias_rows = view_category_alias_rows(view, category_names);
 
@@ -2398,6 +2479,7 @@ fn print_items_for_view(
 
         let payload = JsonViewOutput {
             view: view.name.clone(),
+            hide_dependent_items: view.hide_dependent_items,
             category_aliases: alias_rows
                 .iter()
                 .map(|row| JsonViewCategoryAliasOutput {
@@ -2416,6 +2498,7 @@ fn print_items_for_view(
     }
 
     println!("# {}", view.name);
+    println!("hide_dependent_items: {}", view.hide_dependent_items);
     if !alias_rows.is_empty() {
         println!("\nAliases:");
         for row in &alias_rows {
@@ -2709,9 +2792,9 @@ mod tests {
         retain_items_by_dependency_state, retain_items_matching_numeric_filters,
         retain_items_with_all_categories, retain_items_with_any_categories,
         unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
-        write_stdout_allow_broken_pipe, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
-        DependencyStateFilter, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
-        OutputFormatArg, UnlinkCommand, ViewCommand,
+        write_stdout_allow_broken_pipe, blocked_item_ids, Cli, CliSortDirection, CliSortField,
+        CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
+        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3381,6 +3464,35 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_view_create_with_hide_dependent_items_flag() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "view",
+            "create",
+            "Focus",
+            "--hide-dependent-items",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command:
+                    ViewCommand::Create {
+                        name,
+                        hide_unmatched,
+                        hide_dependent_items,
+                        ..
+                    },
+            }) => {
+                assert_eq!(name, "Focus");
+                assert!(!hide_unmatched);
+                assert!(hide_dependent_items);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_export_with_view_and_include_links() {
         let cli =
             Cli::try_parse_from(["agenda", "export", "--view", "All Items", "--include-links"])
@@ -3393,6 +3505,34 @@ mod tests {
             }) => {
                 assert_eq!(view.as_deref(), Some("All Items"));
                 assert!(include_links);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_edit_with_hide_dependent_items_option() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "view",
+            "edit",
+            "Focus",
+            "--hide-dependent-items",
+            "true",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command:
+                    ViewCommand::Edit {
+                        name,
+                        hide_dependent_items,
+                        ..
+                    },
+            }) => {
+                assert_eq!(name, "Focus");
+                assert_eq!(hide_dependent_items, Some(true));
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -3660,6 +3800,51 @@ mod tests {
         )
         .expect_err("delete should fail");
         assert!(err.contains("cannot modify system view"));
+    }
+
+    #[test]
+    fn cmd_view_edit_sets_hide_dependent_items() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let view = View::new("Focus".to_string());
+        let view_id = view.id;
+        store.create_view(&view).expect("create view");
+
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Edit {
+                name: "Focus".to_string(),
+                hide_unmatched: None,
+                hide_dependent_items: Some(true),
+            },
+        )
+        .expect("edit view");
+
+        let updated = store.get_view(view_id).expect("load updated view");
+        assert!(updated.hide_dependent_items);
+    }
+
+    #[test]
+    fn blocked_item_ids_marks_open_dependency_as_blocked() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let dependency = Item::new("Dependency".to_string());
+        let dependent = Item::new("Dependent".to_string());
+        store.create_item(&dependency).expect("create dependency");
+        store.create_item(&dependent).expect("create dependent");
+        agenda
+            .link_items_depends_on(dependent.id, dependency.id)
+            .expect("link depends-on");
+
+        let items = store.list_items().expect("list items");
+        let blocked = blocked_item_ids(&items, &store).expect("blocked ids");
+        assert!(blocked.contains(&dependent.id));
+        assert!(!blocked.contains(&dependency.id));
     }
 
     #[test]
