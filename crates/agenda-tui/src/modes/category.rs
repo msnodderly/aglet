@@ -21,6 +21,37 @@ impl App {
                 && self.current_key_modifiers.contains(KeyModifiers::SHIFT))
     }
 
+    fn close_category_manager_with_status(&mut self, status: &str) {
+        self.mode = Mode::Normal;
+        self.close_category_manager_session();
+        self.clear_input();
+        self.status = status.to_string();
+    }
+
+    fn handle_category_manager_discard_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Char('y') => {
+                self.save_category_manager_details_note(agenda)?;
+                self.close_category_manager_with_status("Category manager closed (saved)");
+            }
+            KeyCode::Char('n') => {
+                self.close_category_manager_with_status(
+                    "Category manager closed; unsaved note changes discarded",
+                );
+            }
+            KeyCode::Esc => {
+                self.set_category_manager_discard_confirm(false);
+                self.status = "Kept category manager open; unsaved note retained".to_string();
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
     pub(crate) fn category_manager_parent_label(&self, parent_id: Option<CategoryId>) -> String {
         parent_id
             .and_then(|id| {
@@ -633,6 +664,10 @@ impl App {
         if self.handle_category_manager_inline_action_key(code, agenda)? {
             return Ok(false);
         }
+        if self.category_manager_discard_confirm() {
+            self.handle_category_manager_discard_confirm_key(code, agenda)?;
+            return Ok(false);
+        }
         if self.handle_category_manager_details_key(code, agenda)? {
             return Ok(false);
         }
@@ -706,11 +741,12 @@ impl App {
                     self.rebuild_category_manager_visible_rows();
                     self.set_category_manager_focus(CategoryManagerFocus::Tree);
                     self.status = "Category filter cleared".to_string();
+                } else if self.category_manager_details_note_dirty() {
+                    self.set_category_manager_discard_confirm(true);
+                    self.status =
+                        "Save changes? y:save and close  n:discard  Esc:keep editing".to_string();
                 } else {
-                    self.mode = Mode::Normal;
-                    self.close_category_manager_session();
-                    self.clear_input();
-                    self.status = "Category manager closed".to_string();
+                    self.close_category_manager_with_status("Category manager closed");
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
