@@ -1374,7 +1374,7 @@ impl App {
             return;
         };
         if meta.column_kind == ColumnKind::When {
-            self.status = "Editing 'When' date not yet implemented inline".to_string();
+            self.open_when_column_editor(&meta);
             return;
         }
 
@@ -1422,6 +1422,25 @@ impl App {
             "Set {}: type to filter, Space toggle, Enter save, Esc cancel",
             meta.parent_name
         );
+    }
+
+    fn open_when_column_editor(&mut self, meta: &CategoryDirectEditColumnMeta) {
+        let current_value = self
+            .selected_item()
+            .and_then(|item| item.when_date)
+            .map(|value| value.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+
+        self.when_edit_target = Some(WhenEditTarget {
+            item_id: meta.item_id,
+        });
+        self.input_panel = Some(input_panel::InputPanel::new_when_date_input(
+            &current_value,
+            &meta.item_label,
+        ));
+        self.name_input_context = Some(NameInputContext::WhenDateEdit);
+        self.mode = Mode::InputPanel;
+        self.status = String::new();
     }
 
     fn open_numeric_column_editor(&mut self, meta: &CategoryDirectEditColumnMeta) {
@@ -3273,10 +3292,13 @@ impl App {
                 self.input_panel = None;
                 match kind {
                     Some(input_panel::InputPanelKind::NameInput)
+                    | Some(input_panel::InputPanelKind::WhenDate)
                     | Some(input_panel::InputPanelKind::NumericValue)
                     | Some(input_panel::InputPanelKind::CategoryCreate) => {
                         self.mode = self.name_input_return_mode();
                         self.name_input_context = None;
+                        self.numeric_edit_target = None;
+                        self.when_edit_target = None;
                     }
                     _ => {
                         self.mode = Mode::Normal;
@@ -3302,6 +3324,9 @@ impl App {
                         self.save_input_panel_edit(agenda)?;
                     }
                     input_panel::InputPanelKind::NameInput => {
+                        self.save_input_panel_name(agenda)?;
+                    }
+                    input_panel::InputPanelKind::WhenDate => {
                         self.save_input_panel_name(agenda)?;
                     }
                     input_panel::InputPanelKind::NumericValue => {
@@ -3384,6 +3409,12 @@ impl App {
                             }
                         }
                     }
+                } else if matches!(
+                    self.name_input_context,
+                    Some(NameInputContext::WhenDateEdit)
+                ) && self.status.starts_with("Could not parse date/time")
+                {
+                    self.status.clear();
                 }
             }
             InputPanelAction::ToggleType => {
@@ -3649,9 +3680,52 @@ impl App {
                 Mode::ViewPicker
             }
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
+            Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
             None => Mode::Normal,
         }
+    }
+
+    fn parse_when_datetime_input_with_reference_date(
+        input: &str,
+        reference_date: chrono::NaiveDate,
+    ) -> Result<Option<NaiveDateTime>, String> {
+        use agenda_core::dates::DateParser;
+
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+
+        if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M") {
+            return Ok(Some(value));
+        }
+        if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
+            return Ok(Some(value));
+        }
+        if let Ok(date_only) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+            return Ok(Some(
+                date_only
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is a valid time"),
+            ));
+        }
+
+        let parser = agenda_core::dates::BasicDateParser::default();
+        if let Some(parsed) = parser.parse(trimmed, reference_date) {
+            return Ok(Some(parsed.datetime));
+        }
+
+        Err(
+            format!(
+                "Could not parse date/time from '{}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional 'at 3pm'/'at 15:00'/'at noon'). 'last week' and 'next week' are not supported yet.",
+                trimmed,
+            ),
+        )
+    }
+
+    fn parse_when_datetime_input(input: &str) -> Result<Option<NaiveDateTime>, String> {
+        Self::parse_when_datetime_input_with_reference_date(input, Utc::now().date_naive())
     }
 
     /// Save an InputPanel(NameInput) — dispatches on name_input_context.
@@ -3797,6 +3871,50 @@ impl App {
                             name
                         );
                         return Ok(());
+                    }
+                }
+            }
+            Some(NameInputContext::WhenDateEdit) => {
+                let Some(target) = self.when_edit_target.take() else {
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::Normal;
+                    self.status = "When edit: no target".to_string();
+                    return Ok(());
+                };
+
+                let parsed_when = match Self::parse_when_datetime_input(&input_text) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.when_edit_target = Some(target);
+                        self.status = message;
+                        return Ok(());
+                    }
+                };
+
+                match agenda.set_item_when_date(
+                    target.item_id,
+                    parsed_when,
+                    Some("manual:tui.when-edit".to_string()),
+                ) {
+                    Ok(_result) => {
+                        self.refresh(agenda.store())?;
+                        self.set_item_selection_by_id(target.item_id);
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.mode = Mode::Normal;
+                        self.status = match parsed_when {
+                            Some(value) => {
+                                format!("When set to {}", value.format("%Y-%m-%d %H:%M"))
+                            }
+                            None => "When cleared".to_string(),
+                        };
+                    }
+                    Err(err) => {
+                        self.input_panel = None;
+                        self.name_input_context = None;
+                        self.mode = Mode::Normal;
+                        self.status = format!("When save failed: {err}");
                     }
                 }
             }
@@ -4349,7 +4467,9 @@ fn exclusive_siblings_to_clear(rows: &[CategoryListRow], row_idx: usize) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agenda_core::dates::{BasicDateParser, DateParser};
     use agenda_core::model::CategoryId;
+    use chrono::NaiveDate;
 
     fn make_row(id: CategoryId, depth: usize, is_exclusive: bool) -> CategoryListRow {
         CategoryListRow {
@@ -4873,6 +4993,37 @@ mod tests {
         assert!(
             assignments.contains_key(&aglet.id),
             "view include should be assigned"
+        );
+    }
+
+    #[test]
+    fn parse_when_datetime_input_supports_core_relative_phrase_forms() {
+        let reference = NaiveDate::from_ymd_opt(2026, 2, 16).expect("valid date");
+        let input = "next Tuesday at 3pm";
+        let expected = BasicDateParser::default()
+            .parse(input, reference)
+            .expect("core parser should parse")
+            .datetime;
+
+        let parsed = App::parse_when_datetime_input_with_reference_date(input, reference)
+            .expect("input should parse")
+            .expect("should return datetime");
+
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn parse_when_datetime_input_reports_unparsable_input() {
+        let reference = NaiveDate::from_ymd_opt(2026, 2, 16).expect("valid date");
+        let err = App::parse_when_datetime_input_with_reference_date("next weem", reference)
+            .expect_err("invalid phrase should return error");
+        assert!(
+            err.contains("Could not parse date/time"),
+            "unexpected parse error: {err}"
+        );
+        assert!(
+            err.contains("next weem"),
+            "error should echo invalid input for debugging: {err}"
         );
     }
 }

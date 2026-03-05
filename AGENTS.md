@@ -530,6 +530,41 @@ Practical implications:
 - Initial wizard focus starts in inline section-title input; first `Esc` exits
   inline editing, then `Esc` again closes/cancels the wizard.
 
+## NameInput Enter-Save Behavior (Current)
+
+`InputPanelKind::NameInput` now saves on `Enter` from the text field directly
+(same as numeric value panels).
+
+Practical implications:
+- NameInput-backed flows (for example board inline `When` editing and view-name
+  create/rename) do not require tabbing to the Save button before Enter.
+- Save/Cancel buttons still work normally for mouse/keyboard navigation flows.
+
+## Inline When Validation Feedback Is Pane-Local (Surprising)
+
+`When` inline editing now shows parse/validation feedback in the popup pane
+itself (help/feedback row), not in the global footer status line.
+
+Practical implications:
+- Keep parse/validation failures visible in the `When` editor pane while it is
+  open.
+- Do not rely on footer status text for inline `When` feedback.
+- Invalid `When` input must keep the panel open and show a clear parse error
+  including the attempted text.
+- Invalid `When` help text should list supported date forms and explicitly note
+  that phrases like `last week` / `next week` are not supported yet.
+
+## Inline When Editor Must Keep Full Item Context Visible (UX)
+
+The board inline `When` editor uses a dedicated compact popup with a single
+context line that should display the full item text (not a short truncated
+label).
+
+Practical implications:
+- Do not pass `truncate_board_cell(...)` output as `When` editor context text.
+- Keep `WhenDate` context as one concise line (`Item: ...`) to avoid vertical
+  space bloat.
+
 ## Manual PR Review Session Workflow (Process)
 
 1. Enumerate open PRs sorted by PR number and review sequentially.

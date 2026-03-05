@@ -726,7 +726,6 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     println!("text:       {}", item.text);
     println!("status:     {}", done);
     println!("when:       {}", when);
-    println!("entry_date: {}", item.entry_date);
     println!("created_at: {}", item.created_at.to_rfc3339());
     println!("modified_at: {}", item.modified_at.to_rfc3339());
     if let Some(done_date) = item.done_date {
@@ -2062,7 +2061,6 @@ fn append_markdown_items(
                 .map(|dt| dt.to_string())
                 .unwrap_or_else(|| "-".to_string())
         ));
-        out.push_str(&format!("- Entry Date: `{}`\n", item.entry_date));
 
         let categories = item_categories(item, category_names);
         if categories.is_empty() {
@@ -4337,7 +4335,10 @@ mod tests {
 
         // "A blocks B" is stored as "B depends-on A"
         let deps = store.list_dependency_ids_for_item(b.id).expect("list");
-        assert!(deps.contains(&a.id), "b should depend-on a after 'a blocks b'");
+        assert!(
+            deps.contains(&a.id),
+            "b should depend-on a after 'a blocks b'"
+        );
     }
 
     #[test]
@@ -4417,7 +4418,10 @@ mod tests {
         );
         assert!(result.is_err(), "cyclic dependency should be rejected");
         let msg = result.unwrap_err();
-        assert!(msg.contains("cycle"), "error should mention cycle, got: {msg}");
+        assert!(
+            msg.contains("cycle"),
+            "error should mention cycle, got: {msg}"
+        );
     }
 
     #[test]
