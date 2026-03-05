@@ -1462,10 +1462,7 @@ impl App {
         } else {
             String::new()
         };
-        let view_flags = if current_view
-            .map(|view| view.hide_dependent_items)
-            .unwrap_or(false)
-        {
+        let view_flags = if self.effective_hide_dependent_items() {
             " dep:hidden"
         } else {
             ""
@@ -2513,9 +2510,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  s:sort  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  d:done  a:assign  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  s:sort  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
