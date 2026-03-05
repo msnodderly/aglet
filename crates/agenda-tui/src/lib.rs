@@ -451,6 +451,7 @@ struct CategoryManagerState {
     filter: text_buffer::TextBuffer,
     filter_editing: bool,
     structure_move_prefix: Option<char>,
+    discard_confirm: bool,
     details_focus: CategoryManagerDetailsFocus,
     details_note_category_id: Option<CategoryId>,
     details_note: text_buffer::TextBuffer,
@@ -7592,11 +7593,8 @@ mod tests {
         assert_eq!(saved.note, None, "tab should not autosave");
         assert!(app.status.contains("unsaved changes"));
 
-        // Go back and save explicitly
-        app.set_category_selection_by_id(category.id);
-        app.set_category_manager_focus(CategoryManagerFocus::Details);
-        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
-        app.set_category_manager_details_note_editing(true);
+        // Save explicitly with S from outside note-edit mode
+        assert!(!app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
             .expect("explicit save with S");
         let saved = store.get_category(category.id).expect("load category");
@@ -7607,7 +7605,53 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_note_focus_lowercase_j_starts_note_edit() {
+    fn category_manager_details_note_shift_s_modifier_saves() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-note-shift-s-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        for c in "Ship".chars() {
+            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+                .expect("type note");
+        }
+        assert!(app.category_manager_details_note_editing());
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit without saving");
+        assert!(!app.category_manager_details_note_editing());
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT),
+            &agenda,
+        )
+        .expect("save with shift+s key event");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("Ship"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -7634,11 +7678,23 @@ mod tests {
         assert!(app.category_manager_details_note_editing());
         assert_eq!(app.category_manager_details_note_text(), Some("j"));
 
-        // Save explicitly with S
+        app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
+            .expect("type uppercase S in note");
+        assert!(app.category_manager_details_note_editing());
+        assert_eq!(app.category_manager_details_note_text(), Some("jS"));
+        let unsaved = store
+            .get_category(category.id)
+            .expect("load unsaved category");
+        assert_eq!(unsaved.note, None, "typing uppercase S should not save");
+
+        // Leave note edit mode, then save with S command
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(!app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
             .expect("save note with S");
         let saved = store.get_category(category.id).expect("load category");
-        assert_eq!(saved.note.as_deref(), Some("j"));
+        assert_eq!(saved.note.as_deref(), Some("jS"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -7684,6 +7740,161 @@ mod tests {
         assert!(!app.category_manager_details_note_editing());
         assert!(!app.category_manager_details_note_dirty());
         assert!(app.status.contains("discarded"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_esc_with_dirty_note_opens_discard_confirm() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-close-confirm-prompt-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(
+            app.category_manager
+                .as_ref()
+                .expect("manager state")
+                .discard_confirm
+        );
+        assert!(app.status.contains("Save changes?"));
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("cancel close confirm");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(
+            !app.category_manager
+                .as_ref()
+                .expect("manager state")
+                .discard_confirm
+        );
+        assert!(app.category_manager_details_note_dirty());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_discard_confirm_y_saves_and_closes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-close-confirm-yes-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
+            .expect("save and close");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+        assert_eq!(
+            store.get_category(category.id).expect("load category").note,
+            Some("x".to_string())
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_discard_confirm_n_discards_and_closes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-close-confirm-no-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Work".to_string());
+        category.note = Some("seed".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("discard and close");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+        assert_eq!(
+            store.get_category(category.id).expect("load category").note,
+            Some("seed".to_string())
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
