@@ -4801,6 +4801,41 @@ mod tests {
     }
 
     #[test]
+    fn cmd_link_blocks_cycle_returns_error() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("A".to_string());
+        let b = Item::new("B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        cmd_link(
+            &agenda,
+            LinkCommand::Blocks {
+                blocker_item_id: a.id.to_string(),
+                blocked_item_id: b.id.to_string(),
+            },
+        )
+        .expect("first blocks link should succeed");
+
+        let result = cmd_link(
+            &agenda,
+            LinkCommand::Blocks {
+                blocker_item_id: b.id.to_string(),
+                blocked_item_id: a.id.to_string(),
+            },
+        );
+        assert!(result.is_err(), "cyclic blocks link should be rejected");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("cycle"),
+            "error should mention cycle, got: {msg}"
+        );
+    }
+
+    #[test]
     fn cmd_link_depends_on_is_idempotent() {
         let store = Store::open_memory().expect("store");
         let classifier = SubstringClassifier;
