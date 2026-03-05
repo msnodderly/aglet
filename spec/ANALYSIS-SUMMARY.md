@@ -68,7 +68,7 @@ Mode::InputPanel {
 
 ### 4. Feature Request Context
 
-Top open requests (from `feature-requests.ag`):
+Top open requests (from `aglet-features.ag`):
 
 | ID | Area | Title | Status |
 |----|------|-------|--------|
@@ -124,7 +124,7 @@ Each phase is testable independently; keeps existing tests passing throughout.
 
 - **tui-ux-redesign.md**: Broader redesign (30→21 modes). InputPanel follows same consolidation philosophy.
 - **tui-view-workflow-implementation.md**: Current contract. InputPanel doesn't change it; just improves add/edit UX.
-- **feature-requests.md**: Original feature list (markdown). Updated as `feature-requests.ag` (database).
+- **feature-requests.md**: Original feature list (markdown). Updated as `aglet-features.ag` (database).
 
 ---
 

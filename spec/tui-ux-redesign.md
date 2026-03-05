@@ -740,7 +740,7 @@ Phase 2 already deletes the flag-based Esc routing (`view_return_to_manager`, `v
 
 This section records where the shipped code **differs from the spec above**. It is the authoritative reference for "what does the code actually do today." When spec and code disagree, the code wins until a tracking issue is resolved.
 
-Last updated: 2026-02-20. Tracking issues are in `feature-requests.ag`.
+Last updated: 2026-02-20. Tracking issues are in `aglet-features.ag`.
 
 ### 12.1 ViewEdit Save Key (§4.7)
 
