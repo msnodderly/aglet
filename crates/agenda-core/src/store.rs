@@ -12,11 +12,10 @@ use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
-    NumericFormat, Query, Section, View,
+    NumericFormat, Query, Section, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
 };
 
 const SCHEMA_VERSION: i32 = 8;
-const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
 const SCHEMA_SQL: &str = "
@@ -1691,7 +1690,7 @@ impl Store {
                 Some(existing_id) => existing_id,
                 None => self.insert_reserved_category(reserved_name)?,
             };
-            if reserved_name.eq_ignore_ascii_case("When") {
+            if reserved_name == RESERVED_CATEGORY_NAME_WHEN {
                 when_category_id = Some(category_id);
             }
         }
@@ -1846,7 +1845,7 @@ impl Store {
             // Inject kind field into existing columns_json.
             // Find the When category ID, then tag columns whose heading matches it
             // as When, all others as Standard.
-            let when_cat_id = self.get_category_id_by_name("When")?;
+            let when_cat_id = self.get_category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
             let mut stmt = self.conn.prepare("SELECT id, columns_json FROM views")?;
             let rows: Vec<(String, String)> = stmt
                 .query_map([], |row| {
@@ -1905,7 +1904,7 @@ mod tests {
     use crate::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
         ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
-        View,
+        View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN, RESERVED_CATEGORY_NAMES,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
@@ -2217,7 +2216,7 @@ mod tests {
 
         // Reserved categories should have implicit string matching disabled
         // so common words like "done" or "when" don't trigger auto-assignment.
-        for name in ["When", "Entry", "Done"] {
+        for name in RESERVED_CATEGORY_NAMES {
             let cat = store
                 .get_category(category_id_by_name(&store, name))
                 .unwrap();
@@ -2231,7 +2230,7 @@ mod tests {
             );
         }
 
-        let _when_id = category_id_by_name(&store, "When");
+        let _when_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_WHEN);
         let all_items_view: String = store
             .conn
             .query_row("SELECT id FROM views WHERE name = 'All Items'", [], |row| {
@@ -3137,19 +3136,19 @@ mod tests {
     #[test]
     fn test_delete_reserved_category_rejected() {
         let store = Store::open_memory().unwrap();
-        let reserved_id = category_id_by_name(&store, "Done");
+        let reserved_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_DONE);
 
         let result = store.delete_category(reserved_id);
         assert!(matches!(
             result,
-            Err(AgendaError::ReservedName { name }) if name == "Done"
+            Err(AgendaError::ReservedName { name }) if name == RESERVED_CATEGORY_NAME_DONE
         ));
     }
 
     #[test]
     fn test_update_reserved_category_allowed_without_rename() {
         let store = Store::open_memory().unwrap();
-        let reserved_id = category_id_by_name(&store, "When");
+        let reserved_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_WHEN);
 
         let mut category = store.get_category(reserved_id).unwrap();
         category.note = Some("allowed".to_string());
@@ -3157,7 +3156,7 @@ mod tests {
         store.update_category(&category).unwrap();
 
         let loaded = store.get_category(reserved_id).unwrap();
-        assert_eq!(loaded.name, "When");
+        assert_eq!(loaded.name, RESERVED_CATEGORY_NAME_WHEN);
         assert_eq!(loaded.note.as_deref(), Some("allowed"));
         assert!(!loaded.enable_implicit_string);
     }
