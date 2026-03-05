@@ -12,11 +12,10 @@ use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
-    NumericFormat, Query, Section, View,
+    NumericFormat, Query, Section, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
 };
 
 const SCHEMA_VERSION: i32 = 8;
-const RESERVED_CATEGORY_NAMES: [&str; 3] = ["When", "Entry", "Done"];
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
 const SCHEMA_SQL: &str = "
@@ -140,7 +139,7 @@ impl Store {
     }
 
     /// Access the underlying connection.
-    pub fn conn(&self) -> &Connection {
+    pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
 
@@ -272,7 +271,8 @@ impl Store {
     pub fn delete_item(&self, id: ItemId, deleted_by: &str) -> Result<()> {
         let item = self.get_item(id)?;
         let assignments_json =
-            serde_json::to_string(&item.assignments).unwrap_or_else(|_| "{}".to_string());
+            serde_json::to_string(&item.assignments)
+                .expect("BTreeMap<CategoryId, Assignment> is always serialisable");
 
         self.conn.execute(
             "INSERT INTO deletion_log (id, item_id, text, note, entry_date, when_date, done_date, is_done, assignments_json, deleted_at, deleted_by)
@@ -363,6 +363,7 @@ impl Store {
         };
         self.create_item(&item)?;
 
+        // Corrupt or legacy deletion-log row: restore item without assignments.
         let assignments: HashMap<CategoryId, Assignment> =
             serde_json::from_str(&entry.assignments_json).unwrap_or_default();
         for (category_id, assignment) in assignments {
@@ -725,6 +726,14 @@ impl Store {
         self.insert_view(view)
     }
 
+    pub fn clone_view(&self, source_id: Uuid, new_name: String) -> Result<View> {
+        let mut cloned = self.get_view(source_id)?;
+        cloned.id = Uuid::new_v4();
+        cloned.name = new_name;
+        self.create_view(&cloned)?;
+        Ok(cloned)
+    }
+
     fn insert_view(&self, view: &View) -> Result<()> {
         let criteria_json =
             serde_json::to_string(&view.criteria).map_err(|err| AgendaError::StorageError {
@@ -1014,6 +1023,8 @@ impl Store {
         let item_column_label: Option<String> = row.get(9)?;
         let board_display_mode_json: Option<String> = row.get(10)?;
 
+        // Corrupt or legacy view row: fall back to empty defaults so the view
+        // still loads rather than failing the entire hierarchy read.
         let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
         let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
         let remove_from_view_unassign: HashSet<CategoryId> =
@@ -1308,6 +1319,8 @@ impl Store {
         let value_kind_str: String = row.get(12)?;
         let numeric_format_json: String = row.get(13)?;
 
+        // Corrupt or legacy category row: fall back to no conditions/actions
+        // so the category still loads without its rules rather than failing.
         let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
         let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
         let value_kind = Self::category_value_kind_from_db(&value_kind_str);
@@ -1522,48 +1535,37 @@ impl Store {
         }
     }
 
-    fn map_category_write_error(err: rusqlite::Error, category_name: &str) -> AgendaError {
+    /// Map a SQLite write error to a domain error, detecting unique-name violations.
+    /// `table_column` is e.g. `"categories.name"` or `"views.name"` for the fallback
+    /// message-based detection path.
+    fn map_write_error(err: rusqlite::Error, name: &str, table_column: &str) -> AgendaError {
         match err {
             rusqlite::Error::SqliteFailure(sqlite_err, _)
                 if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
                     && sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
                 AgendaError::DuplicateName {
-                    name: category_name.to_string(),
+                    name: name.to_string(),
                 }
             }
-            rusqlite::Error::SqliteFailure(sqlite_err, Some(message))
+            rusqlite::Error::SqliteFailure(sqlite_err, Some(ref message))
                 if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && message.contains("categories.name") =>
+                    && message.contains(table_column) =>
             {
                 AgendaError::DuplicateName {
-                    name: category_name.to_string(),
+                    name: name.to_string(),
                 }
             }
             other => AgendaError::from(other),
         }
     }
 
+    fn map_category_write_error(err: rusqlite::Error, category_name: &str) -> AgendaError {
+        Self::map_write_error(err, category_name, "categories.name")
+    }
+
     fn map_view_write_error(err: rusqlite::Error, view_name: &str) -> AgendaError {
-        match err {
-            rusqlite::Error::SqliteFailure(sqlite_err, _)
-                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                AgendaError::DuplicateName {
-                    name: view_name.to_string(),
-                }
-            }
-            rusqlite::Error::SqliteFailure(sqlite_err, Some(message))
-                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && message.contains("views.name") =>
-            {
-                AgendaError::DuplicateName {
-                    name: view_name.to_string(),
-                }
-            }
-            other => AgendaError::from(other),
-        }
+        Self::map_write_error(err, view_name, "views.name")
     }
 
     fn get_category_id_by_name(&self, name: &str) -> Result<Option<CategoryId>> {
@@ -1694,7 +1696,7 @@ impl Store {
                 Some(existing_id) => existing_id,
                 None => self.insert_reserved_category(reserved_name)?,
             };
-            if reserved_name.eq_ignore_ascii_case("When") {
+            if reserved_name == RESERVED_CATEGORY_NAME_WHEN {
                 when_category_id = Some(category_id);
             }
         }
@@ -1849,7 +1851,7 @@ impl Store {
             // Inject kind field into existing columns_json.
             // Find the When category ID, then tag columns whose heading matches it
             // as When, all others as Standard.
-            let when_cat_id = self.get_category_id_by_name("When")?;
+            let when_cat_id = self.get_category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
             let mut stmt = self.conn.prepare("SELECT id, columns_json FROM views")?;
             let rows: Vec<(String, String)> = stmt
                 .query_map([], |row| {
@@ -1858,6 +1860,7 @@ impl Store {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
             for (view_id, columns_json) in rows {
+                // Corrupt legacy row: treat as having no columns and skip the migration.
                 let mut columns: Vec<serde_json::Value> =
                     serde_json::from_str(&columns_json).unwrap_or_default();
                 let mut changed = false;
@@ -1877,7 +1880,8 @@ impl Store {
                     }
                 }
                 if changed {
-                    let new_json = serde_json::to_string(&columns).unwrap_or_default();
+                    let new_json = serde_json::to_string(&columns)
+                        .expect("Vec<serde_json::Value> is always serialisable");
                     self.conn.execute(
                         "UPDATE views SET columns_json = ?1 WHERE id = ?2",
                         params![new_json, view_id],
@@ -1908,7 +1912,7 @@ mod tests {
     use crate::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
         ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
-        View,
+        View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN, RESERVED_CATEGORY_NAMES,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
@@ -2220,7 +2224,7 @@ mod tests {
 
         // Reserved categories should have implicit string matching disabled
         // so common words like "done" or "when" don't trigger auto-assignment.
-        for name in ["When", "Entry", "Done"] {
+        for name in RESERVED_CATEGORY_NAMES {
             let cat = store
                 .get_category(category_id_by_name(&store, name))
                 .unwrap();
@@ -2234,7 +2238,7 @@ mod tests {
             );
         }
 
-        let _when_id = category_id_by_name(&store, "When");
+        let _when_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_WHEN);
         let all_items_view: String = store
             .conn
             .query_row("SELECT id FROM views WHERE name = 'All Items'", [], |row| {
@@ -3140,19 +3144,19 @@ mod tests {
     #[test]
     fn test_delete_reserved_category_rejected() {
         let store = Store::open_memory().unwrap();
-        let reserved_id = category_id_by_name(&store, "Done");
+        let reserved_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_DONE);
 
         let result = store.delete_category(reserved_id);
         assert!(matches!(
             result,
-            Err(AgendaError::ReservedName { name }) if name == "Done"
+            Err(AgendaError::ReservedName { name }) if name == RESERVED_CATEGORY_NAME_DONE
         ));
     }
 
     #[test]
     fn test_update_reserved_category_allowed_without_rename() {
         let store = Store::open_memory().unwrap();
-        let reserved_id = category_id_by_name(&store, "When");
+        let reserved_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_WHEN);
 
         let mut category = store.get_category(reserved_id).unwrap();
         category.note = Some("allowed".to_string());
@@ -3160,7 +3164,7 @@ mod tests {
         store.update_category(&category).unwrap();
 
         let loaded = store.get_category(reserved_id).unwrap();
-        assert_eq!(loaded.name, "When");
+        assert_eq!(loaded.name, RESERVED_CATEGORY_NAME_WHEN);
         assert_eq!(loaded.note.as_deref(), Some("allowed"));
         assert!(!loaded.enable_implicit_string);
     }
@@ -3244,6 +3248,101 @@ mod tests {
     fn test_create_view_reserved_system_name_rejected() {
         let store = Store::open_memory().unwrap();
         let result = store.create_view(&new_view("all items"));
+        assert!(matches!(
+            result,
+            Err(AgendaError::InvalidOperation { message })
+            if message.contains("cannot create system view")
+        ));
+    }
+
+    #[test]
+    fn test_clone_view_copies_configuration_and_is_independent() {
+        let store = Store::open_memory().unwrap();
+        let area = make_category(&store, "Area");
+        let mut child_category = new_category("CLI");
+        child_category.parent = Some(area);
+        let child = child_category.id;
+        store.create_category(&child_category).unwrap();
+
+        let mut source = new_view("Source");
+        source.criteria.set_criterion(CriterionMode::And, area);
+        source.show_unmatched = false;
+        source.unmatched_label = "Other".to_string();
+        source.remove_from_view_unassign = HashSet::from([area]);
+        source.category_aliases = BTreeMap::from([(area, "Team".to_string())]);
+        source.item_column_label = Some("Task".to_string());
+        source.board_display_mode = BoardDisplayMode::MultiLine;
+        let mut section_criteria = Query::default();
+        section_criteria.set_criterion(CriterionMode::And, child);
+        source.sections.push(Section {
+            title: "Section One".to_string(),
+            criteria: section_criteria,
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area,
+                width: 24,
+            }],
+            item_column_index: 1,
+            on_insert_assign: HashSet::from([child]),
+            on_remove_unassign: HashSet::from([area]),
+            show_children: true,
+            board_display_mode_override: Some(BoardDisplayMode::SingleLine),
+        });
+        store.create_view(&source).unwrap();
+
+        let cloned = store
+            .clone_view(source.id, "Source Copy".to_string())
+            .expect("clone view");
+        assert_ne!(cloned.id, source.id);
+        assert_eq!(cloned.name, "Source Copy");
+        assert_eq!(cloned.criteria.criteria, source.criteria.criteria);
+        assert_eq!(cloned.sections.len(), source.sections.len());
+        assert_eq!(cloned.sections[0].title, source.sections[0].title);
+        assert_eq!(
+            cloned.sections[0].criteria.criteria,
+            source.sections[0].criteria.criteria
+        );
+        assert_eq!(cloned.sections[0].columns.len(), 1);
+        assert_eq!(cloned.sections[0].columns[0].heading, area);
+        assert_eq!(cloned.sections[0].columns[0].width, 24);
+        assert_eq!(cloned.sections[0].item_column_index, 1);
+        assert_eq!(
+            cloned.sections[0].on_insert_assign,
+            source.sections[0].on_insert_assign
+        );
+        assert_eq!(
+            cloned.sections[0].on_remove_unassign,
+            source.sections[0].on_remove_unassign
+        );
+        assert!(cloned.sections[0].show_children);
+        assert_eq!(
+            cloned.sections[0].board_display_mode_override,
+            Some(BoardDisplayMode::SingleLine)
+        );
+        assert_eq!(cloned.show_unmatched, source.show_unmatched);
+        assert_eq!(cloned.unmatched_label, source.unmatched_label);
+        assert_eq!(
+            cloned.remove_from_view_unassign,
+            source.remove_from_view_unassign
+        );
+        assert_eq!(cloned.category_aliases, source.category_aliases);
+        assert_eq!(cloned.item_column_label, source.item_column_label);
+        assert_eq!(cloned.board_display_mode, source.board_display_mode);
+
+        let mut edited_clone = store.get_view(cloned.id).expect("load clone");
+        edited_clone.unmatched_label = "Changed".to_string();
+        store.update_view(&edited_clone).expect("update clone");
+        let reloaded_source = store.get_view(source.id).expect("reload source");
+        assert_eq!(reloaded_source.unmatched_label, "Other");
+    }
+
+    #[test]
+    fn test_clone_view_rejects_reserved_target_name() {
+        let store = Store::open_memory().unwrap();
+        let source = new_view("Source");
+        store.create_view(&source).unwrap();
+
+        let result = store.clone_view(source.id, "All Items".to_string());
         assert!(matches!(
             result,
             Err(AgendaError::InvalidOperation { message })
@@ -3549,5 +3648,157 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("empty item id prefix"), "got: {msg}");
+    }
+
+    // ── column_exists ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn column_exists_returns_true_for_existing_column() {
+        let store = Store::open_memory().unwrap();
+        assert!(
+            store.column_exists("categories", "is_actionable").unwrap(),
+            "is_actionable should exist on categories table"
+        );
+    }
+
+    #[test]
+    fn column_exists_returns_false_for_nonexistent_column() {
+        let store = Store::open_memory().unwrap();
+        assert!(
+            !store.column_exists("categories", "does_not_exist").unwrap(),
+            "does_not_exist should not be present"
+        );
+    }
+
+    // ── v3 columns_json kind migration ────────────────────────────────────────
+
+    #[test]
+    fn upgrade_from_v2_injects_kind_into_existing_columns_json() {
+        // Build a database that looks like a v2 store: all current tables exist
+        // (SCHEMA_SQL is idempotent), but the views already have columns_json
+        // rows without a "kind" field.  After init() the migration must inject
+        // "kind": "When" for columns whose heading matches the When category ID
+        // and "kind": "Standard" for all others.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+
+        // Insert the When category so the migration can identify it.
+        let when_id = Uuid::new_v4();
+        conn.execute(
+            "INSERT INTO categories
+             (id, name, is_exclusive, is_actionable, enable_implicit_string,
+              conditions_json, actions_json, sort_order, created_at, modified_at,
+              value_kind, numeric_format_json)
+             VALUES (?1, 'When', 0, 0, 0, '[]', '[]', 0,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+                     'Tag', 'null')",
+            params![when_id.to_string()],
+        )
+        .unwrap();
+
+        // Insert a view whose columns_json has entries without a "kind" field.
+        // First column heading matches the When category ID; second does not.
+        let view_id = Uuid::new_v4();
+        let columns_without_kind = serde_json::json!([
+            {"heading": when_id.to_string()},
+            {"heading": "SomeStandardHeading"}
+        ])
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO views
+             (id, name, criteria_json, sections_json, columns_json,
+              show_unmatched, unmatched_label, remove_from_view_unassign_json,
+              category_aliases_json, board_display_mode)
+             VALUES (?1, 'TestView', '{}', '[]', ?2, 1, 'Unassigned', '[]', '{}',
+                     '\"SingleLine\"')",
+            params![view_id.to_string(), columns_without_kind],
+        )
+        .unwrap();
+
+        // Stamp as v2 so init() will call apply_migrations(2).
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        // Read back raw columns_json from the DB.
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT columns_json FROM views WHERE id = ?1",
+                params![view_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let columns: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(columns.len(), 2);
+
+        let kind0 = columns[0]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let kind1 = columns[1]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        assert_eq!(
+            kind0, "When",
+            "column whose heading matches When category id should get kind=When"
+        );
+        assert_eq!(
+            kind1, "Standard",
+            "column with unrecognised heading should get kind=Standard"
+        );
+    }
+
+    #[test]
+    fn upgrade_from_v2_skips_columns_that_already_have_kind() {
+        // If a column already has a "kind" field (e.g. from a partial migration),
+        // the migration must leave it unchanged.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+
+        let view_id = Uuid::new_v4();
+        let already_has_kind = serde_json::json!([
+            {"heading": "SomeHeading", "kind": "Standard"}
+        ])
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO views
+             (id, name, criteria_json, sections_json, columns_json,
+              show_unmatched, unmatched_label, remove_from_view_unassign_json,
+              category_aliases_json, board_display_mode)
+             VALUES (?1, 'PreMigrated', '{}', '[]', ?2, 1, 'Unassigned', '[]', '{}',
+                     '\"SingleLine\"')",
+            params![view_id.to_string(), already_has_kind],
+        )
+        .unwrap();
+
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT columns_json FROM views WHERE id = ?1",
+                params![view_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let columns: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(columns.len(), 1);
+        // kind must still be "Standard" — not duplicated or overwritten.
+        let kind = columns[0]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert_eq!(kind, "Standard");
     }
 }
