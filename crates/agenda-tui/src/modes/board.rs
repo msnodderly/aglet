@@ -717,6 +717,7 @@ impl App {
         self.collect_assigned_child_categories_for_parent(item, meta.parent_id)
     }
 
+    // TODO(feature): inline column direct-edit not yet triggered; see open_category_direct_edit
     #[allow(dead_code)]
     fn build_current_column_direct_edit_rows(&self) -> Vec<CategoryDirectEditRow> {
         let assigned_child_ids = self.current_column_assigned_child_ids();
@@ -1328,6 +1329,7 @@ impl App {
         Ok(())
     }
 
+    // TODO(feature): inline direct-edit for board columns not yet invoked from key handler
     #[allow(dead_code)]
     pub(crate) fn open_category_direct_edit(&mut self) {
         let Some(meta) = self.current_category_direct_edit_column_meta() else {

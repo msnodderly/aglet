@@ -132,6 +132,8 @@ pub(super) fn item_assignment_labels(
 
 pub(super) const BOARD_MULTI_CATEGORY_LINE_CAP: usize = 8;
 
+// TODO(feature): single-line compact rendering not yet used; kept alongside
+// format_category_values_multi_line for a planned compact display mode
 #[allow(dead_code)]
 pub(super) fn format_category_values_single_line(labels: &[String]) -> String {
     if labels.is_empty() {
