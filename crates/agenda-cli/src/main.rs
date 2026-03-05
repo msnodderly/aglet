@@ -9,7 +9,7 @@ use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, CriterionMode, Item, ItemId, Query, View,
+    Category, CategoryId, CategoryValueKind, ColumnKind, CriterionMode, Item, ItemId, Query, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -2508,6 +2508,11 @@ fn print_items_for_view(
 
     for section in result.sections {
         println!("\n## {}", section.title);
+        if let Some(columns_line) =
+            section_column_definitions_line(view, section.section_index, category_names)
+        {
+            println!("{columns_line}");
+        }
         if section.subsections.is_empty() {
             print_item_table(&section.items, category_names, sort_keys, categories);
             continue;
@@ -2539,6 +2544,36 @@ fn print_items_for_view(
         }
     }
     Ok(())
+}
+
+fn section_column_definitions_line(
+    view: &View,
+    section_index: usize,
+    category_names: &HashMap<CategoryId, String>,
+) -> Option<String> {
+    let section = view.sections.get(section_index)?;
+    if section.columns.is_empty() {
+        return None;
+    }
+
+    let rendered = section
+        .columns
+        .iter()
+        .map(|column| {
+            let heading = category_names
+                .get(&column.heading)
+                .cloned()
+                .unwrap_or_else(|| format!("(deleted:{})", column.heading));
+            let kind = match column.kind {
+                ColumnKind::Standard => "standard",
+                ColumnKind::When => "when",
+            };
+            format!("{heading} [{kind},w={}]", column.width)
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    Some(format!("columns: {rendered}"))
 }
 
 fn print_item_table(
@@ -2791,17 +2826,20 @@ mod tests {
         parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
         reject_items_with_any_categories, retain_items_by_dependency_state,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        retain_items_with_any_categories, section_column_definitions_line,
+        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
+        write_stdout_allow_broken_pipe, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
+        DependencyStateFilter, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
+        OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Category, CategoryValueKind, CriterionMode, Item, Query, Section, View,
+        Category, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, Query, Section, View,
     };
+    use agenda_core::query::resolve_view;
     use agenda_core::store::Store;
+    use chrono::Local;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
@@ -3825,6 +3863,102 @@ mod tests {
 
         let updated = store.get_view(view_id).expect("load updated view");
         assert!(updated.hide_dependent_items);
+    }
+
+    #[test]
+    fn section_column_definitions_line_renders_custom_columns_in_order() {
+        let priority = Category::new("Priority".to_string());
+        let effort = Category::new("Effort".to_string());
+        let mut view = View::new("Planning".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: priority.id,
+                    width: 24,
+                },
+                Column {
+                    kind: ColumnKind::When,
+                    heading: effort.id,
+                    width: 16,
+                },
+            ],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+
+        let category_names = HashMap::from([
+            (priority.id, priority.name.clone()),
+            (effort.id, effort.name.clone()),
+        ]);
+        let rendered = section_column_definitions_line(&view, 0, &category_names)
+            .expect("section should have configured columns");
+        assert_eq!(
+            rendered,
+            "columns: Priority [standard,w=24] | Effort [when,w=16]"
+        );
+    }
+
+    #[test]
+    fn section_column_definitions_line_works_for_generated_subsection_backing_section() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let projects = Category::new("Projects".to_string());
+        store.create_category(&projects).expect("create projects");
+        let mut alpha = Category::new("Alpha".to_string());
+        alpha.parent = Some(projects.id);
+        store.create_category(&alpha).expect("create alpha");
+        let mut beta = Category::new("Beta".to_string());
+        beta.parent = Some(projects.id);
+        store.create_category(&beta).expect("create beta");
+
+        let item = Item::new("Build Alpha".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, alpha.id, Some("test:assign".to_string()))
+            .expect("assign alpha");
+
+        let mut section_query = Query::default();
+        section_query.set_criterion(CriterionMode::And, projects.id);
+        let mut view = View::new("Projects View".to_string());
+        view.sections.push(Section {
+            title: "Projects".to_string(),
+            criteria: section_query,
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: projects.id,
+                width: 30,
+            }],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: true,
+            board_display_mode_override: None,
+        });
+
+        let categories = store.get_hierarchy().expect("hierarchy");
+        let items = store.list_items().expect("items");
+        let resolved = resolve_view(&view, &items, &categories, Local::now().date_naive());
+        assert!(
+            !resolved.sections[0].subsections.is_empty(),
+            "show_children should generate subsections for parent categories"
+        );
+
+        let category_names = super::category_name_map(&categories);
+        let rendered = section_column_definitions_line(
+            &view,
+            resolved.sections[0].section_index,
+            &category_names,
+        )
+        .expect("backing section should expose column definitions");
+        assert_eq!(rendered, "columns: Projects [standard,w=30]");
     }
 
     #[test]
