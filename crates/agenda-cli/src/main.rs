@@ -115,7 +115,7 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nDependency-state filter examples:\n  agenda list --blocked\n  agenda list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
         /// View to render. If omitted, uses the first stored view when present.
@@ -130,6 +130,12 @@ enum Command {
         /// Exclude-category filter (repeat for OR). Item must have NONE of the specified categories.
         #[arg(long = "exclude-category")]
         exclude_category: Vec<String>,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
         /// Numeric equality filter (repeat for AND): category value must equal VALUE.
         #[arg(
             long = "value-eq",
@@ -170,6 +176,12 @@ enum Command {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
         /// Include done items in search results (default excludes them).
         #[arg(long)]
         include_done: bool,
@@ -353,6 +365,12 @@ enum ViewCommand {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
     },
 
     /// Create a basic view from include/exclude categories
@@ -464,6 +482,8 @@ fn run() -> Result<(), String> {
         category: Vec::new(),
         any_category: Vec::new(),
         exclude_category: Vec::new(),
+        blocked: false,
+        not_blocked: false,
         value_eq: Vec::new(),
         value_in: Vec::new(),
         value_max: Vec::new(),
@@ -519,6 +539,8 @@ fn run() -> Result<(), String> {
             category,
             any_category,
             exclude_category,
+            blocked,
+            not_blocked,
             value_eq,
             value_in,
             value_max,
@@ -532,6 +554,7 @@ fn run() -> Result<(), String> {
                 all_categories: category,
                 any_categories: any_category,
                 exclude_categories: exclude_category,
+                dependency_state_filter: dependency_state_filter_from_flags(blocked, not_blocked),
                 value_eq,
                 value_in,
                 value_max,
@@ -543,8 +566,16 @@ fn run() -> Result<(), String> {
         Command::Search {
             query,
             format,
+            blocked,
+            not_blocked,
             include_done,
-        } => cmd_search(&store, query, format, include_done),
+        } => cmd_search(
+            &store,
+            query,
+            format,
+            dependency_state_filter_from_flags(blocked, not_blocked),
+            include_done,
+        ),
         Command::Export {
             view,
             include_links,
@@ -830,10 +861,30 @@ struct ListFilters {
     all_categories: Vec<String>,
     any_categories: Vec<String>,
     exclude_categories: Vec<String>,
+    dependency_state_filter: Option<DependencyStateFilter>,
     value_eq: Vec<String>,
     value_in: Vec<String>,
     value_max: Vec<String>,
     include_done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DependencyStateFilter {
+    Blocked,
+    NotBlocked,
+}
+
+fn dependency_state_filter_from_flags(
+    blocked: bool,
+    not_blocked: bool,
+) -> Option<DependencyStateFilter> {
+    if blocked {
+        Some(DependencyStateFilter::Blocked)
+    } else if not_blocked {
+        Some(DependencyStateFilter::NotBlocked)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -893,6 +944,9 @@ fn cmd_list(
     }
     if !numeric_filters.is_empty() {
         retain_items_matching_numeric_filters(&mut items, &numeric_filters);
+    }
+    if let Some(filter) = filters.dependency_state_filter {
+        retain_items_by_dependency_state(store, &mut items, filter)?;
     }
 
     let resolved_view = if let Some(view_name) = view_name {
@@ -1053,10 +1107,44 @@ fn retain_items_matching_numeric_filters(items: &mut Vec<Item>, numeric_filters:
     });
 }
 
+fn item_is_dependency_blocked(store: &Store, item_id: ItemId) -> Result<bool, String> {
+    let dependency_ids = store
+        .list_dependency_ids_for_item(item_id)
+        .map_err(|e| e.to_string())?;
+    for dependency_id in dependency_ids {
+        let dependency = store.get_item(dependency_id).map_err(|e| e.to_string())?;
+        if !dependency.is_done {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn retain_items_by_dependency_state(
+    store: &Store,
+    items: &mut Vec<Item>,
+    filter: DependencyStateFilter,
+) -> Result<(), String> {
+    let mut retained = Vec::with_capacity(items.len());
+    for item in std::mem::take(items) {
+        let is_blocked = item_is_dependency_blocked(store, item.id)?;
+        let keep = match filter {
+            DependencyStateFilter::Blocked => is_blocked,
+            DependencyStateFilter::NotBlocked => !is_blocked,
+        };
+        if keep {
+            retained.push(item);
+        }
+    }
+    *items = retained;
+    Ok(())
+}
+
 fn cmd_search(
     store: &Store,
     query: String,
     output_format: OutputFormatArg,
+    dependency_state_filter: Option<DependencyStateFilter>,
     include_done: bool,
 ) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
@@ -1074,7 +1162,10 @@ fn cmd_search(
     let reference_date = Local::now().date_naive();
     let matches = evaluate_query(&q, &items, reference_date);
 
-    let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
+    let mut matched_items: Vec<Item> = matches.into_iter().cloned().collect();
+    if let Some(filter) = dependency_state_filter {
+        retain_items_by_dependency_state(store, &mut matched_items, filter)?;
+    }
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
     } else {
@@ -1701,10 +1792,19 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
             Ok(())
         }
-        ViewCommand::Show { name, sort, format } => {
+        ViewCommand::Show {
+            name,
+            sort,
+            format,
+            blocked,
+            not_blocked,
+        } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
-            let items = store.list_items().map_err(|e| e.to_string())?;
+            let mut items = store.list_items().map_err(|e| e.to_string())?;
+            if let Some(filter) = dependency_state_filter_from_flags(blocked, not_blocked) {
+                retain_items_by_dependency_state(store, &mut items, filter)?;
+            }
             let view = view_by_name(store, &name)?;
             let sort_keys = parse_sort_specs(&sort, &categories)?;
             print_items_for_view(
@@ -2606,11 +2706,12 @@ mod tests {
         cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
         item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
         parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
+        retain_items_with_all_categories, retain_items_with_any_categories,
+        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
+        write_stdout_allow_broken_pipe, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
+        DependencyStateFilter, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
+        OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -3068,6 +3169,26 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--blocked"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { blocked, .. }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_not_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--not-blocked"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { not_blocked, .. }) => assert!(not_blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_list_with_repeated_value_eq_flags() {
         let cli = Cli::try_parse_from([
             "agenda",
@@ -3183,7 +3304,10 @@ mod tests {
 
         match cli.command {
             Some(Command::View {
-                command: ViewCommand::Show { name, sort, format },
+                command:
+                    ViewCommand::Show {
+                        name, sort, format, ..
+                    },
             }) => {
                 assert_eq!(name, "All Items");
                 assert_eq!(sort, vec!["when".to_string()]);
@@ -3214,6 +3338,29 @@ mod tests {
             Some(Command::Search { format, .. }) => {
                 assert_eq!(format, OutputFormatArg::Json);
             }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_search_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "search", "foo", "--blocked"]).expect("parse");
+
+        match cli.command {
+            Some(Command::Search { blocked, .. }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_show_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--blocked"])
+            .expect("parse");
+
+        match cli.command {
+            Some(Command::View {
+                command: ViewCommand::Show { blocked, .. },
+            }) => assert!(blocked),
             other => panic!("unexpected parse result: {other:?}"),
         }
     }
@@ -3681,6 +3828,45 @@ mod tests {
     }
 
     #[test]
+    fn dependency_state_filter_transitions_when_links_are_added_or_removed() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+
+        let mut rows = store.list_items().expect("list initial");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter initial blocked");
+        assert!(rows.is_empty(), "no links means nothing is blocked");
+
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+        let mut rows = store.list_items().expect("list linked");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter linked blocked");
+        assert_eq!(
+            rows.into_iter().map(|item| item.text).collect::<Vec<_>>(),
+            vec!["Blocked".to_string()]
+        );
+
+        agenda
+            .unlink_items_depends_on(blocked.id, blocker.id)
+            .expect("unlink depends-on");
+        let mut rows = store.list_items().expect("list unlinked");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter unlinked blocked");
+        assert!(
+            rows.is_empty(),
+            "removing dependency link clears blocked state"
+        );
+    }
+
+    #[test]
     fn parse_csv_decimals_rejects_empty_value_token() {
         let err = parse_csv_decimals("1,,2", "Complexity").expect_err("should fail");
         assert_eq!(
@@ -3696,6 +3882,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Nope".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3713,6 +3900,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Status".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3734,6 +3922,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Complexity".to_string(), "abc".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
