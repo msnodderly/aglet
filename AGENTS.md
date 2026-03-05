@@ -68,6 +68,15 @@ items that have either category.
 For example, `agenda-cli list --exclude-category Complete` removes completed
 status/category matches from results.
 
+Dependency-state filtering is available via derived flags (not assignable
+categories):
+- `agenda-cli list --blocked` / `--not-blocked`
+- `agenda-cli search <query> --blocked` / `--not-blocked`
+- `agenda-cli view show "<name>" --blocked` / `--not-blocked`
+
+`blocked` means the item has at least one unresolved `depends-on` prerequisite.
+This state is computed from links + done state at query time.
+
 ## Category Assignment in Items
 
 When viewing items, the categories list includes both the assigned category and
@@ -286,6 +295,18 @@ Do not apply these aliases to category identity, query/filter behavior, section
 titles, generated subsection labels, or board column headings unless a separate
 feature explicitly requests that behavior.
 
+## View `hide_dependent_items` Semantics
+
+View-level hide-dependent mode is persisted in `views.hide_dependent_items`
+(`View.hide_dependent_items`, default `false`).
+
+Practical implications:
+- "Dependent/blocked" means an item has at least one unresolved `depends-on`
+  link to an item that is **not done**.
+- Done dependencies do not block.
+- Current filtering is applied in CLI/TUI view rendering paths using link data;
+  if you add another view consumer, wire this filter there too.
+
 ## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
 
 In the rewritten category manager (`c` / `F9`), the Details pane uses `j/k` for
@@ -319,6 +340,17 @@ use footer/input-panel cursor logic.
 If you add or refactor Category Manager render code, explicitly position the
 terminal cursor for these Action/Filter editing states; otherwise text editing
 still works but the caret appears missing/intermittent.
+
+## InputPanel Note Cursor Requires Explicit Position (Surprising)
+
+`Mode::InputPanel` note editing (`InputPanelFocus::Note`) does not automatically
+show a terminal caret unless `render` sets cursor coordinates explicitly.
+
+Practical implications:
+- Keep `input_panel_cursor_position()` returning a cursor position for Note
+  focus (line/column mapped into the note viewport with scroll clamp).
+- If you only style the `tui-textarea` cursor but do not set terminal cursor
+  position, cursor visibility can appear inconsistent across text-entry panes.
 
 ## Category Create Parent Defaults (Surprising)
 

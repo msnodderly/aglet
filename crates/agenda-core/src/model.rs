@@ -179,6 +179,8 @@ pub struct View {
     pub item_column_label: Option<String>,
     #[serde(default)]
     pub board_display_mode: BoardDisplayMode,
+    #[serde(default)]
+    pub hide_dependent_items: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -448,6 +450,7 @@ impl View {
             category_aliases: BTreeMap::new(),
             item_column_label: None,
             board_display_mode: BoardDisplayMode::SingleLine,
+            hide_dependent_items: false,
         }
     }
 }
@@ -480,11 +483,18 @@ mod tests {
         json.as_object_mut()
             .expect("view object")
             .remove("category_aliases");
+        json.as_object_mut()
+            .expect("view object")
+            .remove("hide_dependent_items");
 
         let parsed: View = serde_json::from_value(json).expect("deserialize view");
         assert!(
             parsed.category_aliases.is_empty(),
             "missing category_aliases should default to empty"
+        );
+        assert!(
+            !parsed.hide_dependent_items,
+            "missing hide_dependent_items should default to false"
         );
     }
 

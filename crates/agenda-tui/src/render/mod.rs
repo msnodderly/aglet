@@ -1355,7 +1355,39 @@ impl App {
                     .min(max_x);
                 Some((cursor_x, regions.text.y))
             }
-            InputPanelFocus::Note => None,
+            InputPanelFocus::Note => {
+                let note_rect = regions.note?;
+                if note_rect.width < 3 || note_rect.height < 3 {
+                    return None;
+                }
+                let note_inner = Rect {
+                    x: note_rect.x.saturating_add(1),
+                    y: note_rect.y.saturating_add(1),
+                    width: note_rect.width.saturating_sub(2),
+                    height: note_rect.height.saturating_sub(2),
+                };
+                if note_inner.width == 0 || note_inner.height == 0 {
+                    return None;
+                }
+                let (line, col) = panel.note.line_col();
+                let scroll = list_scroll_for_selected_line(note_rect, Some(line)) as usize;
+                let visible_row = line.saturating_sub(scroll);
+                let max_x = note_inner
+                    .x
+                    .saturating_add(note_inner.width.saturating_sub(1));
+                let max_y = note_inner
+                    .y
+                    .saturating_add(note_inner.height.saturating_sub(1));
+                let cursor_x = note_inner
+                    .x
+                    .saturating_add(col.min(u16::MAX as usize) as u16)
+                    .min(max_x);
+                let cursor_y = note_inner
+                    .y
+                    .saturating_add(visible_row.min(u16::MAX as usize) as u16)
+                    .min(max_y);
+                Some((cursor_x, cursor_y))
+            }
             InputPanelFocus::Categories => {
                 if panel.category_filter_editing {
                     let filter_rect = regions.categories_filter?;
@@ -1419,8 +1451,8 @@ impl App {
     }
 
     pub(crate) fn render_header(&self) -> Paragraph<'_> {
-        let view_name = self
-            .current_view()
+        let current_view = self.current_view();
+        let view_name = current_view
             .map(|view| view.name.as_str())
             .unwrap_or("(none)");
         let mode = format!("{:?}", self.mode);
@@ -1430,13 +1462,23 @@ impl App {
         } else {
             String::new()
         };
+        let view_flags = if current_view
+            .map(|view| view.hide_dependent_items)
+            .unwrap_or(false)
+        {
+            " dep:hidden"
+        } else {
+            ""
+        };
 
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "Agenda Reborn",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("  view:{view_name}  mode:{mode}{filter}")),
+            Span::raw(format!(
+                "  view:{view_name}{view_flags}  mode:{mode}{filter}"
+            )),
         ]))
     }
 
@@ -3723,7 +3765,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
@@ -3755,6 +3797,25 @@ impl App {
                     )),
                 );
 
+                let hide_dependent_value = if state.draft.hide_dependent_items {
+                    "yes".to_string()
+                } else {
+                    "no".to_string()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Hide dependent",
+                        hide_dependent_value,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
                 let unmatched_label_text = if matches!(
                     state.inline_input,
                     Some(ViewEditInlineInput::UnmatchedLabel)
@@ -3771,7 +3832,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -4185,6 +4246,14 @@ impl App {
                     "hidden"
                 },
                 unmatched_count
+            ))));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Dependent items: {}",
+                if state.draft.hide_dependent_items {
+                    "hidden"
+                } else {
+                    "shown"
+                }
             ))));
 
             let selected_preview_row = if preview_items.is_empty() {
