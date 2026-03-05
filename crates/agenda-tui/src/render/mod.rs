@@ -2448,7 +2448,9 @@ impl App {
                     "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
                 }
             }
-            Mode::ViewPicker => "Enter:switch  N:new  r:rename  e:edit  x:delete  Esc:cancel",
+            Mode::ViewPicker => {
+                "Enter:switch  N:new  c:clone  r:rename  e:edit  x:delete  Esc:cancel"
+            }
             Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
