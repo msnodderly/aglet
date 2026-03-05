@@ -239,7 +239,7 @@ pub(super) const BOARD_ROW_MARKER_WIDTH: usize = 2;
 pub(super) const BOARD_NOTE_MARKER_WIDTH: usize = 4;
 pub(super) const BOARD_TABLE_COLUMN_SPACING: u16 = 1;
 pub(super) const NOTE_MARKER_SYMBOL: &str = "♪";
-pub(super) const BOARD_WHEN_TARGET_WIDTH: usize = 19;
+pub(super) const BOARD_WHEN_TARGET_WIDTH: usize = 10;
 pub(super) const BOARD_WHEN_MIN_WIDTH: usize = 10;
 pub(super) const BOARD_ITEM_MIN_WIDTH: usize = 12;
 pub(super) const BOARD_CATEGORY_TARGET_WIDTH: usize = 34;
@@ -809,9 +809,38 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
     horizontal[1]
 }
 
+fn centered_fixed_rect(area: Rect, width: u16, height: u16) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return area;
+    }
+    let popup_width = width.min(area.width).max(1);
+    let popup_height = height.min(area.height).max(1);
+    let x = area
+        .x
+        .saturating_add((area.width.saturating_sub(popup_width)) / 2);
+    let y = area
+        .y
+        .saturating_add((area.height.saturating_sub(popup_height)) / 2);
+    Rect {
+        x,
+        y,
+        width: popup_width,
+        height: popup_height,
+    }
+}
+
 pub(super) fn input_panel_popup_area(area: Rect, kind: crate::input_panel::InputPanelKind) -> Rect {
     match kind {
         crate::input_panel::InputPanelKind::CategoryCreate => centered_rect(50, 40, area),
+        crate::input_panel::InputPanelKind::WhenDate => {
+            let max_width = area.width.saturating_sub(4);
+            let width = if max_width >= 56 {
+                max_width.min(96)
+            } else {
+                max_width.max(1)
+            };
+            centered_fixed_rect(area, width, 7)
+        }
         crate::input_panel::InputPanelKind::NumericValue => centered_rect(48, 22, area),
         _ => centered_rect(84, 70, area),
     }
@@ -895,6 +924,34 @@ pub(super) fn input_panel_popup_regions(
                     Constraint::Length(1), // value input
                     Constraint::Length(1), // buttons
                     Constraint::Length(1), // help
+                    Constraint::Min(0),    // spacer
+                ])
+                .split(inner);
+            Some(InputPanelPopupRegions {
+                context: Some(chunks[0]),
+                text: chunks[1],
+                note: None,
+                categories: None,
+                categories_inner: None,
+                categories_filter: None,
+                categories_list: None,
+                type_picker: None,
+                buttons: chunks[2],
+                help: chunks[3],
+            })
+        }
+        InputPanelKind::WhenDate => {
+            // context + datetime text + buttons + help = 4 lines minimum
+            if inner.height < 4 {
+                return None;
+            }
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // context
+                    Constraint::Length(1), // datetime input
+                    Constraint::Length(1), // buttons
+                    Constraint::Length(1), // help / feedback
                     Constraint::Min(0),    // spacer
                 ])
                 .split(inner);

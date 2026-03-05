@@ -314,6 +314,8 @@ enum NameInputContext {
     ViewRename,
     /// Editing a numeric cell value in the board.
     NumericValueEdit,
+    /// Editing a When datetime value in the board.
+    WhenDateEdit,
     /// Creating a new category via InputPanel.
     CategoryCreate,
 }
@@ -323,6 +325,12 @@ enum NameInputContext {
 struct NumericEditTarget {
     item_id: ItemId,
     category_id: CategoryId,
+}
+
+/// Pending state for an in-flight When datetime edit.
+#[derive(Clone, Copy, Debug)]
+struct WhenEditTarget {
+    item_id: ItemId,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -781,6 +789,7 @@ struct App {
     view_pending_edit_name: Option<String>,
     view_edit_state: Option<ViewEditState>,
     numeric_edit_target: Option<NumericEditTarget>,
+    when_edit_target: Option<WhenEditTarget>,
 
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
@@ -834,6 +843,7 @@ impl Default for App {
             view_pending_edit_name: None,
             view_edit_state: None,
             numeric_edit_target: None,
+            when_edit_target: None,
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
@@ -2647,7 +2657,7 @@ mod tests {
     }
 
     #[test]
-    fn board_when_column_enter_keeps_when_not_implemented_status() {
+    fn board_when_column_enter_opens_when_datetime_editor() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -2688,12 +2698,303 @@ mod tests {
         };
 
         app.handle_key(KeyCode::Enter, &agenda).expect("enter");
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::WhenDateEdit));
+        assert_eq!(
+            app.input_panel.as_ref().map(|panel| panel.kind),
+            Some(input_panel::InputPanelKind::WhenDate)
+        );
+    }
+
+    fn setup_when_column_board(
+        suffix: &str,
+    ) -> (
+        Store,
+        SubstringClassifier,
+        CategoryId,
+        ItemId,
+        std::path::PathBuf,
+    ) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-when-{suffix}-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+
+        let when_id = store
+            .get_hierarchy()
+            .expect("hierarchy")
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .expect("reserved When exists")
+            .id;
+
+        let item = Item::new("When field test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::When,
+                heading: when_id,
+                width: 19,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        (store, classifier, when_id, item.id, db_path)
+    }
+
+    #[test]
+    fn when_column_edit_saves_datetime_and_reserved_when_assignment() {
+        let (store, classifier, when_id, item_id, db_path) = setup_when_column_board("save");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open when editor");
+        for ch in "2026-03-07 14:25".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type datetime");
+        }
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("focus save button");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save when datetime");
+
+        assert_eq!(app.mode, Mode::Normal);
+        let loaded = store.get_item(item_id).expect("load item");
+        assert_eq!(
+            loaded.when_date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 3, 7)
+                    .expect("date")
+                    .and_hms_opt(14, 25, 0)
+                    .expect("time")
+            )
+        );
+        let assignments = store
+            .get_assignments_for_item(item_id)
+            .expect("assignments for item");
+        let when_assignment = assignments.get(&when_id).expect("when assignment exists");
+        assert_eq!(when_assignment.source, AssignmentSource::Manual);
+        assert_eq!(
+            when_assignment.origin.as_deref(),
+            Some("manual:tui.when-edit")
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn when_column_edit_accepts_seconds_precision() {
+        let (store, classifier, _when_id, item_id, db_path) = setup_when_column_board("seconds");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open when editor");
+        for ch in "2026-03-07 14:25:59".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type datetime with seconds");
+        }
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("focus save button");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save datetime with seconds");
+
+        let loaded = store.get_item(item_id).expect("load item");
+        assert_eq!(
+            loaded.when_date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 3, 7)
+                    .expect("date")
+                    .and_hms_opt(14, 25, 59)
+                    .expect("time")
+            )
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn when_column_edit_accepts_natural_language_tomorrow() {
+        let (store, classifier, when_id, item_id, db_path) = setup_when_column_board("tomorrow");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open when editor");
+        for ch in "tomorrow".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type natural language date");
+        }
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("focus save button");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save natural language date");
+
+        assert_eq!(app.mode, Mode::Normal);
+        let loaded = store.get_item(item_id).expect("load item");
+        assert!(
+            loaded.when_date.is_some(),
+            "natural-language input should parse into when_date"
+        );
+        let assignments = store
+            .get_assignments_for_item(item_id)
+            .expect("assignments for item");
+        assert!(
+            assignments.contains_key(&when_id),
+            "reserved When assignment should be present after save"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn when_column_edit_enter_from_text_focus_saves() {
+        let (store, classifier, _when_id, item_id, db_path) = setup_when_column_board("enter-save");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open when editor");
+        for ch in "tomorrow".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type natural language date");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save directly from text focus");
+
+        assert_eq!(app.mode, Mode::Normal);
+        let loaded = store.get_item(item_id).expect("load item");
+        assert!(loaded.when_date.is_some());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn when_column_edit_invalid_input_keeps_panel_open() {
+        let (store, classifier, _when_id, _item_id, db_path) = setup_when_column_board("invalid");
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open when editor");
+        for ch in "xyzqv-nodate-token".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type invalid input");
+        }
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("focus save button");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt save");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::WhenDateEdit));
+        assert!(
+            app.status.contains("Could not parse date/time"),
+            "expected validation error, got: {}",
+            app.status
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn when_column_edit_empty_input_clears_when_and_reserved_assignment() {
+        let (store, classifier, when_id, item_id, db_path) = setup_when_column_board("clear");
+        let agenda = Agenda::new(&store, &classifier);
+
+        agenda
+            .set_item_when_date(
+                item_id,
+                Some(
+                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                        .expect("date")
+                        .and_hms_opt(14, 25, 0)
+                        .expect("time"),
+                ),
+                Some("manual:test-setup".to_string()),
+            )
+            .expect("seed when date");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open when editor");
+        let prefill_len = app
+            .input_panel
+            .as_ref()
+            .map(|panel| panel.text.trimmed().len())
+            .expect("panel text");
+        for _ in 0..prefill_len {
+            app.handle_key(KeyCode::Backspace, &agenda)
+                .expect("clear input");
+        }
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("focus save button");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save cleared when");
+
         assert_eq!(app.mode, Mode::Normal);
         assert!(
-            app.status.contains("When' date not yet implemented inline"),
+            app.status.contains("When cleared"),
             "unexpected status: {}",
             app.status
         );
+        let loaded = store.get_item(item_id).expect("load item");
+        assert_eq!(loaded.when_date, None);
+        let assignments = store
+            .get_assignments_for_item(item_id)
+            .expect("assignments for item");
+        assert!(
+            !assignments.contains_key(&when_id),
+            "reserved When assignment should be removed when clearing datetime"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
@@ -4131,6 +4432,22 @@ mod tests {
     }
 
     #[test]
+    fn when_date_popup_area_is_compact_vs_generic_name_input() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let when_popup = input_panel_popup_area(screen, input_panel::InputPanelKind::WhenDate);
+        let name_popup = input_panel_popup_area(screen, input_panel::InputPanelKind::NameInput);
+
+        assert!(
+            when_popup.width < name_popup.width,
+            "when popup should be narrower than generic name popup"
+        );
+        assert!(
+            when_popup.height < name_popup.height,
+            "when popup should be shorter than generic name popup"
+        );
+    }
+
+    #[test]
     fn category_manager_action_cursor_position_tracks_filter_input() {
         let action_area = Rect::new(10, 4, 40, 3);
         let mut app = App {
@@ -5507,6 +5824,53 @@ mod tests {
         assert!(
             rendered.contains("Auto-refresh:5s"),
             "footer should include auto-refresh mode indicator: {rendered}"
+        );
+    }
+
+    #[test]
+    fn when_input_panel_surfaces_parse_feedback_inside_popup() {
+        let app = App {
+            mode: Mode::InputPanel,
+            status: "Could not parse date/time from 'next weem'".to_string(),
+            input_panel: Some(input_panel::InputPanel::new_when_date_input(
+                "next weem",
+                "When date for: Demo",
+            )),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(120, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Could not parse date/time"),
+            "when popup should show validation feedback inline: {rendered}"
+        );
+    }
+
+    #[test]
+    fn when_input_panel_shows_full_item_context_text() {
+        let long_item_text =
+            "change auto-refresh timer default from none to 1 sec END-CONTEXT-TOKEN";
+        let app = App {
+            mode: Mode::InputPanel,
+            input_panel: Some(input_panel::InputPanel::new_when_date_input(
+                "tomorrow",
+                long_item_text,
+            )),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(160, 24);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("END-CONTEXT-TOKEN"),
+            "when popup should render full item context instead of truncating: {rendered}"
         );
     }
 
@@ -8074,6 +8438,76 @@ mod tests {
     }
 
     #[test]
+    fn board_legacy_when_column_shows_date_without_time() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-legacy-when-date-only-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("LEGACY-WHEN-DATE-ONLY".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .set_item_when_date(
+                item.id,
+                Some(
+                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                        .expect("date")
+                        .and_hms_opt(14, 25, 0)
+                        .expect("time"),
+                ),
+                Some("test:when".to_string()),
+            )
+            .expect("set when");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(90, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let row_line = lines
+            .iter()
+            .find(|line| line.contains("LEGACY-WHEN-DATE-ONLY"))
+            .expect("row line should include item text");
+        assert!(
+            row_line.contains("2026-03-07"),
+            "when cell should display date: {row_line}"
+        );
+        assert!(
+            !row_line.contains("14:25"),
+            "legacy board row should not include time component: {row_line}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn board_dynamic_rows_keep_adjacent_columns_separated_when_truncated() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -8152,6 +8586,118 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_dynamic_when_column_shows_date_without_time() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-dynamic-when-date-only-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let when_id = store
+            .get_hierarchy()
+            .expect("hierarchy")
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .expect("reserved When")
+            .id;
+
+        let item = Item::new("DYNAMIC-WHEN-DATE-ONLY".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .set_item_when_date(
+                item.id,
+                Some(
+                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                        .expect("date")
+                        .and_hms_opt(14, 25, 0)
+                        .expect("time"),
+                ),
+                Some("test:when".to_string()),
+            )
+            .expect("set when");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::When,
+                heading: when_id,
+                width: 16,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(100, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("2026-03-07"),
+            "when cell should display date: {rendered}"
+        );
+        assert!(
+            !rendered.contains("2026-03-07 14:25"),
+            "dynamic board should not include time component in row cells: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_info_metadata_keeps_full_when_datetime() {
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Info when metadata".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .set_item_when_date(
+                item.id,
+                Some(
+                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                        .expect("date")
+                        .and_hms_opt(14, 25, 0)
+                        .expect("time"),
+                ),
+                Some("test:when".to_string()),
+            )
+            .expect("set when");
+
+        let loaded = store.get_item(item.id).expect("load item");
+        let app = App::default();
+        let info_lines = app.item_info_header_lines_for_item(&loaded);
+        let when_line = info_lines
+            .iter()
+            .find(|line| line.trim_start().starts_with("When:"))
+            .expect("info lines should include when metadata");
+        assert!(
+            when_line.contains("2026-03-07 14:25:00"),
+            "info metadata should keep full datetime: {when_line}"
+        );
     }
 
     #[test]

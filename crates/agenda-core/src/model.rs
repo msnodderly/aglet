@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -32,6 +32,8 @@ pub mod origin {
     pub const MANUAL_NUMERIC: &str = "manual:numeric";
     /// User created an item link.
     pub const MANUAL_LINK: &str = "manual:link";
+    /// User explicitly edited the When datetime.
+    pub const MANUAL_WHEN: &str = "manual:when";
     /// NLP date parser inferred a When date.
     pub const NLP_DATE: &str = "nlp:date";
     /// Engine auto-assigned via category hierarchy subsumption.
@@ -74,7 +76,6 @@ pub struct Item {
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
-    pub entry_date: NaiveDate,
     pub when_date: Option<NaiveDateTime>,
     pub done_date: Option<NaiveDateTime>,
     pub is_done: bool,
@@ -389,7 +390,6 @@ pub struct DeletionLogEntry {
     pub item_id: Uuid,
     pub text: String,
     pub note: Option<String>,
-    pub entry_date: NaiveDate,
     pub when_date: Option<NaiveDateTime>,
     pub done_date: Option<NaiveDateTime>,
     pub is_done: bool,
@@ -407,7 +407,6 @@ impl Item {
             note: None,
             created_at: now,
             modified_at: now,
-            entry_date: now.date_naive(),
             when_date: None,
             done_date: None,
             is_done: false,

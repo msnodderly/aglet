@@ -1331,6 +1331,7 @@ impl App {
                 let prefix_str = match panel.kind {
                     input_panel::InputPanelKind::NameInput
                     | input_panel::InputPanelKind::CategoryCreate => "  Name> ",
+                    input_panel::InputPanelKind::WhenDate => "  When> ",
                     input_panel::InputPanelKind::NumericValue => "  Value> ",
                     _ => "  Text> ",
                 };
@@ -1817,7 +1818,7 @@ impl App {
                                     let value = match column.kind {
                                         ColumnKind::When => item
                                             .when_date
-                                            .map(|dt| dt.to_string())
+                                            .map(|dt| dt.date().to_string())
                                             .unwrap_or_else(|| "\u{2013}".to_string()),
                                         ColumnKind::Standard if is_numeric_column => {
                                             let numeric_val = item
@@ -2037,7 +2038,7 @@ impl App {
                             let is_selected = is_selected_slot && item_index == self.item_index;
                             let when = item
                                 .when_date
-                                .map(|dt| dt.to_string())
+                                .map(|dt| dt.date().to_string())
                                 .unwrap_or_else(|| "-".to_string());
                             let marker_cell = if is_selected { ">" } else { " " };
                             let note_cell = item_indicator_glyphs(
@@ -2231,7 +2232,6 @@ impl App {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "-".to_string())
             ),
-            format!("  Entry date: {}", item.entry_date),
             format!("  Created: {}", item.created_at),
             format!("  Modified: {}", item.modified_at),
         ];
@@ -2409,6 +2409,7 @@ impl App {
                             input_panel::InputPanelKind::AddItem => "Add item",
                             input_panel::InputPanelKind::EditItem => "Edit item",
                             input_panel::InputPanelKind::NameInput => "Name input",
+                            input_panel::InputPanelKind::WhenDate => "When editor",
                             input_panel::InputPanelKind::NumericValue => "Set value",
                             input_panel::InputPanelKind::CategoryCreate => "Create category",
                         },
@@ -2487,7 +2488,10 @@ impl App {
                 if self
                     .input_panel
                     .as_ref()
-                    .map(|p| p.kind == input_panel::InputPanelKind::NumericValue)
+                    .map(|p| {
+                        p.kind == input_panel::InputPanelKind::NumericValue
+                            || p.kind == input_panel::InputPanelKind::WhenDate
+                    })
                     .unwrap_or(false)
                 {
                     "Enter:save  S:save  Tab:buttons  Esc:cancel"
@@ -2530,6 +2534,7 @@ impl App {
             InputPanelKind::AddItem => format!("Add Item{dirty_marker}"),
             InputPanelKind::EditItem => format!("Edit Item{dirty_marker}"),
             InputPanelKind::NameInput => format!("Name{dirty_marker}"),
+            InputPanelKind::WhenDate => format!("Edit When{dirty_marker}"),
             InputPanelKind::NumericValue => format!("Set Value{dirty_marker}"),
             InputPanelKind::CategoryCreate => format!("Create Category{dirty_marker}"),
         };
@@ -2556,6 +2561,7 @@ impl App {
         };
         let text_label = match panel.kind {
             InputPanelKind::NameInput | InputPanelKind::CategoryCreate => "Name",
+            InputPanelKind::WhenDate => "When",
             InputPanelKind::NumericValue => "Value",
             _ => "Text",
         };
@@ -2585,6 +2591,16 @@ impl App {
                 frame.render_widget(
                     Paragraph::new(format!("  {}", panel.preview_context))
                         .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                    context_rect,
+                );
+            }
+        }
+
+        if panel.kind == InputPanelKind::WhenDate {
+            if let Some(context_rect) = regions.context {
+                let context_text = format!("Item: {}", panel.preview_context);
+                frame.render_widget(
+                    Paragraph::new(context_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
                     context_rect,
                 );
             }
@@ -2865,9 +2881,11 @@ impl App {
         let base_help = match panel.focus {
             InputPanelFocus::Text => match panel.kind {
                 InputPanelKind::NumericValue => "Type value  Enter:save  Tab:actions  Esc:cancel",
-                InputPanelKind::NameInput | InputPanelKind::CategoryCreate => {
-                    "Type name  Tab:next  S:save  Esc:cancel"
+                InputPanelKind::NameInput => "Type name  Enter:save  Tab:actions  Esc:cancel",
+                InputPanelKind::WhenDate => {
+                    "Enter natural language or ISO datetime  Enter:save  Tab:actions  Esc:cancel"
                 }
+                InputPanelKind::CategoryCreate => "Type name  Tab:next  S:save  Esc:cancel",
                 _ => "Type title  Tab:note  S:save  Esc:cancel",
             },
             InputPanelFocus::Note => {
@@ -2881,13 +2899,23 @@ impl App {
             InputPanelFocus::SaveButton => "Enter save  Tab:cancel  Shift-Tab:categories",
             InputPanelFocus::CancelButton => "Enter cancel  Tab:text  Shift-Tab:save",
         };
-        let help_text =
-            if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
-                format!("{} | {}", panel.preview_context, base_help)
+        let mut help_style = Style::default();
+        let help_text = if panel.kind == InputPanelKind::WhenDate {
+            let is_when_error = self.status.starts_with("Could not parse date/time")
+                || self.status.starts_with("When edit failed:");
+            if is_when_error {
+                help_style = Style::default().fg(Color::LightRed);
+                self.status.clone()
             } else {
-                base_help.to_string()
-            };
-        frame.render_widget(Paragraph::new(help_text), regions.help);
+                help_style = Style::default().fg(MUTED_TEXT_COLOR);
+                "Supported: today/tomorrow/yesterday | this/next weekday | YYYY-MM-DD | YYYYMMDD | M/D/YY (+ optional at-time)".to_string()
+            }
+        } else if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
+            format!("{} | {}", panel.preview_context, base_help)
+        } else {
+            base_help.to_string()
+        };
+        frame.render_widget(Paragraph::new(help_text).style(help_style), regions.help);
     }
 
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
