@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use rust_decimal::Decimal;
 use serde_json;
@@ -178,7 +178,7 @@ impl Store {
                 item.note,
                 item.created_at.to_rfc3339(),
                 item.modified_at.to_rfc3339(),
-                item.entry_date.to_string(),
+                item.created_at.date_naive().to_string(),
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
@@ -270,9 +270,8 @@ impl Store {
     /// Delete an item. Writes to deletion_log first, then removes from items table.
     pub fn delete_item(&self, id: ItemId, deleted_by: &str) -> Result<()> {
         let item = self.get_item(id)?;
-        let assignments_json =
-            serde_json::to_string(&item.assignments)
-                .expect("BTreeMap<CategoryId, Assignment> is always serialisable");
+        let assignments_json = serde_json::to_string(&item.assignments)
+            .expect("BTreeMap<CategoryId, Assignment> is always serialisable");
 
         self.conn.execute(
             "INSERT INTO deletion_log (id, item_id, text, note, entry_date, when_date, done_date, is_done, assignments_json, deleted_at, deleted_by)
@@ -282,7 +281,7 @@ impl Store {
                 item.id.to_string(),
                 item.text,
                 item.note,
-                item.entry_date.to_string(),
+                item.created_at.date_naive().to_string(),
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
@@ -355,7 +354,6 @@ impl Store {
             note: entry.note,
             created_at: now,
             modified_at: now,
-            entry_date: entry.entry_date,
             when_date: entry.when_date,
             done_date: entry.done_date,
             is_done: entry.is_done,
@@ -909,7 +907,7 @@ impl Store {
         let id_str: String = row.get(0)?;
         let created_str: String = row.get(3)?;
         let modified_str: String = row.get(4)?;
-        let entry_str: String = row.get(5)?;
+        let _entry_str: String = row.get(5)?;
         let when_str: Option<String> = row.get(6)?;
         let done_str: Option<String> = row.get(7)?;
         let is_done_int: i32 = row.get(8)?;
@@ -924,7 +922,6 @@ impl Store {
             modified_at: DateTime::parse_from_rfc3339(&modified_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_default(),
-            entry_date: NaiveDate::parse_from_str(&entry_str, "%Y-%m-%d").unwrap_or_default(),
             when_date: when_str
                 .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
             done_date: done_str
@@ -937,7 +934,7 @@ impl Store {
     fn row_to_deleted_item(row: &Row<'_>) -> rusqlite::Result<DeletionLogEntry> {
         let id_str: String = row.get(0)?;
         let item_id_str: String = row.get(1)?;
-        let entry_str: String = row.get(4)?;
+        let _entry_str: String = row.get(4)?;
         let when_str: Option<String> = row.get(5)?;
         let done_str: Option<String> = row.get(6)?;
         let is_done_int: i32 = row.get(7)?;
@@ -948,7 +945,6 @@ impl Store {
             item_id: Uuid::parse_str(&item_id_str).unwrap_or_default(),
             text: row.get(2)?,
             note: row.get(3)?,
-            entry_date: NaiveDate::parse_from_str(&entry_str, "%Y-%m-%d").unwrap_or_default(),
             when_date: when_str
                 .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
             done_date: done_str
@@ -1912,7 +1908,7 @@ mod tests {
     use crate::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
         ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
-        View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN, RESERVED_CATEGORY_NAMES,
+        View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;

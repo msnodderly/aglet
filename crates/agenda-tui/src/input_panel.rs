@@ -16,6 +16,8 @@ pub(crate) enum InputPanelKind {
     EditItem,
     /// Single text field for naming (views, categories).
     NameInput,
+    /// Single text field for editing When datetime text.
+    WhenDate,
     /// Single text field for editing a numeric value.
     NumericValue,
     /// Category creation: Name + Type picker.
@@ -198,6 +200,29 @@ impl InputPanel {
         }
     }
 
+    pub(crate) fn new_when_date_input(current_value: &str, label: &str) -> Self {
+        Self {
+            kind: InputPanelKind::WhenDate,
+            text: TextBuffer::new(current_value.to_string()),
+            note: TextBuffer::empty(),
+            categories: HashSet::new(),
+            focus: InputPanelFocus::Text,
+            item_id: None,
+            preview_context: label.to_string(),
+            category_cursor: 0,
+            category_filter: TextBuffer::empty(),
+            category_filter_editing: false,
+            numeric_buffers: HashMap::new(),
+            numeric_originals: HashMap::new(),
+            parent_id: None,
+            parent_label: String::new(),
+            value_kind: CategoryValueKind::Tag,
+            original_text: current_value.to_string(),
+            original_note: String::new(),
+            original_categories: HashSet::new(),
+        }
+    }
+
     pub(crate) fn new_category_create(parent_id: Option<CategoryId>, parent_label: &str) -> Self {
         Self {
             kind: InputPanelKind::CategoryCreate,
@@ -307,9 +332,11 @@ impl InputPanel {
             {
                 Some(InputPanelAction::Save)
             }
-            // Numeric value panel: Enter from the value field saves directly.
+            // Single-value editors: Enter from text field saves directly.
             KeyCode::Enter
-                if self.kind == InputPanelKind::NumericValue
+                if (self.kind == InputPanelKind::NumericValue
+                    || self.kind == InputPanelKind::NameInput
+                    || self.kind == InputPanelKind::WhenDate)
                     && self.focus == InputPanelFocus::Text =>
             {
                 Some(InputPanelAction::Save)
@@ -404,9 +431,9 @@ impl InputPanel {
     fn cycle_focus_forward(&mut self) {
         self.focus = match self.focus {
             InputPanelFocus::Text => match self.kind {
-                InputPanelKind::NameInput | InputPanelKind::NumericValue => {
-                    InputPanelFocus::SaveButton
-                }
+                InputPanelKind::NameInput
+                | InputPanelKind::WhenDate
+                | InputPanelKind::NumericValue => InputPanelFocus::SaveButton,
                 InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
                 _ => InputPanelFocus::Note,
             },
@@ -425,7 +452,9 @@ impl InputPanel {
             InputPanelFocus::Categories => InputPanelFocus::Note,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
             InputPanelFocus::SaveButton => match self.kind {
-                InputPanelKind::NameInput | InputPanelKind::NumericValue => InputPanelFocus::Text,
+                InputPanelKind::NameInput
+                | InputPanelKind::WhenDate
+                | InputPanelKind::NumericValue => InputPanelFocus::Text,
                 InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
                 _ => InputPanelFocus::Categories,
             },
@@ -713,6 +742,13 @@ mod tests {
     }
 
     #[test]
+    fn enter_in_name_input_text_focus_saves() {
+        let mut p = name_panel();
+        p.focus = InputPanelFocus::Text;
+        assert_eq!(p.handle_key(KeyCode::Enter, false), InputPanelAction::Save);
+    }
+
+    #[test]
     fn enter_in_note_focus_inserts_newline() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::Note;
@@ -818,6 +854,14 @@ mod tests {
         assert_eq!(p.kind, InputPanelKind::NumericValue);
         assert_eq!(p.text.text(), "12.5");
         assert_eq!(p.preview_context, "Cost");
+    }
+
+    #[test]
+    fn new_when_date_input_prefills_text() {
+        let p = InputPanel::new_when_date_input("tomorrow 3pm", "When date for: Demo");
+        assert_eq!(p.kind, InputPanelKind::WhenDate);
+        assert_eq!(p.text.text(), "tomorrow 3pm");
+        assert_eq!(p.preview_context, "When date for: Demo");
     }
 
     #[test]
