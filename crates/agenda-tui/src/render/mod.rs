@@ -882,8 +882,9 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),
+                Constraint::Length(5),
                 Constraint::Length(3),
-                Constraint::Min(6),
+                Constraint::Min(4),
                 Constraint::Length(2),
             ])
             .split(inner);
@@ -901,19 +902,27 @@ impl App {
         };
         frame.render_widget(
             Paragraph::new(format!(
-                "Column: {}  Item: {}\nSelected: {}  Mode: {}",
+                "Column: {}  Mode: {}\nSelected: {}",
                 state.parent_name,
-                truncate_board_cell(&state.item_label, 28),
-                truncate_board_cell(&selected_display, 28),
                 if state.is_exclusive {
                     "single"
                 } else {
                     "multi"
-                }
+                },
+                truncate_board_cell(&selected_display, 56),
             ))
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
             chunks[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new(state.item_label.clone())
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .block(Block::default().borders(Borders::ALL).title("Item Context"))
+                .wrap(Wrap { trim: false })
+                .scroll((state.item_preview_scroll, 0)),
+            chunks[1],
         );
 
         let input_border = if state.focus == CategoryColumnPickerFocus::FilterInput {
@@ -932,13 +941,13 @@ impl App {
                     .title("Filter")
                     .border_style(input_border),
             ),
-            chunks[1],
+            chunks[2],
         );
 
         if let Some(name) = state.create_confirm_name.as_deref() {
             self.render_category_create_confirm_panel(
                 frame,
-                chunks[2],
+                chunks[3],
                 name,
                 "as a new child category in this column?",
             );
@@ -981,7 +990,7 @@ impl App {
             } else {
                 Some(state.list_index.min(matches.len() - 1))
             };
-            let mut list_state = Self::list_state_for(chunks[2], selected);
+            let mut list_state = Self::list_state_for(chunks[3], selected);
             frame.render_stateful_widget(
                 List::new(items)
                     .block(
@@ -996,12 +1005,12 @@ impl App {
                     )
                     .highlight_symbol("> ")
                     .highlight_style(selected_row_style()),
-                chunks[2],
+                chunks[3],
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(
                 frame,
-                chunks[2],
+                chunks[3],
                 matches.len().max(1),
                 list_state.offset(),
             );
@@ -1009,11 +1018,11 @@ impl App {
 
         frame.render_widget(
             Paragraph::new(
-                "Type filter | j/k or Up/Down move | Space toggle | Enter save | Esc cancel",
+                "Type filter | j/k or Up/Down move | PgUp/PgDn item | Space toggle | Enter save | Esc cancel",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
-            chunks[3],
+            chunks[4],
         );
     }
 
@@ -1035,12 +1044,13 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),
+                Constraint::Length(5),
                 Constraint::Length(3),
-                Constraint::Min(6),
+                Constraint::Min(4),
                 Constraint::Length(2),
             ])
             .split(inner);
-        let input_area = chunks[1];
+        let input_area = chunks[2];
         let input_x = input_area.x.saturating_add(1);
         let input_y = input_area.y.saturating_add(1);
         let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
@@ -1344,7 +1354,39 @@ impl App {
                     .min(max_x);
                 Some((cursor_x, regions.text.y))
             }
-            InputPanelFocus::Note => None,
+            InputPanelFocus::Note => {
+                let note_rect = regions.note?;
+                if note_rect.width < 3 || note_rect.height < 3 {
+                    return None;
+                }
+                let note_inner = Rect {
+                    x: note_rect.x.saturating_add(1),
+                    y: note_rect.y.saturating_add(1),
+                    width: note_rect.width.saturating_sub(2),
+                    height: note_rect.height.saturating_sub(2),
+                };
+                if note_inner.width == 0 || note_inner.height == 0 {
+                    return None;
+                }
+                let (line, col) = panel.note.line_col();
+                let scroll = list_scroll_for_selected_line(note_rect, Some(line)) as usize;
+                let visible_row = line.saturating_sub(scroll);
+                let max_x = note_inner
+                    .x
+                    .saturating_add(note_inner.width.saturating_sub(1));
+                let max_y = note_inner
+                    .y
+                    .saturating_add(note_inner.height.saturating_sub(1));
+                let cursor_x = note_inner
+                    .x
+                    .saturating_add(col.min(u16::MAX as usize) as u16)
+                    .min(max_x);
+                let cursor_y = note_inner
+                    .y
+                    .saturating_add(visible_row.min(u16::MAX as usize) as u16)
+                    .min(max_y);
+                Some((cursor_x, cursor_y))
+            }
             InputPanelFocus::Categories => {
                 if panel.category_filter_editing {
                     let filter_rect = regions.categories_filter?;

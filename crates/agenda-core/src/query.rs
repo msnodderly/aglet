@@ -271,11 +271,9 @@ fn item_matches_query(
     }
 
     // Or: If any Or criteria exist, at least ONE must be present
-    let or_ids: Vec<CategoryId> = query.or_category_ids().collect();
-    if !or_ids.is_empty()
-        && !or_ids
-            .iter()
-            .any(|category_id| item.assignments.contains_key(category_id))
+    let mut or_ids = query.or_category_ids().peekable();
+    if or_ids.peek().is_some()
+        && !or_ids.any(|category_id| item.assignments.contains_key(&category_id))
     {
         return false;
     }
