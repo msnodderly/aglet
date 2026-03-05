@@ -12,6 +12,7 @@ use agenda_core::model::{
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use chrono::{Local, NaiveDateTime, Utc};
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -45,6 +46,13 @@ struct TerminalSession {
 }
 
 impl TerminalSession {
+    fn try_apply_preferred_cursor_style<W: io::Write>(writer: &mut W) {
+        // Prefer a tall blinking bar; fall back to steady bar when blink is unsupported.
+        if execute!(writer, SetCursorStyle::BlinkingBar).is_err() {
+            let _ = execute!(writer, SetCursorStyle::SteadyBar);
+        }
+    }
+
     fn enter() -> Result<Self, String> {
         enable_raw_mode().map_err(|e| e.to_string())?;
 
@@ -53,6 +61,7 @@ impl TerminalSession {
             let _ = disable_raw_mode();
             return Err(err.to_string());
         }
+        Self::try_apply_preferred_cursor_style(&mut stdout);
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = match Terminal::new(backend) {
@@ -78,6 +87,10 @@ impl TerminalSession {
         if !self.active {
             return Ok(());
         }
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            SetCursorStyle::DefaultUserShape
+        );
         disable_raw_mode().map_err(|e| e.to_string())?;
         execute!(self.terminal.backend_mut(), LeaveAlternateScreen).map_err(|e| e.to_string())?;
         self.terminal.show_cursor().map_err(|e| e.to_string())?;
@@ -91,6 +104,10 @@ impl Drop for TerminalSession {
         if !self.active {
             return;
         }
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            SetCursorStyle::DefaultUserShape
+        );
         let _ = disable_raw_mode();
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         let _ = self.terminal.show_cursor();
@@ -4375,6 +4392,43 @@ mod tests {
         );
         assert!(cx < popup.x + popup.width, "cursor x in bounds");
         assert!(cy < popup.y + popup.height, "cursor y in bounds");
+    }
+
+    #[test]
+    fn input_panel_cursor_position_is_set_for_note_focus() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            agenda_core::model::ItemId::new_v4(),
+            "Title".to_string(),
+            "line one\nline two".to_string(),
+            Default::default(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        panel.focus = input_panel::InputPanelFocus::Note;
+        panel.note = text_buffer::TextBuffer::with_cursor("line one\nline two".to_string(), 10);
+        let app = App {
+            mode: Mode::InputPanel,
+            input_panel: Some(panel),
+            ..App::default()
+        };
+
+        let pos = if let Some(panel) = &app.input_panel {
+            app.input_panel_cursor_position(popup, panel)
+        } else {
+            None
+        };
+        assert!(pos.is_some(), "expected note cursor position");
+        let (cx, cy) = pos.unwrap();
+        assert!(
+            cx >= popup.x && cx < popup.x + popup.width,
+            "cursor x in bounds"
+        );
+        assert!(
+            cy >= popup.y && cy < popup.y + popup.height,
+            "cursor y in bounds"
+        );
     }
 
     #[test]
@@ -9320,14 +9374,14 @@ mod tests {
         );
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("unmatched visible -> unmatched label");
+            .expect("unmatched visible -> hide dependent");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
             4
         );
 
         app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-            .expect("unmatched label -> unmatched visible");
+            .expect("hide dependent -> unmatched visible");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
             3
@@ -9407,9 +9461,11 @@ mod tests {
 
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("move to unmatched label row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("move past hide dependent to unmatched label row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            4
+            5
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -9437,13 +9493,13 @@ mod tests {
         app.open_view_edit(view);
 
         // Move focus to Aliases row in view details.
-        for _ in 0..6 {
+        for _ in 0..7 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move details selection");
         }
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            5
+            6
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -12227,5 +12283,74 @@ mod tests {
         store.update_item(&a).expect("update a");
         app.refresh(&store).expect("refresh");
         assert!(!app.is_item_blocked(b.id));
+    }
+
+    #[test]
+    fn hide_dependent_items_view_setting_filters_blocked_items_from_slots() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        let mut view = View::new("Focused".to_string());
+        view.hide_dependent_items = true;
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Focused");
+        app.refresh(&store).expect("refresh focused");
+
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocker.id)),
+            "unblocked item should remain visible"
+        );
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != blocked.id)),
+            "blocked item should be hidden when view.hide_dependent_items=true"
+        );
+    }
+
+    #[test]
+    fn header_shows_hide_dependent_indicator_when_enabled() {
+        let mut view = View::new("Focus".to_string());
+        view.hide_dependent_items = true;
+
+        let app = App {
+            views: vec![view],
+            view_index: 0,
+            mode: Mode::Normal,
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("dep:hidden"),
+            "header should indicate hide-dependent mode: {rendered}"
+        );
     }
 }

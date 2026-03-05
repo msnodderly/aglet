@@ -115,7 +115,7 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nDependency-state filter examples:\n  agenda list --blocked\n  agenda list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
         /// View to render. If omitted, uses the first stored view when present.
@@ -130,6 +130,12 @@ enum Command {
         /// Exclude-category filter (repeat for OR). Item must have NONE of the specified categories.
         #[arg(long = "exclude-category")]
         exclude_category: Vec<String>,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
         /// Numeric equality filter (repeat for AND): category value must equal VALUE.
         #[arg(
             long = "value-eq",
@@ -170,6 +176,12 @@ enum Command {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
         /// Include done items in search results (default excludes them).
         #[arg(long)]
         include_done: bool,
@@ -353,6 +365,12 @@ enum ViewCommand {
         /// Output format.
         #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
         format: OutputFormatArg,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
     },
 
     /// Create a basic view from include/exclude categories
@@ -368,6 +386,17 @@ enum ViewCommand {
         /// Hide items that do not match any section.
         #[arg(long = "hide-unmatched")]
         hide_unmatched: bool,
+        #[arg(long = "hide-dependent-items")]
+        hide_dependent_items: bool,
+    },
+
+    /// Edit mutable view properties
+    Edit {
+        name: String,
+        #[arg(long = "hide-unmatched")]
+        hide_unmatched: Option<bool>,
+        #[arg(long = "hide-dependent-items")]
+        hide_dependent_items: Option<bool>,
     },
 
     /// Clone a view into a new mutable view
@@ -464,6 +493,8 @@ fn run() -> Result<(), String> {
         category: Vec::new(),
         any_category: Vec::new(),
         exclude_category: Vec::new(),
+        blocked: false,
+        not_blocked: false,
         value_eq: Vec::new(),
         value_in: Vec::new(),
         value_max: Vec::new(),
@@ -519,6 +550,8 @@ fn run() -> Result<(), String> {
             category,
             any_category,
             exclude_category,
+            blocked,
+            not_blocked,
             value_eq,
             value_in,
             value_max,
@@ -532,6 +565,7 @@ fn run() -> Result<(), String> {
                 all_categories: category,
                 any_categories: any_category,
                 exclude_categories: exclude_category,
+                dependency_state_filter: dependency_state_filter_from_flags(blocked, not_blocked),
                 value_eq,
                 value_in,
                 value_max,
@@ -543,8 +577,16 @@ fn run() -> Result<(), String> {
         Command::Search {
             query,
             format,
+            blocked,
+            not_blocked,
             include_done,
-        } => cmd_search(&store, query, format, include_done),
+        } => cmd_search(
+            &store,
+            query,
+            format,
+            dependency_state_filter_from_flags(blocked, not_blocked),
+            include_done,
+        ),
         Command::Export {
             view,
             include_links,
@@ -829,10 +871,30 @@ struct ListFilters {
     all_categories: Vec<String>,
     any_categories: Vec<String>,
     exclude_categories: Vec<String>,
+    dependency_state_filter: Option<DependencyStateFilter>,
     value_eq: Vec<String>,
     value_in: Vec<String>,
     value_max: Vec<String>,
     include_done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DependencyStateFilter {
+    Blocked,
+    NotBlocked,
+}
+
+fn dependency_state_filter_from_flags(
+    blocked: bool,
+    not_blocked: bool,
+) -> Option<DependencyStateFilter> {
+    if blocked {
+        Some(DependencyStateFilter::Blocked)
+    } else if not_blocked {
+        Some(DependencyStateFilter::NotBlocked)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -856,7 +918,9 @@ fn cmd_list(
     sort_args: Vec<String>,
     output_format: OutputFormatArg,
 ) -> Result<(), String> {
-    let mut items = store.list_items().map_err(|e| e.to_string())?;
+    let all_items = store.list_items().map_err(|e| e.to_string())?;
+    let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+    let mut items = all_items.clone();
     if !filters.include_done {
         items.retain(|item| !item.is_done);
     }
@@ -893,6 +957,9 @@ fn cmd_list(
     if !numeric_filters.is_empty() {
         retain_items_matching_numeric_filters(&mut items, &numeric_filters);
     }
+    if let Some(filter) = filters.dependency_state_filter {
+        retain_items_by_dependency_state(store, &mut items, filter)?;
+    }
 
     let resolved_view = if let Some(view_name) = view_name {
         Some(view_by_name(store, &view_name)?)
@@ -912,6 +979,7 @@ fn cmd_list(
             &category_names,
             &sort_keys,
             output_format,
+            &blocked_item_ids,
         )?;
     } else if output_format == OutputFormatArg::Json {
         print_items_json(&items, &category_names, &sort_keys, &categories)?;
@@ -919,6 +987,24 @@ fn cmd_list(
         print_item_table(&items, &category_names, &sort_keys, &categories);
     }
     Ok(())
+}
+
+fn blocked_item_ids(items: &[Item], store: &Store) -> Result<HashSet<ItemId>, String> {
+    let done_by_item_id: HashMap<ItemId, bool> =
+        items.iter().map(|item| (item.id, item.is_done)).collect();
+    let mut blocked = HashSet::new();
+    for item in items {
+        let dependency_ids = store
+            .list_dependency_ids_for_item(item.id)
+            .map_err(|e| e.to_string())?;
+        let is_blocked = dependency_ids
+            .iter()
+            .any(|dep_id| !done_by_item_id.get(dep_id).copied().unwrap_or(false));
+        if is_blocked {
+            blocked.insert(item.id);
+        }
+    }
+    Ok(blocked)
 }
 
 fn retain_items_with_all_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
@@ -1052,10 +1138,44 @@ fn retain_items_matching_numeric_filters(items: &mut Vec<Item>, numeric_filters:
     });
 }
 
+fn item_is_dependency_blocked(store: &Store, item_id: ItemId) -> Result<bool, String> {
+    let dependency_ids = store
+        .list_dependency_ids_for_item(item_id)
+        .map_err(|e| e.to_string())?;
+    for dependency_id in dependency_ids {
+        let dependency = store.get_item(dependency_id).map_err(|e| e.to_string())?;
+        if !dependency.is_done {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn retain_items_by_dependency_state(
+    store: &Store,
+    items: &mut Vec<Item>,
+    filter: DependencyStateFilter,
+) -> Result<(), String> {
+    let mut retained = Vec::with_capacity(items.len());
+    for item in std::mem::take(items) {
+        let is_blocked = item_is_dependency_blocked(store, item.id)?;
+        let keep = match filter {
+            DependencyStateFilter::Blocked => is_blocked,
+            DependencyStateFilter::NotBlocked => !is_blocked,
+        };
+        if keep {
+            retained.push(item);
+        }
+    }
+    *items = retained;
+    Ok(())
+}
+
 fn cmd_search(
     store: &Store,
     query: String,
     output_format: OutputFormatArg,
+    dependency_state_filter: Option<DependencyStateFilter>,
     include_done: bool,
 ) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
@@ -1073,7 +1193,10 @@ fn cmd_search(
     let reference_date = Local::now().date_naive();
     let matches = evaluate_query(&q, &items, reference_date);
 
-    let matched_items: Vec<Item> = matches.into_iter().cloned().collect();
+    let mut matched_items: Vec<Item> = matches.into_iter().cloned().collect();
+    if let Some(filter) = dependency_state_filter {
+        retain_items_by_dependency_state(store, &mut matched_items, filter)?;
+    }
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
     } else {
@@ -1689,21 +1812,33 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             }
             for view in views {
                 println!(
-                    "{} (sections={}, and={}, not={}, or={})",
+                    "{} (sections={}, and={}, not={}, or={}, hide_dependent_items={})",
                     view.name,
                     view.sections.len(),
                     view.criteria.and_category_ids().count(),
                     view.criteria.not_category_ids().count(),
-                    view.criteria.or_category_ids().count()
+                    view.criteria.or_category_ids().count(),
+                    view.hide_dependent_items
                 );
             }
             println!("hint: use `agenda view show \"<name>\"` to see view contents");
             Ok(())
         }
-        ViewCommand::Show { name, sort, format } => {
+        ViewCommand::Show {
+            name,
+            sort,
+            format,
+            blocked,
+            not_blocked,
+        } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
-            let items = store.list_items().map_err(|e| e.to_string())?;
+            let all_items = store.list_items().map_err(|e| e.to_string())?;
+            let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+            let mut items = all_items;
+            if let Some(filter) = dependency_state_filter_from_flags(blocked, not_blocked) {
+                retain_items_by_dependency_state(store, &mut items, filter)?;
+            }
             let view = view_by_name(store, &name)?;
             let sort_keys = parse_sort_specs(&sort, &categories)?;
             print_items_for_view(
@@ -1713,6 +1848,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                 &category_names,
                 &sort_keys,
                 format,
+                &blocked_item_ids,
             )?;
             Ok(())
         }
@@ -1721,10 +1857,12 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             include,
             exclude,
             hide_unmatched,
+            hide_dependent_items,
         } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let mut view = View::new(name);
             view.show_unmatched = !hide_unmatched;
+            view.hide_dependent_items = hide_dependent_items;
             for id in names_to_category_ids(&categories, &include)? {
                 view.criteria.set_criterion(CriterionMode::And, id);
             }
@@ -1734,6 +1872,32 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
 
             store.create_view(&view).map_err(|e| e.to_string())?;
             println!("created view {}", view.name);
+            Ok(())
+        }
+        ViewCommand::Edit {
+            name,
+            hide_unmatched,
+            hide_dependent_items,
+        } => {
+            let mut view = view_by_name(store, &name)?;
+            let mut changed = false;
+            if let Some(hide_unmatched) = hide_unmatched {
+                let next_show_unmatched = !hide_unmatched;
+                changed = changed || view.show_unmatched != next_show_unmatched;
+                view.show_unmatched = next_show_unmatched;
+            }
+            if let Some(hide_dependent_items) = hide_dependent_items {
+                changed = changed || view.hide_dependent_items != hide_dependent_items;
+                view.hide_dependent_items = hide_dependent_items;
+            }
+            if !changed {
+                return Err(
+                    "no editable view changes requested (pass --hide-unmatched and/or --hide-dependent-items)"
+                        .to_string(),
+                );
+            }
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!("updated view {}", view.name);
             Ok(())
         }
         ViewCommand::Clone {
@@ -1957,6 +2121,7 @@ struct JsonViewCategoryAliasOutput {
 #[derive(Serialize)]
 struct JsonViewOutput {
     view: String,
+    hide_dependent_items: bool,
     category_aliases: Vec<JsonViewCategoryAliasOutput>,
     sections: Vec<JsonViewSectionOutput>,
     unmatched_label: Option<String>,
@@ -2244,9 +2409,25 @@ fn print_items_for_view(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     output_format: OutputFormatArg,
+    blocked_item_ids: &HashSet<ItemId>,
 ) -> Result<(), String> {
     let reference_date = Local::now().date_naive();
-    let result = resolve_view(view, items, categories, reference_date);
+    let mut result = resolve_view(view, items, categories, reference_date);
+    if view.hide_dependent_items {
+        for section in &mut result.sections {
+            section
+                .items
+                .retain(|item| !blocked_item_ids.contains(&item.id));
+            for subsection in &mut section.subsections {
+                subsection
+                    .items
+                    .retain(|item| !blocked_item_ids.contains(&item.id));
+            }
+        }
+        if let Some(unmatched) = &mut result.unmatched {
+            unmatched.retain(|item| !blocked_item_ids.contains(&item.id));
+        }
+    }
     let has_sections = !result.sections.is_empty();
     let alias_rows = view_category_alias_rows(view, category_names);
 
@@ -2296,6 +2477,7 @@ fn print_items_for_view(
 
         let payload = JsonViewOutput {
             view: view.name.clone(),
+            hide_dependent_items: view.hide_dependent_items,
             category_aliases: alias_rows
                 .iter()
                 .map(|row| JsonViewCategoryAliasOutput {
@@ -2314,6 +2496,7 @@ fn print_items_for_view(
     }
 
     println!("# {}", view.name);
+    println!("hide_dependent_items: {}", view.hide_dependent_items);
     if !alias_rows.is_empty() {
         println!("\nAliases:");
         for row in &alias_rows {
@@ -2604,10 +2787,11 @@ mod tests {
         cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
         item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
         parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
-        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
-        CliSortField, CliSortKey, Command, LinkCommand, ListFilters, NumericFilter,
+        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
+        retain_items_with_all_categories, retain_items_with_any_categories,
+        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
+        write_stdout_allow_broken_pipe, blocked_item_ids, Cli, CliSortDirection, CliSortField,
+        CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
         NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
@@ -3066,6 +3250,26 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_list_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--blocked"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { blocked, .. }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_list_with_not_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "list", "--not-blocked"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::List { not_blocked, .. }) => assert!(not_blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_list_with_repeated_value_eq_flags() {
         let cli = Cli::try_parse_from([
             "agenda",
@@ -3181,7 +3385,10 @@ mod tests {
 
         match cli.command {
             Some(Command::View {
-                command: ViewCommand::Show { name, sort, format },
+                command:
+                    ViewCommand::Show {
+                        name, sort, format, ..
+                    },
             }) => {
                 assert_eq!(name, "All Items");
                 assert_eq!(sort, vec!["when".to_string()]);
@@ -3217,6 +3424,29 @@ mod tests {
     }
 
     #[test]
+    fn clap_parses_search_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "search", "foo", "--blocked"]).expect("parse");
+
+        match cli.command {
+            Some(Command::Search { blocked, .. }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_show_with_blocked_flag() {
+        let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--blocked"])
+            .expect("parse");
+
+        match cli.command {
+            Some(Command::View {
+                command: ViewCommand::Show { blocked, .. },
+            }) => assert!(blocked),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
     fn clap_parses_view_show_with_json_format() {
         let cli = Cli::try_parse_from(["agenda", "view", "show", "All Items", "--format", "json"])
             .expect("parse CLI");
@@ -3226,6 +3456,35 @@ mod tests {
                 command: ViewCommand::Show { format, .. },
             }) => {
                 assert_eq!(format, OutputFormatArg::Json);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_create_with_hide_dependent_items_flag() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "view",
+            "create",
+            "Focus",
+            "--hide-dependent-items",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command:
+                    ViewCommand::Create {
+                        name,
+                        hide_unmatched,
+                        hide_dependent_items,
+                        ..
+                    },
+            }) => {
+                assert_eq!(name, "Focus");
+                assert!(!hide_unmatched);
+                assert!(hide_dependent_items);
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -3244,6 +3503,34 @@ mod tests {
             }) => {
                 assert_eq!(view.as_deref(), Some("All Items"));
                 assert!(include_links);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_view_edit_with_hide_dependent_items_option() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "view",
+            "edit",
+            "Focus",
+            "--hide-dependent-items",
+            "true",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::View {
+                command:
+                    ViewCommand::Edit {
+                        name,
+                        hide_dependent_items,
+                        ..
+                    },
+            }) => {
+                assert_eq!(name, "Focus");
+                assert_eq!(hide_dependent_items, Some(true));
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -3514,6 +3801,51 @@ mod tests {
     }
 
     #[test]
+    fn cmd_view_edit_sets_hide_dependent_items() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let view = View::new("Focus".to_string());
+        let view_id = view.id;
+        store.create_view(&view).expect("create view");
+
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Edit {
+                name: "Focus".to_string(),
+                hide_unmatched: None,
+                hide_dependent_items: Some(true),
+            },
+        )
+        .expect("edit view");
+
+        let updated = store.get_view(view_id).expect("load updated view");
+        assert!(updated.hide_dependent_items);
+    }
+
+    #[test]
+    fn blocked_item_ids_marks_open_dependency_as_blocked() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let dependency = Item::new("Dependency".to_string());
+        let dependent = Item::new("Dependent".to_string());
+        store.create_item(&dependency).expect("create dependency");
+        store.create_item(&dependent).expect("create dependent");
+        agenda
+            .link_items_depends_on(dependent.id, dependency.id)
+            .expect("link depends-on");
+
+        let items = store.list_items().expect("list items");
+        let blocked = blocked_item_ids(&items, &store).expect("blocked ids");
+        assert!(blocked.contains(&dependent.id));
+        assert!(!blocked.contains(&dependency.id));
+    }
+
+    #[test]
     fn parse_sort_spec_supports_when_and_direction_suffix() {
         let categories = vec![Category::new("Priority".to_string())];
         let when_key = parse_sort_spec("when:desc", &categories).expect("parse when desc");
@@ -3679,6 +4011,45 @@ mod tests {
     }
 
     #[test]
+    fn dependency_state_filter_transitions_when_links_are_added_or_removed() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+
+        let mut rows = store.list_items().expect("list initial");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter initial blocked");
+        assert!(rows.is_empty(), "no links means nothing is blocked");
+
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+        let mut rows = store.list_items().expect("list linked");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter linked blocked");
+        assert_eq!(
+            rows.into_iter().map(|item| item.text).collect::<Vec<_>>(),
+            vec!["Blocked".to_string()]
+        );
+
+        agenda
+            .unlink_items_depends_on(blocked.id, blocker.id)
+            .expect("unlink depends-on");
+        let mut rows = store.list_items().expect("list unlinked");
+        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
+            .expect("filter unlinked blocked");
+        assert!(
+            rows.is_empty(),
+            "removing dependency link clears blocked state"
+        );
+    }
+
+    #[test]
     fn parse_csv_decimals_rejects_empty_value_token() {
         let err = parse_csv_decimals("1,,2", "Complexity").expect_err("should fail");
         assert_eq!(
@@ -3694,6 +4065,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Nope".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3711,6 +4083,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Status".to_string(), "2".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
@@ -3732,6 +4105,7 @@ mod tests {
             all_categories: Vec::new(),
             any_categories: Vec::new(),
             exclude_categories: Vec::new(),
+            dependency_state_filter: None,
             value_eq: vec!["Complexity".to_string(), "abc".to_string()],
             value_in: Vec::new(),
             value_max: Vec::new(),
