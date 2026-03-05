@@ -695,6 +695,7 @@ impl App {
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
             structure_move_prefix: None,
+            discard_confirm: false,
             details_focus: CategoryManagerDetailsFocus::Exclusive,
             details_note_category_id: selected_category_id,
             details_note: text_buffer::TextBuffer::new(initial_note),
@@ -827,6 +828,19 @@ impl App {
 
     pub(crate) fn category_manager_focus(&self) -> Option<CategoryManagerFocus> {
         self.category_manager.as_ref().map(|state| state.focus)
+    }
+
+    pub(crate) fn category_manager_discard_confirm(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.discard_confirm)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_category_manager_discard_confirm(&mut self, discard_confirm: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.discard_confirm = discard_confirm;
+        }
     }
 
     pub(crate) fn set_category_manager_focus(&mut self, focus: CategoryManagerFocus) {

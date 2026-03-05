@@ -2437,7 +2437,9 @@ impl App {
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
             Mode::CategoryManager => {
-                if self.category_manager_details_note_editing() {
+                if self.category_manager_discard_confirm() {
+                    "y:save & close  n:discard  Esc:keep editing"
+                } else if self.category_manager_details_note_editing() {
                     "Tab:leave note  Esc:discard"
                 } else if let Some(action) = self.category_manager_inline_action() {
                     match action {
@@ -3470,6 +3472,30 @@ impl App {
                     details_inner,
                 );
             }
+        }
+
+        if self.category_manager_discard_confirm() {
+            let w = area.width.min(48);
+            let h = 5;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Save changes before closing?"),
+                    Line::from(""),
+                    Line::from("y: save and close   n: discard   Esc: keep editing"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Confirm ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
         }
     }
 
