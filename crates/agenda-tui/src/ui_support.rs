@@ -293,6 +293,7 @@ pub(super) struct BoardColumnSpec {
     pub(super) child_ids: Vec<CategoryId>,
     pub(super) heading_id: CategoryId,
     pub(super) heading_value_kind: CategoryValueKind,
+    pub(super) summary_fn: SummaryFn,
 }
 
 pub(super) fn board_table_spacing_budget(column_count: usize) -> usize {
@@ -388,6 +389,7 @@ pub(super) fn compute_board_layout(
                 child_ids,
                 heading_id: col.heading,
                 heading_value_kind,
+                summary_fn: col.summary_fn.unwrap_or(SummaryFn::None),
             }
         })
         .collect();
@@ -484,12 +486,16 @@ fn add_thousands_separator(s: &str) -> String {
 pub(super) struct NumericAggregate {
     pub(super) count: usize,
     pub(super) sum: rust_decimal::Decimal,
+    pub(super) min: Option<rust_decimal::Decimal>,
+    pub(super) max: Option<rust_decimal::Decimal>,
 }
 
 impl NumericAggregate {
     pub(super) fn push(&mut self, v: rust_decimal::Decimal) {
         self.count += 1;
         self.sum += v;
+        self.min = Some(self.min.map(|current| current.min(v)).unwrap_or(v));
+        self.max = Some(self.max.map(|current| current.max(v)).unwrap_or(v));
     }
 
     pub(super) fn avg(&self) -> Option<rust_decimal::Decimal> {
@@ -497,6 +503,17 @@ impl NumericAggregate {
             Some(self.sum / rust_decimal::Decimal::from(self.count as u32))
         } else {
             None
+        }
+    }
+
+    pub(super) fn value_for(&self, summary_fn: SummaryFn) -> Option<rust_decimal::Decimal> {
+        match summary_fn {
+            SummaryFn::None => None,
+            SummaryFn::Sum => (self.count > 0).then_some(self.sum),
+            SummaryFn::Avg => self.avg(),
+            SummaryFn::Min => self.min,
+            SummaryFn::Max => self.max,
+            SummaryFn::Count => Some(rust_decimal::Decimal::from(self.count as u32)),
         }
     }
 }
@@ -1345,6 +1362,7 @@ mod tests {
             label: "Status".to_string(),
             width: 12,
             kind: ColumnKind::Standard,
+            summary_fn: SummaryFn::None,
             child_ids: vec![],
             heading_id: cat_id,
             heading_value_kind: CategoryValueKind::Tag,
@@ -1386,6 +1404,7 @@ mod tests {
             label: "Cost".to_string(),
             width: 12,
             kind: ColumnKind::Standard,
+            summary_fn: SummaryFn::None,
             child_ids: vec![],
             heading_id: cat_id,
             heading_value_kind: CategoryValueKind::Numeric,
