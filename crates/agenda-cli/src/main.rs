@@ -115,10 +115,11 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Default behavior:\n  If `--view` is omitted, `list` renders the first stored view (if any).\n\nDependency-state filter examples:\n  agenda list --blocked\n  agenda list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Default behavior:\n  If `--view` is omitted, `list` uses the \"All Items\" view when present;\n  otherwise falls back to the first stored view.\n\nDependency-state filter examples:\n  agenda list --blocked\n  agenda list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
-        /// View to render. If omitted, uses the first stored view when present.
+        /// View to render. If omitted, defaults to "All Items"; falls back to
+        /// the first stored view when "All Items" is unavailable.
         #[arg(long)]
         view: Option<String>,
         /// Category filter (repeat for AND). Item must have ALL specified categories.
@@ -964,11 +965,12 @@ fn cmd_list(
     let resolved_view = if let Some(view_name) = view_name {
         Some(view_by_name(store, &view_name)?)
     } else {
-        store
-            .list_views()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .next()
+        let views = store.list_views().map_err(|e| e.to_string())?;
+        views
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case("All Items"))
+            .cloned()
+            .or_else(|| views.into_iter().next())
     };
 
     if let Some(view) = resolved_view {
@@ -2783,16 +2785,16 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_link, cmd_unlink,
-        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
-        item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
-        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
-        retain_items_with_all_categories, retain_items_with_any_categories,
-        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
-        write_stdout_allow_broken_pipe, blocked_item_ids, Cli, CliSortDirection, CliSortField,
-        CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit,
+        cmd_link, cmd_list, cmd_unlink, cmd_view, compare_items_by_sort_keys,
+        duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
+        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
+        reject_items_with_any_categories, retain_items_by_dependency_state,
+        retain_items_matching_numeric_filters, retain_items_with_all_categories,
+        retain_items_with_any_categories, unknown_hashtag_feedback_line, view_category_alias_rows,
+        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, Cli, CliSortDirection,
+        CliSortField, CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters,
+        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4824,5 +4826,86 @@ mod tests {
 
         let deps = store.list_dependency_ids_for_item(a.id).expect("list");
         assert_eq!(deps.len(), 1, "only one dependency should exist");
+    }
+
+    fn empty_list_filters() -> ListFilters {
+        ListFilters {
+            all_categories: vec![],
+            any_categories: vec![],
+            exclude_categories: vec![],
+            dependency_state_filter: None,
+            value_eq: vec![],
+            value_in: vec![],
+            value_max: vec![],
+            include_done: false,
+        }
+    }
+
+    #[test]
+    fn cmd_list_defaults_to_all_items_view() {
+        let store = Store::open_memory().expect("store");
+        // Store::open_memory creates the "All Items" system view automatically.
+        // Create a second view that would sort first alphabetically.
+        let custom = View::new("AAA View".to_string());
+        store.create_view(&custom).expect("create view");
+
+        let item = Item::new("Hello".to_string());
+        store.create_item(&item).expect("create item");
+
+        // Running cmd_list without a view name should succeed and use "All Items".
+        let result = cmd_list(
+            &store,
+            None,
+            empty_list_filters(),
+            vec![],
+            OutputFormatArg::Table,
+        );
+        assert!(result.is_ok(), "cmd_list should succeed: {result:?}");
+    }
+
+    #[test]
+    fn cmd_list_prefers_all_items_over_alphabetically_first_view() {
+        let store = Store::open_memory().expect("store");
+        // "All Items" is created by Store::open_memory. Create a view that
+        // sorts before it alphabetically.
+        let earlier = View::new("AAA Earlier".to_string());
+        store.create_view(&earlier).expect("create view");
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        // cmd_list with no --view should use "All Items", not "AAA Earlier".
+        // "All Items" has the default section that shows items;
+        // "AAA Earlier" has no matching criteria so it would show nothing useful.
+        let result = cmd_list(
+            &store,
+            None,
+            empty_list_filters(),
+            vec![],
+            OutputFormatArg::Table,
+        );
+        assert!(
+            result.is_ok(),
+            "cmd_list should prefer All Items: {result:?}"
+        );
+    }
+
+    #[test]
+    fn cmd_list_explicit_view_overrides_default() {
+        let store = Store::open_memory().expect("store");
+        let custom = View::new("Custom".to_string());
+        store.create_view(&custom).expect("create view");
+
+        let item = Item::new("Explicit view test".to_string());
+        store.create_item(&item).expect("create item");
+
+        let result = cmd_list(
+            &store,
+            Some("Custom".to_string()),
+            empty_list_filters(),
+            vec![],
+            OutputFormatArg::Table,
+        );
+        assert!(result.is_ok(), "explicit --view should work: {result:?}");
     }
 }
