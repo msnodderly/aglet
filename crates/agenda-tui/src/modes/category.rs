@@ -15,6 +15,12 @@ fn category_inline_confirm_key_action(code: KeyCode) -> CategoryInlineConfirmKey
 }
 
 impl App {
+    fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
+        matches!(code, KeyCode::Char('S'))
+            || (matches!(code, KeyCode::Char('s'))
+                && self.current_key_modifiers.contains(KeyModifiers::SHIFT))
+    }
+
     pub(crate) fn category_manager_parent_label(&self, parent_id: Option<CategoryId>) -> String {
         parent_id
             .and_then(|id| {
@@ -189,7 +195,7 @@ impl App {
         self.set_category_manager_focus(CategoryManagerFocus::Details);
         self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
         self.set_category_manager_details_note_editing(true);
-        self.status = "Edit category note: type text, S:save  Esc:discard".to_string();
+        self.status = "Edit category note: type text, Esc:discard, Tab:leave".to_string();
     }
 
     fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
@@ -273,14 +279,6 @@ impl App {
             && self.category_manager_details_note_editing()
         {
             match code {
-                KeyCode::Char('S') => {
-                    self.save_category_manager_details_note(agenda)?;
-                    return Ok(true);
-                }
-                KeyCode::Char('s') if self.current_key_modifiers.contains(KeyModifiers::SHIFT) => {
-                    self.save_category_manager_details_note(agenda)?;
-                    return Ok(true);
-                }
                 KeyCode::Esc => {
                     if self.category_manager_details_note_dirty() {
                         self.reload_category_manager_details_note_from_selected();
@@ -307,6 +305,15 @@ impl App {
                     }
                 }
             }
+            return Ok(false);
+        }
+
+        if details_focus == CategoryManagerDetailsFocus::Note
+            && !self.category_manager_details_note_editing()
+            && self.category_manager_details_note_dirty()
+            && self.category_manager_save_key_pressed(code)
+        {
+            // Let category-manager level save handling persist the draft.
             return Ok(false);
         }
 
@@ -665,6 +672,13 @@ impl App {
         }
         if !matches!(code, KeyCode::Char('<') | KeyCode::Char('>')) {
             self.set_category_manager_structure_move_prefix(None);
+        }
+        if self.category_manager_save_key_pressed(code)
+            && self.category_manager_details_note_dirty()
+            && !self.category_manager_details_note_editing()
+        {
+            self.save_category_manager_details_note(agenda)?;
+            return Ok(false);
         }
         match code {
             KeyCode::Tab => {

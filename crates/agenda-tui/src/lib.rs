@@ -7592,11 +7592,8 @@ mod tests {
         assert_eq!(saved.note, None, "tab should not autosave");
         assert!(app.status.contains("unsaved changes"));
 
-        // Go back and save explicitly
-        app.set_category_selection_by_id(category.id);
-        app.set_category_manager_focus(CategoryManagerFocus::Details);
-        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
-        app.set_category_manager_details_note_editing(true);
+        // Save explicitly with S from outside note-edit mode
+        assert!(!app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
             .expect("explicit save with S");
         let saved = store.get_category(category.id).expect("load category");
@@ -7636,6 +7633,10 @@ mod tests {
         }
         assert!(app.category_manager_details_note_editing());
 
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit without saving");
+        assert!(!app.category_manager_details_note_editing());
+
         app.handle_key_event(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT),
             &agenda,
@@ -7649,7 +7650,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_note_focus_lowercase_j_starts_note_edit() {
+    fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -7676,11 +7677,23 @@ mod tests {
         assert!(app.category_manager_details_note_editing());
         assert_eq!(app.category_manager_details_note_text(), Some("j"));
 
-        // Save explicitly with S
+        app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
+            .expect("type uppercase S in note");
+        assert!(app.category_manager_details_note_editing());
+        assert_eq!(app.category_manager_details_note_text(), Some("jS"));
+        let unsaved = store
+            .get_category(category.id)
+            .expect("load unsaved category");
+        assert_eq!(unsaved.note, None, "typing uppercase S should not save");
+
+        // Leave note edit mode, then save with S command
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(!app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
             .expect("save note with S");
         let saved = store.get_category(category.id).expect("load category");
-        assert_eq!(saved.note.as_deref(), Some("j"));
+        assert_eq!(saved.note.as_deref(), Some("jS"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

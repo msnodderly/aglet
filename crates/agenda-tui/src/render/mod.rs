@@ -2438,14 +2438,14 @@ impl App {
         match self.mode {
             Mode::CategoryManager => {
                 if self.category_manager_details_note_editing() {
-                    "S:save  Esc:discard"
+                    "Tab:leave note  Esc:discard"
                 } else if let Some(action) = self.category_manager_inline_action() {
                     match action {
                         CategoryInlineAction::Rename { .. } => "Enter:apply  Esc:cancel",
                         CategoryInlineAction::DeleteConfirm { .. } => "y:confirm  Esc:cancel",
                     }
                 } else {
-                    "n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
+                    "S:save  n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
                 }
             }
             Mode::ViewPicker => "Enter:switch  N:new  r:rename  e:edit  x:delete  Esc:cancel",
@@ -3439,7 +3439,7 @@ impl App {
                 }
 
                 let details_hint = if note_editing {
-                    "Type to edit  S:save  Esc:discard  Tab:leave (warn if unsaved)"
+                    "Type to edit  Esc:discard  Tab:leave (warn if unsaved)"
                 } else if is_numeric {
                     "Numeric: values are set per item, not toggled"
                 } else {
