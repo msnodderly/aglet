@@ -3439,7 +3439,7 @@ impl App {
                 }
 
                 let details_hint = if note_editing {
-                    "Type to edit  Tab/Esc: save and leave note"
+                    "Type to edit  S:save  Esc:discard  Tab:leave (warn if unsaved)"
                 } else if is_numeric {
                     "Numeric: values are set per item, not toggled"
                 } else {

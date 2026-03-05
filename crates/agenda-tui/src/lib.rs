@@ -7607,6 +7607,48 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_details_note_shift_s_modifier_saves() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-note-shift-s-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        for c in "Ship".chars() {
+            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+                .expect("type note");
+        }
+        assert!(app.category_manager_details_note_editing());
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT),
+            &agenda,
+        )
+        .expect("save with shift+s key event");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("Ship"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn category_manager_note_focus_lowercase_j_starts_note_edit() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
