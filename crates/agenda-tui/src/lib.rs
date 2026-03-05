@@ -27,6 +27,7 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
+use uuid::Uuid;
 
 mod app;
 mod input;
@@ -312,6 +313,8 @@ struct LinkWizardState {
 enum NameInputContext {
     ViewCreate,
     ViewRename,
+    /// Cloning an existing view with a new name.
+    ViewClone,
     /// Editing a numeric cell value in the board.
     NumericValueEdit,
     /// Editing a When datetime value in the board.
@@ -451,6 +454,7 @@ struct CategoryManagerState {
     filter: text_buffer::TextBuffer,
     filter_editing: bool,
     structure_move_prefix: Option<char>,
+    discard_confirm: bool,
     details_focus: CategoryManagerDetailsFocus,
     details_note_category_id: Option<CategoryId>,
     details_note: text_buffer::TextBuffer,
@@ -785,8 +789,11 @@ struct App {
 
     views: Vec<View>,
     view_index: usize,
+    active_view_name: Option<String>,
+    session_hide_dependent_items_override: Option<bool>,
     picker_index: usize,
     view_pending_edit_name: Option<String>,
+    view_pending_clone_id: Option<Uuid>,
     view_edit_state: Option<ViewEditState>,
     numeric_edit_target: Option<NumericEditTarget>,
     when_edit_target: Option<WhenEditTarget>,
@@ -839,8 +846,11 @@ impl Default for App {
             item_links_by_item_id: HashMap::new(),
             views: Vec::new(),
             view_index: 0,
+            active_view_name: None,
+            session_hide_dependent_items_override: None,
             picker_index: 0,
             view_pending_edit_name: None,
+            view_pending_clone_id: None,
             view_edit_state: None,
             numeric_edit_target: None,
             when_edit_target: None,
@@ -4893,6 +4903,158 @@ mod tests {
     }
 
     #[test]
+    fn view_picker_c_opens_clone_name_input() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone name input");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::ViewClone));
+        assert!(app.view_pending_clone_id.is_some());
+        assert!(app.status.contains("Clone"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_clone_creates_new_view() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-save");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone");
+        assert_eq!(app.mode, Mode::InputPanel);
+
+        for ch in "Cloned View".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type clone name");
+        }
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save clone");
+
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("Cloned view as 'Cloned View'"));
+        assert!(store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "Cloned View"));
+        assert!(store
+            .list_views()
+            .expect("list views")
+            .iter()
+            .any(|view| view.name == "TestView"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_clone_rejects_duplicate_name() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-dup");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone");
+
+        for ch in "TestView".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type duplicate name");
+        }
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save clone with dup name");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.status.contains("already exists"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_clone_rejects_empty_name() {
+        let (store, db_path) = make_test_store_with_view("picker-clone-empty");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist");
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c opens clone");
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save clone with empty name");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(app.status.contains("cannot be empty"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_c_with_no_views_shows_status() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-clone-no-views-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App {
+            mode: Mode::ViewPicker,
+            ..Default::default()
+        };
+
+        app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
+            .expect("c with no views");
+
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.status.contains("No selected view to clone"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() {
         let (store, db_path) = make_test_store_with_view("picker-create-direct-editor");
         let classifier = SubstringClassifier;
@@ -5113,30 +5275,140 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_u_no_longer_opens_item_category_picker() {
+    fn normal_mode_u_toggles_hide_dependent_items_session_only() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-u-alias-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-hide-dependent-u-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
-        store
-            .create_category(&Category::new("Work".to_string()))
-            .expect("create category");
-        store
-            .create_item(&Item::new("demo item".to_string()))
-            .expect("create item");
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        let mut view = View::new("Focused".to_string());
+        view.hide_dependent_items = false;
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("Focused");
+        app.refresh(&store).expect("refresh focused view");
+        app.mode = Mode::Normal;
+
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocked.id)),
+            "blocked item should be visible before toggle"
+        );
+
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("u should toggle hide-dependent on");
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != blocked.id)),
+            "blocked item should be hidden after toggle"
+        );
+        let persisted = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("load persisted view");
+        assert!(
+            !persisted.hide_dependent_items,
+            "session toggle must not persist to the stored view"
+        );
+
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("u should toggle hide-dependent off");
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocked.id)),
+            "blocked item should be visible again after second toggle"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn hide_dependent_session_toggle_resets_on_view_switch() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-hide-dependent-reset-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        for name in ["A", "B"] {
+            let mut view = View::new(name.to_string());
+            view.sections.push(Section {
+                title: "All".to_string(),
+                criteria: Query::default(),
+                columns: Vec::new(),
+                item_column_index: 0,
+                on_insert_assign: std::collections::HashSet::new(),
+                on_remove_unassign: std::collections::HashSet::new(),
+                show_children: false,
+                board_display_mode_override: None,
+            });
+            store.create_view(&view).expect("create view");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("A");
+        app.refresh(&store).expect("refresh A");
         app.mode = Mode::Normal;
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
-            .expect("u should be ignored");
-        assert_eq!(app.mode, Mode::Normal);
+            .expect("enable hide-dependent session toggle");
+        assert!(
+            app.effective_hide_dependent_items(),
+            "session override should enable hide-dependent in current view"
+        );
+
+        app.set_view_selection_by_name("B");
+        app.refresh(&store).expect("refresh B");
+        assert!(
+            !app.effective_hide_dependent_items(),
+            "switching views should reset session hide-dependent toggle"
+        );
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocked.id)),
+            "blocked item should be visible again after view switch reset"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -5890,6 +6162,10 @@ mod tests {
             rendered.contains("p:preview"),
             "normal footer hints should include preview shortcut: {rendered}"
         );
+        assert!(
+            rendered.contains("u:deps"),
+            "normal footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
 
         app.section_filters = vec![Some("ready".to_string())];
         let backend = TestBackend::new(220, 18);
@@ -5903,6 +6179,10 @@ mod tests {
         assert!(
             rendered.contains("p:preview"),
             "filtered footer hints should include preview shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("u:deps"),
+            "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
         );
     }
 
@@ -7592,11 +7872,8 @@ mod tests {
         assert_eq!(saved.note, None, "tab should not autosave");
         assert!(app.status.contains("unsaved changes"));
 
-        // Go back and save explicitly
-        app.set_category_selection_by_id(category.id);
-        app.set_category_manager_focus(CategoryManagerFocus::Details);
-        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
-        app.set_category_manager_details_note_editing(true);
+        // Save explicitly with S from outside note-edit mode
+        assert!(!app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
             .expect("explicit save with S");
         let saved = store.get_category(category.id).expect("load category");
@@ -7607,7 +7884,53 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_note_focus_lowercase_j_starts_note_edit() {
+    fn category_manager_details_note_shift_s_modifier_saves() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-note-shift-s-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        for c in "Ship".chars() {
+            app.handle_category_manager_key(KeyCode::Char(c), &agenda)
+                .expect("type note");
+        }
+        assert!(app.category_manager_details_note_editing());
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit without saving");
+        assert!(!app.category_manager_details_note_editing());
+
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT),
+            &agenda,
+        )
+        .expect("save with shift+s key event");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("Ship"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -7634,11 +7957,23 @@ mod tests {
         assert!(app.category_manager_details_note_editing());
         assert_eq!(app.category_manager_details_note_text(), Some("j"));
 
-        // Save explicitly with S
+        app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
+            .expect("type uppercase S in note");
+        assert!(app.category_manager_details_note_editing());
+        assert_eq!(app.category_manager_details_note_text(), Some("jS"));
+        let unsaved = store
+            .get_category(category.id)
+            .expect("load unsaved category");
+        assert_eq!(unsaved.note, None, "typing uppercase S should not save");
+
+        // Leave note edit mode, then save with S command
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(!app.category_manager_details_note_editing());
         app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
             .expect("save note with S");
         let saved = store.get_category(category.id).expect("load category");
-        assert_eq!(saved.note.as_deref(), Some("j"));
+        assert_eq!(saved.note.as_deref(), Some("jS"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -7684,6 +8019,161 @@ mod tests {
         assert!(!app.category_manager_details_note_editing());
         assert!(!app.category_manager_details_note_dirty());
         assert!(app.status.contains("discarded"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_esc_with_dirty_note_opens_discard_confirm() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-close-confirm-prompt-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(
+            app.category_manager
+                .as_ref()
+                .expect("manager state")
+                .discard_confirm
+        );
+        assert!(app.status.contains("Save changes?"));
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("cancel close confirm");
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(
+            !app.category_manager
+                .as_ref()
+                .expect("manager state")
+                .discard_confirm
+        );
+        assert!(app.category_manager_details_note_dirty());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_discard_confirm_y_saves_and_closes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-close-confirm-yes-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
+            .expect("save and close");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+        assert_eq!(
+            store.get_category(category.id).expect("load category").note,
+            Some("x".to_string())
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_discard_confirm_n_discards_and_closes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-close-confirm-no-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Work".to_string());
+        category.note = Some("seed".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave note edit");
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("discard and close");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+        assert_eq!(
+            store.get_category(category.id).expect("load category").note,
+            Some("seed".to_string())
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
