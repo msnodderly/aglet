@@ -2183,6 +2183,23 @@ impl App {
                             .to_string();
                 }
             }
+            KeyCode::Char('u') => {
+                let persisted = self
+                    .current_view()
+                    .map(|view| view.hide_dependent_items)
+                    .unwrap_or(false);
+                let next_hide_dependent = !self.effective_hide_dependent_items();
+                self.session_hide_dependent_items_override = if next_hide_dependent == persisted {
+                    None
+                } else {
+                    Some(next_hide_dependent)
+                };
+                self.refresh(agenda.store())?;
+                self.status = format!(
+                    "Hide dependent items: {} (session-only)",
+                    if next_hide_dependent { "ON" } else { "OFF" }
+                );
+            }
             KeyCode::Char('p') => self.toggle_preview(),
             KeyCode::Char('i') => self.toggle_preview_mode(),
             KeyCode::Char('o') => self.toggle_preview_mode(),
