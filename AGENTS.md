@@ -38,6 +38,18 @@ To show items with different mutually exclusive values:
 - Create separate views for each value
 - Or use sections (TUI feature, not yet exposed in CLI)
 
+## `agenda-cli view clone` Semantics
+
+`agenda-cli view clone "<source>" "<new name>"` creates a new mutable view by
+copying the source view configuration (criteria, sections, unmatched settings,
+aliases, and display metadata) with a fresh ID.
+
+Practical implications:
+- Cloning **does not mutate** the source view (including immutable system views
+  like `All Items`).
+- Target-name validation still uses create rules; reserved system target names
+  (for example `All Items`) are rejected.
+
 ## CLI Default Behavior
 
 Running `agenda-cli list` without arguments shows a default view, which may be
@@ -489,6 +501,17 @@ Practical implications:
 - Add-item flows still apply section criteria assignments (for example `Ready`)
   through the normal section insert path.
 
+## Clap `--help` Coverage Requires Per-Arg Doc Comments (Surprising)
+
+In `agenda-cli`, Clap renders blank lines for options/arguments that have no
+doc comment/help string, even when the command itself is documented.
+
+Practical implications:
+- Add explicit doc comments for every user-facing option and positional arg in
+  parser enums (`Command`, `CategoryCommand`, `ViewCommand`, etc.).
+- Keep a parser regression test that walks the command tree and fails when any
+  non-`help` argument lacks help text (current test:
+  `clap_help_docs_cover_all_commands_and_arguments`).
 ## Normal Mode Preview Hint Must Be In Footer (Discoverability)
 
 `p` already toggles item preview in `Mode::Normal`, but discoverability depends
@@ -499,3 +522,19 @@ Practical implications:
   with section filters (`Esc:clear search`) and without filters.
 - If you edit normal footer hints, preserve preview discoverability and update
   rendering tests that assert `p:preview` is visible.
+
+## View Creation Wizard Defers Persistence Until `S` In ViewEdit (Behavior)
+
+`ViewPicker` -> `n` now opens a name input, then enters `ViewEdit` with an
+unsaved draft (`is_new_view=true`) after saving the name. The new view is not
+written to the DB until `S` is pressed in `ViewEdit`.
+
+Practical implications:
+- Do not call `store.create_view()` in the name-input save path for
+  `NameInputContext::ViewCreate`; open `ViewEdit` with a draft instead.
+- `handle_view_edit_save` must branch: `create_view` for new drafts,
+  `update_view` for existing views.
+- Cancel paths (`Esc`/discard confirm) in new-view `ViewEdit` must not persist
+  partial drafts.
+- Initial wizard focus starts in inline section-title input; first `Esc` exits
+  inline editing, then `Esc` again closes/cancels the wizard.

@@ -174,6 +174,7 @@ enum Mode {
     Normal,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
+    // TODO(feature): inline note editor not yet implemented
     #[allow(dead_code)]
     NoteEdit,
     ItemAssignPicker,
@@ -189,6 +190,7 @@ enum Mode {
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
+    // TODO(feature): confirmation dialog before creating a category not yet implemented
     #[allow(dead_code)]
     CategoryCreateConfirm {
         name: String,
@@ -338,6 +340,7 @@ enum ViewEditInlineInput {
 #[derive(Clone)]
 struct ViewEditState {
     draft: View,
+    is_new_view: bool,
     region: ViewEditRegion,
     pane_focus: ViewEditPaneFocus,
     criteria_index: usize,
@@ -436,12 +439,14 @@ struct CategoryManagerState {
 
 #[derive(Clone, Debug)]
 struct CategorySuggestState {
+    // TODO(feature): not yet used in rendering; reserved for keyboard-driven suggestion navigation
     #[allow(dead_code)]
     suggest_index: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AddColumnDirection {
+    // TODO(feature): inserting a column to the left not yet wired up
     #[allow(dead_code)]
     Left,
     Right,
@@ -537,6 +542,7 @@ struct CategoryDirectEditRow {
 
 #[derive(Clone)]
 struct CategoryDirectEditState {
+    // TODO(feature): anchor position not yet used in layout calculation
     #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
@@ -560,12 +566,14 @@ enum CategoryColumnPickerFocus {
 
 #[derive(Clone)]
 struct CategoryColumnPickerState {
+    // TODO(feature): anchor position not yet used in layout calculation
     #[allow(dead_code)]
     anchor: CategoryDirectEditAnchor,
     parent_id: CategoryId,
     parent_name: String,
     item_id: ItemId,
     item_label: String,
+    item_preview_scroll: u16,
     is_exclusive: bool,
     filter: text_buffer::TextBuffer,
     focus: CategoryColumnPickerFocus,
@@ -582,6 +590,7 @@ impl CategoryDirectEditRow {
         }
     }
 
+    // TODO(feature): pre-populate input with a resolved category name (e.g. from suggestion)
     #[allow(dead_code)]
     fn resolved(category_id: CategoryId, name: String) -> Self {
         Self {
@@ -2467,6 +2476,68 @@ mod tests {
         assert_eq!(state.create_confirm_name, None);
         assert_eq!(state.filter.text(), "NewTag");
         assert_eq!(app.mode, Mode::CategoryColumnPicker);
+    }
+
+    #[test]
+    fn category_column_picker_renders_wrapped_full_item_text_context() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut area = Category::new("Area".to_string());
+        let mut cli = Category::new("CLI".to_string());
+        cli.parent = Some(area.id);
+        area.children = vec![cli.id];
+        for cat in [&area, &cli] {
+            store.create_category(cat).expect("create category");
+        }
+
+        let long_title =
+            "Board picker context should include wrapped text and tail token UNIQUEENDTOKEN";
+        let item = Item::new(long_title.to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: area.id,
+                width: 12,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1;
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open picker");
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+
+        let backend = TestBackend::new(92, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render picker");
+
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Item Context"),
+            "picker should render item context block: {rendered}"
+        );
+        assert!(
+            rendered.contains("UNIQUEENDTOKEN"),
+            "picker should render full wrapped item text without truncating tail token: {rendered}"
+        );
     }
 
     #[test]
@@ -4451,7 +4522,7 @@ mod tests {
     }
 
     #[test]
-    fn view_create_name_save_opens_view_edit_directly_with_first_section_editing() {
+    fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() {
         let (store, db_path) = make_test_store_with_view("picker-create-direct-editor");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -4479,6 +4550,10 @@ mod tests {
         let state = app.view_edit_state.as_ref().expect("view edit state");
         assert_eq!(state.region, ViewEditRegion::Sections);
         assert_eq!(state.draft.name, "Mixed");
+        assert!(
+            state.is_new_view,
+            "newly-created wizard draft should not be persisted until save"
+        );
         assert_eq!(state.draft.criteria.criteria.len(), 0);
         assert_eq!(state.draft.sections.len(), 1);
         assert!(matches!(
@@ -4486,11 +4561,99 @@ mod tests {
             Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
         ));
 
+        let persisted = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Mixed");
+        assert!(
+            persisted.is_none(),
+            "view should not be stored until ViewEdit save"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_create_wizard_esc_discards_unsaved_view() {
+        let (store, db_path) = make_test_store_with_view("picker-create-esc-cancel");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("open create name input");
+        for ch in "Scratch".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save button");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("open wizard");
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        // First Esc exits inline section-title editing.
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("exit inline section title");
+        assert_eq!(app.mode, Mode::ViewEdit);
+        // Second Esc cancels the unsaved new-view wizard.
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("cancel wizard");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+
+        let persisted = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "Scratch");
+        assert!(
+            persisted.is_none(),
+            "Esc cancel should not persist a partially-created view"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_create_wizard_s_save_persists_view() {
+        let (store, db_path) = make_test_store_with_view("picker-create-save");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+
+        app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+            .expect("open create name input");
+        for ch in "Roadmap".chars() {
+            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save button");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("open wizard");
+        assert_eq!(app.mode, Mode::ViewEdit);
+
+        // Exit initial inline section-title input before using global save key.
+        app.handle_view_edit_key(KeyCode::Esc, &agenda)
+            .expect("exit inline section title");
+        app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
+            .expect("save new view");
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.view_edit_state.is_none());
+
         let created = store
             .list_views()
             .expect("list views")
             .into_iter()
-            .find(|view| view.name == "Mixed")
+            .find(|view| view.name == "Roadmap")
             .expect("created view");
         assert_eq!(created.criteria.criteria.len(), 0);
         assert_eq!(created.sections.len(), 1);
