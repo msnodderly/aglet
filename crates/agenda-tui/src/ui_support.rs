@@ -43,11 +43,11 @@ pub(super) fn when_bucket_label(bucket: WhenBucket) -> &'static str {
         WhenBucket::Overdue => "Overdue",
         WhenBucket::Today => "Today",
         WhenBucket::Tomorrow => "Tomorrow",
-        WhenBucket::ThisWeek => "ThisWeek",
-        WhenBucket::NextWeek => "NextWeek",
-        WhenBucket::ThisMonth => "ThisMonth",
+        WhenBucket::ThisWeek => "This Week",
+        WhenBucket::NextWeek => "Next Week",
+        WhenBucket::ThisMonth => "This Month",
         WhenBucket::Future => "Future",
-        WhenBucket::NoDate => "NoDate",
+        WhenBucket::NoDate => "No Date",
     }
 }
 

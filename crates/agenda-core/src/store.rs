@@ -140,7 +140,7 @@ impl Store {
     }
 
     /// Access the underlying connection.
-    pub fn conn(&self) -> &Connection {
+    pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
 
@@ -1530,48 +1530,37 @@ impl Store {
         }
     }
 
-    fn map_category_write_error(err: rusqlite::Error, category_name: &str) -> AgendaError {
+    /// Map a SQLite write error to a domain error, detecting unique-name violations.
+    /// `table_column` is e.g. `"categories.name"` or `"views.name"` for the fallback
+    /// message-based detection path.
+    fn map_write_error(err: rusqlite::Error, name: &str, table_column: &str) -> AgendaError {
         match err {
             rusqlite::Error::SqliteFailure(sqlite_err, _)
                 if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
                     && sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
                 AgendaError::DuplicateName {
-                    name: category_name.to_string(),
+                    name: name.to_string(),
                 }
             }
-            rusqlite::Error::SqliteFailure(sqlite_err, Some(message))
+            rusqlite::Error::SqliteFailure(sqlite_err, Some(ref message))
                 if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && message.contains("categories.name") =>
+                    && message.contains(table_column) =>
             {
                 AgendaError::DuplicateName {
-                    name: category_name.to_string(),
+                    name: name.to_string(),
                 }
             }
             other => AgendaError::from(other),
         }
     }
 
+    fn map_category_write_error(err: rusqlite::Error, category_name: &str) -> AgendaError {
+        Self::map_write_error(err, category_name, "categories.name")
+    }
+
     fn map_view_write_error(err: rusqlite::Error, view_name: &str) -> AgendaError {
-        match err {
-            rusqlite::Error::SqliteFailure(sqlite_err, _)
-                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                AgendaError::DuplicateName {
-                    name: view_name.to_string(),
-                }
-            }
-            rusqlite::Error::SqliteFailure(sqlite_err, Some(message))
-                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && message.contains("views.name") =>
-            {
-                AgendaError::DuplicateName {
-                    name: view_name.to_string(),
-                }
-            }
-            other => AgendaError::from(other),
-        }
+        Self::map_write_error(err, view_name, "views.name")
     }
 
     fn get_category_id_by_name(&self, name: &str) -> Result<Option<CategoryId>> {
