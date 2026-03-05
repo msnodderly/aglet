@@ -38,6 +38,7 @@ dependencies = [
  "ratatui",
  "rust_decimal",
  "tui-textarea-2",
+ "uuid",
 ]
 
 [[package]]
