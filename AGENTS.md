@@ -529,3 +529,41 @@ Practical implications:
   partial drafts.
 - Initial wizard focus starts in inline section-title input; first `Esc` exits
   inline editing, then `Esc` again closes/cancels the wizard.
+
+## Manual PR Review Session Workflow (Process)
+
+1. Enumerate open PRs sorted by PR number and review sequentially.
+2. For each PR, provide:
+   - an intent + product-fit assessment
+   - copy/paste smoke-test commands
+   - expected pass/fail signals.
+3. Use explicit decision gating per PR:
+   - reviewer responds `accept <PR#>` or `reject <PR#>`
+   - record a running decision log
+   - work exactly one PR at a time; do not begin reviewing the next PR until the current PR has an explicit accept/reject decision
+   - do not merge/close during the active review loop.
+4. Operational guardrails:
+   - prefer existing per-PR worktrees when `gh pr checkout` reports branch/worktree conflicts
+   - avoid `set -e` / `set -o pipefail` in user-facing pasted commands
+   - use deterministic temp-DB smoke scripts for CLI features and clean up seeded data.
+5. Review quality bar:
+   - verify both behavior and product/API shape (not only green tests)
+   - call out concrete findings with severity and file/line references
+   - separate blocking issues from follow-up issues.
+6. Tracking hygiene:
+   - keep accept/reject log visible throughout the session
+   - search tracking DBs for existing matching feature items before creating new ones
+   - complete existing items instead of creating duplicates when appropriate.
+7. Finalization phase (when session ends):
+   - run finalization steps strictly serially (never in parallel): merge/close actions must be one command at a time
+   - fetch latest remote refs immediately before finalization (`git fetch origin`)
+   - sync `main`
+   - merge all accepted PRs in order
+   - if conflicts occur, fetch again, merge current `origin/main` into each accepted PR branch, resolve, test, push, then merge
+   - do not resolve conflicts against stale `origin/main`; always refresh refs first
+   - close rejected PRs with a short comment
+   - report remaining open PRs for the next session.
+8. Finalization workspace hygiene:
+   - prefer a clean integration worktree for finalization to avoid local dirty-file interference
+   - if local `main` cannot fast-forward because of local modifications, do not force-reset; report the exact blocking files/paths and current `HEAD` vs `origin/main`
+   - after each merge/close action, re-check PR state before moving to the next step.
