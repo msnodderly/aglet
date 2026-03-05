@@ -170,7 +170,7 @@ Follow `AGENTS.md`. Issue ID: `bd-1c5`.
 # Claim on main:
 #   br update bd-1c5 --status in_progress
 #   br comments add bd-1c5 "Claimed <date>. Plan: <your approach>"
-#   br sync --flush-only && git add .beads/ && git commit -m "br sync: Claim bd-1c5"
+#   # (legacy beads reference removed) -m "br sync: Claim bd-1c5"
 
 git checkout -b task/t017-rule-engine
 

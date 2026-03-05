@@ -128,7 +128,7 @@ it belongs in this phase.
 
 ```bash
 br sync --flush-only
-git add .beads/
+git add aglet-features.ag
 git commit -m "br sync: Create Phase N issues (T0XX-T0YY)"
 ```
 
@@ -145,4 +145,4 @@ git commit -m "br sync: Create Phase N issues (T0XX-T0YY)"
 - [ ] Create issues with labels and dependencies
 - [ ] `br ready` and `br blocked` show correct graph
 - [ ] Walk the checkpoint — every claim traces to an issue
-- [ ] Commit `.beads/`
+- [ ] Commit `aglet-features.ag`
