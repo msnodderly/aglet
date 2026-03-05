@@ -97,6 +97,7 @@ fn process_item_inner(
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
     let categories = store.get_hierarchy()?;
+    let match_text = item_match_text(&item);
 
     let mut assignments = item.assignments;
     let mut seen_pairs: HashSet<(ItemId, CategoryId)> = assignments
@@ -112,7 +113,7 @@ fn process_item_inner(
             store,
             classifier,
             item_id,
-            &item.text,
+            &match_text,
             &categories,
             &mut assignments,
             &mut seen_pairs,
@@ -137,6 +138,13 @@ fn process_item_inner(
     }
 
     unreachable!("fixed-point loop should always return from within MAX_PASSES");
+}
+
+fn item_match_text(item: &crate::model::Item) -> String {
+    match item.note.as_deref() {
+        Some(note) if !note.trim().is_empty() => format!("{} {}", item.text, note),
+        _ => item.text.clone(),
+    }
 }
 
 fn run_hierarchy_pass(
@@ -515,6 +523,13 @@ mod tests {
         store.update_item(&item).unwrap();
     }
 
+    fn set_item_note(store: &Store, item_id: ItemId, note: Option<&str>) {
+        let mut item = store.get_item(item_id).unwrap();
+        item.note = note.map(str::to_string);
+        item.modified_at = Utc::now();
+        store.update_item(&item).unwrap();
+    }
+
     fn manual_assignment() -> Assignment {
         Assignment {
             source: AssignmentSource::Manual,
@@ -569,6 +584,27 @@ mod tests {
 
         assert!(result.new_assignments.contains(&sarah.id));
         assert!(result.deferred_removals.is_empty());
+    }
+
+    #[test]
+    fn process_item_implicit_match_uses_note_text() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let sarah = Category::new("Sarah".to_string());
+        create_category(&store, &sarah);
+
+        let item = create_item(&store, "Call someone tomorrow");
+        set_item_note(&store, item.id, Some("Follow up with Sarah after lunch"));
+
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&sarah.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&sarah.id).unwrap().source,
+            AssignmentSource::AutoMatch
+        );
     }
 
     #[test]
