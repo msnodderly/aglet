@@ -9,7 +9,7 @@ use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, CriterionMode, Item, ItemId, Query, View,
+    Category, CategoryId, CategoryValueKind, CriterionMode, Item, ItemId, Query, SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -386,15 +386,19 @@ enum ViewCommand {
         /// Hide items that do not match any section.
         #[arg(long = "hide-unmatched")]
         hide_unmatched: bool,
+        /// Hide items blocked by unresolved dependencies.
         #[arg(long = "hide-dependent-items")]
         hide_dependent_items: bool,
     },
 
     /// Edit mutable view properties
     Edit {
+        /// Existing view name.
         name: String,
+        /// Set whether unmatched items are shown.
         #[arg(long = "hide-unmatched")]
         hide_unmatched: Option<bool>,
+        /// Set whether blocked items are hidden.
         #[arg(long = "hide-dependent-items")]
         hide_dependent_items: Option<bool>,
     },
@@ -2102,6 +2106,7 @@ struct JsonItemsOutput {
 struct JsonViewSubsectionOutput {
     title: String,
     items: Vec<JsonItemRow>,
+    summaries: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -2109,6 +2114,7 @@ struct JsonViewSectionOutput {
     title: String,
     items: Vec<JsonItemRow>,
     subsections: Vec<JsonViewSubsectionOutput>,
+    summaries: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -2434,20 +2440,36 @@ fn print_items_for_view(
     if output_format == OutputFormatArg::Json {
         let mut sections = Vec::new();
         for section in result.sections {
+            let summaries = section_summary_entries(
+                view,
+                section.section_index,
+                &section.items,
+                categories,
+                category_names,
+            );
             if section.subsections.is_empty() {
                 sections.push(JsonViewSectionOutput {
                     title: section.title,
                     items: rows_to_json(&section.items, category_names, sort_keys, categories),
                     subsections: Vec::new(),
+                    summaries,
                 });
                 continue;
             }
 
             let mut subsections = Vec::new();
             for subsection in section.subsections {
+                let subsection_summaries = section_summary_entries(
+                    view,
+                    section.section_index,
+                    &subsection.items,
+                    categories,
+                    category_names,
+                );
                 subsections.push(JsonViewSubsectionOutput {
                     title: subsection.title,
                     items: rows_to_json(&subsection.items, category_names, sort_keys, categories),
+                    summaries: subsection_summaries,
                 });
             }
 
@@ -2455,6 +2477,7 @@ fn print_items_for_view(
                 title: section.title,
                 items: Vec::new(),
                 subsections,
+                summaries,
             });
         }
 
@@ -2505,15 +2528,34 @@ fn print_items_for_view(
     }
 
     for section in result.sections {
+        let section_index = section.section_index;
         println!("\n## {}", section.title);
         if section.subsections.is_empty() {
             print_item_table(&section.items, category_names, sort_keys, categories);
+            if let Some(summary_line) = section_summary_line(
+                view,
+                section_index,
+                &section.items,
+                categories,
+                category_names,
+            ) {
+                println!("{summary_line}");
+            }
             continue;
         }
 
         for subsection in section.subsections {
             println!("\n### {}", subsection.title);
             print_item_table(&subsection.items, category_names, sort_keys, categories);
+            if let Some(summary_line) = section_summary_line(
+                view,
+                section_index,
+                &subsection.items,
+                categories,
+                category_names,
+            ) {
+                println!("{summary_line}");
+            }
         }
     }
 
@@ -2537,6 +2579,116 @@ fn print_items_for_view(
         }
     }
     Ok(())
+}
+
+fn section_summary_line(
+    view: &View,
+    section_index: usize,
+    items: &[Item],
+    categories: &[Category],
+    category_names: &HashMap<CategoryId, String>,
+) -> Option<String> {
+    let entries = section_summary_entries(view, section_index, items, categories, category_names);
+    if entries.is_empty() {
+        return None;
+    }
+    Some(format!("summary: {}", entries.join(" | ")))
+}
+
+fn section_summary_entries(
+    view: &View,
+    section_index: usize,
+    items: &[Item],
+    categories: &[Category],
+    category_names: &HashMap<CategoryId, String>,
+) -> Vec<String> {
+    let Some(section) = view.sections.get(section_index) else {
+        return Vec::new();
+    };
+
+    let categories_by_id: HashMap<CategoryId, &Category> = categories
+        .iter()
+        .map(|category| (category.id, category))
+        .collect();
+    section
+        .columns
+        .iter()
+        .filter_map(|column| {
+            let summary_fn = column.summary_fn.unwrap_or(SummaryFn::None);
+            if summary_fn == SummaryFn::None {
+                return None;
+            }
+
+            let value = column_summary_value(summary_fn, column.heading, items, &categories_by_id)?;
+            let heading = category_names
+                .get(&column.heading)
+                .cloned()
+                .unwrap_or_else(|| format!("(deleted:{})", column.heading));
+            Some(format!(
+                "{}({})={}",
+                heading,
+                summary_fn_label(summary_fn),
+                value.normalize()
+            ))
+        })
+        .collect()
+}
+
+fn column_summary_value(
+    summary_fn: SummaryFn,
+    heading_id: CategoryId,
+    items: &[Item],
+    categories_by_id: &HashMap<CategoryId, &Category>,
+) -> Option<Decimal> {
+    if categories_by_id
+        .get(&heading_id)
+        .map(|category| category.value_kind != CategoryValueKind::Numeric)
+        .unwrap_or(true)
+    {
+        return None;
+    }
+
+    let values: Vec<Decimal> = items
+        .iter()
+        .filter_map(|item| {
+            item.assignments
+                .get(&heading_id)
+                .and_then(|assignment| assignment.numeric_value)
+        })
+        .collect();
+
+    match summary_fn {
+        SummaryFn::None => None,
+        SummaryFn::Sum => {
+            if values.is_empty() {
+                None
+            } else {
+                Some(values.iter().copied().sum())
+            }
+        }
+        SummaryFn::Avg => {
+            if values.is_empty() {
+                None
+            } else {
+                let sum: Decimal = values.iter().copied().sum();
+                Some(sum / Decimal::from(values.len() as u32))
+            }
+        }
+        SummaryFn::Min => values.iter().copied().min(),
+        SummaryFn::Max => values.iter().copied().max(),
+        SummaryFn::Count => Some(Decimal::from(values.len() as u32)),
+    }
+}
+
+fn summary_fn_label(summary_fn: SummaryFn) -> &'static str {
+    match summary_fn {
+        SummaryFn::None => "none",
+        SummaryFn::Sum => "sum",
+        SummaryFn::Avg => "avg",
+        SummaryFn::Min => "min",
+        SummaryFn::Max => "max",
+        SummaryFn::Count => "count",
+    }
 }
 
 fn print_item_table(
@@ -2783,21 +2935,23 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit, cmd_link, cmd_unlink,
-        cmd_view, compare_items_by_sort_keys, duplicate_category_create_error,
-        item_link_section_lines, parse_csv_decimals, parse_decimal_value, parse_sort_spec,
-        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
-        retain_items_with_all_categories, retain_items_with_any_categories,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit,
+        cmd_link, cmd_unlink, cmd_view, compare_items_by_sort_keys,
+        duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
+        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
+        reject_items_with_any_categories, retain_items_by_dependency_state,
+        retain_items_matching_numeric_filters, retain_items_with_all_categories,
+        retain_items_with_any_categories, section_summary_entries, section_summary_line,
         unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
-        write_stdout_allow_broken_pipe, blocked_item_ids, Cli, CliSortDirection, CliSortField,
-        CliSortKey, Command, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        write_stdout_allow_broken_pipe, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
+        DependencyStateFilter, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
+        OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Category, CategoryValueKind, CriterionMode, Item, Query, Section, View,
+        Category, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, Query, Section,
+        SummaryFn, View,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -3823,6 +3977,142 @@ mod tests {
 
         let updated = store.get_view(view_id).expect("load updated view");
         assert!(updated.hide_dependent_items);
+    }
+
+    #[test]
+    fn section_summary_entries_supports_all_summary_functions() {
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        let status = Category::new("Status".to_string());
+
+        let mut item_a = Item::new("A".to_string());
+        item_a.assignments.insert(
+            cost.id,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: chrono::Utc::now(),
+                sticky: true,
+                origin: None,
+                numeric_value: Some(Decimal::new(100, 0)),
+            },
+        );
+        let mut item_b = Item::new("B".to_string());
+        item_b.assignments.insert(
+            cost.id,
+            agenda_core::model::Assignment {
+                source: agenda_core::model::AssignmentSource::Manual,
+                assigned_at: chrono::Utc::now(),
+                sticky: true,
+                origin: None,
+                numeric_value: Some(Decimal::new(250, 0)),
+            },
+        );
+        let item_c = Item::new("C".to_string());
+        let items = vec![item_a, item_b, item_c];
+
+        let mut view = View::new("Summary".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Sum),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Avg),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Min),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Max),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Count),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: status.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Sum),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::None),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: None,
+                },
+            ],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+
+        let categories = vec![cost.clone(), status];
+        let category_names = HashMap::from([(cost.id, "Cost".to_string())]);
+        let entries = section_summary_entries(&view, 0, &items, &categories, &category_names);
+        assert_eq!(
+            entries,
+            vec![
+                "Cost(sum)=350".to_string(),
+                "Cost(avg)=175".to_string(),
+                "Cost(min)=100".to_string(),
+                "Cost(max)=250".to_string(),
+                "Cost(count)=2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn section_summary_line_is_none_when_no_summary_columns_are_configured() {
+        let status = Category::new("Status".to_string());
+        let mut view = View::new("Summary".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: status.id,
+                width: 12,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+
+        let items = vec![Item::new("A".to_string())];
+        let categories = vec![status];
+        let category_names = HashMap::new();
+        assert_eq!(
+            section_summary_line(&view, 0, &items, &categories, &category_names),
+            None
+        );
     }
 
     #[test]
