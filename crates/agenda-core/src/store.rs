@@ -271,7 +271,8 @@ impl Store {
     pub fn delete_item(&self, id: ItemId, deleted_by: &str) -> Result<()> {
         let item = self.get_item(id)?;
         let assignments_json =
-            serde_json::to_string(&item.assignments).unwrap_or_else(|_| "{}".to_string());
+            serde_json::to_string(&item.assignments)
+                .expect("BTreeMap<CategoryId, Assignment> is always serialisable");
 
         self.conn.execute(
             "INSERT INTO deletion_log (id, item_id, text, note, entry_date, when_date, done_date, is_done, assignments_json, deleted_at, deleted_by)
@@ -362,6 +363,7 @@ impl Store {
         };
         self.create_item(&item)?;
 
+        // Corrupt or legacy deletion-log row: restore item without assignments.
         let assignments: HashMap<CategoryId, Assignment> =
             serde_json::from_str(&entry.assignments_json).unwrap_or_default();
         for (category_id, assignment) in assignments {
@@ -1021,6 +1023,8 @@ impl Store {
         let item_column_label: Option<String> = row.get(9)?;
         let board_display_mode_json: Option<String> = row.get(10)?;
 
+        // Corrupt or legacy view row: fall back to empty defaults so the view
+        // still loads rather than failing the entire hierarchy read.
         let criteria: Query = serde_json::from_str(&criteria_json).unwrap_or_default();
         let sections: Vec<Section> = serde_json::from_str(&sections_json).unwrap_or_default();
         let remove_from_view_unassign: HashSet<CategoryId> =
@@ -1315,6 +1319,8 @@ impl Store {
         let value_kind_str: String = row.get(12)?;
         let numeric_format_json: String = row.get(13)?;
 
+        // Corrupt or legacy category row: fall back to no conditions/actions
+        // so the category still loads without its rules rather than failing.
         let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
         let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
         let value_kind = Self::category_value_kind_from_db(&value_kind_str);
@@ -1854,6 +1860,7 @@ impl Store {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
             for (view_id, columns_json) in rows {
+                // Corrupt legacy row: treat as having no columns and skip the migration.
                 let mut columns: Vec<serde_json::Value> =
                     serde_json::from_str(&columns_json).unwrap_or_default();
                 let mut changed = false;
@@ -1873,7 +1880,8 @@ impl Store {
                     }
                 }
                 if changed {
-                    let new_json = serde_json::to_string(&columns).unwrap_or_default();
+                    let new_json = serde_json::to_string(&columns)
+                        .expect("Vec<serde_json::Value> is always serialisable");
                     self.conn.execute(
                         "UPDATE views SET columns_json = ?1 WHERE id = ?2",
                         params![new_json, view_id],
