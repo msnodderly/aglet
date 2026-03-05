@@ -5,7 +5,8 @@ use chrono::Utc;
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, Condition, ItemId, Query,
+    origin as origin_const, Action, Assignment, AssignmentSource, Category, CategoryId, Condition,
+    ItemId, Query,
 };
 use crate::store::Store;
 
@@ -393,7 +394,7 @@ fn assign_subsumption_ancestors(
         return Ok(());
     };
 
-    let subsumption_origin = Some(format!("subsumption:{}", category.name));
+    let subsumption_origin = Some(format!("{}:{}", origin_const::SUBSUMPTION, category.name));
     let mut current_parent = category.parent;
     let mut visited = HashSet::new();
 
