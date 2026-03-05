@@ -195,7 +195,20 @@ impl App {
                 .cloned()
                 .ok_or("No active view".to_string())?;
             let reference_date = Local::now().date_naive();
-            let result = resolve_view(&view, &items, &self.categories, reference_date);
+            let mut result = resolve_view(&view, &items, &self.categories, reference_date);
+            if view.hide_dependent_items {
+                for section in &mut result.sections {
+                    section.items.retain(|item| !self.is_item_blocked(item.id));
+                    for subsection in &mut section.subsections {
+                        subsection
+                            .items
+                            .retain(|item| !self.is_item_blocked(item.id));
+                    }
+                }
+                if let Some(unmatched_items) = &mut result.unmatched {
+                    unmatched_items.retain(|item| !self.is_item_blocked(item.id));
+                }
+            }
 
             for section in result.sections {
                 if section.subsections.is_empty() {
