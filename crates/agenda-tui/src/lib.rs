@@ -786,6 +786,8 @@ struct App {
 
     views: Vec<View>,
     view_index: usize,
+    active_view_name: Option<String>,
+    session_hide_dependent_items_override: Option<bool>,
     picker_index: usize,
     view_pending_edit_name: Option<String>,
     view_edit_state: Option<ViewEditState>,
@@ -840,6 +842,8 @@ impl Default for App {
             item_links_by_item_id: HashMap::new(),
             views: Vec::new(),
             view_index: 0,
+            active_view_name: None,
+            session_hide_dependent_items_override: None,
             picker_index: 0,
             view_pending_edit_name: None,
             view_edit_state: None,
@@ -5114,30 +5118,140 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_u_no_longer_opens_item_category_picker() {
+    fn normal_mode_u_toggles_hide_dependent_items_session_only() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-u-alias-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-hide-dependent-u-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
-        store
-            .create_category(&Category::new("Work".to_string()))
-            .expect("create category");
-        store
-            .create_item(&Item::new("demo item".to_string()))
-            .expect("create item");
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        let mut view = View::new("Focused".to_string());
+        view.hide_dependent_items = false;
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("Focused");
+        app.refresh(&store).expect("refresh focused view");
+        app.mode = Mode::Normal;
+
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocked.id)),
+            "blocked item should be visible before toggle"
+        );
+
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("u should toggle hide-dependent on");
+        assert!(
+            app.slots
+                .iter()
+                .all(|slot| slot.items.iter().all(|item| item.id != blocked.id)),
+            "blocked item should be hidden after toggle"
+        );
+        let persisted = store
+            .get_view(app.current_view().expect("current view").id)
+            .expect("load persisted view");
+        assert!(
+            !persisted.hide_dependent_items,
+            "session toggle must not persist to the stored view"
+        );
+
+        app.handle_normal_key(KeyCode::Char('u'), &agenda)
+            .expect("u should toggle hide-dependent off");
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocked.id)),
+            "blocked item should be visible again after second toggle"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn hide_dependent_session_toggle_resets_on_view_switch() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-hide-dependent-reset-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        for name in ["A", "B"] {
+            let mut view = View::new(name.to_string());
+            view.sections.push(Section {
+                title: "All".to_string(),
+                criteria: Query::default(),
+                columns: Vec::new(),
+                item_column_index: 0,
+                on_insert_assign: std::collections::HashSet::new(),
+                on_remove_unassign: std::collections::HashSet::new(),
+                show_children: false,
+                board_display_mode_override: None,
+            });
+            store.create_view(&view).expect("create view");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("A");
+        app.refresh(&store).expect("refresh A");
         app.mode = Mode::Normal;
 
         app.handle_normal_key(KeyCode::Char('u'), &agenda)
-            .expect("u should be ignored");
-        assert_eq!(app.mode, Mode::Normal);
+            .expect("enable hide-dependent session toggle");
+        assert!(
+            app.effective_hide_dependent_items(),
+            "session override should enable hide-dependent in current view"
+        );
+
+        app.set_view_selection_by_name("B");
+        app.refresh(&store).expect("refresh B");
+        assert!(
+            !app.effective_hide_dependent_items(),
+            "switching views should reset session hide-dependent toggle"
+        );
+        assert!(
+            app.slots
+                .iter()
+                .any(|slot| slot.items.iter().any(|item| item.id == blocked.id)),
+            "blocked item should be visible again after view switch reset"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -5891,6 +6005,10 @@ mod tests {
             rendered.contains("p:preview"),
             "normal footer hints should include preview shortcut: {rendered}"
         );
+        assert!(
+            rendered.contains("u:deps"),
+            "normal footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
 
         app.section_filters = vec![Some("ready".to_string())];
         let backend = TestBackend::new(220, 18);
@@ -5904,6 +6022,10 @@ mod tests {
         assert!(
             rendered.contains("p:preview"),
             "filtered footer hints should include preview shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("u:deps"),
+            "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
         );
     }
 
