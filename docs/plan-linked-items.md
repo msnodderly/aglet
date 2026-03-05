@@ -1158,7 +1158,7 @@ Phase 7 exit criteria:
 ### Phase 8: Integration Validation and QA (MVP Cut)
 
 - [x] Run `cargo test --workspace`.
-- [x] Run targeted manual CLI scenarios on `feature-requests.ag` or a temp `.ag`:
+- [x] Run targeted manual CLI scenarios on `aglet-features.ag` or a temp `.ag`:
   - create items
   - add `depends-on`
   - add `blocks` (verify inversion)

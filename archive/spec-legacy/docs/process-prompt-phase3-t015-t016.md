@@ -95,7 +95,7 @@ Follow the branching workflow in `AGENTS.md`:
 # before you start. If not, do them on main first:
 #   br update bd-2dg --status in_progress
 #   br comments add bd-2dg "Claimed <date>. Plan: define Classifier trait + SubstringClassifier with word-boundary matching"
-#   br sync --flush-only && git add .beads/ && git commit -m "br sync: Claim bd-2dg"
+#   # (legacy beads reference removed) -m "br sync: Claim bd-2dg"
 
 # Create your branch from main
 git checkout -b task/t015-t016-classifier

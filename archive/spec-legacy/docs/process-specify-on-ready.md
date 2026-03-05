@@ -12,7 +12,7 @@ After closing an issue on `main`:
 
 ```bash
 br close <id>
-br sync --flush-only && git add .beads/ && git commit -m "br sync: Close <id>"
+# (legacy beads reference removed) -m "br sync: Close <id>"
 
 # Scheduling source of truth
 br ready

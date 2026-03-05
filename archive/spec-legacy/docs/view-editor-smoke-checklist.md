@@ -4,7 +4,7 @@ Use this checklist after TUI changes to validate the streamlined view workflow.
 
 ## Setup
 
-- Run: `cargo run --bin agenda-tui -- --db /Users/mds/src/aglet/feature-requests.ag`
+- Run: `cargo run --bin agenda-tui -- --db /Users/mds/src/aglet/aglet-features.ag`
 - Open the quick view picker with `v`
 
 ## Quick Picker (Must Stay Lightweight)

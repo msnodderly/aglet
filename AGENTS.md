@@ -91,28 +91,10 @@ Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts
 The project has two binaries: `agenda-cli` and `agenda-tui`. Use
 `cargo run --bin agenda-cli` or `cargo run --bin agenda-tui` to run them.
 
-## Feature Requests Database
-
-`feature-requests.ag` in the project root is the dogfooding database used to
-track feature requests for aglet itself. It uses these categories:
-
-- **Area** (non-exclusive): CLI, UX, Validation, Display, Automation
-- **Priority** (exclusive): High, Medium, Low
-- **Status** (exclusive): Pending, In Progress, Completed, Deferred
-
-Views defined: All Items, Backlog, CLI, Deferred, High Priority, Pending, UX.
-
-Every item should have Priority, Status, and at least one Area category. If
-you see an item missing any of these in `view show "All Items"`, assign them.
-
-Manual TUI testing against `feature-requests.ag` can create SQLite sidecar files
-`feature-requests.ag-wal` and `feature-requests.ag-shm`. Treat these as local
-runtime artifacts and do not commit them.
-
 ## Aglet Features Database
 
-`aglet-features.ag` in the project root tracks feature ideas and requests for
-aglet itself (distinct from `feature-requests.ag`). Categories:
+`aglet-features.ag` in the project root is the canonical issue-tracking database
+for aglet. Categories:
 
 - **Issue type** (non-exclusive): Bug, Idea, Feature request
 - **Priority** (exclusive): Critical, High, Normal, Low
@@ -160,14 +142,14 @@ Quote category names that contain spaces (e.g., `"Feature request"`,
 **Do not use shell variable shorthand for commands.** This does NOT work:
 
 ```bash
-CLI="cargo run --bin agenda-cli -- --db feature-requests.ag"
+CLI="cargo run --bin agenda-cli -- --db aglet-features.ag"
 $CLI list   # ERROR: command not found
 ```
 
 Write the full command each time, or use `&&` to chain them:
 
 ```bash
-cargo run --bin agenda-cli -- --db feature-requests.ag add "Title" --note "..." 2>&1 | tail -2
+cargo run --bin agenda-cli -- --db aglet-features.ag add "Title" --note "..." 2>&1 | tail -2
 ```
 
 **`add` output parsing gotcha.** `agenda-cli add` can print additional lines
@@ -184,8 +166,8 @@ UUID instead of the full ID:
 
 ```bash
 # These are equivalent:
-cargo run --bin agenda-cli -- --db feature-requests.ag category assign be6f0754 High
-cargo run --bin agenda-cli -- --db feature-requests.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign be6f0754 High
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
 ```
 
 ## Item ID Prefix Matching
@@ -203,10 +185,10 @@ hex prefix works (e.g., `d157` resolves to `d15772e9-b608-...`).
 assign categories with `&&`-chained commands:
 
 ```bash
-item_id=$(cargo run --bin agenda-cli -- --db feature-requests.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
+item_id=$(cargo run --bin agenda-cli -- --db aglet-features.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
 # Then assign:
-cargo run --bin agenda-cli -- --db feature-requests.ag category assign "$item_id" High 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db feature-requests.ag category assign "$item_id" Pending 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
+cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
 ```
 
 **Items appearing twice in `list` or `view show` is expected.** The "All Items"
