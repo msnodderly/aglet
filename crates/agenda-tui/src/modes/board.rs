@@ -3208,18 +3208,12 @@ impl App {
         if let Some(item) = self.selected_item() {
             let text = item.text.clone();
             let note = item.note.clone().unwrap_or_default();
-            // Collect manually-assigned category IDs for the draft.
+            // Collect all assigned category IDs for the draft so Edit view
+            // mirrors Assign/Column picker check states (manual + derived).
             let categories: HashSet<agenda_core::model::CategoryId> = item
                 .assignments
-                .iter()
-                .filter(|(_, a)| {
-                    matches!(
-                        a.source,
-                        agenda_core::model::AssignmentSource::Manual
-                            | agenda_core::model::AssignmentSource::Action
-                    )
-                })
-                .map(|(id, _)| *id)
+                .keys()
+                .copied()
                 .collect();
             // Collect numeric buffers and originals for assigned numeric categories.
             let mut numeric_buffers = std::collections::HashMap::new();
@@ -3584,18 +3578,7 @@ impl App {
             .map_err(|e| e.to_string())?;
 
         // Compute category diff: which to add, which to remove.
-        let existing_categories: HashSet<_> = item
-            .assignments
-            .iter()
-            .filter(|(_, a)| {
-                matches!(
-                    a.source,
-                    agenda_core::model::AssignmentSource::Manual
-                        | agenda_core::model::AssignmentSource::Action
-                )
-            })
-            .map(|(id, _)| *id)
-            .collect();
+        let existing_categories: HashSet<_> = item.assignments.keys().copied().collect();
 
         // Check for numeric value changes.
         let has_numeric_changes = numeric_buffers.iter().any(|(cat_id, buf)| {

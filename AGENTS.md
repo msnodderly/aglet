@@ -118,6 +118,18 @@ by `agenda-cli show`; it can still print `status: open`.
 Treat the `assignments:` section as the source of truth for workflow status
 categories in this DB.
 
+## Edit Panel Category Checks Include Derived Assignments (Current)
+
+In `agenda-tui` `Mode::InputPanel` edit-item flow, category checkboxes are
+initialized from all current assignment keys, including derived sources
+(`AutoMatch`, `Subsumption`), so Edit Item matches Assign/Column picker state.
+
+Practical implications:
+- If `agenda-cli show` reports `In Progress | AutoMatch | cat:In Progress`,
+  `In Progress` should now appear checked in Edit Item categories.
+- Category diffs in Edit Item are computed against the full current assignment
+  key set (not just manual/action rows).
+
 ### Creating a feature request via CLI
 
 Use the create-then-assign pattern. `add` prints the UUID, then assign
