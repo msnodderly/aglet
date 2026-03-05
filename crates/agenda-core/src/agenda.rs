@@ -56,9 +56,8 @@ impl<'a> Agenda<'a> {
 
         self.store.create_item(&item_to_create)?;
 
-        if parsed_datetime.is_some() {
-            self.assign_when_provenance(item_to_create.id)?;
-        }
+        let when_assignment = parsed_datetime.map(|_| Self::nlp_when_assignment());
+        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, when_assignment)?;
 
         process_item(self.store, self.classifier, item_to_create.id)
     }
@@ -73,18 +72,46 @@ impl<'a> Agenda<'a> {
         reference_date: NaiveDate,
     ) -> Result<ProcessItemResult> {
         let mut item_to_update = item.clone();
-        let parsed_datetime = self.parse_datetime_from_text(&item_to_update.text, reference_date);
+        let existing = self.store.get_item(item.id)?;
+        let text_changed = item_to_update.text != existing.text;
+        let parsed_datetime = if text_changed {
+            self.parse_datetime_from_text(&item_to_update.text, reference_date)
+        } else {
+            None
+        };
         if let Some(datetime) = parsed_datetime {
             item_to_update.when_date = Some(datetime);
         }
 
         self.store.update_item(&item_to_update)?;
 
-        if parsed_datetime.is_some() {
-            self.assign_when_provenance(item_to_update.id)?;
-        }
+        let when_assignment = parsed_datetime.map(|_| Self::nlp_when_assignment());
+        self.sync_when_assignment(item_to_update.id, item_to_update.when_date, when_assignment)?;
 
         process_item(self.store, self.classifier, item_to_update.id)
+    }
+
+    pub fn set_item_when_date(
+        &self,
+        item_id: ItemId,
+        when_date: Option<NaiveDateTime>,
+        origin: Option<String>,
+    ) -> Result<ProcessItemResult> {
+        let mut item = self.store.get_item(item_id)?;
+        item.when_date = when_date;
+        item.modified_at = Utc::now();
+        self.store.update_item(&item)?;
+
+        let when_assignment = when_date.map(|_| Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin: origin.or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
+            numeric_value: None,
+        });
+        self.sync_when_assignment(item_id, when_date, when_assignment)?;
+
+        process_item(self.store, self.classifier, item_id)
     }
 
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
@@ -613,17 +640,46 @@ impl<'a> Agenda<'a> {
             .map(|parsed| parsed.datetime)
     }
 
-    fn assign_when_provenance(&self, item_id: ItemId) -> Result<()> {
+    fn sync_when_assignment(
+        &self,
+        item_id: ItemId,
+        when_date: Option<NaiveDateTime>,
+        assignment_override: Option<Assignment>,
+    ) -> Result<()> {
         let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
-        let assignment = Assignment {
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+
+        match when_date {
+            Some(_) => {
+                if let Some(assignment) = assignment_override {
+                    self.store
+                        .assign_item(item_id, when_category_id, &assignment)?;
+                } else if !assignments.contains_key(&when_category_id) {
+                    self.store.assign_item(
+                        item_id,
+                        when_category_id,
+                        &Self::nlp_when_assignment(),
+                    )?;
+                }
+            }
+            None => {
+                if assignments.contains_key(&when_category_id) {
+                    self.store.unassign_item(item_id, when_category_id)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn nlp_when_assignment() -> Assignment {
+        Assignment {
             source: AssignmentSource::AutoMatch,
             assigned_at: Utc::now(),
             sticky: true,
             origin: Some(origin_const::NLP_DATE.to_string()),
             numeric_value: None,
-        };
-        self.store
-            .assign_item(item_id, when_category_id, &assignment)
+        }
     }
 
     fn done_category_id(&self) -> Result<CategoryId> {
@@ -733,7 +789,11 @@ mod tests {
             .get_hierarchy()
             .expect("hierarchy available")
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_WHEN))
+            .find(|category| {
+                category
+                    .name
+                    .eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_WHEN)
+            })
             .expect("reserved When category exists")
             .id
     }
@@ -906,6 +966,116 @@ mod tests {
 
         let loaded = store.get_item(item.id).unwrap();
         assert_eq!(loaded.when_date, Some(datetime(2026, 2, 17, 0, 0)));
+    }
+
+    #[test]
+    fn update_item_note_only_does_not_reparse_relative_when_date() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("tomorrow".to_string());
+        agenda
+            .create_item_with_reference_date(&item, date(2026, 2, 16))
+            .unwrap();
+
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.note = Some("added note text".to_string());
+        updated.modified_at = Utc::now();
+
+        agenda
+            .update_item_with_reference_date(&updated, date(2026, 2, 20))
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(
+            loaded.when_date,
+            Some(datetime(2026, 2, 17, 0, 0)),
+            "note-only edits should not reparse relative date text"
+        );
+    }
+
+    #[test]
+    fn set_item_when_date_assigns_reserved_when_with_manual_provenance() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let when_id = when_category_id(&store);
+
+        let item = Item::new("plain item".to_string());
+        store.create_item(&item).unwrap();
+
+        let target_when = datetime(2026, 2, 20, 9, 30);
+        agenda
+            .set_item_when_date(
+                item.id,
+                Some(target_when),
+                Some("manual:test.when-edit".to_string()),
+            )
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(loaded.when_date, Some(target_when));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let when_assignment = assignments.get(&when_id).expect("when assignment exists");
+        assert_eq!(when_assignment.source, AssignmentSource::Manual);
+        assert_eq!(
+            when_assignment.origin.as_deref(),
+            Some("manual:test.when-edit")
+        );
+        assert!(when_assignment.sticky);
+    }
+
+    #[test]
+    fn set_item_when_date_uses_default_manual_origin_when_none_is_provided() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let when_id = when_category_id(&store);
+
+        let item = Item::new("plain item".to_string());
+        store.create_item(&item).unwrap();
+
+        agenda
+            .set_item_when_date(item.id, Some(datetime(2026, 2, 20, 9, 30)), None)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let when_assignment = assignments.get(&when_id).expect("when assignment exists");
+        assert_eq!(when_assignment.source, AssignmentSource::Manual);
+        assert_eq!(when_assignment.origin.as_deref(), Some("manual:when"));
+    }
+
+    #[test]
+    fn set_item_when_date_none_clears_datetime_and_reserved_when_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let when_id = when_category_id(&store);
+
+        let item = Item::new("tomorrow".to_string());
+        agenda
+            .create_item_with_reference_date(&item, date(2026, 2, 16))
+            .unwrap();
+        assert!(store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&when_id));
+
+        agenda
+            .set_item_when_date(item.id, None, Some("manual:test.when-clear".to_string()))
+            .unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(loaded.when_date, None);
+        assert!(
+            !store
+                .get_assignments_for_item(item.id)
+                .unwrap()
+                .contains_key(&when_id),
+            "clearing when_date should unassign reserved When"
+        );
     }
 
     #[test]
@@ -1918,7 +2088,11 @@ mod tests {
             .get_hierarchy()
             .unwrap()
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_DONE))
+            .find(|category| {
+                category
+                    .name
+                    .eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_DONE)
+            })
             .expect("Done category exists")
             .id;
         let assignments = store.get_assignments_for_item(item.id).unwrap();
@@ -1978,7 +2152,11 @@ mod tests {
             .get_hierarchy()
             .unwrap()
             .into_iter()
-            .find(|category| category.name.eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_DONE))
+            .find(|category| {
+                category
+                    .name
+                    .eq_ignore_ascii_case(RESERVED_CATEGORY_NAME_DONE)
+            })
             .expect("Done category exists")
             .id;
         let assignments = store.get_assignments_for_item(item.id).unwrap();
@@ -2232,12 +2410,12 @@ mod tests {
         let id = make_item(&store, "Task");
 
         let result = agenda.ensure_not_self_link(id, id, "depends-on");
-        assert!(
-            result.is_err(),
-            "self-link should be rejected"
-        );
+        assert!(result.is_err(), "self-link should be rejected");
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("self-link"), "error message should mention self-link, got: {msg}");
+        assert!(
+            msg.contains("self-link"),
+            "error message should mention self-link, got: {msg}"
+        );
     }
 
     #[test]
@@ -2269,12 +2447,12 @@ mod tests {
 
         // Trying to make B depend-on A would create A→B→A cycle.
         let result = agenda.ensure_depends_on_no_cycle(b, a);
-        assert!(
-            result.is_err(),
-            "direct cycle A→B→A should be detected"
-        );
+        assert!(result.is_err(), "direct cycle A→B→A should be detected");
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("cycle"), "error should mention cycle, got: {msg}");
+        assert!(
+            msg.contains("cycle"),
+            "error should mention cycle, got: {msg}"
+        );
     }
 
     #[test]
