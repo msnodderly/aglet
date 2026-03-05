@@ -9,7 +9,8 @@ use agenda_core::agenda::Agenda;
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, CriterionMode, Item, ItemId, Query, SummaryFn, View,
+    Category, CategoryId, CategoryValueKind, ColumnKind, CriterionMode, Item, ItemId, Query,
+    SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -2588,6 +2589,34 @@ fn print_items_for_view(
     Ok(())
 }
 
+fn section_column_definitions_line(
+    view: &View,
+    section_index: usize,
+    category_names: &HashMap<CategoryId, String>,
+) -> Option<String> {
+    let section = view.sections.get(section_index)?;
+    if section.columns.is_empty() {
+        return None;
+    }
+    let rendered = section
+        .columns
+        .iter()
+        .map(|column| {
+            let heading = category_names
+                .get(&column.heading)
+                .cloned()
+                .unwrap_or_else(|| format!("(deleted:{})", column.heading));
+            let kind = match column.kind {
+                ColumnKind::Standard => "standard",
+                ColumnKind::When => "when",
+            };
+            format!("{heading} [{kind},w={}]", column.width)
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    Some(format!("columns: {rendered}"))
+}
+
 fn section_summary_line(
     view: &View,
     section_index: usize,
@@ -2943,7 +2972,7 @@ fn print_category_subtree(
 mod tests {
     use super::{
         blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit,
-        cmd_link, cmd_unlink, cmd_view, compare_items_by_sort_keys,
+        cmd_link, cmd_list, cmd_unlink, cmd_view, compare_items_by_sort_keys,
         duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
         parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
         reject_items_with_any_categories, retain_items_by_dependency_state,
@@ -2960,9 +2989,7 @@ mod tests {
         Category, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, Query, Section,
         SummaryFn, View,
     };
-    use agenda_core::query::resolve_view;
     use agenda_core::store::Store;
-    use chrono::Local;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
