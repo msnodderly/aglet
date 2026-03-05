@@ -484,7 +484,7 @@ Note: Section 7 previously referenced `Mode::ItemEditInput` (old name). This was
 
 ## 12. Status & Next Steps
 
-Implementation issues filed in `feature-requests.ag` (2026-02-20):
+Implementation issues filed in `aglet-features.ag` (2026-02-20):
 
 | Phase | FR ID | Title |
 |-------|-------|-------|

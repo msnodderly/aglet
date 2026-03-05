@@ -493,7 +493,7 @@ Legend:
 #### 11.21 Final Verification
 
 - [ ] Run full `cargo test -p agenda-tui` (and any impacted workspace tests if necessary).
-- [ ] Perform one end-to-end manual walkthrough on `feature-requests.ag` (or disposable test DB) covering all key flows.
+- [ ] Perform one end-to-end manual walkthrough on `aglet-features.ag` (or disposable test DB) covering all key flows.
 - [ ] Capture any surprising behavior and, if found, add a note to `/Users/mds/src/aglet/AGENTS.md` per repo instructions.
 - [ ] Prepare a concise implementation summary and follow-up items (if any) for review.
 

@@ -154,7 +154,7 @@ Follow `AGENTS.md`. Issue ID: `bd-km0`.
 # Claim on main:
 #   br update bd-km0 --status in_progress
 #   br comments add bd-km0 "Claimed <date>. Plan: <your approach>"
-#   br sync --flush-only && git add .beads/ && git commit -m "br sync: Claim bd-km0"
+#   # (legacy beads reference removed) -m "br sync: Claim bd-km0"
 
 git checkout -b task/t018-fixed-point-loop
 
