@@ -2451,8 +2451,10 @@ impl App {
                 let blocked_count = blocked_item_ids.len();
                 let suffix = if blocked_count == 1 { "" } else { "s" };
                 self.done_blocks_confirm = Some(DoneBlocksConfirmState {
-                    item_id,
-                    blocked_item_ids,
+                    scope: DoneBlocksConfirmScope::Single {
+                        item_id,
+                        blocked_item_ids,
+                    },
                     origin,
                 });
                 self.mode = Mode::ConfirmDelete;
@@ -2479,14 +2481,84 @@ impl App {
                 .find(|item| item.id == *item_id)
                 .is_some_and(|item| item.is_done)
         });
-        let anchor_id = self.selected_item_id().unwrap_or(action_item_ids[0]);
+        if mark_done {
+            let mut blocking_item_count = 0usize;
+            let mut blocked_link_count = 0usize;
+            for item_id in &action_item_ids {
+                let Some(item) = self.all_items.iter().find(|candidate| candidate.id == *item_id) else {
+                    continue;
+                };
+                if item.is_done {
+                    continue;
+                }
+                let has_actionable_assignment = item.assignments.keys().any(|category_id| {
+                    self.categories
+                        .iter()
+                        .find(|category| category.id == *category_id)
+                        .is_some_and(|category| category.is_actionable)
+                });
+                if !has_actionable_assignment {
+                    continue;
+                }
+                let blocked_count = self
+                    .item_links_by_item_id
+                    .get(item_id)
+                    .map(|links| links.blocks.len())
+                    .unwrap_or(0);
+                if blocked_count > 0 {
+                    blocking_item_count += 1;
+                    blocked_link_count += blocked_count;
+                }
+            }
 
+            if blocked_link_count > 0 {
+                let item_suffix = if blocking_item_count == 1 { "" } else { "s" };
+                let blocked_suffix = if blocked_link_count == 1 { "" } else { "s" };
+                self.done_blocks_confirm = Some(DoneBlocksConfirmState {
+                    scope: DoneBlocksConfirmScope::Batch {
+                        item_ids: action_item_ids,
+                        blocking_item_count,
+                        blocked_link_count,
+                    },
+                    origin: DoneToggleOrigin::NormalMode,
+                });
+                self.mode = Mode::ConfirmDelete;
+                self.status = format!(
+                    "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                );
+                return Ok(());
+            }
+        }
+
+        self.apply_batch_done_action(agenda, &action_item_ids, false)
+    }
+
+    pub(crate) fn apply_batch_done_action(
+        &mut self,
+        agenda: &Agenda<'_>,
+        item_ids: &[ItemId],
+        remove_blocking_links: bool,
+    ) -> Result<(), String> {
+        if item_ids.is_empty() {
+            self.status = "No selected items to update".to_string();
+            self.mode = Mode::Normal;
+            return Ok(());
+        }
+
+        let mark_done = !item_ids.iter().all(|item_id| {
+            self.all_items
+                .iter()
+                .find(|item| item.id == *item_id)
+                .is_some_and(|item| item.is_done)
+        });
+        let anchor_id = self.selected_item_id().unwrap_or(item_ids[0]);
         let mut changed = 0usize;
         let mut skipped = 0usize;
         let mut failed = 0usize;
+        let mut removed_links = 0usize;
         let mut first_error = None;
 
-        for item_id in &action_item_ids {
+        for item_id in item_ids {
             let Some(item) = self.all_items.iter().find(|candidate| candidate.id == *item_id) else {
                 failed += 1;
                 if first_error.is_none() {
@@ -2516,30 +2588,28 @@ impl App {
                     }
                     continue;
                 }
-                let blocked_count = self
-                    .item_links_by_item_id
-                    .get(item_id)
-                    .map(|links| links.blocks.len())
-                    .unwrap_or(0);
-                if blocked_count > 0 {
-                    failed += 1;
-                    if first_error.is_none() {
-                        first_error = Some(format!(
-                            "item '{}' blocks {} other item{}",
-                            truncate_board_cell(&item.text, 24),
-                            blocked_count,
-                            if blocked_count == 1 { "" } else { "s" }
-                        ));
-                    }
-                    continue;
-                }
             } else if !item.is_done {
                 skipped += 1;
                 continue;
             }
 
             match agenda.toggle_item_done(*item_id) {
-                Ok(_) => changed += 1,
+                Ok(_) => {
+                    changed += 1;
+                    if mark_done && remove_blocking_links {
+                        let blocked_ids = self
+                            .item_links_by_item_id
+                            .get(item_id)
+                            .map(|links| links.blocks.clone())
+                            .unwrap_or_default();
+                        for blocked_id in &blocked_ids {
+                            agenda
+                                .unlink_items_blocks(*item_id, *blocked_id)
+                                .map_err(|e| e.to_string())?;
+                            removed_links += 1;
+                        }
+                    }
+                }
                 Err(err) => {
                     failed += 1;
                     if first_error.is_none() {
@@ -2556,11 +2626,15 @@ impl App {
         }
 
         let mut summary = format!(
-            "{} {} selected items {} (changed={changed}, skipped={skipped}, failed={failed})",
+            "{} {} selected items {} (changed={changed}, skipped={skipped}, failed={failed}",
             if mark_done { "Marked" } else { "Unmarked" },
-            action_item_ids.len(),
+            item_ids.len(),
             if mark_done { "done" } else { "not-done" },
         );
+        if remove_blocking_links {
+            summary.push_str(&format!(", removed_links={removed_links}"));
+        }
+        summary.push(')');
         if let Some(err) = first_error {
             summary.push_str(&format!(" first_error={err}"));
         }

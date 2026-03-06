@@ -2881,11 +2881,28 @@ impl App {
             }
             Mode::ConfirmDelete => {
                 if let Some(done_confirm) = &self.done_blocks_confirm {
-                    let blocked_count = done_confirm.blocked_item_ids.len();
-                    let suffix = if blocked_count == 1 { "" } else { "s" };
-                    format!(
-                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
-                    )
+                    match &done_confirm.scope {
+                        DoneBlocksConfirmScope::Single {
+                            blocked_item_ids, ..
+                        } => {
+                            let blocked_count = blocked_item_ids.len();
+                            let suffix = if blocked_count == 1 { "" } else { "s" };
+                            format!(
+                                "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                            )
+                        }
+                        DoneBlocksConfirmScope::Batch {
+                            blocking_item_count,
+                            blocked_link_count,
+                            ..
+                        } => {
+                            let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
+                            let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
+                            format!(
+                                "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                            )
+                        }
+                    }
                 } else if let Some(batch_delete_item_ids) = &self.batch_delete_item_ids {
                     let selected_count = batch_delete_item_ids.len();
                     let item_suffix = if selected_count == 1 { "" } else { "s" };

@@ -194,23 +194,40 @@ impl App {
             match code {
                 KeyCode::Char('y') => {
                     self.done_blocks_confirm = None;
-                    self.apply_done_toggle_action(
-                        agenda,
-                        done_confirm.item_id,
-                        false,
-                        done_confirm.origin,
-                        &done_confirm.blocked_item_ids,
-                    )?;
+                    match done_confirm.scope {
+                        DoneBlocksConfirmScope::Single {
+                            item_id,
+                            blocked_item_ids,
+                        } => {
+                            self.apply_done_toggle_action(
+                                agenda,
+                                item_id,
+                                false,
+                                done_confirm.origin,
+                                &blocked_item_ids,
+                            )?;
+                        }
+                        DoneBlocksConfirmScope::Batch { item_ids, .. } => {
+                            self.apply_batch_done_action(agenda, &item_ids, true)?;
+                        }
+                    }
                 }
                 KeyCode::Char('n') => {
                     self.done_blocks_confirm = None;
-                    self.apply_done_toggle_action(
-                        agenda,
-                        done_confirm.item_id,
-                        false,
-                        done_confirm.origin,
-                        &[],
-                    )?;
+                    match done_confirm.scope {
+                        DoneBlocksConfirmScope::Single { item_id, .. } => {
+                            self.apply_done_toggle_action(
+                                agenda,
+                                item_id,
+                                false,
+                                done_confirm.origin,
+                                &[],
+                            )?;
+                        }
+                        DoneBlocksConfirmScope::Batch { item_ids, .. } => {
+                            self.apply_batch_done_action(agenda, &item_ids, false)?;
+                        }
+                    }
                 }
                 KeyCode::Esc => {
                     self.done_blocks_confirm = None;

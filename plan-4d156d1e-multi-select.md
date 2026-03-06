@@ -100,6 +100,10 @@ Primary actions in scope:
 - Partial batch-done failures preserve selection so retry is possible
 - Existing single-item `d` confirm behavior remains unchanged for blocker-link
   cleanup
+- If selected items block others, batch `d` now opens an explicit confirm prompt
+  mirroring the single-item flow
+- `y` removes blocking links and marks the selected set done
+- `n` keeps blocking links and still marks the selected set done
 
 ### Active Work
 
@@ -108,8 +112,8 @@ Primary actions in scope:
     testing
   - otherwise continue broadening batch-link parity where the current wizard
     still has single-item assumptions
-  - consider whether batch done should gain an explicit confirm path for
-    blocker-link cleanup, or remain safely non-destructive
+  - tighten any remaining batch status / footer wording issues that show up in
+    manual testing
 
 ## Delivery Strategy
 
