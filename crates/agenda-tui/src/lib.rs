@@ -6758,16 +6758,24 @@ mod tests {
         });
         store.create_view(&view).expect("create board view");
 
-        let item = Item::new("Selected task".to_string());
-        store.create_item(&item).expect("create item");
+        let marked = Item::new("Marked task".to_string());
+        let focused = Item::new("Focused task".to_string());
+        store.create_item(&marked).expect("create marked item");
+        store.create_item(&focused).expect("create focused item");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
         app.set_view_selection_by_name("Board");
         app.refresh(&store).expect("refresh board");
         app.mode = Mode::Normal;
+        let selected_label = app
+            .selected_item()
+            .map(|item| item.text.clone())
+            .expect("selected item");
         app.handle_normal_key(KeyCode::Char(' '), &agenda)
             .expect("select item");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move focus to next item");
 
         let backend = TestBackend::new(220, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -6775,8 +6783,8 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("sel:1"),
-            "header should advertise selected item count: {rendered}"
+            !rendered.contains("sel:"),
+            "header should not repeat selected count: {rendered}"
         );
         assert!(
             rendered.contains("Space:toggle"),
@@ -6785,6 +6793,181 @@ mod tests {
         assert!(
             rendered.contains("Esc:clear sel"),
             "footer should advertise clear-selection when active: {rendered}"
+        );
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.contains(&selected_label) && line.contains('+')),
+            "selected but unfocused item should show '+' marker: {rendered}"
+        );
+    }
+
+    #[test]
+    fn normal_mode_a_with_selection_opens_batch_assign_input() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign input");
+
+        assert_eq!(app.mode, Mode::ItemAssignInput);
+        assert!(
+            app.status.contains("selected items"),
+            "batch assign status should describe selection scope: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_assign_input_assigns_existing_category_to_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign");
+        app.set_input("Work".to_string());
+        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+            .expect("assign category to selected items");
+
+        let first_updated = store.get_item(first.id).expect("reload first");
+        let second_updated = store.get_item(second.id).expect("reload second");
+        assert!(first_updated.assignments.contains_key(&work.id));
+        assert!(second_updated.assignments.contains_key(&work.id));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.selected_count(),
+            0,
+            "successful batch assign clears selection"
+        );
+        assert!(
+            app.status.contains("Applied category Work to 2 items"),
+            "status should summarize batch result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_assign_input_creates_category_and_assigns_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First create target".to_string());
+        let second = Item::new("Second create target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign");
+        app.set_input("Sprint".to_string());
+        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+            .expect("create and assign category");
+
+        let sprint = app
+            .categories
+            .iter()
+            .find(|category| category.name == "Sprint")
+            .expect("created category should exist");
+        let first_updated = store.get_item(first.id).expect("reload first");
+        let second_updated = store.get_item(second.id).expect("reload second");
+        assert!(first_updated.assignments.contains_key(&sprint.id));
+        assert!(second_updated.assignments.contains_key(&sprint.id));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status
+                .contains("Created and applied category Sprint to 2 items"),
+            "status should summarize create+assign result: {}",
+            app.status
         );
     }
 
