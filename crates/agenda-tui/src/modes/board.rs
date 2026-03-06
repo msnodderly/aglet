@@ -4726,13 +4726,12 @@ impl App {
                 let query = self.search_buffer.trimmed().to_string();
                 if query.is_empty() {
                     self.mode = Mode::Normal;
-                } else if let Some((slot_idx, item_idx)) = self.find_exact_match(&query) {
+                } else if let Some((slot_idx, item_idx)) = self.find_first_visible_search_result() {
                     self.slot_index = slot_idx;
                     self.item_index = item_idx;
-                    self.mode = Mode::Normal;
-                    self.status = format!("Jumped to '{}'", query);
+                    self.open_input_panel_edit_item();
                 } else {
-                    self.open_add_item_with_title(query);
+                    self.status = format!("No items match '{}'", query);
                 }
             }
             KeyCode::Down | KeyCode::Tab => {
@@ -4766,67 +4765,15 @@ impl App {
         }
     }
 
-    fn find_exact_match(&self, query: &str) -> Option<(usize, usize)> {
-        let needle = query.to_ascii_lowercase();
+    fn find_first_visible_search_result(&self) -> Option<(usize, usize)> {
         if self.global_search_active() {
-            for (slot_index, slot) in self.slots.iter().enumerate() {
-                if let Some(item_index) = slot
-                    .items
-                    .iter()
-                    .position(|item| item.text.to_ascii_lowercase() == needle)
-                {
-                    return Some((slot_index, item_index));
-                }
-            }
-            None
+            self.slots
+                .iter()
+                .enumerate()
+                .find_map(|(slot_index, slot)| (!slot.items.is_empty()).then_some((slot_index, 0)))
         } else {
             self.current_slot()
-                .and_then(|slot| {
-                    slot.items
-                        .iter()
-                        .position(|item| item.text.to_ascii_lowercase() == needle)
-                })
-                .map(|item_index| (self.slot_index, item_index))
-        }
-    }
-
-    fn open_add_item_with_title(&mut self, title: String) {
-        let (section_title, on_insert_assign) = self
-            .current_slot()
-            .map(|slot| {
-                let stitle = slot.title.clone();
-                let on_insert = match &slot.context {
-                    SlotContext::GeneratedSection {
-                        on_insert_assign, ..
-                    } => on_insert_assign.clone(),
-                    SlotContext::Section { section_index } => {
-                        let idx = *section_index;
-                        self.current_view()
-                            .and_then(|v| v.sections.get(idx))
-                            .map(|s| s.on_insert_assign.clone())
-                            .unwrap_or_default()
-                    }
-                    SlotContext::Unmatched => HashSet::new(),
-                };
-                (stitle, on_insert)
-            })
-            .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
-
-        let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
-        panel.text.set(title);
-        self.input_panel = Some(panel);
-        self.mode = Mode::InputPanel;
-        self.status =
-            "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
-        // Clear search state
-        let was_global_search = self.global_search_active();
-        self.search_buffer.clear();
-        if was_global_search {
-            for slot_filter in &mut self.section_filters {
-                *slot_filter = None;
-            }
-        } else if self.slot_index < self.section_filters.len() {
-            self.section_filters[self.slot_index] = None;
+                .and_then(|slot| (!slot.items.is_empty()).then_some((self.slot_index, 0)))
         }
     }
 }
