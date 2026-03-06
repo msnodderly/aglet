@@ -1563,10 +1563,13 @@ impl App {
     }
 
     fn render_search_bar(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let section_name = self
-            .current_slot()
-            .map(|s| s.title.as_str())
-            .unwrap_or("section");
+        let section_name = if self.global_search_active() {
+            "Global/All Items"
+        } else {
+            self.current_slot()
+                .map(|s| s.title.as_str())
+                .unwrap_or("section")
+        };
         let label = format!("[{section_name}] ");
         let is_focused = self.mode == Mode::SearchBarFocused;
 
@@ -2847,7 +2850,13 @@ impl App {
             Mode::BoardColumnDeleteConfirm | Mode::CategoryCreateConfirm { .. } => {
                 "y:confirm  Esc:cancel"
             }
-            Mode::SearchBarFocused => "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear",
+            Mode::SearchBarFocused => {
+                if self.global_search_active() {
+                    "Enter:jump/create  \u{2193}/Tab:browse  Esc:return"
+                } else {
+                    "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear"
+                }
+            }
             Mode::NoteEdit => "Enter:save  Esc:cancel",
             Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
             Mode::InputPanel => {
@@ -2877,9 +2886,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
