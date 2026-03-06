@@ -83,6 +83,32 @@ impl App {
         state
     }
 
+    fn stable_table_offset(
+        area: Rect,
+        selected_row: Option<usize>,
+        preferred_offset: usize,
+        item_count: usize,
+    ) -> usize {
+        if item_count == 0 {
+            return 0;
+        }
+        let clamped_preferred = preferred_offset.min(item_count.saturating_sub(1));
+        let Some(selected_row) = selected_row else {
+            return clamped_preferred;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 {
+            return 0;
+        }
+        let selected_visible = selected_row >= clamped_preferred
+            && selected_row < clamped_preferred.saturating_add(viewport_rows);
+        if selected_visible {
+            clamped_preferred
+        } else {
+            list_scroll_for_selected_line(area, Some(selected_row)) as usize
+        }
+    }
+
     fn effective_board_display_mode_for_slot(&self, slot: &Slot) -> BoardDisplayMode {
         let current_view = self.current_view();
         match (&slot.context, current_view) {
@@ -2108,6 +2134,29 @@ impl App {
                 };
 
                 let mut state = Self::table_state_for(table_area, selected_row);
+                let remembered_index = self
+                    .horizontal_slot_item_indices
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                let remembered_scroll_offset = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow()
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                *state.offset_mut() = if is_selected_slot {
+                    Self::stable_table_offset(
+                        table_area,
+                        selected_row,
+                        remembered_scroll_offset,
+                        slot.items.len(),
+                    )
+                } else {
+                    remembered_scroll_offset.min(remembered_index)
+                };
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
@@ -2124,6 +2173,13 @@ impl App {
                     table_area,
                     &mut state,
                 );
+                if let Some(stored) = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow_mut()
+                    .get_mut(slot_index)
+                {
+                    *stored = state.offset();
+                }
                 if let (Some(area), Some(spans)) = (summary_area, summary_spans) {
                     frame.render_widget(Paragraph::new(Line::from(spans)), area);
                 }
@@ -2231,6 +2287,29 @@ impl App {
                         .collect()
                 };
                 let mut state = Self::table_state_for(columns[slot_index], selected_row);
+                let remembered_index = self
+                    .horizontal_slot_item_indices
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                let remembered_scroll_offset = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow()
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                *state.offset_mut() = if is_selected_slot {
+                    Self::stable_table_offset(
+                        columns[slot_index],
+                        selected_row,
+                        remembered_scroll_offset,
+                        slot.items.len(),
+                    )
+                } else {
+                    remembered_scroll_offset.min(remembered_index)
+                };
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
@@ -2253,6 +2332,13 @@ impl App {
                     columns[slot_index],
                     &mut state,
                 );
+                if let Some(stored) = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow_mut()
+                    .get_mut(slot_index)
+                {
+                    *stored = state.offset();
+                }
                 Self::render_vertical_scrollbar(
                     frame,
                     columns[slot_index],
