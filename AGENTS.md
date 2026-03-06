@@ -555,6 +555,9 @@ Practical implications:
 - While this session is active, `Esc` returns to the prior view context instead
   of only clearing the current slot filter.
 - `Enter` exact-match resolution searches across all visible slots in `All Items`.
+- Creating from global search (`g/` + query + `Enter`) must keep the session
+  active through add/edit save flows so `Esc` can still return to the original
+  view afterwards.
 - Keep `ga` behavior unchanged; `g` prefix help/status should mention both
   commands (`ga` and `g/`).
 

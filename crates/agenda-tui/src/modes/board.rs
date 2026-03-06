@@ -4645,7 +4645,6 @@ impl App {
             "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
         // Clear search state
         let was_global_search = self.global_search_active();
-        self.global_search_session = None;
         self.search_buffer.clear();
         if was_global_search {
             for slot_filter in &mut self.section_filters {
