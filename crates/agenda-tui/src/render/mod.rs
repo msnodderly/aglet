@@ -3490,7 +3490,7 @@ impl App {
                         } else if assigned_count == total_count {
                             "[x]".to_string()
                         } else {
-                            "[-]".to_string()
+                            "[~]".to_string()
                         }
                     } else if self.selected_item_has_assignment(row.id) {
                         if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {

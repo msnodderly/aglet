@@ -6899,11 +6899,11 @@ mod tests {
         let second_updated = store.get_item(second.id).expect("reload second");
         assert!(first_updated.assignments.contains_key(&work.id));
         assert!(second_updated.assignments.contains_key(&work.id));
-        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.mode, Mode::Normal);
         assert_eq!(
             app.selected_count(),
-            2,
-            "picker-driven batch assign keeps selection active"
+            0,
+            "successful picker-driven batch assign clears selection"
         );
         assert!(
             app.status.contains("Applied category Work to 2 items"),
@@ -6965,8 +6965,8 @@ mod tests {
         let second_updated = store.get_item(second.id).expect("reload second");
         assert!(first_updated.assignments.contains_key(&sprint.id));
         assert!(second_updated.assignments.contains_key(&sprint.id));
-        assert_eq!(app.mode, Mode::ItemAssignPicker);
-        assert_eq!(app.selected_count(), 2);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
         assert!(
             app.status
                 .contains("Created and applied category Sprint to 2 items"),
@@ -7026,9 +7026,60 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("[-] Work"),
+            rendered.contains("[~] Work"),
             "mixed batch checkbox should render tri-state marker: {rendered}"
         );
+    }
+
+    #[test]
+    fn batch_assign_picker_esc_preserves_selection_without_changes() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Esc, &agenda)
+            .expect("cancel assign picker");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 2);
+        assert!(store.get_item(first.id).is_ok());
+        assert!(store.get_item(second.id).is_ok());
+        assert_eq!(app.status, "Assign canceled");
     }
 
     #[test]
