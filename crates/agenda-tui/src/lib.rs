@@ -12669,23 +12669,23 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Cost(sum)=350"),
+            rendered.contains("sum=350"),
             "sum missing: {rendered}"
         );
         assert!(
-            rendered.contains("Cost(avg)=175"),
+            rendered.contains("avg=175"),
             "avg missing: {rendered}"
         );
         assert!(
-            rendered.contains("Cost(min)=100"),
+            rendered.contains("min=100"),
             "min missing: {rendered}"
         );
         assert!(
-            rendered.contains("Cost(max)=250"),
+            rendered.contains("max=250"),
             "max missing: {rendered}"
         );
         assert!(
-            rendered.contains("Cost(count)=2"),
+            rendered.contains("count=2"),
             "count missing: {rendered}"
         );
 
