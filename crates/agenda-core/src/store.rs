@@ -12,10 +12,11 @@ use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
-    NumericFormat, Query, Section, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
+    NumericFormat, Query, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 const DEFAULT_VIEW_NAME: &str = "All Items";
 
 const SCHEMA_SQL: &str = "
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS views (
     category_aliases_json       TEXT NOT NULL DEFAULT '{}',
     item_column_label           TEXT,
     board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
+    section_flow                TEXT NOT NULL DEFAULT 'Vertical',
     hide_dependent_items        INTEGER NOT NULL DEFAULT 0
 );
 
@@ -759,8 +761,8 @@ impl Store {
                     id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    hide_dependent_items
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    section_flow, hide_dependent_items
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     view.id.to_string(),
                     view.name,
@@ -774,6 +776,8 @@ impl Store {
                     view.item_column_label,
                     serde_json::to_string(&view.board_display_mode)
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
+                    serde_json::to_string(&view.section_flow)
+                        .unwrap_or_else(|_| "\"Vertical\"".to_string()),
                     view.hide_dependent_items as i32,
                 ],
             )
@@ -787,7 +791,7 @@ impl Store {
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    hide_dependent_items
+                    section_flow, hide_dependent_items
              FROM views WHERE id = ?1",
         )?;
         stmt.query_row(params![id.to_string()], Self::row_to_view)
@@ -848,8 +852,9 @@ impl Store {
                      category_aliases_json = ?8,
                      item_column_label = ?9,
                      board_display_mode = ?10,
-                     hide_dependent_items = ?11
-                 WHERE id = ?12",
+                     section_flow = ?11,
+                     hide_dependent_items = ?12
+                 WHERE id = ?13",
                 params![
                     view.name,
                     criteria_json,
@@ -862,6 +867,8 @@ impl Store {
                     view.item_column_label,
                     serde_json::to_string(&view.board_display_mode)
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
+                    serde_json::to_string(&view.section_flow)
+                        .unwrap_or_else(|_| "\"Vertical\"".to_string()),
                     view.hide_dependent_items as i32,
                     view.id.to_string(),
                 ],
@@ -881,7 +888,7 @@ impl Store {
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    hide_dependent_items
+                    section_flow, hide_dependent_items
              FROM views
              ORDER BY name COLLATE NOCASE ASC",
         )?;
@@ -1025,7 +1032,8 @@ impl Store {
         let category_aliases_json: Option<String> = row.get(8)?;
         let item_column_label: Option<String> = row.get(9)?;
         let board_display_mode_json: Option<String> = row.get(10)?;
-        let hide_dependent_items: Option<i32> = row.get(11)?;
+        let section_flow_json: Option<String> = row.get(11)?;
+        let hide_dependent_items: Option<i32> = row.get(12)?;
 
         // Corrupt or legacy view row: fall back to empty defaults so the view
         // still loads rather than failing the entire hierarchy read.
@@ -1039,6 +1047,9 @@ impl Store {
         let board_display_mode = board_display_mode_json
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or(BoardDisplayMode::SingleLine);
+        let section_flow = section_flow_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or(SectionFlow::Vertical);
 
         Ok(View {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
@@ -1051,6 +1062,7 @@ impl Store {
             category_aliases,
             item_column_label,
             board_display_mode,
+            section_flow,
             hide_dependent_items: hide_dependent_items.unwrap_or(0) != 0,
         })
     }
@@ -1798,6 +1810,11 @@ impl Store {
                 "ALTER TABLE views ADD COLUMN board_display_mode TEXT NOT NULL DEFAULT 'SingleLine';",
             )?;
         }
+        if !self.column_exists("views", "section_flow")? {
+            self.conn.execute_batch(
+                "ALTER TABLE views ADD COLUMN section_flow TEXT NOT NULL DEFAULT 'Vertical';",
+            )?;
+        }
         if !self.column_exists("views", "category_aliases_json")? {
             self.conn.execute_batch(
                 "ALTER TABLE views ADD COLUMN category_aliases_json TEXT NOT NULL DEFAULT '{}';",
@@ -1922,7 +1939,8 @@ mod tests {
     use crate::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
         ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
-        View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
+        SectionFlow, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE,
+        RESERVED_CATEGORY_NAME_WHEN,
     };
     use chrono::{Duration, Utc};
     use rusqlite::params;
@@ -2230,6 +2248,40 @@ mod tests {
         assert!(
             hide_dependent_column_exists,
             "migration should add hide_dependent_items column"
+        );
+    }
+
+    #[test]
+    fn test_upgrade_from_v9_adds_section_flow_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE views (
+                id                          TEXT PRIMARY KEY,
+                name                        TEXT NOT NULL UNIQUE,
+                criteria_json               TEXT NOT NULL DEFAULT '{}',
+                sections_json               TEXT NOT NULL DEFAULT '[]',
+                columns_json                TEXT NOT NULL DEFAULT '[]',
+                show_unmatched              INTEGER NOT NULL DEFAULT 1,
+                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
+                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
+                item_column_label           TEXT,
+                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
+                hide_dependent_items        INTEGER NOT NULL DEFAULT 0
+            );
+            "#,
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 9).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let section_flow_column_exists = store.column_exists("views", "section_flow").unwrap();
+        assert!(
+            section_flow_column_exists,
+            "migration should add section_flow column"
         );
     }
 
@@ -3499,6 +3551,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let mut view = new_view("Display");
         view.board_display_mode = BoardDisplayMode::MultiLine;
+        view.section_flow = SectionFlow::Horizontal;
         view.sections.push(Section {
             title: "One".to_string(),
             criteria: Query::default(),
@@ -3513,6 +3566,7 @@ mod tests {
 
         let loaded = store.get_view(view.id).unwrap();
         assert_eq!(loaded.board_display_mode, BoardDisplayMode::MultiLine);
+        assert_eq!(loaded.section_flow, SectionFlow::Horizontal);
         assert_eq!(
             loaded.sections[0].board_display_mode_override,
             Some(BoardDisplayMode::SingleLine)

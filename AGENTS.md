@@ -304,6 +304,18 @@ Practical implications:
 - Current filtering is applied in CLI/TUI view rendering paths using link data;
   if you add another view consumer, wire this filter there too.
 
+## View `section_flow` Storage + Horizontal Navigation (Behavior)
+
+Per-view lane direction is now persisted in `views.section_flow`
+(`View.section_flow`, default `Vertical`).
+
+Practical implications:
+- `Horizontal` flow renders sections left-to-right using compact card rows.
+- In horizontal flow, `h/l` move between section lanes and `j/k` move within
+  the current lane.
+- Lane item selection is remembered per section in horizontal flow; moving away
+  and back restores that lane's prior item index.
+
 ## Category Manager Details Pane Keybinding Conflict (Tree Editor Rewrite)
 
 In the rewritten category manager (`c` / `F9`), the Details pane uses `j/k` for

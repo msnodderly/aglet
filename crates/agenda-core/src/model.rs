@@ -180,6 +180,8 @@ pub struct View {
     #[serde(default)]
     pub board_display_mode: BoardDisplayMode,
     #[serde(default)]
+    pub section_flow: SectionFlow,
+    #[serde(default)]
     pub hide_dependent_items: bool,
 }
 
@@ -188,6 +190,13 @@ pub enum BoardDisplayMode {
     #[default]
     SingleLine,
     MultiLine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SectionFlow {
+    #[default]
+    Vertical,
+    Horizontal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -489,6 +498,7 @@ impl View {
             category_aliases: BTreeMap::new(),
             item_column_label: None,
             board_display_mode: BoardDisplayMode::SingleLine,
+            section_flow: SectionFlow::Vertical,
             hide_dependent_items: false,
         }
     }
@@ -496,7 +506,7 @@ impl View {
 
 #[cfg(test)]
 mod tests {
-    use super::{Column, ItemLinkKind, SummaryFn, View};
+    use super::{Column, ItemLinkKind, SectionFlow, SummaryFn, View};
     use serde_json::Value;
     use uuid::Uuid;
 
@@ -525,6 +535,9 @@ mod tests {
         json.as_object_mut()
             .expect("view object")
             .remove("hide_dependent_items");
+        json.as_object_mut()
+            .expect("view object")
+            .remove("section_flow");
 
         let parsed: View = serde_json::from_value(json).expect("deserialize view");
         assert!(
@@ -534,6 +547,11 @@ mod tests {
         assert!(
             !parsed.hide_dependent_items,
             "missing hide_dependent_items should default to false"
+        );
+        assert_eq!(
+            parsed.section_flow,
+            SectionFlow::Vertical,
+            "missing section_flow should default to vertical"
         );
     }
 
