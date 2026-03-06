@@ -386,6 +386,22 @@ impl App {
                     self.toggle_selected_category_actionable(agenda)?;
                     return Ok(true);
                 }
+                CategoryManagerDetailsFocus::DecimalPlaces => {
+                    self.cycle_numeric_decimal_places(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::ThousandsSeparator => {
+                    self.toggle_numeric_thousands_separator(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::CurrencySymbol => {
+                    if code == KeyCode::Char(' ') {
+                        self.clear_numeric_currency_symbol(agenda)?;
+                    } else {
+                        self.open_numeric_currency_symbol_edit();
+                    }
+                    return Ok(true);
+                }
                 CategoryManagerDetailsFocus::Note => {
                     self.start_category_manager_details_note_edit();
                     return Ok(true);
@@ -395,6 +411,76 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    fn selected_category_mut(&self) -> Option<Category> {
+        let row = self.selected_category_row()?;
+        self.categories.iter().find(|c| c.id == row.id).cloned()
+    }
+
+    fn cycle_numeric_decimal_places(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let mut cat = self.selected_category_mut().ok_or("No category")?;
+        let mut fmt = cat.numeric_format.clone().unwrap_or_default();
+        fmt.decimal_places = match fmt.decimal_places {
+            0 => 1,
+            1 => 2,
+            2 => 3,
+            _ => 0,
+        };
+        cat.numeric_format = Some(fmt);
+        agenda.update_category(&cat).map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        let dp = cat.numeric_format.as_ref().unwrap().decimal_places;
+        self.status = if dp == 0 {
+            "Decimal places: 0 (integer)".to_string()
+        } else {
+            format!("Decimal places: {dp}")
+        };
+        Ok(())
+    }
+
+    fn toggle_numeric_thousands_separator(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let mut cat = self.selected_category_mut().ok_or("No category")?;
+        let mut fmt = cat.numeric_format.clone().unwrap_or_default();
+        fmt.use_thousands_separator = !fmt.use_thousands_separator;
+        cat.numeric_format = Some(fmt);
+        agenda.update_category(&cat).map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        let on = cat.numeric_format.as_ref().unwrap().use_thousands_separator;
+        self.status = format!(
+            "Thousands separator: {}",
+            if on { "ON" } else { "OFF" }
+        );
+        Ok(())
+    }
+
+    fn clear_numeric_currency_symbol(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let mut cat = self.selected_category_mut().ok_or("No category")?;
+        let mut fmt = cat.numeric_format.clone().unwrap_or_default();
+        fmt.currency_symbol = None;
+        cat.numeric_format = Some(fmt);
+        agenda.update_category(&cat).map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.status = "Currency symbol cleared".to_string();
+        Ok(())
+    }
+
+    fn open_numeric_currency_symbol_edit(&mut self) {
+        let cat = match self.selected_category_mut() {
+            Some(c) => c,
+            None => return,
+        };
+        let current = cat
+            .numeric_format
+            .as_ref()
+            .and_then(|f| f.currency_symbol.clone())
+            .unwrap_or_default();
+        self.name_input_context = Some(NameInputContext::CurrencySymbol);
+        self.input_panel = Some(input_panel::InputPanel::new_name_input(
+            &format!("Currency symbol for {}", cat.name),
+            &current,
+        ));
+        self.mode = Mode::InputPanel;
     }
 
     fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {

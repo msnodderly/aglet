@@ -1822,7 +1822,7 @@ impl App {
                                                 .assignments
                                                 .get(&column.heading_id)
                                                 .and_then(|a| a.numeric_value);
-                                            format_numeric_cell(numeric_val, None)
+                                            format_numeric_cell(numeric_val, column.numeric_format.as_ref())
                                         }
                                         ColumnKind::Standard => standard_column_value(
                                             item,
@@ -1932,7 +1932,7 @@ impl App {
                                     "{}({})={}",
                                     spec.label,
                                     spec.summary_fn.label(),
-                                    format_numeric_cell(Some(value), None).trim(),
+                                    format_numeric_cell(Some(value), spec.numeric_format.as_ref()).trim(),
                                 ))
                             })
                             .collect();
@@ -2512,9 +2512,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
@@ -3294,7 +3294,16 @@ impl App {
                 }
 
                 let is_numeric_category = row.value_kind == CategoryValueKind::Numeric;
-                let flags_height = if is_numeric_category { 3 } else { 6 };
+                let numeric_format = if is_numeric_category {
+                    self.categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .and_then(|c| c.numeric_format.clone())
+                        .unwrap_or_default()
+                } else {
+                    NumericFormat::default()
+                };
+                let flags_height = if is_numeric_category { 7 } else { 6 };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -3339,10 +3348,40 @@ impl App {
                 };
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
-                    vec![Line::from(Span::styled(
-                        "  Type: Numeric",
-                        Style::default().fg(Color::DarkGray),
-                    ))]
+                    let dp_label = if numeric_format.decimal_places == 0 {
+                        "Integer (0dp)".to_string()
+                    } else {
+                        format!("{} decimal places", numeric_format.decimal_places)
+                    };
+                    let currency_label = numeric_format
+                        .currency_symbol
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("\"{}\"", s))
+                        .unwrap_or_else(|| "none".to_string());
+                    let preview_val = rust_decimal::Decimal::new(123456, 2);
+                    let preview = format_numeric_cell(Some(preview_val), Some(&numeric_format));
+                    vec![
+                        Line::from(Span::styled(
+                            format!("  Preview: {preview}"),
+                            Style::default().fg(Color::DarkGray),
+                        )),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::DecimalPlaces,
+                            &dp_label,
+                            numeric_format.decimal_places == 0,
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::ThousandsSeparator,
+                            "Thousands separator",
+                            numeric_format.use_thousands_separator,
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::CurrencySymbol,
+                            &format!("Currency: {currency_label}"),
+                            numeric_format.currency_symbol.is_some(),
+                        ),
+                    ]
                 } else {
                     vec![
                         flag_line(
@@ -3362,16 +3401,21 @@ impl App {
                         ),
                     ]
                 };
+                let flags_title = if is_numeric { "Numeric Format" } else { "Flags" };
+                let flags_border_focused = !matches!(
+                    details_focus,
+                    CategoryManagerDetailsFocus::Note
+                );
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
-                            .title("Flags")
+                            .title(flags_title)
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(
-                                if details_focus == CategoryManagerDetailsFocus::Note {
-                                    pane_idle
-                                } else {
+                                if flags_border_focused {
                                     Color::LightCyan
+                                } else {
+                                    pane_idle
                                 },
                             )),
                     ),
@@ -3441,8 +3485,6 @@ impl App {
 
                 let details_hint = if note_editing {
                     "Type to edit  Esc:discard  Tab:leave (warn if unsaved)"
-                } else if is_numeric {
-                    "Numeric: values are set per item, not toggled"
                 } else {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive => {
@@ -3453,6 +3495,15 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
+                        }
+                        CategoryManagerDetailsFocus::DecimalPlaces => {
+                            "Space: cycle decimal places (0/1/2/3)"
+                        }
+                        CategoryManagerDetailsFocus::ThousandsSeparator => {
+                            "Space: toggle thousands separator"
+                        }
+                        CategoryManagerDetailsFocus::CurrencySymbol => {
+                            "Enter: edit currency symbol  Space: clear"
                         }
                         CategoryManagerDetailsFocus::Note => {
                             "j/k: focus field  Enter/Space: toggle/edit"

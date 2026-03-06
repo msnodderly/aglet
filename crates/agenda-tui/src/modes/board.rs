@@ -1,5 +1,52 @@
 use crate::*;
 
+/// Cycle through numeric format presets:
+/// 2dp → integer (0dp) → 1dp → 2dp+thousands → 2dp (back to default)
+fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
+    match (
+        current.decimal_places,
+        current.use_thousands_separator,
+    ) {
+        (2, false) => NumericFormat {
+            decimal_places: 0,
+            currency_symbol: current.currency_symbol.clone(),
+            use_thousands_separator: false,
+        },
+        (0, false) => NumericFormat {
+            decimal_places: 1,
+            currency_symbol: current.currency_symbol.clone(),
+            use_thousands_separator: false,
+        },
+        (1, false) => NumericFormat {
+            decimal_places: 2,
+            currency_symbol: current.currency_symbol.clone(),
+            use_thousands_separator: true,
+        },
+        (2, true) => NumericFormat {
+            decimal_places: 2,
+            currency_symbol: current.currency_symbol.clone(),
+            use_thousands_separator: false,
+        },
+        _ => NumericFormat::default(),
+    }
+}
+
+fn describe_numeric_format(fmt: &NumericFormat) -> String {
+    let mut parts = Vec::new();
+    if fmt.decimal_places == 0 {
+        parts.push("integer".to_string());
+    } else {
+        parts.push(format!("{}dp", fmt.decimal_places));
+    }
+    if fmt.use_thousands_separator {
+        parts.push("thousands".to_string());
+    }
+    if let Some(sym) = &fmt.currency_symbol {
+        parts.push(format!("currency={sym}"));
+    }
+    parts.join(", ")
+}
+
 enum InlineCreateConfirmKeyAction {
     Confirm,
     Cancel,
@@ -795,21 +842,6 @@ impl App {
         self.status = match self.preview_mode {
             PreviewMode::Summary => "Preview mode: Summary".to_string(),
             PreviewMode::Provenance => "Preview mode: Info".to_string(),
-        };
-    }
-
-    pub(crate) fn toggle_normal_focus(&mut self) {
-        if !self.show_preview {
-            self.status = "Preview is closed (press p to open)".to_string();
-            return;
-        }
-        self.normal_focus = match self.normal_focus {
-            NormalFocus::Board => NormalFocus::Preview,
-            NormalFocus::Preview => NormalFocus::Board,
-        };
-        self.status = match self.normal_focus {
-            NormalFocus::Board => "Focus: Board".to_string(),
-            NormalFocus::Preview => "Focus: Preview".to_string(),
         };
     }
 
@@ -2167,7 +2199,9 @@ impl App {
             }
             KeyCode::Tab => self.move_slot_cursor(1),
             KeyCode::BackTab => self.move_slot_cursor(-1),
-            KeyCode::Char('f') => self.toggle_normal_focus(),
+            KeyCode::Char('f') => {
+                self.cycle_column_numeric_format(agenda)?;
+            }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
                 self.status = "g-prefix: ga=All Items".to_string();
@@ -2484,6 +2518,62 @@ impl App {
             .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         self.status = format!("Column summary: {}", next.label());
+        Ok(())
+    }
+
+    fn cycle_column_numeric_format(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let slot = match self.current_slot() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => {
+                self.status = "No columns on unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        let view = match self.current_view() {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+        let section = match view.sections.get(section_index) {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let section_column_index =
+            match Self::board_column_to_section_column_index(section, self.column_index) {
+                Some(i) => i,
+                None => {
+                    self.status = "No column selected".to_string();
+                    return Ok(());
+                }
+            };
+        let column = match section.columns.get(section_column_index) {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let category = match self.categories.iter().find(|c| c.id == column.heading) {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        if category.value_kind != CategoryValueKind::Numeric {
+            self.status = "Format cycling only applies to numeric columns".to_string();
+            return Ok(());
+        }
+        let mut updated_cat = category.clone();
+        let current = updated_cat.numeric_format.clone().unwrap_or_default();
+        let next = cycle_numeric_format_preset(&current);
+        updated_cat.numeric_format = Some(next.clone());
+        agenda
+            .update_category(&updated_cat)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.status = format!("Column format: {}", describe_numeric_format(&next));
         Ok(())
     }
 
@@ -3742,6 +3832,7 @@ impl App {
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
+            Some(NameInputContext::CurrencySymbol) => Mode::CategoryManager,
             None => Mode::Normal,
         }
     }
@@ -4022,6 +4113,40 @@ impl App {
                 self.name_input_context = None;
                 self.mode = Mode::CategoryManager;
                 self.status = "Unexpected save dispatch for CategoryCreate".to_string();
+            }
+            Some(NameInputContext::CurrencySymbol) => {
+                let name = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.text.text().to_string())
+                    .unwrap_or_default();
+                if let Some(mut cat) = self.selected_category_row().and_then(|row| {
+                    self.categories.iter().find(|c| c.id == row.id).cloned()
+                }) {
+                    let mut fmt = cat.numeric_format.clone().unwrap_or_default();
+                    fmt.currency_symbol = if name.is_empty() {
+                        None
+                    } else {
+                        Some(name.clone())
+                    };
+                    cat.numeric_format = Some(fmt);
+                    match agenda.update_category(&cat) {
+                        Ok(_) => {
+                            self.refresh(agenda.store())?;
+                            self.status = if name.is_empty() {
+                                "Currency symbol cleared".to_string()
+                            } else {
+                                format!("Currency symbol set to '{name}'")
+                            };
+                        }
+                        Err(e) => {
+                            self.status = format!("Failed to save currency: {e}");
+                        }
+                    }
+                }
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::CategoryManager;
             }
             None => {
                 self.input_panel = None;
