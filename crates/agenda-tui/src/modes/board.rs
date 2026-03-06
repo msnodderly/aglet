@@ -3,7 +3,11 @@ use crate::*;
 /// Cycle: integer → 1dp → 2dp → 2dp+thousands → currency (2dp+thousands+$) → integer
 pub(super) fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
     let has_currency = current.currency_symbol.is_some();
-    match (current.decimal_places, current.use_thousands_separator, has_currency) {
+    match (
+        current.decimal_places,
+        current.use_thousands_separator,
+        has_currency,
+    ) {
         (0, false, false) => NumericFormat {
             decimal_places: 1,
             currency_symbol: None,
@@ -35,7 +39,11 @@ pub(super) fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFor
 
 pub(crate) fn describe_numeric_format(fmt: &NumericFormat) -> &'static str {
     let has_currency = fmt.currency_symbol.is_some();
-    match (fmt.decimal_places, fmt.use_thousands_separator, has_currency) {
+    match (
+        fmt.decimal_places,
+        fmt.use_thousands_separator,
+        has_currency,
+    ) {
         (0, false, false) => "Integer",
         (1, false, false) => "1 decimal place",
         (2, false, false) => "2 decimal places",
@@ -2095,15 +2103,21 @@ impl App {
                 }
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                let max_cols = self.current_slot_column_count();
-                if self.column_index < max_cols {
-                    self.column_index += 1;
-                } else {
+                if self.is_horizontal_section_flow() {
                     self.move_slot_cursor(1);
+                } else {
+                    let max_cols = self.current_slot_column_count();
+                    if self.column_index < max_cols {
+                        self.column_index += 1;
+                    } else {
+                        self.move_slot_cursor(1);
+                    }
                 }
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if self.column_index > 0 {
+                if self.is_horizontal_section_flow() {
+                    self.move_slot_cursor(-1);
+                } else if self.column_index > 0 {
                     self.column_index -= 1;
                 } else {
                     self.move_slot_cursor(-1);
@@ -2519,10 +2533,7 @@ impl App {
         Ok(())
     }
 
-    fn cycle_column_numeric_format(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    fn cycle_column_numeric_format(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         let slot = match self.current_slot() {
             Some(s) => s,
             None => return Ok(()),
@@ -3359,11 +3370,8 @@ impl App {
             let note = item.note.clone().unwrap_or_default();
             // Collect all assigned category IDs for the draft so Edit view
             // mirrors Assign/Column picker check states (manual + derived).
-            let categories: HashSet<agenda_core::model::CategoryId> = item
-                .assignments
-                .keys()
-                .copied()
-                .collect();
+            let categories: HashSet<agenda_core::model::CategoryId> =
+                item.assignments.keys().copied().collect();
             // Collect numeric buffers and originals for assigned numeric categories.
             let mut numeric_buffers = std::collections::HashMap::new();
             let mut numeric_originals = std::collections::HashMap::new();

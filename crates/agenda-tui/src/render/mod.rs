@@ -1601,8 +1601,13 @@ impl App {
         let constraints: Vec<Constraint> = (0..self.slots.len())
             .map(|_| Constraint::Percentage(pct))
             .collect();
+        let slot_direction = if self.is_horizontal_section_flow() {
+            Direction::Horizontal
+        } else {
+            Direction::Vertical
+        };
         let columns = Layout::default()
-            .direction(Direction::Vertical)
+            .direction(slot_direction)
             .constraints(constraints)
             .split(area);
 
@@ -1621,6 +1626,10 @@ impl App {
             .and_then(|v| v.item_column_label.clone())
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| "Item".to_string());
+        if self.is_horizontal_section_flow() {
+            self.render_horizontal_board_lanes(frame, &columns, &category_display_names);
+            return;
+        }
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let effective_display_mode = match (&slot.context, current_view.as_ref()) {
                 (SlotContext::Section { section_index }, Some(view))
@@ -1822,7 +1831,10 @@ impl App {
                                                 .assignments
                                                 .get(&column.heading_id)
                                                 .and_then(|a| a.numeric_value);
-                                            format_numeric_cell(numeric_val, column.numeric_format.as_ref())
+                                            format_numeric_cell(
+                                                numeric_val,
+                                                column.numeric_format.as_ref(),
+                                            )
                                         }
                                         ColumnKind::Standard => standard_column_value(
                                             item,
@@ -1913,99 +1925,96 @@ impl App {
                     c.heading_value_kind == CategoryValueKind::Numeric
                         && c.summary_fn != SummaryFn::None
                 });
-                let summary_spans: Option<Vec<Span>> =
-                    if has_summary_columns && !slot.items.is_empty() {
-                        let item_refs: Vec<&Item> = slot.items.iter().collect();
-                        let aggregates =
-                            compute_column_aggregates(&item_refs, &layout.columns);
-                        let summary_style = Style::default()
-                            .fg(Color::White)
-                            .bg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD);
-                        let pad_style = Style::default().bg(Color::DarkGray);
-                        let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
-                        let mut spans: Vec<Span> = Vec::new();
-                        // Pad for marker + note + spacing (border + left padding of block = 1)
-                        let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
-                        spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
-                        for (col_idx, spec) in layout.columns.iter().enumerate() {
-                            // Item column appears at item_board_column_index; add its width
-                            if col_idx == item_board_column_index {
-                                let w = item_width + spacing;
-                                spans.push(Span::styled(" ".repeat(w), pad_style));
-                            }
-                            let col_w = spec.width;
-                            if spec.summary_fn != SummaryFn::None
-                                && spec.heading_value_kind == CategoryValueKind::Numeric
-                            {
-                                let value = aggregates[col_idx]
-                                    .as_ref()
-                                    .and_then(|agg| agg.value_for(spec.summary_fn));
-                                let label = if let Some(v) = value {
-                                    format!(
-                                        "{}={}",
-                                        spec.summary_fn.label(),
-                                        format_numeric_cell(Some(v), spec.numeric_format.as_ref())
-                                            .trim(),
-                                    )
-                                } else {
-                                    format!("{}=-", spec.summary_fn.label())
-                                };
-                                let display = if label.len() > col_w {
-                                    label[..col_w].to_string()
-                                } else {
-                                    format!("{:>width$}", label, width = col_w)
-                                };
-                                spans.push(Span::styled(display, summary_style));
-                            } else {
-                                spans.push(Span::styled(" ".repeat(col_w), pad_style));
-                            }
-                            // Add inter-column spacing
-                            if col_idx < layout.columns.len() - 1
-                                || synthetic_categories_width > 0
-                            {
-                                spans.push(Span::styled(" ".repeat(spacing), pad_style));
-                            }
-                        }
-                        // Item column after all category columns
-                        if item_board_column_index >= layout.columns.len() {
+                let summary_spans: Option<Vec<Span>> = if has_summary_columns
+                    && !slot.items.is_empty()
+                {
+                    let item_refs: Vec<&Item> = slot.items.iter().collect();
+                    let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
+                    let summary_style = Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD);
+                    let pad_style = Style::default().bg(Color::DarkGray);
+                    let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
+                    let mut spans: Vec<Span> = Vec::new();
+                    // Pad for marker + note + spacing (border + left padding of block = 1)
+                    let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
+                    spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
+                    for (col_idx, spec) in layout.columns.iter().enumerate() {
+                        // Item column appears at item_board_column_index; add its width
+                        if col_idx == item_board_column_index {
                             let w = item_width + spacing;
                             spans.push(Span::styled(" ".repeat(w), pad_style));
                         }
-                        if synthetic_categories_width > 0 {
-                            spans.push(Span::styled(
-                                " ".repeat(synthetic_categories_width),
-                                pad_style,
-                            ));
-                        }
-                        // Fill remaining width with reversed background
-                        spans.push(Span::styled(" ", pad_style));
-                        // Only show footer if at least one column has a computed value
-                        let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
-                            let spec = &layout.columns[i];
-                            spec.summary_fn != SummaryFn::None
-                                && agg.as_ref().and_then(|a| a.value_for(spec.summary_fn)).is_some()
-                        });
-                        if has_any_value {
-                            Some(spans)
+                        let col_w = spec.width;
+                        if spec.summary_fn != SummaryFn::None
+                            && spec.heading_value_kind == CategoryValueKind::Numeric
+                        {
+                            let value = aggregates[col_idx]
+                                .as_ref()
+                                .and_then(|agg| agg.value_for(spec.summary_fn));
+                            let label = if let Some(v) = value {
+                                format!(
+                                    "{}={}",
+                                    spec.summary_fn.label(),
+                                    format_numeric_cell(Some(v), spec.numeric_format.as_ref())
+                                        .trim(),
+                                )
+                            } else {
+                                format!("{}=-", spec.summary_fn.label())
+                            };
+                            let display = if label.len() > col_w {
+                                label[..col_w].to_string()
+                            } else {
+                                format!("{:>width$}", label, width = col_w)
+                            };
+                            spans.push(Span::styled(display, summary_style));
                         } else {
-                            None
+                            spans.push(Span::styled(" ".repeat(col_w), pad_style));
                         }
+                        // Add inter-column spacing
+                        if col_idx < layout.columns.len() - 1 || synthetic_categories_width > 0 {
+                            spans.push(Span::styled(" ".repeat(spacing), pad_style));
+                        }
+                    }
+                    // Item column after all category columns
+                    if item_board_column_index >= layout.columns.len() {
+                        let w = item_width + spacing;
+                        spans.push(Span::styled(" ".repeat(w), pad_style));
+                    }
+                    if synthetic_categories_width > 0 {
+                        spans.push(Span::styled(
+                            " ".repeat(synthetic_categories_width),
+                            pad_style,
+                        ));
+                    }
+                    // Fill remaining width with reversed background
+                    spans.push(Span::styled(" ", pad_style));
+                    // Only show footer if at least one column has a computed value
+                    let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
+                        let spec = &layout.columns[i];
+                        spec.summary_fn != SummaryFn::None
+                            && agg
+                                .as_ref()
+                                .and_then(|a| a.value_for(spec.summary_fn))
+                                .is_some()
+                    });
+                    if has_any_value {
+                        Some(spans)
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 // Split the slot area: table on top, optional 1-line summary footer.
                 let slot_area = columns[slot_index];
-                let (table_area, summary_area) = if summary_spans.is_some()
-                    && slot_area.height > 4
+                let (table_area, summary_area) = if summary_spans.is_some() && slot_area.height > 4
                 {
                     let split = Layout::default()
                         .direction(ratatui::layout::Direction::Vertical)
-                        .constraints([
-                            Constraint::Min(3),
-                            Constraint::Length(1),
-                        ])
+                        .constraints([Constraint::Min(3), Constraint::Length(1)])
                         .split(slot_area);
                     (split[0], Some(split[1]))
                 } else {
@@ -2030,10 +2039,7 @@ impl App {
                     &mut state,
                 );
                 if let (Some(area), Some(spans)) = (summary_area, summary_spans) {
-                    frame.render_widget(
-                        Paragraph::new(Line::from(spans)),
-                        area,
-                    );
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
                 }
                 Self::render_vertical_scrollbar(
                     frame,
@@ -2168,6 +2174,120 @@ impl App {
                     state.offset(),
                 );
             }
+        }
+    }
+
+    fn render_horizontal_board_lanes(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        columns: &[Rect],
+        category_display_names: &HashMap<CategoryId, String>,
+    ) {
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let slot_area = columns[slot_index];
+            let is_selected_slot = slot_index == self.slot_index;
+            let selected_row = if is_selected_slot && !slot.items.is_empty() {
+                Some(self.item_index.min(slot.items.len().saturating_sub(1)))
+            } else {
+                None
+            };
+            let filter_suffix = self
+                .section_filters
+                .get(slot_index)
+                .and_then(|f| f.as_deref())
+                .map(|needle| format!("  filter:{needle}"))
+                .unwrap_or_default();
+            let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let border_color = if is_selected_slot {
+                Color::Cyan
+            } else {
+                Color::Blue
+            };
+            let card_width = slot_area.width.saturating_sub(4) as usize;
+            let cards: Vec<ListItem<'_>> = if slot.items.is_empty() {
+                let has_filter = self
+                    .section_filters
+                    .get(slot_index)
+                    .map(|f| f.is_some())
+                    .unwrap_or(false);
+                let all_slots_empty = self.slots.iter().all(|s| s.items.is_empty());
+                let empty_msg = if all_slots_empty {
+                    "No items. n:add item  v:switch view  q:quit"
+                } else if has_filter {
+                    "No matches. Esc:clear filter"
+                } else {
+                    "No items in this section."
+                };
+                vec![ListItem::new(Line::from(Span::styled(
+                    format!(" {}", truncate_board_cell(empty_msg, card_width.max(1))),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                slot.items
+                    .iter()
+                    .map(|item| {
+                        let item_text =
+                            truncate_board_cell(&board_item_label(item), card_width.max(1));
+                        let when = item
+                            .when_date
+                            .map(|dt| dt.date().to_string())
+                            .unwrap_or_else(|| "-".to_string());
+                        let flags = item_indicator_glyphs(
+                            item.is_done,
+                            self.is_item_blocked(item.id),
+                            has_note_text(item.note.as_deref()),
+                        );
+                        let category_count =
+                            item_assignment_labels(item, category_display_names).len();
+                        let meta = truncate_board_cell(
+                            &format!("{when}  {flags}  {category_count} cats"),
+                            card_width.max(1),
+                        );
+                        ListItem::new(vec![
+                            Line::from(format!(" {}", item_text)),
+                            Line::from(Span::styled(
+                                format!(" {}", meta),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )),
+                        ])
+                    })
+                    .collect()
+            };
+
+            let mut list_state = ListState::default().with_selected(selected_row);
+            let item_count = slot.items.len().max(cards.len());
+            let remembered_index = self
+                .horizontal_slot_item_indices
+                .get(slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(item_count.saturating_sub(1));
+            *list_state.offset_mut() = if is_selected_slot {
+                list_scroll_for_selected_line(slot_area, selected_row) as usize
+            } else {
+                remembered_index
+            };
+
+            frame.render_stateful_widget(
+                List::new(cards)
+                    .block(
+                        Block::default()
+                            .title(title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(border_color)),
+                    )
+                    .highlight_style(selected_board_row_style())
+                    .highlight_symbol(">")
+                    .repeat_highlight_symbol(true),
+                slot_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(
+                frame,
+                slot_area,
+                slot.items.len().max(1),
+                list_state.offset(),
+            );
         }
     }
 
@@ -3435,23 +3555,23 @@ impl App {
                         ),
                     ]
                 };
-                let flags_title = if is_numeric { "Numeric Format" } else { "Flags" };
-                let flags_border_focused = !matches!(
-                    details_focus,
-                    CategoryManagerDetailsFocus::Note
-                );
+                let flags_title = if is_numeric {
+                    "Numeric Format"
+                } else {
+                    "Flags"
+                };
+                let flags_border_focused =
+                    !matches!(details_focus, CategoryManagerDetailsFocus::Note);
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
                             .title(flags_title)
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(
-                                if flags_border_focused {
-                                    Color::LightCyan
-                                } else {
-                                    pane_idle
-                                },
-                            )),
+                            .border_style(Style::default().fg(if flags_border_focused {
+                                Color::LightCyan
+                            } else {
+                                pane_idle
+                            })),
                     ),
                     details_chunks[1],
                 );
@@ -3691,6 +3811,10 @@ impl App {
                     BoardDisplayMode::SingleLine => "single-line",
                     BoardDisplayMode::MultiLine => "multi-line",
                 };
+                let section_flow_label = match state.draft.section_flow {
+                    SectionFlow::Vertical => "vertical (stacked lanes)",
+                    SectionFlow::Horizontal => "horizontal (kanban lanes)",
+                };
 
                 let separator_style = Style::default().fg(Color::DarkGray);
                 let pad = 26; // column alignment width
@@ -3849,6 +3973,19 @@ impl App {
                         &mut selected_line,
                     )),
                 );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Section flow",
+                        section_flow_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        3,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
 
                 let alias_count = state
                     .draft
@@ -3869,7 +4006,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        6,
+                        7,
                         &items,
                         &mut selected_line,
                     )),
@@ -3895,7 +4032,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        3,
+                        4,
                         &items,
                         &mut selected_line,
                     )),
@@ -3914,7 +4051,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -3936,7 +4073,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
