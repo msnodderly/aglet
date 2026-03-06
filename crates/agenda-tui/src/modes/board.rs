@@ -2259,6 +2259,14 @@ impl App {
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
                     self.status = "No selected item to edit categories".to_string();
+                } else if self.has_selected_items() {
+                    let selected_count = self.selected_count();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    self.mode = Mode::ItemAssignInput;
+                    self.clear_input();
+                    self.status = format!(
+                        "Type category name for {selected_count} selected item{item_suffix}: Enter assign/create, Esc cancel"
+                    );
                 } else if self.category_rows.is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
@@ -4482,11 +4490,17 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::ItemAssignPicker;
+                self.mode = if self.has_selected_items() {
+                    Mode::Normal
+                } else {
+                    Mode::ItemAssignPicker
+                };
                 self.clear_input();
                 self.status = "Category name entry canceled".to_string();
             }
             KeyCode::Enter => {
+                let batch_mode = self.has_selected_items();
+                let action_item_ids = self.effective_action_item_ids();
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
                     self.clear_input();
@@ -4495,7 +4509,11 @@ impl App {
                 };
                 let name = self.input.trimmed().to_string();
                 if name.is_empty() {
-                    self.mode = Mode::ItemAssignPicker;
+                    self.mode = if batch_mode {
+                        Mode::Normal
+                    } else {
+                        Mode::ItemAssignPicker
+                    };
                     self.clear_input();
                     self.status = "Category name entry canceled (empty)".to_string();
                     return Ok(false);
@@ -4537,62 +4555,93 @@ impl App {
                         created_new_category = true;
                         (category_id, category.name)
                     };
+                let mut assigned = 0usize;
+                let mut already_had = 0usize;
+                let mut failed = 0usize;
+                let mut first_error = None;
 
-                match agenda.assign_item_manual(
-                    item_id,
-                    category_id,
-                    Some("manual:tui.assign".to_string()),
-                ) {
-                    Ok(result) => {
-                        self.refresh(agenda.store())?;
-                        self.set_item_selection_by_id(item_id);
-                        if let Some(index) = self
-                            .category_rows
-                            .iter()
-                            .position(|row| row.id == category_id)
-                        {
-                            self.item_assign_category_index = index;
-                        }
-                        self.mode = Mode::ItemAssignPicker;
-                        self.clear_input();
-                        self.status = if created_new_category {
-                            format!(
-                                "Created and assigned category {} (new_assignments={})",
-                                category_name,
-                                result.new_assignments.len()
-                            )
-                        } else {
-                            format!(
-                                "Assigned category {} (new_assignments={})",
-                                category_name,
-                                result.new_assignments.len()
-                            )
-                        };
+                for action_item_id in &action_item_ids {
+                    let item = agenda
+                        .store()
+                        .get_item(*action_item_id)
+                        .map_err(|e| e.to_string())?;
+                    if item.assignments.contains_key(&category_id) {
+                        already_had += 1;
+                        continue;
                     }
-                    Err(err) => {
-                        // Keep the picker open and refreshed so newly created categories
-                        // appear immediately even if the assignment step fails.
-                        self.refresh(agenda.store())?;
-                        self.set_item_selection_by_id(item_id);
-                        if let Some(index) = self
-                            .category_rows
-                            .iter()
-                            .position(|row| row.id == category_id)
-                        {
-                            self.item_assign_category_index = index;
+
+                    match agenda.assign_item_manual(
+                        *action_item_id,
+                        category_id,
+                        Some("manual:tui.assign".to_string()),
+                    ) {
+                        Ok(_) => assigned += 1,
+                        Err(err) => {
+                            failed += 1;
+                            if first_error.is_none() {
+                                first_error = Some(err.to_string());
+                            }
                         }
-                        self.mode = Mode::ItemAssignPicker;
-                        self.clear_input();
-                        self.status = if created_new_category {
-                            format!(
-                                "Created category {} but could not assign: {}",
-                                category_name, err
-                            )
-                        } else {
-                            format!("Could not assign category {}: {}", category_name, err)
-                        };
                     }
                 }
+
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                if let Some(index) = self
+                    .category_rows
+                    .iter()
+                    .position(|row| row.id == category_id)
+                {
+                    self.item_assign_category_index = index;
+                }
+                self.mode = if batch_mode {
+                    Mode::Normal
+                } else {
+                    Mode::ItemAssignPicker
+                };
+                self.clear_input();
+                if batch_mode && assigned > 0 {
+                    self.clear_selected_items();
+                }
+                self.status = if action_item_ids.len() > 1 {
+                    let mut summary = format!(
+                        "{} category {} to {} items (assigned={}, already={}, failed={})",
+                        if created_new_category {
+                            "Created and applied"
+                        } else {
+                            "Applied"
+                        },
+                        category_name,
+                        action_item_ids.len(),
+                        assigned,
+                        already_had,
+                        failed
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    summary
+                } else if failed > 0 {
+                    if created_new_category {
+                        format!(
+                            "Created category {} but could not assign: {}",
+                            category_name,
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        )
+                    } else {
+                        format!(
+                            "Could not assign category {}: {}",
+                            category_name,
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        )
+                    }
+                } else if created_new_category {
+                    format!("Created and assigned category {}", category_name)
+                } else if already_had > 0 {
+                    format!("Category {} already assigned", category_name)
+                } else {
+                    format!("Assigned category {}", category_name)
+                };
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}

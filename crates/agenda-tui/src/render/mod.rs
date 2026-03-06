@@ -1576,19 +1576,13 @@ impl App {
         } else {
             ""
         };
-        let selection = if self.selected_count() > 0 {
-            format!(" sel:{}", self.selected_item_ids_in_view_order().len())
-        } else {
-            String::new()
-        };
-
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "Agenda Reborn",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  view:{view_name}{view_flags}{selection}  mode:{mode}{filter}"
+                "  view:{view_name}{view_flags}  mode:{mode}{filter}"
             )),
         ]))
     }
@@ -1912,9 +1906,8 @@ impl App {
                             let is_focused_item = is_selected_slot && item_index == self.item_index;
                             let is_marked_selected = self.is_item_selected(item.id);
                             let marker_cell = match (is_focused_item, is_marked_selected) {
-                                (true, true) => "+",
-                                (true, false) => ">",
-                                (false, true) => "*",
+                                (true, _) => ">",
+                                (false, true) => "+",
                                 (false, false) => " ",
                             };
                             let note_cell = item_indicator_glyphs(
@@ -2247,9 +2240,8 @@ impl App {
                                 .unwrap_or_else(|| "-".to_string());
                             let is_marked_selected = self.is_item_selected(item.id);
                             let marker_cell = match (is_selected, is_marked_selected) {
-                                (true, true) => "+",
-                                (true, false) => ">",
-                                (false, true) => "*",
+                                (true, _) => ">",
+                                (false, true) => "+",
                                 (false, false) => " ",
                             };
                             let note_cell = item_indicator_glyphs(
@@ -2471,7 +2463,11 @@ impl App {
             for (item_index, item) in slot.items.iter().enumerate() {
                 let is_focused_item = is_selected_slot && item_index == self.item_index;
                 let is_marked_selected = self.is_item_selected(item.id);
-                let marker_prefix = if is_marked_selected { "* " } else { "" };
+                let marker_prefix = if is_marked_selected && !is_focused_item {
+                    "+ "
+                } else {
+                    ""
+                };
                 let item_text = board_item_label(item);
                 let category_count = item_assignment_labels(item, category_display_names).len();
                 let mut meta_parts = vec![format!(

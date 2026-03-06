@@ -779,6 +779,15 @@ impl App {
         ordered
     }
 
+    pub(crate) fn effective_action_item_ids(&self) -> Vec<ItemId> {
+        let selected = self.selected_item_ids_in_view_order();
+        if !selected.is_empty() {
+            selected
+        } else {
+            self.selected_item_id().into_iter().collect()
+        }
+    }
+
     pub(crate) fn prune_selected_items_to_visible_slots(&mut self) {
         if self.selected_item_ids.is_empty() {
             return;
