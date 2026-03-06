@@ -12510,15 +12510,172 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("SUMMARY"),
-            "summary label missing: {rendered}"
+            rendered.contains("Cost(sum)=350"),
+            "sum missing: {rendered}"
         );
-        assert!(rendered.contains("350.00"), "sum missing: {rendered}");
-        assert!(rendered.contains("175.00"), "avg missing: {rendered}");
-        assert!(rendered.contains("100.00"), "min missing: {rendered}");
-        assert!(rendered.contains("250.00"), "max missing: {rendered}");
-        assert!(rendered.contains("2.00"), "count missing: {rendered}");
+        assert!(
+            rendered.contains("Cost(avg)=175"),
+            "avg missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cost(min)=100"),
+            "min missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cost(max)=250"),
+            "max missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cost(count)=2"),
+            "count missing: {rendered}"
+        );
 
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn shift_f_cycles_column_summary_fn() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("test item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                cost.id,
+                rust_decimal::Decimal::new(42, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign numeric");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 10,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        // With item_column_index=0, the item column is at board index 0.
+        // Section column 0 (Cost) maps to board index 1.
+        app.column_index = 1;
+
+        // Initially summary_fn is None
+        let col = &store
+            .get_view(view.id)
+            .expect("get view")
+            .sections[0]
+            .columns[0];
+        assert_eq!(col.summary_fn, None);
+
+        // Press F to cycle: None -> Sum
+        app.handle_normal_key(KeyCode::Char('F'), &agenda)
+            .expect("press F");
+        let col = &store
+            .get_view(view.id)
+            .expect("get view")
+            .sections[0]
+            .columns[0];
+        assert_eq!(col.summary_fn, Some(SummaryFn::Sum));
+
+        // Press F again: Sum -> Avg
+        app.handle_normal_key(KeyCode::Char('F'), &agenda)
+            .expect("press F again");
+        let col = &store
+            .get_view(view.id)
+            .expect("get view")
+            .sections[0]
+            .columns[0];
+        assert_eq!(col.summary_fn, Some(SummaryFn::Avg));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn shift_f_on_non_numeric_column_is_noop() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-shift-f-nonnumeric-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let tag_cat = Category::new("Priority".to_string());
+        store.create_category(&tag_cat).expect("create category");
+
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: tag_cat.id,
+                width: 10,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1; // section column 0 maps to board index 1 (item at 0)
+
+        app.handle_normal_key(KeyCode::Char('F'), &agenda)
+            .expect("press F on tag column");
+
+        // Should remain None — tag columns don't support summary functions
+        let col = &store
+            .get_view(view.id)
+            .expect("get view")
+            .sections[0]
+            .columns[0];
+        assert_eq!(col.summary_fn, None);
+        assert!(app.status.contains("numeric"), "status should mention numeric: {}", app.status);
+
+        drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 

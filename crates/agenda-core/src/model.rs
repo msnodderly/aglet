@@ -224,6 +224,31 @@ pub enum SummaryFn {
     Count,
 }
 
+impl SummaryFn {
+    /// Cycle to the next summary function variant.
+    pub fn next(self) -> Self {
+        match self {
+            Self::None => Self::Sum,
+            Self::Sum => Self::Avg,
+            Self::Avg => Self::Min,
+            Self::Min => Self::Max,
+            Self::Max => Self::Count,
+            Self::Count => Self::None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Sum => "sum",
+            Self::Avg => "avg",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Count => "count",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
     #[serde(default)]
