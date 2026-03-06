@@ -783,11 +783,9 @@ impl App {
         }
 
         if let Some(next_category_id) = reload_details_for {
-            let next_cat = next_category_id
-                .and_then(|id| self.categories.iter().find(|c| c.id == id));
-            let next_note = next_cat
-                .and_then(|c| c.note.clone())
-                .unwrap_or_default();
+            let next_cat =
+                next_category_id.and_then(|id| self.categories.iter().find(|c| c.id == id));
+            let next_note = next_cat.and_then(|c| c.note.clone()).unwrap_or_default();
             let is_numeric = next_cat
                 .map(|c| c.value_kind == CategoryValueKind::Numeric)
                 .unwrap_or(false);
@@ -1134,6 +1132,116 @@ impl App {
         self.refresh(agenda.store())?;
         self.reset_section_filters();
         self.status = "Jumped to view: All Items".to_string();
+        Ok(())
+    }
+
+    pub(crate) fn global_search_active(&self) -> bool {
+        self.global_search_session.is_some()
+    }
+
+    pub(crate) fn begin_global_search_session(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(index) = self
+            .views
+            .iter()
+            .position(|view| view.name.eq_ignore_ascii_case("All Items"))
+        else {
+            self.status = "All Items view not found".to_string();
+            return Ok(());
+        };
+
+        if self.global_search_session.is_none() {
+            self.global_search_session = Some(GlobalSearchSession {
+                return_view_name: self.current_view().map(|view| view.name.clone()),
+                return_slot_index: self.slot_index,
+                return_item_index: self.item_index,
+                return_column_index: self.column_index,
+                return_section_filters: self.section_filters.clone(),
+                return_slot_sort_keys: self.slot_sort_keys.clone(),
+                return_search_text: self.search_buffer.text().to_string(),
+            });
+        }
+
+        self.set_active_view_index(index);
+        self.slot_index = 0;
+        self.item_index = 0;
+        self.column_index = 0;
+        self.slot_sort_keys.clear();
+        self.refresh(agenda.store())?;
+        self.reset_section_filters();
+        self.search_buffer.clear();
+        self.mode = Mode::SearchBarFocused;
+        self.status = "Global search: All Items (Esc returns to previous view)".to_string();
+        Ok(())
+    }
+
+    pub(crate) fn restore_global_search_session(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(session) = self.global_search_session.take() else {
+            return Ok(());
+        };
+
+        let return_slot_index = session.return_slot_index;
+        let return_item_index = session.return_item_index;
+        let return_column_index = session.return_column_index;
+        let return_search_text = session.return_search_text;
+        let return_filters = session.return_section_filters;
+        let return_sort_keys = session.return_slot_sort_keys;
+
+        let restored_view = session
+            .return_view_name
+            .as_deref()
+            .and_then(|name| {
+                self.views
+                    .iter()
+                    .position(|view| view.name.eq_ignore_ascii_case(name))
+            })
+            .map(|index| {
+                self.set_active_view_index(index);
+                true
+            })
+            .unwrap_or(false);
+
+        self.slot_index = return_slot_index;
+        self.item_index = return_item_index;
+        self.column_index = return_column_index;
+        self.refresh(agenda.store())?;
+
+        let mut restored_sort_keys = vec![Vec::new(); self.slots.len()];
+        for (index, keys) in return_sort_keys.into_iter().enumerate() {
+            if let Some(slot_keys) = restored_sort_keys.get_mut(index) {
+                *slot_keys = keys;
+            }
+        }
+        self.slot_sort_keys = restored_sort_keys;
+
+        let mut restored_filters = vec![None; self.slots.len()];
+        for (index, filter) in return_filters.into_iter().enumerate() {
+            if let Some(slot_filter) = restored_filters.get_mut(index) {
+                *slot_filter = filter;
+            }
+        }
+        self.section_filters = restored_filters;
+        self.search_buffer.set(return_search_text);
+        self.refresh(agenda.store())?;
+
+        self.slot_index = return_slot_index.min(self.slots.len().saturating_sub(1));
+        self.item_index = return_item_index.min(
+            self.current_slot()
+                .map(|slot| slot.items.len().saturating_sub(1))
+                .unwrap_or(0),
+        );
+        self.column_index = return_column_index.min(self.current_slot_column_count());
+        self.mode = Mode::Normal;
+        self.status = if restored_view {
+            "Returned to previous view".to_string()
+        } else {
+            "Previous view not found; staying on current view".to_string()
+        };
         Ok(())
     }
 
