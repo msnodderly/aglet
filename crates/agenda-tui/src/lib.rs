@@ -12510,14 +12510,25 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("SUMMARY"),
-            "summary label missing: {rendered}"
+            rendered.contains("Cost(sum)=350"),
+            "sum missing: {rendered}"
         );
-        assert!(rendered.contains("350.00"), "sum missing: {rendered}");
-        assert!(rendered.contains("175.00"), "avg missing: {rendered}");
-        assert!(rendered.contains("100.00"), "min missing: {rendered}");
-        assert!(rendered.contains("250.00"), "max missing: {rendered}");
-        assert!(rendered.contains("2.00"), "count missing: {rendered}");
+        assert!(
+            rendered.contains("Cost(avg)=175"),
+            "avg missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cost(min)=100"),
+            "min missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cost(max)=250"),
+            "max missing: {rendered}"
+        );
+        assert!(
+            rendered.contains("Cost(count)=2"),
+            "count missing: {rendered}"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }

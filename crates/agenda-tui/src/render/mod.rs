@@ -1907,52 +1907,62 @@ impl App {
                         .collect()
                 };
 
-                // Append a configured aggregate footer row for numeric columns.
+                // Build a fixed summary footer line for numeric columns.
                 let has_summary_columns = layout.columns.iter().any(|c| {
                     c.heading_value_kind == CategoryValueKind::Numeric
                         && c.summary_fn != SummaryFn::None
                 });
-                let mut rows = rows;
-                if has_summary_columns && !slot.items.is_empty() {
-                    let item_refs: Vec<&Item> = slot.items.iter().collect();
-                    let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
-                    let footer_style = Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD);
-                    let mut footer_cells =
-                        vec![Cell::from(String::new()), Cell::from(String::new())];
-                    let category_footer_cells: Vec<Cell<'_>> = aggregates
-                        .iter()
-                        .enumerate()
-                        .map(|(col_idx, agg_opt)| {
-                            let summary_fn = layout.columns[col_idx].summary_fn;
-                            let text = agg_opt
-                                .as_ref()
-                                .and_then(|agg| agg.value_for(summary_fn))
-                                .map(|v| {
-                                    right_pad_cell(
-                                        &format_numeric_cell(Some(v), None),
-                                        layout.columns[col_idx].width,
-                                    )
-                                })
-                                .unwrap_or_default();
-                            Cell::from(text).style(footer_style)
-                        })
-                        .collect();
-                    let mut left_cats: Vec<Cell<'_>> =
-                        category_footer_cells[..item_board_column_index].to_vec();
-                    let right_cats: Vec<Cell<'_>> =
-                        category_footer_cells[item_board_column_index..].to_vec();
-                    footer_cells.append(&mut left_cats);
-                    footer_cells.push(Cell::from("  SUMMARY").style(footer_style));
-                    footer_cells.extend(right_cats);
-                    if synthetic_categories_width > 0 {
-                        footer_cells.push(Cell::from(String::new()));
-                    }
-                    rows.push(Row::new(footer_cells));
-                }
+                let summary_line: Option<String> =
+                    if has_summary_columns && !slot.items.is_empty() {
+                        let item_refs: Vec<&Item> = slot.items.iter().collect();
+                        let aggregates =
+                            compute_column_aggregates(&item_refs, &layout.columns);
+                        let parts: Vec<String> = aggregates
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(col_idx, agg_opt)| {
+                                let spec = &layout.columns[col_idx];
+                                if spec.summary_fn == SummaryFn::None {
+                                    return None;
+                                }
+                                let value = agg_opt
+                                    .as_ref()
+                                    .and_then(|agg| agg.value_for(spec.summary_fn))?;
+                                Some(format!(
+                                    "{}({})={}",
+                                    spec.label,
+                                    spec.summary_fn.label(),
+                                    format_numeric_cell(Some(value), None).trim(),
+                                ))
+                            })
+                            .collect();
+                        if parts.is_empty() {
+                            None
+                        } else {
+                            Some(parts.join("  "))
+                        }
+                    } else {
+                        None
+                    };
 
-                let mut state = Self::table_state_for(columns[slot_index], selected_row);
+                // Split the slot area: table on top, optional 1-line summary footer.
+                let slot_area = columns[slot_index];
+                let (table_area, summary_area) = if summary_line.is_some()
+                    && slot_area.height > 4
+                {
+                    let split = Layout::default()
+                        .direction(ratatui::layout::Direction::Vertical)
+                        .constraints([
+                            Constraint::Min(3),
+                            Constraint::Length(1),
+                        ])
+                        .split(slot_area);
+                    (split[0], Some(split[1]))
+                } else {
+                    (slot_area, None)
+                };
+
+                let mut state = Self::table_state_for(table_area, selected_row);
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
@@ -1966,12 +1976,21 @@ impl App {
                                 .borders(Borders::ALL)
                                 .border_style(Style::default().fg(border_color)),
                         ),
-                    columns[slot_index],
+                    table_area,
                     &mut state,
                 );
+                if let (Some(area), Some(line)) = (summary_area, &summary_line) {
+                    let summary_style = Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD);
+                    frame.render_widget(
+                        Paragraph::new(format!(" {line}")).style(summary_style),
+                        area,
+                    );
+                }
                 Self::render_vertical_scrollbar(
                     frame,
-                    columns[slot_index],
+                    table_area,
                     slot.items.len(),
                     state.offset(),
                 );
