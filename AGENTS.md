@@ -83,6 +83,18 @@ When viewing items, the categories list includes both the assigned category and
 all its parent categories. For example, an item assigned to `High` will show
 `High, Priority` in its categories list (both the child and the parent).
 
+## Implicit String Matching Uses Note Text Too (Surprising)
+
+Implicit-string auto-match is evaluated against `item.text` and the full note
+body, not only the title.
+
+Practical implications:
+- Example commands or acceptance criteria inside notes can accidentally match
+  categories like `Ready`, `CLI`, or `TUI`
+- If an item appears in a status/project view unexpectedly, inspect
+  `agenda-cli show` assignment provenance before assuming the visible category
+  was manually assigned
+
 ## Database Files
 
 Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts
