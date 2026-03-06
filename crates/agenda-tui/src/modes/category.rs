@@ -428,7 +428,8 @@ impl App {
             _ => 0,
         };
         cat.numeric_format = Some(fmt);
-        agenda.update_category(&cat).map_err(|e| e.to_string())?;
+        // Store directly — format-only change needs no reclassification.
+        agenda.store().update_category(&cat).map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         let dp = cat.numeric_format.as_ref().unwrap().decimal_places;
         self.status = if dp == 0 {
@@ -444,7 +445,8 @@ impl App {
         let mut fmt = cat.numeric_format.clone().unwrap_or_default();
         fmt.use_thousands_separator = !fmt.use_thousands_separator;
         cat.numeric_format = Some(fmt);
-        agenda.update_category(&cat).map_err(|e| e.to_string())?;
+        // Store directly — format-only change needs no reclassification.
+        agenda.store().update_category(&cat).map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         let on = cat.numeric_format.as_ref().unwrap().use_thousands_separator;
         self.status = format!(
@@ -459,7 +461,8 @@ impl App {
         let mut fmt = cat.numeric_format.clone().unwrap_or_default();
         fmt.currency_symbol = None;
         cat.numeric_format = Some(fmt);
-        agenda.update_category(&cat).map_err(|e| e.to_string())?;
+        // Store directly — format-only change needs no reclassification.
+        agenda.store().update_category(&cat).map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         self.status = "Currency symbol cleared".to_string();
         Ok(())

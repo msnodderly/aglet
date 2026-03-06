@@ -2569,7 +2569,9 @@ impl App {
         let current = updated_cat.numeric_format.clone().unwrap_or_default();
         let next = cycle_numeric_format_preset(&current);
         updated_cat.numeric_format = Some(next.clone());
+        // Use store directly — format-only change needs no reclassification.
         agenda
+            .store()
             .update_category(&updated_cat)
             .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
@@ -4130,7 +4132,8 @@ impl App {
                         Some(name.clone())
                     };
                     cat.numeric_format = Some(fmt);
-                    match agenda.update_category(&cat) {
+                    // Store directly — format-only change needs no reclassification.
+                    match agenda.store().update_category(&cat) {
                         Ok(_) => {
                             self.refresh(agenda.store())?;
                             self.status = if name.is_empty() {
