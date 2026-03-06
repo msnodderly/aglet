@@ -1919,10 +1919,10 @@ impl App {
                         let aggregates =
                             compute_column_aggregates(&item_refs, &layout.columns);
                         let summary_style = Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                            .add_modifier(Modifier::REVERSED);
-                        let pad_style = Style::default().add_modifier(Modifier::REVERSED);
+                            .fg(Color::White)
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD);
+                        let pad_style = Style::default().bg(Color::DarkGray);
                         let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
                         let mut spans: Vec<Span> = Vec::new();
                         // Pad for marker + note + spacing (border + left padding of block = 1)
@@ -3350,7 +3350,7 @@ impl App {
                 } else {
                     NumericFormat::default()
                 };
-                let flags_height = if is_numeric_category { 7 } else { 6 };
+                let flags_height = if is_numeric_category { 5 } else { 6 };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -3395,39 +3395,26 @@ impl App {
                 };
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
-                    let dp_label = if numeric_format.decimal_places == 0 {
-                        "Integer (0dp)".to_string()
-                    } else {
-                        format!("{} decimal places", numeric_format.decimal_places)
-                    };
-                    let currency_label = numeric_format
-                        .currency_symbol
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .map(|s| format!("\"{}\"", s))
-                        .unwrap_or_else(|| "none".to_string());
+                    use crate::modes::board::describe_numeric_format;
                     let preview_val = rust_decimal::Decimal::new(123456, 2);
                     let preview = format_numeric_cell(Some(preview_val), Some(&numeric_format));
+                    let format_label = describe_numeric_format(&numeric_format);
+                    let focused = details_focus == CategoryManagerDetailsFocus::NumericFormat;
+                    let format_style = if focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    let indicator = if focused { "> " } else { "  " };
                     vec![
                         Line::from(Span::styled(
-                            format!("  Preview: {preview}"),
-                            Style::default().fg(Color::DarkGray),
+                            format!("  Preview: {}", preview.trim()),
+                            Style::default().fg(Color::White),
                         )),
-                        flag_line(
-                            details_focus == CategoryManagerDetailsFocus::DecimalPlaces,
-                            &dp_label,
-                            numeric_format.decimal_places == 0,
-                        ),
-                        flag_line(
-                            details_focus == CategoryManagerDetailsFocus::ThousandsSeparator,
-                            "Thousands separator",
-                            numeric_format.use_thousands_separator,
-                        ),
-                        flag_line(
-                            details_focus == CategoryManagerDetailsFocus::CurrencySymbol,
-                            &format!("Currency: {currency_label}"),
-                            numeric_format.currency_symbol.is_some(),
-                        ),
+                        Line::from(Span::styled(
+                            format!("{indicator}{format_label}"),
+                            format_style,
+                        )),
                     ]
                 } else {
                     vec![
@@ -3543,14 +3530,8 @@ impl App {
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
                         }
-                        CategoryManagerDetailsFocus::DecimalPlaces => {
-                            "Space: cycle decimal places (0/1/2/3)"
-                        }
-                        CategoryManagerDetailsFocus::ThousandsSeparator => {
-                            "Space: toggle thousands separator"
-                        }
-                        CategoryManagerDetailsFocus::CurrencySymbol => {
-                            "Enter: edit currency symbol  Space: clear"
+                        CategoryManagerDetailsFocus::NumericFormat => {
+                            "Enter/Space: cycle format (int → 1dp → 2dp → thousands → currency)"
                         }
                         CategoryManagerDetailsFocus::Note => {
                             "j/k: focus field  Enter/Space: toggle/edit"

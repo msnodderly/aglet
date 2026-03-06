@@ -722,7 +722,7 @@ impl App {
             .map(|c| c.value_kind == CategoryValueKind::Numeric)
             .unwrap_or(false);
         let initial_details_focus = if is_numeric {
-            CategoryManagerDetailsFocus::DecimalPlaces
+            CategoryManagerDetailsFocus::NumericFormat
         } else {
             CategoryManagerDetailsFocus::Exclusive
         };
@@ -797,7 +797,7 @@ impl App {
                 state.details_note_dirty = false;
                 state.details_note_editing = false;
                 state.details_focus = if is_numeric {
-                    CategoryManagerDetailsFocus::DecimalPlaces
+                    CategoryManagerDetailsFocus::NumericFormat
                 } else {
                     CategoryManagerDetailsFocus::Exclusive
                 };
