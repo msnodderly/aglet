@@ -3785,6 +3785,91 @@ mod tests {
     }
 
     #[test]
+    fn batch_link_wizard_reports_created_and_skipped_counts() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .link_items_depends_on(source_a.id, target.id)
+            .expect("seed existing link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_b.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus confirm");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("apply batch link");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("created=1, skipped=1, failed=0"),
+            "status should report batch link counts: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_partial_failure_preserves_remaining_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_a.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+        store.delete_item(source_b.id, "test").expect("delete second source");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus confirm");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("apply batch link");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 1);
+        assert!(app.is_item_selected(source_a.id));
+        assert!(
+            agenda
+                .immediate_prereq_ids(source_a.id)
+                .expect("source A prereqs")
+                .contains(&target.id)
+        );
+        assert!(
+            app.status.contains("created=1, skipped=0, failed=1"),
+            "status should report partial failure counts: {}",
+            app.status
+        );
+    }
+
+    #[test]
     fn link_wizard_excludes_closed_targets_and_restores_after_reopen() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;

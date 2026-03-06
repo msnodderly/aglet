@@ -34,6 +34,8 @@ Primary actions in scope:
 - Restored picker-first batch assign and added batch delete in commit `40342b6`
 - Refined batch-assign tri-state marker and exit semantics in commits
   `ce94cab` and `b86a68c`
+- Phase B1 batch link fast path completed in commit `ede88ae`
+- Phase B2 batch link result semantics completed in the next checkpoint
 
 ### Phase 0 Delivered
 
@@ -68,13 +70,32 @@ Primary actions in scope:
 - `Esc` cancels batch delete and preserves selection
 - Existing single-item delete flow remains intact
 
+### Phase B1 Delivered
+
+- `b` / `B` open the existing link wizard against the selected source set
+- Target matches exclude all selected source items
+- Applying a wizard relation fans out from every selected source item to one
+  chosen target
+- Successful batch link apply clears selection and returns to Normal mode
+- Existing single-item link wizard behavior remains intact
+
+### Phase B2 Delivered
+
+- Batch link apply now reports `created / skipped / failed` counts explicitly
+- Partial batch-link failures preserve the remaining selection so retry is
+  possible
+- Batch link success still clears selection on exit
+- Existing single-item link wizard messages remain unchanged
+- Link wizard filtering, navigation, and scrolling behavior remain covered by
+  the existing focused tests
+
 ### Active Work
 
-- Phase B1 minimal batch link:
-  - open the existing link wizard against a selected source set
-  - exclude all selected source items from target matches
-  - apply one chosen relation from every selected source item to one target
-  - clear selection after a successful batch link apply
+- Next likely phase:
+  - return to any remaining Phase A2 polish gaps only if they show up in manual
+    testing
+  - otherwise continue broadening batch-link parity where the current wizard
+    still has single-item assumptions
 
 ## Delivery Strategy
 
@@ -202,12 +223,18 @@ pairwise or wizard-complete semantics immediately.
 
 Purpose: complete the link workflow promised by the issue.
 
+### Current Implementation Target
+
+- Keep the current wizard UI and preview behavior
+- Tighten apply summaries so batch results are explicit and trustworthy
+- Avoid destructive selection clearing when some source items fail to link
+
 ## Recommended Order From Here
 
 1. Keep the branch green after the `main` merge.
-2. Implement minimal batch linking for the next demo.
+2. Tighten batch link result reporting and partial-failure behavior.
 3. Return to deeper Phase A2 polish only if remaining gaps matter in practice.
-4. Complete full batch link wizard parity after the basic demo path is solid.
+4. Complete any remaining batch link parity gaps after the result semantics are solid.
 
 ## Notes
 
