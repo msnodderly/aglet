@@ -506,9 +506,21 @@ enum DoneToggleOrigin {
 }
 
 #[derive(Clone, Debug)]
+enum DoneBlocksConfirmScope {
+    Single {
+        item_id: ItemId,
+        blocked_item_ids: Vec<ItemId>,
+    },
+    Batch {
+        item_ids: Vec<ItemId>,
+        blocking_item_count: usize,
+        blocked_link_count: usize,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct DoneBlocksConfirmState {
-    item_id: ItemId,
-    blocked_item_ids: Vec<ItemId>,
+    scope: DoneBlocksConfirmScope,
     origin: DoneToggleOrigin,
 }
 
@@ -10239,6 +10251,166 @@ mod tests {
             app.status
                 .contains("changed=1, skipped=0, failed=1"),
             "status should summarize partial failure: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_with_blockers_opens_confirm_prompt() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked_a = Item::new("Blocked A".to_string());
+        let blocked_b = Item::new("Blocked B".to_string());
+        let plain = Item::new("Plain".to_string());
+        for item in [&blocker, &blocked_a, &blocked_b, &plain] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked_a.id)
+            .expect("link blocked a");
+        agenda
+            .link_items_blocks(blocker.id, blocked_b.id)
+            .expect("link blocked b");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+        assert!(
+            app.status.contains("1 selected item blocks 2 other items"),
+            "status should summarize batch blocker confirm: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_confirm_y_marks_done_and_removes_links() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked_a = Item::new("Blocked A".to_string());
+        let blocked_b = Item::new("Blocked B".to_string());
+        let plain = Item::new("Plain".to_string());
+        for item in [&blocker, &blocked_a, &blocked_b, &plain] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked_a.id)
+            .expect("link blocked a");
+        agenda
+            .link_items_blocks(blocker.id, blocked_b.id)
+            .expect("link blocked b");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(blocker.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+        app.handle_confirm_delete_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm batch done with cleanup");
+
+        assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
+        assert!(store.get_item(plain.id).expect("reload plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("reload dependents"),
+            Vec::<ItemId>::new()
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("removed_links=2"),
+            "status should mention removed blocker links: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_confirm_n_marks_done_and_keeps_links() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        let plain = Item::new("Plain".to_string());
+        for item in [&blocker, &blocked, &plain] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("link blocked");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
+            .expect("confirm batch done without cleanup");
+
+        assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
+        assert!(store.get_item(plain.id).expect("reload plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("reload dependents")
+                .len(),
+            1
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            !app.status.contains("removed_links="),
+            "status should not mention link removal when keeping blockers: {}",
             app.status
         );
     }
