@@ -2393,21 +2393,22 @@ impl App {
                         let single_line_text = if glyphs.is_empty() {
                             truncate_board_cell(&item_text, title_width)
                         } else {
-                            let reserved_glyph_width = glyphs.chars().count().saturating_add(2);
+                            let glyph_prefix = format!("{glyphs} ");
+                            let reserved_glyph_width = glyph_prefix.chars().count();
                             if title_width > reserved_glyph_width {
                                 format!(
-                                    "{}  {}",
+                                    "{}{}",
+                                    glyph_prefix,
                                     truncate_board_cell(
                                         &item_text,
                                         title_width.saturating_sub(reserved_glyph_width),
-                                    ),
-                                    glyphs
+                                    )
                                 )
                             } else {
-                                truncate_board_cell(&glyphs, title_width)
+                                truncate_board_cell(&glyph_prefix, title_width)
                             }
                         };
-                        lines.push(Line::from(format!(" {}", single_line_text)));
+                        lines.push(Line::from(single_line_text));
                     }
                     BoardDisplayMode::MultiLine => {
                         for line in wrap_text_for_board_cell_clamped(&item_text, title_width, 2) {
