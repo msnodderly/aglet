@@ -2092,6 +2092,26 @@ impl App {
         }
         match code {
             KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char(' ') => {
+                if let Some(item_id) = self.selected_item_id() {
+                    let is_selected = self.toggle_selected_item(item_id);
+                    let selected_count = self.selected_count();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    self.status = if is_selected {
+                        format!(
+                            "Selected {selected_count} item{item_suffix} (Space toggles, Esc clears selection)"
+                        )
+                    } else if selected_count == 0 {
+                        "Selection cleared".to_string()
+                    } else {
+                        format!(
+                            "Selected {selected_count} item{item_suffix} (Space toggles, Esc clears selection)"
+                        )
+                    };
+                } else {
+                    self.status = "No selected item to toggle".to_string();
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.show_preview && self.normal_focus == NormalFocus::Preview {
                     self.scroll_preview(1);
@@ -2191,7 +2211,11 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                if self.global_search_active() {
+                if self.has_selected_items() {
+                    let cleared_count = self.clear_selected_items();
+                    let item_suffix = if cleared_count == 1 { "" } else { "s" };
+                    self.status = format!("Cleared selection ({cleared_count} item{item_suffix})");
+                } else if self.global_search_active() {
                     self.restore_global_search_session(agenda)?;
                 } else {
                     self.search_buffer.clear();
@@ -2241,10 +2265,18 @@ impl App {
                     self.mode = Mode::ItemAssignPicker;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
+                    self.item_assign_dirty = false;
                     self.clear_input();
-                    self.status =
-                        "Item categories: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
-                            .to_string();
+                    self.status = if self.has_selected_items() {
+                        let selected_count = self.selected_count();
+                        let item_suffix = if selected_count == 1 { "" } else { "s" };
+                        format!(
+                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
+                        )
+                    } else {
+                        "Item categories: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
+                            .to_string()
+                    };
                 }
             }
             KeyCode::Char('u') => {
@@ -2285,7 +2317,9 @@ impl App {
                 }
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
-                if let Some(item_id) = self.selected_item_id() {
+                if self.selected_count() > 1 {
+                    self.batch_toggle_selected_items_done(agenda, DoneToggleOrigin::NormalMode)?;
+                } else if let Some(item_id) = self.selected_item_id() {
                     self.begin_done_toggle_or_confirm(
                         agenda,
                         item_id,
@@ -2294,8 +2328,17 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                if self.selected_item_id().is_some() {
+                if self.has_selected_items() {
                     self.done_blocks_confirm = None;
+                    self.batch_delete_item_ids = Some(self.selected_item_ids_in_view_order());
+                    let selected_count = self.selected_count();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    self.mode = Mode::ConfirmDelete;
+                    self.status =
+                        format!("Delete {selected_count} selected item{item_suffix}? y/n");
+                } else if self.selected_item_id().is_some() {
+                    self.done_blocks_confirm = None;
+                    self.batch_delete_item_ids = None;
                     self.mode = Mode::ConfirmDelete;
                     self.status = "Delete item? y/n".to_string();
                 }
@@ -2408,8 +2451,10 @@ impl App {
                 let blocked_count = blocked_item_ids.len();
                 let suffix = if blocked_count == 1 { "" } else { "s" };
                 self.done_blocks_confirm = Some(DoneBlocksConfirmState {
-                    item_id,
-                    blocked_item_ids,
+                    scope: DoneBlocksConfirmScope::Single {
+                        item_id,
+                        blocked_item_ids,
+                    },
                     origin,
                 });
                 self.mode = Mode::ConfirmDelete;
@@ -2421,6 +2466,199 @@ impl App {
         }
 
         self.apply_done_toggle_action(agenda, item_id, was_done, origin, &[])
+    }
+
+    fn batch_toggle_selected_items_done(
+        &mut self,
+        agenda: &Agenda<'_>,
+        origin: DoneToggleOrigin,
+    ) -> Result<(), String> {
+        let action_item_ids = self.selected_item_ids_in_view_order();
+        if action_item_ids.is_empty() {
+            self.status = "No selected items to update".to_string();
+            return Ok(());
+        }
+
+        let mark_done = !action_item_ids.iter().all(|item_id| {
+            self.all_items
+                .iter()
+                .find(|item| item.id == *item_id)
+                .is_some_and(|item| item.is_done)
+        });
+        if mark_done {
+            let mut blocking_item_count = 0usize;
+            let mut blocked_link_count = 0usize;
+            for item_id in &action_item_ids {
+                let Some(item) = self
+                    .all_items
+                    .iter()
+                    .find(|candidate| candidate.id == *item_id)
+                else {
+                    continue;
+                };
+                if item.is_done {
+                    continue;
+                }
+                let has_actionable_assignment = item.assignments.keys().any(|category_id| {
+                    self.categories
+                        .iter()
+                        .find(|category| category.id == *category_id)
+                        .is_some_and(|category| category.is_actionable)
+                });
+                if !has_actionable_assignment {
+                    continue;
+                }
+                let blocked_count = self
+                    .item_links_by_item_id
+                    .get(item_id)
+                    .map(|links| links.blocks.len())
+                    .unwrap_or(0);
+                if blocked_count > 0 {
+                    blocking_item_count += 1;
+                    blocked_link_count += blocked_count;
+                }
+            }
+
+            if blocked_link_count > 0 {
+                let item_suffix = if blocking_item_count == 1 { "" } else { "s" };
+                let blocked_suffix = if blocked_link_count == 1 { "" } else { "s" };
+                self.done_blocks_confirm = Some(DoneBlocksConfirmState {
+                    scope: DoneBlocksConfirmScope::Batch {
+                        item_ids: action_item_ids,
+                        blocking_item_count,
+                        blocked_link_count,
+                    },
+                    origin,
+                });
+                self.mode = Mode::ConfirmDelete;
+                self.status = format!(
+                    "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                );
+                return Ok(());
+            }
+        }
+
+        self.apply_batch_done_action(agenda, &action_item_ids, false, origin)
+    }
+
+    pub(crate) fn apply_batch_done_action(
+        &mut self,
+        agenda: &Agenda<'_>,
+        item_ids: &[ItemId],
+        remove_blocking_links: bool,
+        origin: DoneToggleOrigin,
+    ) -> Result<(), String> {
+        if item_ids.is_empty() {
+            self.status = "No selected items to update".to_string();
+            self.mode = Self::done_toggle_return_mode(origin);
+            return Ok(());
+        }
+
+        let mark_done = !item_ids.iter().all(|item_id| {
+            self.all_items
+                .iter()
+                .find(|item| item.id == *item_id)
+                .is_some_and(|item| item.is_done)
+        });
+        let anchor_id = self.selected_item_id().unwrap_or(item_ids[0]);
+        let mut changed = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+        let mut removed_links = 0usize;
+        let mut first_error = None;
+
+        for item_id in item_ids {
+            let Some(item) = self
+                .all_items
+                .iter()
+                .find(|candidate| candidate.id == *item_id)
+            else {
+                failed += 1;
+                if first_error.is_none() {
+                    first_error = Some(format!("item {} is no longer available", item_id));
+                }
+                continue;
+            };
+
+            if mark_done {
+                if item.is_done {
+                    skipped += 1;
+                    continue;
+                }
+                let has_actionable_assignment = item.assignments.keys().any(|category_id| {
+                    self.categories
+                        .iter()
+                        .find(|category| category.id == *category_id)
+                        .is_some_and(|category| category.is_actionable)
+                });
+                if !has_actionable_assignment {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(format!(
+                            "item '{}' has no actionable category assignments",
+                            truncate_board_cell(&item.text, 24)
+                        ));
+                    }
+                    continue;
+                }
+            } else if !item.is_done {
+                skipped += 1;
+                continue;
+            }
+
+            match agenda.toggle_item_done(*item_id) {
+                Ok(_) => {
+                    changed += 1;
+                    if mark_done && remove_blocking_links {
+                        let blocked_ids = self
+                            .item_links_by_item_id
+                            .get(item_id)
+                            .map(|links| links.blocks.clone())
+                            .unwrap_or_default();
+                        for blocked_id in &blocked_ids {
+                            agenda
+                                .unlink_items_blocks(*item_id, *blocked_id)
+                                .map_err(|e| e.to_string())?;
+                            removed_links += 1;
+                        }
+                    }
+                }
+                Err(err) => {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(err.to_string());
+                    }
+                }
+            }
+        }
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(anchor_id);
+        let clear_selection = failed == 0 && changed > 0;
+        if clear_selection {
+            self.clear_selected_items();
+        }
+
+        let mut summary = format!(
+            "{} {} selected items {} (changed={changed}, skipped={skipped}, failed={failed}",
+            if mark_done { "Marked" } else { "Unmarked" },
+            item_ids.len(),
+            if mark_done { "done" } else { "not-done" },
+        );
+        if remove_blocking_links {
+            summary.push_str(&format!(", removed_links={removed_links}"));
+        }
+        summary.push(')');
+        if let Some(err) = first_error {
+            summary.push_str(&format!(" first_error={err}"));
+        }
+        self.status = summary;
+        self.mode = if clear_selection {
+            Mode::Normal
+        } else {
+            Self::done_toggle_return_mode(origin)
+        };
+        Ok(())
     }
 
     fn sort_current_slot_by_active_column(
@@ -2728,8 +2966,10 @@ impl App {
             self.status = "No selected item to link".to_string();
             return;
         };
+        let source_item_ids = self.effective_action_item_ids();
         self.link_wizard = Some(LinkWizardState {
             anchor_item_id,
+            source_item_ids: source_item_ids.clone(),
             focus: LinkWizardFocus::ScopeAction,
             action_index: default_action.index(),
             target_filter: text_buffer::TextBuffer::empty(),
@@ -2740,10 +2980,17 @@ impl App {
             .selected_item()
             .map(board_item_label)
             .unwrap_or_else(|| anchor_item_id.to_string());
-        self.status = format!(
-            "Link wizard for '{}': choose relation, target, then Enter to apply",
-            truncate_board_cell(&anchor_label, 40)
-        );
+        self.status = if source_item_ids.len() > 1 {
+            format!(
+                "Link wizard for {} selected items: choose relation, target, then Enter to apply",
+                source_item_ids.len()
+            )
+        } else {
+            format!(
+                "Link wizard for '{}': choose relation, target, then Enter to apply",
+                truncate_board_cell(&anchor_label, 40)
+            )
+        };
     }
 
     pub(crate) fn link_wizard_state(&self) -> Option<&LinkWizardState> {
@@ -2764,6 +3011,12 @@ impl App {
         self.all_items.iter().find(|item| item.id == anchor_id)
     }
 
+    pub(crate) fn link_wizard_source_count(&self) -> usize {
+        self.link_wizard_state()
+            .map(|state| state.source_item_ids.len())
+            .unwrap_or(0)
+    }
+
     pub(crate) fn link_wizard_target_matches(&self) -> Vec<ItemId> {
         let Some(state) = self.link_wizard_state() else {
             return Vec::new();
@@ -2781,7 +3034,7 @@ impl App {
         let mut rows: Vec<(String, ItemId)> = self
             .all_items
             .iter()
-            .filter(|item| item.id != state.anchor_item_id)
+            .filter(|item| !state.source_item_ids.contains(&item.id))
             .filter(|item| !item.is_done)
             .filter(|item| {
                 !item
@@ -2862,6 +3115,35 @@ impl App {
         self.status = status.to_string();
     }
 
+    fn apply_link_action_to_sources<F>(
+        &self,
+        source_item_ids: &[ItemId],
+        mut apply: F,
+    ) -> (usize, usize, usize, Option<String>)
+    where
+        F: FnMut(ItemId) -> Result<bool, String>,
+    {
+        let mut created = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+        let mut first_error = None;
+
+        for source_item_id in source_item_ids {
+            match apply(*source_item_id) {
+                Ok(true) => created += 1,
+                Ok(false) => skipped += 1,
+                Err(err) => {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        (created, skipped, failed, first_error)
+    }
+
     fn apply_link_wizard(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         let Some(state) = self.link_wizard_state().cloned() else {
             self.mode = Mode::Normal;
@@ -2870,114 +3152,249 @@ impl App {
 
         let action = LinkWizardAction::from_index(state.action_index);
         let anchor_id = state.anchor_item_id;
+        let source_item_ids = state.source_item_ids.clone();
         let anchor_label = self
             .all_items
             .iter()
             .find(|item| item.id == anchor_id)
             .map(board_item_label)
             .unwrap_or_else(|| anchor_id.to_string());
+        let source_label = if source_item_ids.len() > 1 {
+            format!("{} selected items", source_item_ids.len())
+        } else {
+            anchor_label.clone()
+        };
+        let batch_mode = source_item_ids.len() > 1;
 
-        let status = match action {
+        let (status, clear_selection) = match action {
             LinkWizardAction::BlockedBy => {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_depends_on(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
                 let target_label = self
                     .all_items
                     .iter()
                     .find(|item| item.id == target_id)
                     .map(board_item_label)
                     .unwrap_or_else(|| target_id.to_string());
-                if result.created {
-                    format!(
-                        "Linked '{}' blocked by '{}'",
-                        truncate_board_cell(&anchor_label, 30),
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_depends_on(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} blocked by '{}' (created={created}, skipped={skipped}, failed={failed})",
+                        source_label,
                         truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
+                    )
+                } else if created > 0 {
+                    (
+                        format!(
+                            "Linked '{}' blocked by '{}'",
+                            truncate_board_cell(&anchor_label, 30),
+                            truncate_board_cell(&target_label, 30)
+                        ),
+                        true,
                     )
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::DependsOn => {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_depends_on(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
-                if result.created {
-                    "Linked depends-on".to_string()
-                } else {
-                    "Link already exists".to_string()
-                }
-            }
-            LinkWizardAction::Blocks => {
-                let target_id = self
-                    .link_wizard_selected_target_id()
-                    .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_blocks(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
                 let target_label = self
                     .all_items
                     .iter()
                     .find(|item| item.id == target_id)
                     .map(board_item_label)
                     .unwrap_or_else(|| target_id.to_string());
-                if result.created {
-                    format!(
-                        "Linked '{}' blocks '{}'",
-                        truncate_board_cell(&anchor_label, 30),
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_depends_on(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} depends on '{}' (created={created}, skipped={skipped}, failed={failed})",
+                        source_label,
                         truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
+                    )
+                } else if created > 0 {
+                    ("Linked depends-on".to_string(), true)
+                } else {
+                    ("Link already exists".to_string(), true)
+                }
+            }
+            LinkWizardAction::Blocks => {
+                let target_id = self
+                    .link_wizard_selected_target_id()
+                    .ok_or("No target selected".to_string())?;
+                let target_label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == target_id)
+                    .map(board_item_label)
+                    .unwrap_or_else(|| target_id.to_string());
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_blocks(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} blocks '{}' (created={created}, skipped={skipped}, failed={failed})",
+                        source_label,
+                        truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
+                    )
+                } else if created > 0 {
+                    (
+                        format!(
+                            "Linked '{}' blocks '{}'",
+                            truncate_board_cell(&anchor_label, 30),
+                            truncate_board_cell(&target_label, 30)
+                        ),
+                        true,
                     )
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::RelatedTo => {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_related(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
-                if result.created {
-                    "Linked related items".to_string()
+                let target_label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == target_id)
+                    .map(board_item_label)
+                    .unwrap_or_else(|| target_id.to_string());
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_related(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} related to '{}' (created={created}, skipped={skipped}, failed={failed})",
+                        source_label,
+                        truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
+                    )
+                } else if created > 0 {
+                    ("Linked related items".to_string(), true)
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::ClearDependencies => {
-                let prereqs = agenda
-                    .immediate_prereq_ids(anchor_id)
-                    .map_err(|e| e.to_string())?;
-                let dependents = agenda
-                    .immediate_dependent_ids(anchor_id)
-                    .map_err(|e| e.to_string())?;
-                for dependency_id in &prereqs {
-                    agenda
-                        .unlink_items_depends_on(anchor_id, *dependency_id)
+                let mut total_prereqs = 0usize;
+                let mut total_dependents = 0usize;
+                for source_item_id in &source_item_ids {
+                    let prereqs = agenda
+                        .immediate_prereq_ids(*source_item_id)
                         .map_err(|e| e.to_string())?;
-                }
-                for blocked_id in &dependents {
-                    agenda
-                        .unlink_items_blocks(anchor_id, *blocked_id)
+                    let dependents = agenda
+                        .immediate_dependent_ids(*source_item_id)
                         .map_err(|e| e.to_string())?;
+                    total_prereqs += prereqs.len();
+                    total_dependents += dependents.len();
+                    for dependency_id in &prereqs {
+                        agenda
+                            .unlink_items_depends_on(*source_item_id, *dependency_id)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    for blocked_id in &dependents {
+                        agenda
+                            .unlink_items_blocks(*source_item_id, *blocked_id)
+                            .map_err(|e| e.to_string())?;
+                    }
                 }
-                format!(
-                    "Cleared dependencies for '{}' (prereqs={}, blocks={})",
-                    truncate_board_cell(&anchor_label, 30),
-                    prereqs.len(),
-                    dependents.len()
-                )
+                if source_item_ids.len() > 1 {
+                    (
+                        format!(
+                            "Cleared dependencies for {} (prereqs={}, blocks={})",
+                            source_label, total_prereqs, total_dependents
+                        ),
+                        true,
+                    )
+                } else {
+                    (
+                        format!(
+                            "Cleared dependencies for '{}' (prereqs={}, blocks={})",
+                            truncate_board_cell(&anchor_label, 30),
+                            total_prereqs,
+                            total_dependents
+                        ),
+                        true,
+                    )
+                }
             }
         };
 
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(anchor_id);
+        if batch_mode && clear_selection {
+            self.clear_selected_items();
+        }
         self.close_link_wizard(&status);
         Ok(())
     }
@@ -4365,9 +4782,16 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
+                let clear_selection = self.item_assign_dirty && self.has_selected_items();
                 self.mode = Mode::Normal;
+                if clear_selection {
+                    self.clear_selected_items();
+                }
+                self.item_assign_dirty = false;
                 self.clear_input();
-                self.status = "Assign canceled".to_string();
+                if !clear_selection {
+                    self.status = "Assign canceled".to_string();
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.category_rows.is_empty() {
@@ -4391,6 +4815,8 @@ impl App {
                     .to_string();
             }
             KeyCode::Char(' ') => {
+                let batch_mode = self.has_selected_items();
+                let action_item_ids = self.effective_action_item_ids();
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
                     self.status = "Assign failed: no selected item".to_string();
@@ -4406,6 +4832,15 @@ impl App {
                 };
 
                 if row.name.eq_ignore_ascii_case("Done") {
+                    if batch_mode && action_item_ids.len() > 1 {
+                        if let Err(err) = self.batch_toggle_selected_items_done(
+                            agenda,
+                            DoneToggleOrigin::ItemAssignPicker,
+                        ) {
+                            self.status = format!("Done toggle failed: {}", err);
+                        }
+                        return Ok(false);
+                    }
                     if let Err(err) = self.begin_done_toggle_or_confirm(
                         agenda,
                         item_id,
@@ -4416,7 +4851,66 @@ impl App {
                     return Ok(false);
                 }
 
-                if self.selected_item_has_assignment(row.id) {
+                if batch_mode && action_item_ids.len() > 1 {
+                    let (assigned_count, total_count) =
+                        self.effective_action_assignment_counts(row.id);
+                    let should_unassign = assigned_count == total_count;
+                    let mut changed = 0usize;
+                    let mut failed = 0usize;
+                    let mut first_error = None;
+
+                    for action_item_id in &action_item_ids {
+                        let result = if should_unassign {
+                            agenda.unassign_item_manual(*action_item_id, row.id)
+                        } else {
+                            agenda
+                                .assign_item_manual(
+                                    *action_item_id,
+                                    row.id,
+                                    Some("manual:tui.assign".to_string()),
+                                )
+                                .map(|_| ())
+                        };
+                        match result {
+                            Ok(()) => changed += 1,
+                            Err(err) => {
+                                failed += 1;
+                                if first_error.is_none() {
+                                    first_error = Some(err.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    self.refresh(agenda.store())?;
+                    self.set_item_selection_by_id(item_id);
+                    if changed > 0 && failed == 0 {
+                        self.item_assign_dirty = true;
+                    }
+                    self.status = if failed == 0 {
+                        if should_unassign {
+                            format!("Removed category {} from {} items", row.name, changed)
+                        } else {
+                            format!("Applied category {} to {} items", row.name, changed)
+                        }
+                    } else {
+                        let mut summary = if should_unassign {
+                            format!(
+                                "Removed category {} from {} items (failed={failed})",
+                                row.name, changed
+                            )
+                        } else {
+                            format!(
+                                "Applied category {} to {} items (failed={failed})",
+                                row.name, changed
+                            )
+                        };
+                        if let Some(err) = first_error {
+                            summary.push_str(&format!(" first_error={err}"));
+                        }
+                        summary
+                    };
+                } else if self.selected_item_has_assignment(row.id) {
                     match agenda.unassign_item_manual(item_id, row.id) {
                         Ok(()) => {
                             self.refresh(agenda.store())?;
@@ -4441,9 +4935,16 @@ impl App {
                 }
             }
             KeyCode::Enter => {
+                let clear_selection = self.item_assign_dirty && self.has_selected_items();
                 self.mode = Mode::Normal;
+                if clear_selection {
+                    self.clear_selected_items();
+                }
+                self.item_assign_dirty = false;
                 self.clear_input();
-                self.status = "Category edit saved".to_string();
+                if !clear_selection {
+                    self.status = "Category edit saved".to_string();
+                }
             }
             _ => {}
         }
@@ -4463,6 +4964,7 @@ impl App {
                 self.status = "Category name entry canceled".to_string();
             }
             KeyCode::Enter => {
+                let action_item_ids = self.effective_action_item_ids();
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
                     self.clear_input();
@@ -4513,62 +5015,90 @@ impl App {
                         created_new_category = true;
                         (category_id, category.name)
                     };
+                let mut assigned = 0usize;
+                let mut already_had = 0usize;
+                let mut failed = 0usize;
+                let mut first_error = None;
 
-                match agenda.assign_item_manual(
-                    item_id,
-                    category_id,
-                    Some("manual:tui.assign".to_string()),
-                ) {
-                    Ok(result) => {
-                        self.refresh(agenda.store())?;
-                        self.set_item_selection_by_id(item_id);
-                        if let Some(index) = self
-                            .category_rows
-                            .iter()
-                            .position(|row| row.id == category_id)
-                        {
-                            self.item_assign_category_index = index;
-                        }
-                        self.mode = Mode::ItemAssignPicker;
-                        self.clear_input();
-                        self.status = if created_new_category {
-                            format!(
-                                "Created and assigned category {} (new_assignments={})",
-                                category_name,
-                                result.new_assignments.len()
-                            )
-                        } else {
-                            format!(
-                                "Assigned category {} (new_assignments={})",
-                                category_name,
-                                result.new_assignments.len()
-                            )
-                        };
+                for action_item_id in &action_item_ids {
+                    let item = agenda
+                        .store()
+                        .get_item(*action_item_id)
+                        .map_err(|e| e.to_string())?;
+                    if item.assignments.contains_key(&category_id) {
+                        already_had += 1;
+                        continue;
                     }
-                    Err(err) => {
-                        // Keep the picker open and refreshed so newly created categories
-                        // appear immediately even if the assignment step fails.
-                        self.refresh(agenda.store())?;
-                        self.set_item_selection_by_id(item_id);
-                        if let Some(index) = self
-                            .category_rows
-                            .iter()
-                            .position(|row| row.id == category_id)
-                        {
-                            self.item_assign_category_index = index;
+
+                    match agenda.assign_item_manual(
+                        *action_item_id,
+                        category_id,
+                        Some("manual:tui.assign".to_string()),
+                    ) {
+                        Ok(_) => assigned += 1,
+                        Err(err) => {
+                            failed += 1;
+                            if first_error.is_none() {
+                                first_error = Some(err.to_string());
+                            }
                         }
-                        self.mode = Mode::ItemAssignPicker;
-                        self.clear_input();
-                        self.status = if created_new_category {
-                            format!(
-                                "Created category {} but could not assign: {}",
-                                category_name, err
-                            )
-                        } else {
-                            format!("Could not assign category {}: {}", category_name, err)
-                        };
                     }
                 }
+
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(item_id);
+                if let Some(index) = self
+                    .category_rows
+                    .iter()
+                    .position(|row| row.id == category_id)
+                {
+                    self.item_assign_category_index = index;
+                }
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::ItemAssignPicker;
+                if assigned > 0 && failed == 0 {
+                    self.item_assign_dirty = true;
+                }
+                self.clear_input();
+                self.status = if action_item_ids.len() > 1 {
+                    let mut summary = format!(
+                        "{} category {} to {} items (assigned={}, already={}, failed={})",
+                        if created_new_category {
+                            "Created and applied"
+                        } else {
+                            "Applied"
+                        },
+                        category_name,
+                        action_item_ids.len(),
+                        assigned,
+                        already_had,
+                        failed
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    summary
+                } else if failed > 0 {
+                    if created_new_category {
+                        format!(
+                            "Created category {} but could not assign: {}",
+                            category_name,
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        )
+                    } else {
+                        format!(
+                            "Could not assign category {}: {}",
+                            category_name,
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
+                        )
+                    }
+                } else if created_new_category {
+                    format!("Created and assigned category {}", category_name)
+                } else if already_had > 0 {
+                    format!("Category {} already assigned", category_name)
+                } else {
+                    format!("Assigned category {}", category_name)
+                };
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}
@@ -4653,13 +5183,12 @@ impl App {
                 let query = self.search_buffer.trimmed().to_string();
                 if query.is_empty() {
                     self.mode = Mode::Normal;
-                } else if let Some((slot_idx, item_idx)) = self.find_exact_match(&query) {
+                } else if let Some((slot_idx, item_idx)) = self.find_first_visible_search_result() {
                     self.slot_index = slot_idx;
                     self.item_index = item_idx;
-                    self.mode = Mode::Normal;
-                    self.status = format!("Jumped to '{}'", query);
+                    self.open_input_panel_edit_item();
                 } else {
-                    self.open_add_item_with_title(query);
+                    self.status = format!("No items match '{}'", query);
                 }
             }
             KeyCode::Down | KeyCode::Tab => {
@@ -4693,67 +5222,15 @@ impl App {
         }
     }
 
-    fn find_exact_match(&self, query: &str) -> Option<(usize, usize)> {
-        let needle = query.to_ascii_lowercase();
+    fn find_first_visible_search_result(&self) -> Option<(usize, usize)> {
         if self.global_search_active() {
-            for (slot_index, slot) in self.slots.iter().enumerate() {
-                if let Some(item_index) = slot
-                    .items
-                    .iter()
-                    .position(|item| item.text.to_ascii_lowercase() == needle)
-                {
-                    return Some((slot_index, item_index));
-                }
-            }
-            None
+            self.slots
+                .iter()
+                .enumerate()
+                .find_map(|(slot_index, slot)| (!slot.items.is_empty()).then_some((slot_index, 0)))
         } else {
             self.current_slot()
-                .and_then(|slot| {
-                    slot.items
-                        .iter()
-                        .position(|item| item.text.to_ascii_lowercase() == needle)
-                })
-                .map(|item_index| (self.slot_index, item_index))
-        }
-    }
-
-    fn open_add_item_with_title(&mut self, title: String) {
-        let (section_title, on_insert_assign) = self
-            .current_slot()
-            .map(|slot| {
-                let stitle = slot.title.clone();
-                let on_insert = match &slot.context {
-                    SlotContext::GeneratedSection {
-                        on_insert_assign, ..
-                    } => on_insert_assign.clone(),
-                    SlotContext::Section { section_index } => {
-                        let idx = *section_index;
-                        self.current_view()
-                            .and_then(|v| v.sections.get(idx))
-                            .map(|s| s.on_insert_assign.clone())
-                            .unwrap_or_default()
-                    }
-                    SlotContext::Unmatched => HashSet::new(),
-                };
-                (stitle, on_insert)
-            })
-            .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
-
-        let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
-        panel.text.set(title);
-        self.input_panel = Some(panel);
-        self.mode = Mode::InputPanel;
-        self.status =
-            "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
-        // Clear search state
-        let was_global_search = self.global_search_active();
-        self.search_buffer.clear();
-        if was_global_search {
-            for slot_filter in &mut self.section_filters {
-                *slot_filter = None;
-            }
-        } else if self.slot_index < self.section_filters.len() {
-            self.section_filters[self.slot_index] = None;
+                .and_then(|slot| (!slot.items.is_empty()).then_some((self.slot_index, 0)))
         }
     }
 }

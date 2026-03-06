@@ -331,6 +331,7 @@ impl App {
         }
 
         self.slots = slots;
+        self.prune_selected_items_to_visible_slots();
         self.clamp_horizontal_slot_item_indices();
         self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
@@ -738,6 +739,83 @@ impl App {
         self.selected_item().map(|item| item.id)
     }
 
+    pub(crate) fn has_selected_items(&self) -> bool {
+        !self.selected_item_ids.is_empty()
+    }
+
+    pub(crate) fn selected_count(&self) -> usize {
+        self.selected_item_ids.len()
+    }
+
+    pub(crate) fn is_item_selected(&self, item_id: ItemId) -> bool {
+        self.selected_item_ids.contains(&item_id)
+    }
+
+    pub(crate) fn toggle_selected_item(&mut self, item_id: ItemId) -> bool {
+        if !self.selected_item_ids.insert(item_id) {
+            self.selected_item_ids.remove(&item_id);
+            false
+        } else {
+            true
+        }
+    }
+
+    pub(crate) fn clear_selected_items(&mut self) -> usize {
+        let count = self.selected_item_ids.len();
+        self.selected_item_ids.clear();
+        count
+    }
+
+    pub(crate) fn selected_item_ids_in_view_order(&self) -> Vec<ItemId> {
+        let mut ordered = Vec::new();
+        let mut seen = HashSet::new();
+        for slot in &self.slots {
+            for item in &slot.items {
+                if self.selected_item_ids.contains(&item.id) && seen.insert(item.id) {
+                    ordered.push(item.id);
+                }
+            }
+        }
+        ordered
+    }
+
+    pub(crate) fn effective_action_item_ids(&self) -> Vec<ItemId> {
+        let selected = self.selected_item_ids_in_view_order();
+        if !selected.is_empty() {
+            selected
+        } else {
+            self.selected_item_id().into_iter().collect()
+        }
+    }
+
+    pub(crate) fn effective_action_assignment_counts(&self, category_id: CategoryId) -> (usize, usize) {
+        let action_item_ids = self.effective_action_item_ids();
+        let assigned = action_item_ids
+            .iter()
+            .filter(|item_id| {
+                self.all_items
+                    .iter()
+                    .find(|item| item.id == **item_id)
+                    .is_some_and(|item| item.assignments.contains_key(&category_id))
+            })
+            .count();
+        (assigned, action_item_ids.len())
+    }
+
+    pub(crate) fn prune_selected_items_to_visible_slots(&mut self) {
+        if self.selected_item_ids.is_empty() {
+            return;
+        }
+
+        let visible_ids: HashSet<ItemId> = self
+            .slots
+            .iter()
+            .flat_map(|slot| slot.items.iter().map(|item| item.id))
+            .collect();
+        self.selected_item_ids
+            .retain(|item_id| visible_ids.contains(item_id));
+    }
+
     pub(crate) fn is_item_blocked(&self, item_id: ItemId) -> bool {
         self.item_links_by_item_id
             .get(&item_id)
@@ -769,6 +847,7 @@ impl App {
             self.picker_index = 0;
             self.active_view_name = None;
             self.session_hide_dependent_items_override = None;
+            self.selected_item_ids.clear();
             return;
         }
 
@@ -776,6 +855,7 @@ impl App {
         let next_view_name = self.views.get(next_index).map(|view| view.name.clone());
         if self.active_view_name != next_view_name {
             self.session_hide_dependent_items_override = None;
+            self.selected_item_ids.clear();
         }
         self.view_index = next_index;
         self.picker_index = next_index;

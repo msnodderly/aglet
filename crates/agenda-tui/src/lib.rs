@@ -273,11 +273,11 @@ impl LinkWizardAction {
 
     fn description(self) -> &'static str {
         match self {
-            Self::BlockedBy => "(X blocks selected item)",
-            Self::DependsOn => "(selected item depends on X)",
-            Self::Blocks => "(selected item blocks X)",
-            Self::RelatedTo => "(selected item related to X)",
-            Self::ClearDependencies => "(remove depends-on/blocks links for selected item)",
+            Self::BlockedBy => "(target blocks source item(s))",
+            Self::DependsOn => "(source item(s) depend on target)",
+            Self::Blocks => "(source item(s) block target)",
+            Self::RelatedTo => "(source item(s) relate to target)",
+            Self::ClearDependencies => "(remove depends-on/blocks links for source item(s))",
         }
     }
 
@@ -303,6 +303,7 @@ impl LinkWizardAction {
 #[derive(Clone, Debug)]
 struct LinkWizardState {
     anchor_item_id: ItemId,
+    source_item_ids: Vec<ItemId>,
     focus: LinkWizardFocus,
     action_index: usize,
     target_filter: text_buffer::TextBuffer,
@@ -505,9 +506,21 @@ enum DoneToggleOrigin {
 }
 
 #[derive(Clone, Debug)]
+enum DoneBlocksConfirmScope {
+    Single {
+        item_id: ItemId,
+        blocked_item_ids: Vec<ItemId>,
+    },
+    Batch {
+        item_ids: Vec<ItemId>,
+        blocking_item_count: usize,
+        blocked_link_count: usize,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct DoneBlocksConfirmState {
-    item_id: ItemId,
-    blocked_item_ids: Vec<ItemId>,
+    scope: DoneBlocksConfirmScope,
     origin: DoneToggleOrigin,
 }
 
@@ -831,6 +844,7 @@ struct App {
     category_column_picker: Option<CategoryColumnPickerState>,
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
+    item_assign_dirty: bool,
     input_panel: Option<input_panel::InputPanel>,
     link_wizard: Option<LinkWizardState>,
     name_input_context: Option<NameInputContext>,
@@ -838,6 +852,7 @@ struct App {
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
+    selected_item_ids: HashSet<ItemId>,
     horizontal_slot_item_indices: Vec<usize>,
     horizontal_slot_scroll_offsets: RefCell<Vec<usize>>,
     slot_index: usize,
@@ -846,6 +861,7 @@ struct App {
     normal_mode_prefix: Option<NormalModePrefix>,
     global_search_session: Option<GlobalSearchSession>,
     done_blocks_confirm: Option<DoneBlocksConfirmState>,
+    batch_delete_item_ids: Option<Vec<ItemId>>,
     board_pending_delete_column_label: Option<String>,
     note_edit_original: String,
     auto_refresh_interval: AutoRefreshInterval,
@@ -890,6 +906,7 @@ impl Default for App {
             category_column_picker: None,
             board_add_column: None,
             item_assign_category_index: 0,
+            item_assign_dirty: false,
             input_panel: None,
             link_wizard: None,
             name_input_context: None,
@@ -897,6 +914,7 @@ impl Default for App {
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
+            selected_item_ids: HashSet::new(),
             horizontal_slot_item_indices: Vec::new(),
             horizontal_slot_scroll_offsets: RefCell::new(Vec::new()),
             slot_index: 0,
@@ -905,6 +923,7 @@ impl Default for App {
             normal_mode_prefix: None,
             global_search_session: None,
             done_blocks_confirm: None,
+            batch_delete_item_ids: None,
             board_pending_delete_column_label: None,
             note_edit_original: String::new(),
             auto_refresh_interval: AutoRefreshInterval::Off,
@@ -917,7 +936,7 @@ impl Default for App {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
@@ -3693,6 +3712,168 @@ mod tests {
         assert!(
             !matches.contains(&anchor.id),
             "anchor item must never appear in target matches"
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_excludes_all_selected_source_items_from_targets() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_b.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+
+        let matches = app.link_wizard_target_matches();
+        assert_eq!(matches, vec![target.id]);
+        assert_eq!(app.link_wizard_source_count(), 2);
+        assert!(
+            app.status.contains("2 selected items"),
+            "status should describe batch source scope: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_applies_relation_to_all_selected_sources() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_b.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus confirm");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("apply batch link");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(agenda
+            .immediate_prereq_ids(source_a.id)
+            .expect("source A prereqs")
+            .contains(&target.id));
+        assert!(agenda
+            .immediate_prereq_ids(source_b.id)
+            .expect("source B prereqs")
+            .contains(&target.id));
+        assert!(
+            app.status.contains("2 selected items blocked by"),
+            "status should summarize batch link result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_reports_created_and_skipped_counts() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .link_items_depends_on(source_a.id, target.id)
+            .expect("seed existing link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_b.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus confirm");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("apply batch link");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("created=1, skipped=1, failed=0"),
+            "status should report batch link counts: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_partial_failure_preserves_remaining_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_a.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+        store
+            .delete_item(source_b.id, "test")
+            .expect("delete second source");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus confirm");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("apply batch link");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 1);
+        assert!(app.is_item_selected(source_a.id));
+        assert!(agenda
+            .immediate_prereq_ids(source_a.id)
+            .expect("source A prereqs")
+            .contains(&target.id));
+        assert!(
+            app.status.contains("created=1, skipped=0, failed=1"),
+            "status should report partial failure counts: {}",
+            app.status
         );
     }
 
@@ -6616,6 +6797,764 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_space_toggles_selection_and_esc_clears_before_filter() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First task".to_string());
+        let second = Item::new("Second task".to_string());
+        store.create_item(&first).expect("create first item");
+        store.create_item(&second).expect("create second item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+        let focused_item_id = app.selected_item_id().expect("focused item");
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("space selects focused item");
+        assert_eq!(app.selected_count(), 1);
+        assert!(app.is_item_selected(focused_item_id));
+
+        app.section_filters = vec![Some("first".to_string())];
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("esc clears selection first");
+        assert_eq!(app.selected_count(), 0);
+        assert_eq!(app.section_filters, vec![Some("first".to_string())]);
+
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("second esc clears filter");
+        assert_eq!(app.section_filters, vec![None]);
+    }
+
+    #[test]
+    fn refresh_prunes_selected_items_that_are_no_longer_visible() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Transient task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select item");
+        assert_eq!(app.selected_count(), 1);
+
+        agenda.delete_item(item.id, "test").expect("delete item");
+        app.refresh(&store).expect("refresh after delete");
+        assert_eq!(app.selected_count(), 0);
+    }
+
+    #[test]
+    fn cycle_view_clears_transient_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        for name in ["A", "B"] {
+            let mut view = View::new(name.to_string());
+            view.sections.push(Section {
+                title: "All".to_string(),
+                criteria: Query::default(),
+                columns: Vec::new(),
+                item_column_index: 0,
+                on_insert_assign: HashSet::new(),
+                on_remove_unassign: HashSet::new(),
+                show_children: false,
+                board_display_mode_override: None,
+            });
+            store.create_view(&view).expect("create view");
+        }
+
+        let item = Item::new("View switch task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("A");
+        app.refresh(&store).expect("refresh A");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select item");
+        assert_eq!(app.selected_count(), 1);
+
+        app.cycle_view(1, &agenda).expect("cycle to next view");
+        assert_eq!(app.selected_count(), 0);
+    }
+
+    #[test]
+    fn normal_mode_header_and_footer_reflect_active_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let marked = Item::new("Marked task".to_string());
+        let focused = Item::new("Focused task".to_string());
+        store.create_item(&marked).expect("create marked item");
+        store.create_item(&focused).expect("create focused item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+        let selected_label = app
+            .selected_item()
+            .map(|item| item.text.clone())
+            .expect("selected item");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select item");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move focus to next item");
+
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            !rendered.contains("sel:"),
+            "header should not repeat selected count: {rendered}"
+        );
+        assert!(
+            rendered.contains("Space:toggle"),
+            "footer should advertise selection toggle when active: {rendered}"
+        );
+        assert!(
+            rendered.contains("Esc:clear sel"),
+            "footer should advertise clear-selection when active: {rendered}"
+        );
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.contains(&selected_label) && line.contains('+')),
+            "selected but unfocused item should show '+' marker: {rendered}"
+        );
+    }
+
+    #[test]
+    fn normal_mode_a_with_selection_opens_batch_assign_picker() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert!(
+            app.status.contains("Batch categories"),
+            "batch assign status should describe selection scope: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_assign_picker_space_assigns_existing_category_to_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle category across selected items");
+
+        let first_updated = store.get_item(first.id).expect("reload first");
+        let second_updated = store.get_item(second.id).expect("reload second");
+        assert!(first_updated.assignments.contains_key(&work.id));
+        assert!(second_updated.assignments.contains_key(&work.id));
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(
+            app.selected_count(),
+            2,
+            "selection stays active until assign mode exits"
+        );
+        assert!(
+            app.status.contains("Applied category Work to 2 items"),
+            "status should summarize batch result: {}",
+            app.status
+        );
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("close assign picker");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+    }
+
+    #[test]
+    fn batch_assign_input_creates_category_and_assigns_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First create target".to_string());
+        let second = Item::new("Second create target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char('n'), &agenda)
+            .expect("open typed category entry");
+        app.set_input("Sprint".to_string());
+        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+            .expect("create and assign category");
+
+        let sprint = app
+            .categories
+            .iter()
+            .find(|category| category.name == "Sprint")
+            .expect("created category should exist");
+        let first_updated = store.get_item(first.id).expect("reload first");
+        let second_updated = store.get_item(second.id).expect("reload second");
+        assert!(first_updated.assignments.contains_key(&sprint.id));
+        assert!(second_updated.assignments.contains_key(&sprint.id));
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status
+                .contains("Created and applied category Sprint to 2 items"),
+            "status should summarize create+assign result: {}",
+            app.status
+        );
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("close assign picker");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+    }
+
+    #[test]
+    fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First mixed target".to_string());
+        let second = Item::new("Second mixed target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first only");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("[~] Work"),
+            "mixed batch checkbox should render tri-state marker: {rendered}"
+        );
+    }
+
+    #[test]
+    fn assign_picker_and_done_confirm_render_updated_footer_copy() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-copy-render-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let plain = Item::new("Plain".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&plain).expect("create plain");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+        app.mode = Mode::ItemAssignPicker;
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Assign categories (Space applies; Enter/Esc close)"),
+            "assign picker status copy should describe apply/close behavior: {rendered}"
+        );
+        assert!(
+            rendered.contains("Space:apply  n:new  Enter:close  Esc:cancel"),
+            "assign picker footer should describe apply/close controls: {rendered}"
+        );
+
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open batch done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render confirm");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("y:remove links + done  n:done only  Esc:cancel"),
+            "done confirm footer should use compact batch wording: {rendered}"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn batch_assign_picker_esc_preserves_selection_without_changes() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Esc, &agenda)
+            .expect("cancel assign picker");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 2);
+        assert!(store.get_item(first.id).is_ok());
+        assert!(store.get_item(second.id).is_ok());
+        assert_eq!(app.status, "Assign canceled");
+    }
+
+    #[test]
+    fn batch_assign_picker_esc_after_changes_clears_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("assign category");
+        app.handle_item_assign_category_key(KeyCode::Esc, &agenda)
+            .expect("close assign picker");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(store
+            .get_item(first.id)
+            .expect("reload first")
+            .assignments
+            .contains_key(&work.id));
+        assert!(store
+            .get_item(second.id)
+            .expect("reload second")
+            .assignments
+            .contains_key(&work.id));
+    }
+
+    #[test]
+    fn normal_mode_x_with_selection_opens_batch_delete_confirm() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First delete target".to_string());
+        let second = Item::new("Second delete target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('x'), &agenda)
+            .expect("open batch delete confirm");
+
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+        assert!(
+            app.status.contains("Delete 2 selected items"),
+            "status should describe batch delete scope: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_delete_confirm_y_deletes_selected_items_and_clears_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let keep = Item::new("Keep target".to_string());
+        store.create_item(&keep).expect("create keep");
+        let first = Item::new("First delete target".to_string());
+        let second = Item::new("Second delete target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(second.id);
+        app.handle_normal_key(KeyCode::Char('x'), &agenda)
+            .expect("open batch delete confirm");
+        app.handle_confirm_delete_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm batch delete");
+
+        assert!(store.get_item(first.id).is_err());
+        assert!(store.get_item(second.id).is_err());
+        assert!(store.get_item(keep.id).is_ok());
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Deleted 2 selected items"),
+            "status should summarize batch delete result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_delete_confirm_esc_preserves_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First delete target".to_string());
+        let second = Item::new("Second delete target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('x'), &agenda)
+            .expect("open batch delete confirm");
+        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
+            .expect("cancel batch delete");
+
+        assert!(store.get_item(first.id).is_ok());
+        assert!(store.get_item(second.id).is_ok());
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status.contains("Batch delete canceled"),
+            "status should report cancel: {}",
+            app.status
+        );
+    }
+
+    #[test]
     fn normal_mode_jk_scrolls_preview_when_preview_is_focused() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -9058,7 +9997,7 @@ mod tests {
     }
 
     #[test]
-    fn global_search_enter_jumps_across_slots_and_esc_restores_previous_view() {
+    fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
         let (store, db_path) = make_two_section_store("g-slash-restore");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -9078,29 +10017,37 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('/'), &agenda)
             .expect("g/ should open global search");
 
-        for ch in "buy groceries".chars() {
+        for ch in "buy".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
                 .expect("type global query");
         }
         assert!(
             app.section_filters
                 .iter()
-                .all(|filter| filter.as_deref() == Some("buy groceries")),
+                .all(|filter| filter.as_deref() == Some("buy")),
             "global search should apply filter to all slots"
         );
 
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
-            .expect("enter should jump exact match");
-        assert_eq!(app.mode, Mode::Normal);
+            .expect("enter should open top visible result");
+        assert_eq!(app.mode, Mode::InputPanel);
         assert_eq!(
-            app.selected_item().map(|item| item.text.as_str()),
-            Some("Buy groceries"),
-            "exact match should select item from another slot"
+            app.input_panel
+                .as_ref()
+                .and_then(|panel| panel.item_id)
+                .and_then(|item_id| store.get_item(item_id).ok())
+                .map(|item| item.text),
+            Some("Buy groceries".to_string()),
+            "top visible match should open even without an exact title match"
         );
         assert!(
             app.global_search_active(),
             "session remains active until Esc"
         );
+
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("Esc should close edit panel");
+        assert_eq!(app.mode, Mode::Normal);
 
         app.handle_normal_key(KeyCode::Esc, &agenda)
             .expect("Esc should restore previous view");
@@ -9129,8 +10076,8 @@ mod tests {
     }
 
     #[test]
-    fn global_search_create_then_edit_save_still_restores_previous_view_on_esc() {
-        let (store, db_path) = make_two_section_store("g-slash-create-edit-restore");
+    fn global_search_enter_with_no_results_does_not_create_item() {
+        let (store, db_path) = make_two_section_store("g-slash-no-results");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -9149,45 +10096,22 @@ mod tests {
                 .expect("type global query");
         }
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
-            .expect("enter should open add panel");
+            .expect("enter should keep search focused");
 
-        assert_eq!(app.mode, Mode::InputPanel, "add panel should open");
-        assert!(
-            app.global_search_active(),
-            "global search session should remain active after create-from-search"
-        );
-
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to note");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to categories");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save created item");
-        assert_eq!(app.mode, Mode::Normal, "return to normal after save");
         assert_eq!(
-            app.current_view().map(|view| view.name.as_str()),
-            Some("All Items"),
-            "still in temporary global-search view before Esc restore"
+            app.mode,
+            Mode::SearchBarFocused,
+            "search should stay focused"
         );
+        assert!(app.input_panel.is_none(), "no edit/add panel should open");
         assert!(
             app.global_search_active(),
-            "global search session should survive add-item save"
+            "global search session should remain active"
         );
-
-        app.handle_normal_key(KeyCode::Char('e'), &agenda)
-            .expect("open edit panel");
-        assert_eq!(app.mode, Mode::InputPanel, "edit panel should open");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to note");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to categories");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save edited item");
-        assert_eq!(app.mode, Mode::Normal, "back to normal after edit save");
+        assert!(
+            app.status.contains("No items match"),
+            "status should explain why nothing opened"
+        );
 
         app.handle_normal_key(KeyCode::Esc, &agenda)
             .expect("Esc should restore prior view");
@@ -9276,6 +10200,296 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn batch_done_marks_selected_items_done_and_clears_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let first = Item::new("First done target".to_string());
+        let second = Item::new("Second done target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first");
+        agenda
+            .assign_item_manual(second.id, work.id, Some("manual:test".to_string()))
+            .expect("assign second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(second.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+
+        assert!(store.get_item(first.id).expect("reload first").is_done);
+        assert!(store.get_item(second.id).expect("reload second").is_done);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status
+                .contains("Marked 2 selected items done (changed=2, skipped=0, failed=0)"),
+            "status should summarize batch done result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_all_done_marks_selected_items_not_done() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let first = Item::new("First done target".to_string());
+        let second = Item::new("Second done target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first");
+        agenda
+            .assign_item_manual(second.id, work.id, Some("manual:test".to_string()))
+            .expect("assign second");
+        agenda.mark_item_done(first.id).expect("mark first done");
+        agenda.mark_item_done(second.id).expect("mark second done");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(first.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch not-done");
+
+        assert!(!store.get_item(first.id).expect("reload first").is_done);
+        assert!(!store.get_item(second.id).expect("reload second").is_done);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Unmarked 2 selected items not-done"),
+            "status should summarize batch not-done result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_partial_failure_preserves_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let mut reference = Category::new("Reference".to_string());
+        reference.is_actionable = false;
+        store
+            .create_category(&work)
+            .expect("create actionable category");
+        store
+            .create_category(&reference)
+            .expect("create reference category");
+
+        let first = Item::new("First done target".to_string());
+        let second = Item::new("Second done target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first");
+        agenda
+            .assign_item_manual(second.id, reference.id, Some("manual:test".to_string()))
+            .expect("assign second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(first.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+
+        assert!(store.get_item(first.id).expect("reload first").is_done);
+        assert!(!store.get_item(second.id).expect("reload second").is_done);
+        assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status.contains("changed=1, skipped=0, failed=1"),
+            "status should summarize partial failure: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_with_blockers_opens_confirm_prompt() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked_a = Item::new("Blocked A".to_string());
+        let blocked_b = Item::new("Blocked B".to_string());
+        let plain = Item::new("Plain".to_string());
+        for item in [&blocker, &blocked_a, &blocked_b, &plain] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked_a.id)
+            .expect("link blocked a");
+        agenda
+            .link_items_blocks(blocker.id, blocked_b.id)
+            .expect("link blocked b");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+        assert!(
+            app.status.contains("1 selected item blocks 2 other items"),
+            "status should summarize batch blocker confirm: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_confirm_y_marks_done_and_removes_links() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked_a = Item::new("Blocked A".to_string());
+        let blocked_b = Item::new("Blocked B".to_string());
+        let plain = Item::new("Plain".to_string());
+        for item in [&blocker, &blocked_a, &blocked_b, &plain] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked_a.id)
+            .expect("link blocked a");
+        agenda
+            .link_items_blocks(blocker.id, blocked_b.id)
+            .expect("link blocked b");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(blocker.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+        app.handle_confirm_delete_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm batch done with cleanup");
+
+        assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
+        assert!(store.get_item(plain.id).expect("reload plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("reload dependents"),
+            Vec::<ItemId>::new()
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("removed_links=2"),
+            "status should mention removed blocker links: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_confirm_n_marks_done_and_keeps_links() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        let plain = Item::new("Plain".to_string());
+        for item in [&blocker, &blocked, &plain] {
+            store.create_item(item).expect("create item");
+        }
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("link blocked");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
+            .expect("confirm batch done without cleanup");
+
+        assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
+        assert!(store.get_item(plain.id).expect("reload plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("reload dependents")
+                .len(),
+            1
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            !app.status.contains("removed_links="),
+            "status should not mention link removal when keeping blockers: {}",
+            app.status
+        );
     }
 
     #[test]
@@ -9434,6 +10648,142 @@ mod tests {
                 .expect("load dependents")
                 .len(),
             1
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn batch_item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-batch-d-picker-esc-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let plain = Item::new("Plain".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&plain).expect("create plain");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open batch done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
+            .expect("Esc should cancel batch done prompt");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.selected_count(), 2);
+        assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
+        assert!(!store.get_item(plain.id).expect("load plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents")
+                .len(),
+            1
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn batch_item_assign_done_prompt_n_marks_selected_done_and_clears_selection() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-batch-d-picker-apply-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let plain = Item::new("Plain".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&plain).expect("create plain");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open batch done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
+            .expect("n should mark selected items done");
+
+        assert!(store.get_item(blocker.id).expect("load blocker").is_done);
+        assert!(store.get_item(plain.id).expect("load plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents")
+                .len(),
+            1
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Marked 2 selected items done"),
+            "status should summarize batch done result: {}",
+            app.status
         );
 
         drop(store);
@@ -13312,7 +14662,7 @@ mod tests {
     }
 
     #[test]
-    fn search_bar_enter_exact_match_jumps() {
+    fn search_bar_enter_opens_top_visible_item() {
         let (store, db_path) = make_two_section_store("exact-match");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -13326,22 +14676,29 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('/'), &agenda)
             .expect("open search bar");
 
-        for ch in "fix timeout bug".chars() {
+        for ch in "fix".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
                 .expect("type char");
         }
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
             .expect("enter");
 
-        assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(app.item_index, 0, "jumped to exact match");
-        assert!(app.status.contains("Jumped to"), "status confirms jump");
+        assert_eq!(app.mode, Mode::InputPanel);
+        let panel = app.input_panel.as_ref().expect("edit panel should open");
+        assert_eq!(
+            panel
+                .item_id
+                .and_then(|item_id| store.get_item(item_id).ok())
+                .map(|item| item.text),
+            Some("Fix timeout bug".to_string()),
+            "top visible local result should open on Enter"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn search_bar_enter_creates_item_when_no_match() {
+    fn search_bar_enter_with_no_match_does_not_create_item() {
         let (store, db_path) = make_two_section_store("create");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -13360,14 +14717,20 @@ mod tests {
                 .expect("type char");
         }
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
-            .expect("enter creates");
+            .expect("enter stays in search");
 
-        assert_eq!(app.mode, Mode::InputPanel, "opens InputPanel");
-        assert!(app.input_panel.is_some(), "panel exists");
-        let panel = app.input_panel.as_ref().unwrap();
-        assert_eq!(panel.text.text(), "Brand new task", "title pre-filled");
-        assert!(app.search_buffer.is_empty(), "search buffer cleared");
-        assert_eq!(app.section_filters[0], None, "filter cleared");
+        assert_eq!(app.mode, Mode::SearchBarFocused, "search stays focused");
+        assert!(app.input_panel.is_none(), "no add panel should open");
+        assert_eq!(app.search_buffer.text(), "Brand new task");
+        assert_eq!(
+            app.section_filters[0].as_deref(),
+            Some("Brand new task"),
+            "search filter should remain active"
+        );
+        assert!(
+            app.status.contains("No items match"),
+            "status should explain that no item was opened"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
