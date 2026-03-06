@@ -87,6 +87,41 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn effective_section_flow(&self) -> SectionFlow {
+        self.current_view()
+            .map(|view| view.section_flow)
+            .unwrap_or(SectionFlow::Vertical)
+    }
+
+    pub(crate) fn is_horizontal_section_flow(&self) -> bool {
+        self.effective_section_flow() == SectionFlow::Horizontal
+    }
+
+    fn clamp_horizontal_slot_item_indices(&mut self) {
+        if self.horizontal_slot_item_indices.len() != self.slots.len() {
+            self.horizontal_slot_item_indices = vec![0; self.slots.len()];
+        }
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let max_index = slot.items.len().saturating_sub(1);
+            if let Some(stored) = self.horizontal_slot_item_indices.get_mut(slot_index) {
+                *stored = (*stored).min(max_index);
+            }
+        }
+    }
+
+    fn clamp_horizontal_slot_scroll_offsets(&self) {
+        let mut offsets = self.horizontal_slot_scroll_offsets.borrow_mut();
+        if offsets.len() != self.slots.len() {
+            offsets.resize(self.slots.len(), 0);
+        }
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let max_index = slot.items.len().saturating_sub(1);
+            if let Some(stored) = offsets.get_mut(slot_index) {
+                *stored = (*stored).min(max_index);
+            }
+        }
+    }
+
     pub(crate) fn run(
         &mut self,
         terminal: &mut TuiTerminal,
@@ -296,12 +331,35 @@ impl App {
         }
 
         self.slots = slots;
+        self.clamp_horizontal_slot_item_indices();
+        self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
-        self.item_index = self.item_index.min(
-            self.current_slot()
-                .map(|slot| slot.items.len().saturating_sub(1))
-                .unwrap_or(0),
-        );
+        if self.is_horizontal_section_flow() {
+            self.item_index = self
+                .horizontal_slot_item_indices
+                .get(self.slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(
+                    self.current_slot()
+                        .map(|slot| slot.items.len().saturating_sub(1))
+                        .unwrap_or(0),
+                );
+        } else {
+            self.item_index = self.item_index.min(
+                self.current_slot()
+                    .map(|slot| slot.items.len().saturating_sub(1))
+                    .unwrap_or(0),
+            );
+            if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
+                *stored = self.item_index;
+            }
+        }
+        if self.is_horizontal_section_flow() {
+            self.column_index = self.current_slot_item_column_index();
+        } else {
+            self.column_index = self.column_index.min(self.current_slot_column_count());
+        }
         let provenance_len = self.preview_info_line_count_for_selected_item();
         let summary_len = self
             .selected_item()
@@ -324,12 +382,33 @@ impl App {
         if self.slots.is_empty() {
             return;
         }
+        if self.is_horizontal_section_flow() {
+            if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
+                *stored = self.item_index;
+            }
+            self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
+            self.item_index = self
+                .horizontal_slot_item_indices
+                .get(self.slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(
+                    self.current_slot()
+                        .map(|slot| slot.items.len().saturating_sub(1))
+                        .unwrap_or(0),
+                );
+            self.column_index = self.current_slot_item_column_index();
+            return;
+        }
         self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
         self.item_index = self.item_index.min(
             self.current_slot()
                 .map(|slot| slot.items.len().saturating_sub(1))
                 .unwrap_or(0),
         );
+        if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
+            *stored = self.item_index;
+        }
         self.column_index = self.current_slot_item_column_index();
     }
 
@@ -339,9 +418,15 @@ impl App {
         };
         if slot.items.is_empty() {
             self.item_index = 0;
+            if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
+                *stored = 0;
+            }
             return;
         }
         self.item_index = next_index_clamped(self.item_index, slot.items.len(), delta);
+        if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
+            *stored = self.item_index;
+        }
     }
 
     pub(crate) fn move_category_cursor(&mut self, delta: i32) {
@@ -1076,6 +1161,9 @@ impl App {
             if let Some(item_index) = slot.items.iter().position(|item| item.id == item_id) {
                 self.slot_index = slot_index;
                 self.item_index = item_index;
+                if let Some(stored) = self.horizontal_slot_item_indices.get_mut(slot_index) {
+                    *stored = item_index;
+                }
                 return;
             }
         }

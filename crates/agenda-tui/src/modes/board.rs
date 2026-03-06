@@ -2107,15 +2107,21 @@ impl App {
                 }
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                let max_cols = self.current_slot_column_count();
-                if self.column_index < max_cols {
-                    self.column_index += 1;
-                } else {
+                if self.is_horizontal_section_flow() {
                     self.move_slot_cursor(1);
+                } else {
+                    let max_cols = self.current_slot_column_count();
+                    if self.column_index < max_cols {
+                        self.column_index += 1;
+                    } else {
+                        self.move_slot_cursor(1);
+                    }
                 }
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if self.column_index > 0 {
+                if self.is_horizontal_section_flow() {
+                    self.move_slot_cursor(-1);
+                } else if self.column_index > 0 {
                     self.column_index -= 1;
                 } else {
                     self.move_slot_cursor(-1);
@@ -2137,6 +2143,12 @@ impl App {
             }
             KeyCode::Char('n') => {
                 self.open_input_panel_add_item();
+            }
+            KeyCode::Char('m') => {
+                self.toggle_current_view_section_flow(agenda)?;
+            }
+            KeyCode::Char('z') => {
+                self.cycle_current_board_display_mode(agenda)?;
             }
             KeyCode::Char('s') => {
                 self.sort_current_slot_by_active_column(None, agenda)?;
@@ -2587,6 +2599,96 @@ impl App {
             .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         self.status = format!("Column format: {}", describe_numeric_format(&next));
+        Ok(())
+    }
+
+    fn cycle_current_board_display_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(mut view) = self.current_view().cloned() else {
+            return Ok(());
+        };
+
+        let selected_slot_index = self.slot_index;
+        let selected_item_id = self.selected_item_id();
+        let mut status_prefix = "View card display";
+        let next_mode = match self.current_slot().map(|slot| slot.context.clone()) {
+            Some(SlotContext::Section { section_index })
+            | Some(SlotContext::GeneratedSection { section_index, .. }) => {
+                if let Some(section) = view.sections.get_mut(section_index) {
+                    if let Some(current) = section.board_display_mode_override {
+                        let next = toggle_board_display_mode(current);
+                        section.board_display_mode_override = Some(next);
+                        status_prefix = "Lane card display";
+                        next
+                    } else {
+                        let next = toggle_board_display_mode(view.board_display_mode);
+                        view.board_display_mode = next;
+                        next
+                    }
+                } else {
+                    let next = toggle_board_display_mode(view.board_display_mode);
+                    view.board_display_mode = next;
+                    next
+                }
+            }
+            _ => {
+                let next = toggle_board_display_mode(view.board_display_mode);
+                view.board_display_mode = next;
+                next
+            }
+        };
+
+        let view_name = view.name.clone();
+        agenda
+            .store()
+            .update_view(&view)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+        self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
+        if let Some(item_id) = selected_item_id {
+            self.set_item_selection_by_id(item_id);
+        }
+        self.status = format!(
+            "{status_prefix}: {}",
+            match next_mode {
+                BoardDisplayMode::SingleLine => "single-line",
+                BoardDisplayMode::MultiLine => "multi-line",
+            }
+        );
+        Ok(())
+    }
+
+    fn toggle_current_view_section_flow(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(mut view) = self.current_view().cloned() else {
+            return Ok(());
+        };
+
+        let selected_slot_index = self.slot_index;
+        let selected_item_id = self.selected_item_id();
+        view.section_flow = match view.section_flow {
+            SectionFlow::Vertical => SectionFlow::Horizontal,
+            SectionFlow::Horizontal => SectionFlow::Vertical,
+        };
+        let next_flow = view.section_flow;
+        let view_name = view.name.clone();
+
+        agenda
+            .store()
+            .update_view(&view)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+        self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
+        if let Some(item_id) = selected_item_id {
+            self.set_item_selection_by_id(item_id);
+        }
+        self.status = format!(
+            "Board layout: {}",
+            match next_flow {
+                SectionFlow::Vertical => "vertical",
+                SectionFlow::Horizontal => "horizontal",
+            }
+        );
         Ok(())
     }
 
@@ -4653,6 +4755,13 @@ impl App {
         } else if self.slot_index < self.section_filters.len() {
             self.section_filters[self.slot_index] = None;
         }
+    }
+}
+
+fn toggle_board_display_mode(mode: BoardDisplayMode) -> BoardDisplayMode {
+    match mode {
+        BoardDisplayMode::SingleLine => BoardDisplayMode::MultiLine,
+        BoardDisplayMode::MultiLine => BoardDisplayMode::SingleLine,
     }
 }
 

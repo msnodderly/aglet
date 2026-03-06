@@ -226,6 +226,41 @@ pub(super) fn wrap_text_for_board_cell(text: &str, width: usize) -> Vec<String> 
     lines
 }
 
+pub(super) fn wrap_text_for_board_cell_clamped(
+    text: &str,
+    width: usize,
+    max_lines: usize,
+) -> Vec<String> {
+    if max_lines == 0 {
+        return Vec::new();
+    }
+    let mut lines = wrap_text_for_board_cell(text, width);
+    if lines.len() <= max_lines {
+        return lines;
+    }
+
+    lines.truncate(max_lines);
+    let last = lines.pop().unwrap_or_default();
+    lines.push(ellipsis_suffix_for_wrapped_line(&last, width));
+    lines
+}
+
+fn ellipsis_suffix_for_wrapped_line(line: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if width <= BOARD_TRUNCATION_SUFFIX.len() {
+        return ".".repeat(width);
+    }
+
+    let mut visible: String = line
+        .chars()
+        .take(width.saturating_sub(BOARD_TRUNCATION_SUFFIX.len()))
+        .collect();
+    visible.push_str(BOARD_TRUNCATION_SUFFIX);
+    visible
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct BoardColumnWidths {
     pub(super) marker: usize,
@@ -1215,6 +1250,12 @@ mod tests {
     fn wrap_text_for_board_cell_wraps_on_word_boundaries() {
         let lines = wrap_text_for_board_cell("alpha beta gamma", 6);
         assert_eq!(lines, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn wrap_text_for_board_cell_clamped_adds_ellipsis_on_last_line() {
+        let lines = wrap_text_for_board_cell_clamped("alpha beta gamma delta", 10, 2);
+        assert_eq!(lines, vec!["alpha beta", "gamma..."]);
     }
 
     #[test]
