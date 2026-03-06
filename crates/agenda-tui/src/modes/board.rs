@@ -2102,6 +2102,9 @@ impl App {
             KeyCode::Char('S') => {
                 self.sort_current_slot_by_active_column(Some(SlotSortDirection::Desc), agenda)?;
             }
+            KeyCode::Char('F') => {
+                self.cycle_column_summary_fn(agenda)?;
+            }
             KeyCode::Char('b') => {
                 self.open_link_wizard(LinkWizardAction::BlockedBy);
             }
@@ -2425,6 +2428,62 @@ impl App {
             self.set_item_selection_by_id(item_id);
         }
         self.status = self.describe_current_slot_sort("Sorted current lane");
+        Ok(())
+    }
+
+    fn cycle_column_summary_fn(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let slot = match self.current_slot() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => {
+                self.status = "No columns on unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        let mut view = match self.current_view().cloned() {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+        let section = match view.sections.get(section_index) {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let section_column_index =
+            match Self::board_column_to_section_column_index(section, self.column_index) {
+                Some(i) => i,
+                None => {
+                    self.status = "No column selected".to_string();
+                    return Ok(());
+                }
+            };
+        let column = match section.columns.get(section_column_index) {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let is_numeric = self
+            .categories
+            .iter()
+            .find(|c| c.id == column.heading)
+            .map(|c| c.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if !is_numeric {
+            self.status = "Summary functions only apply to numeric columns".to_string();
+            return Ok(());
+        }
+        let current = column.summary_fn.unwrap_or(SummaryFn::None);
+        let next = current.next();
+        let section_mut = &mut view.sections[section_index];
+        section_mut.columns[section_column_index].summary_fn = Some(next);
+        agenda
+            .store()
+            .update_view(&view)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.status = format!("Column summary: {}", next.label());
         Ok(())
     }
 
