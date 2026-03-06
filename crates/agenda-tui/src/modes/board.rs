@@ -2076,12 +2076,16 @@ impl App {
                     self.status = "Jumped to All Items view".to_string();
                     return Ok(false);
                 }
+                (NormalModePrefix::G, KeyCode::Char('/')) => {
+                    self.begin_global_search_session(agenda)?;
+                    return Ok(false);
+                }
                 (NormalModePrefix::G, KeyCode::Esc) => {
                     self.status = "Cancelled g-prefix command".to_string();
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga)".to_string();
+                    self.status = "Unknown g command (use ga or g/)".to_string();
                     return Ok(false);
                 }
             }
@@ -2187,13 +2191,17 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                self.search_buffer.clear();
-                let target = self.slot_index;
-                if target < self.section_filters.len()
-                    && self.section_filters[target].take().is_some()
-                {
-                    self.refresh(agenda.store())?;
-                    self.status = "Filter cleared".to_string();
+                if self.global_search_active() {
+                    self.restore_global_search_session(agenda)?;
+                } else {
+                    self.search_buffer.clear();
+                    let target = self.slot_index;
+                    if target < self.section_filters.len()
+                        && self.section_filters[target].take().is_some()
+                    {
+                        self.refresh(agenda.store())?;
+                        self.status = "Filter cleared".to_string();
+                    }
                 }
             }
             KeyCode::F(8) | KeyCode::Char('v') | KeyCode::Char('V') => {
@@ -2222,7 +2230,7 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status = "g-prefix: ga=All Items".to_string();
+                self.status = "g-prefix: ga=All Items, g/=Global search".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -4629,20 +4637,25 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.search_buffer.clear();
-                if self.slot_index < self.section_filters.len() {
-                    self.section_filters[self.slot_index] = None;
+                if self.global_search_active() {
+                    self.restore_global_search_session(agenda)?;
+                } else {
+                    self.search_buffer.clear();
+                    if self.slot_index < self.section_filters.len() {
+                        self.section_filters[self.slot_index] = None;
+                    }
+                    self.mode = Mode::Normal;
+                    self.refresh(agenda.store())?;
+                    self.status = "Search cleared".to_string();
                 }
-                self.mode = Mode::Normal;
-                self.refresh(agenda.store())?;
-                self.status = "Search cleared".to_string();
             }
             KeyCode::Enter => {
                 let query = self.search_buffer.trimmed().to_string();
                 if query.is_empty() {
                     self.mode = Mode::Normal;
-                } else if let Some(idx) = self.find_exact_match_in_slot(&query) {
-                    self.item_index = idx;
+                } else if let Some((slot_idx, item_idx)) = self.find_exact_match(&query) {
+                    self.slot_index = slot_idx;
+                    self.item_index = item_idx;
                     self.mode = Mode::Normal;
                     self.status = format!("Jumped to '{}'", query);
                 } else {
@@ -4666,19 +4679,42 @@ impl App {
     }
 
     fn apply_search_filter(&mut self) {
-        let slot = self.slot_index;
-        if slot < self.section_filters.len() {
-            let text = self.search_buffer.trimmed().to_string();
-            self.section_filters[slot] = if text.is_empty() { None } else { Some(text) };
+        let text = self.search_buffer.trimmed().to_string();
+        let filter = if text.is_empty() { None } else { Some(text) };
+        if self.global_search_active() {
+            for slot_filter in &mut self.section_filters {
+                *slot_filter = filter.clone();
+            }
+        } else {
+            let slot = self.slot_index;
+            if slot < self.section_filters.len() {
+                self.section_filters[slot] = filter;
+            }
         }
     }
 
-    fn find_exact_match_in_slot(&self, query: &str) -> Option<usize> {
+    fn find_exact_match(&self, query: &str) -> Option<(usize, usize)> {
         let needle = query.to_ascii_lowercase();
-        self.current_slot()?
-            .items
-            .iter()
-            .position(|item| item.text.to_ascii_lowercase() == needle)
+        if self.global_search_active() {
+            for (slot_index, slot) in self.slots.iter().enumerate() {
+                if let Some(item_index) = slot
+                    .items
+                    .iter()
+                    .position(|item| item.text.to_ascii_lowercase() == needle)
+                {
+                    return Some((slot_index, item_index));
+                }
+            }
+            None
+        } else {
+            self.current_slot()
+                .and_then(|slot| {
+                    slot.items
+                        .iter()
+                        .position(|item| item.text.to_ascii_lowercase() == needle)
+                })
+                .map(|item_index| (self.slot_index, item_index))
+        }
     }
 
     fn open_add_item_with_title(&mut self, title: String) {
@@ -4710,8 +4746,13 @@ impl App {
         self.status =
             "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
         // Clear search state
+        let was_global_search = self.global_search_active();
         self.search_buffer.clear();
-        if self.slot_index < self.section_filters.len() {
+        if was_global_search {
+            for slot_filter in &mut self.section_filters {
+                *slot_filter = None;
+            }
+        } else if self.slot_index < self.section_filters.len() {
             self.section_filters[self.slot_index] = None;
         }
     }
