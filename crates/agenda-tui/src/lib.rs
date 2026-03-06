@@ -9058,7 +9058,7 @@ mod tests {
     }
 
     #[test]
-    fn global_search_enter_jumps_across_slots_and_esc_restores_previous_view() {
+    fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
         let (store, db_path) = make_two_section_store("g-slash-restore");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -9078,29 +9078,37 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('/'), &agenda)
             .expect("g/ should open global search");
 
-        for ch in "buy groceries".chars() {
+        for ch in "buy".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
                 .expect("type global query");
         }
         assert!(
             app.section_filters
                 .iter()
-                .all(|filter| filter.as_deref() == Some("buy groceries")),
+                .all(|filter| filter.as_deref() == Some("buy")),
             "global search should apply filter to all slots"
         );
 
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
-            .expect("enter should jump exact match");
-        assert_eq!(app.mode, Mode::Normal);
+            .expect("enter should open top visible result");
+        assert_eq!(app.mode, Mode::InputPanel);
         assert_eq!(
-            app.selected_item().map(|item| item.text.as_str()),
-            Some("Buy groceries"),
-            "exact match should select item from another slot"
+            app.input_panel
+                .as_ref()
+                .and_then(|panel| panel.item_id)
+                .and_then(|item_id| store.get_item(item_id).ok())
+                .map(|item| item.text),
+            Some("Buy groceries".to_string()),
+            "top visible match should open even without an exact title match"
         );
         assert!(
             app.global_search_active(),
             "session remains active until Esc"
         );
+
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("Esc should close edit panel");
+        assert_eq!(app.mode, Mode::Normal);
 
         app.handle_normal_key(KeyCode::Esc, &agenda)
             .expect("Esc should restore previous view");
@@ -9129,8 +9137,8 @@ mod tests {
     }
 
     #[test]
-    fn global_search_create_then_edit_save_still_restores_previous_view_on_esc() {
-        let (store, db_path) = make_two_section_store("g-slash-create-edit-restore");
+    fn global_search_enter_with_no_results_does_not_create_item() {
+        let (store, db_path) = make_two_section_store("g-slash-no-results");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
@@ -9149,45 +9157,22 @@ mod tests {
                 .expect("type global query");
         }
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
-            .expect("enter should open add panel");
+            .expect("enter should keep search focused");
 
-        assert_eq!(app.mode, Mode::InputPanel, "add panel should open");
-        assert!(
-            app.global_search_active(),
-            "global search session should remain active after create-from-search"
-        );
-
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to note");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to categories");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save created item");
-        assert_eq!(app.mode, Mode::Normal, "return to normal after save");
         assert_eq!(
-            app.current_view().map(|view| view.name.as_str()),
-            Some("All Items"),
-            "still in temporary global-search view before Esc restore"
+            app.mode,
+            Mode::SearchBarFocused,
+            "search should stay focused"
         );
+        assert!(app.input_panel.is_none(), "no edit/add panel should open");
         assert!(
             app.global_search_active(),
-            "global search session should survive add-item save"
+            "global search session should remain active"
         );
-
-        app.handle_normal_key(KeyCode::Char('e'), &agenda)
-            .expect("open edit panel");
-        assert_eq!(app.mode, Mode::InputPanel, "edit panel should open");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to note");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to categories");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save edited item");
-        assert_eq!(app.mode, Mode::Normal, "back to normal after edit save");
+        assert!(
+            app.status.contains("No items match"),
+            "status should explain why nothing opened"
+        );
 
         app.handle_normal_key(KeyCode::Esc, &agenda)
             .expect("Esc should restore prior view");
@@ -13162,7 +13147,7 @@ mod tests {
     }
 
     #[test]
-    fn search_bar_enter_exact_match_jumps() {
+    fn search_bar_enter_opens_top_visible_item() {
         let (store, db_path) = make_two_section_store("exact-match");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -13176,22 +13161,29 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('/'), &agenda)
             .expect("open search bar");
 
-        for ch in "fix timeout bug".chars() {
+        for ch in "fix".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
                 .expect("type char");
         }
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
             .expect("enter");
 
-        assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(app.item_index, 0, "jumped to exact match");
-        assert!(app.status.contains("Jumped to"), "status confirms jump");
+        assert_eq!(app.mode, Mode::InputPanel);
+        let panel = app.input_panel.as_ref().expect("edit panel should open");
+        assert_eq!(
+            panel
+                .item_id
+                .and_then(|item_id| store.get_item(item_id).ok())
+                .map(|item| item.text),
+            Some("Fix timeout bug".to_string()),
+            "top visible local result should open on Enter"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn search_bar_enter_creates_item_when_no_match() {
+    fn search_bar_enter_with_no_match_does_not_create_item() {
         let (store, db_path) = make_two_section_store("create");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -13210,14 +13202,20 @@ mod tests {
                 .expect("type char");
         }
         app.handle_search_bar_key(KeyCode::Enter, &agenda)
-            .expect("enter creates");
+            .expect("enter stays in search");
 
-        assert_eq!(app.mode, Mode::InputPanel, "opens InputPanel");
-        assert!(app.input_panel.is_some(), "panel exists");
-        let panel = app.input_panel.as_ref().unwrap();
-        assert_eq!(panel.text.text(), "Brand new task", "title pre-filled");
-        assert!(app.search_buffer.is_empty(), "search buffer cleared");
-        assert_eq!(app.section_filters[0], None, "filter cleared");
+        assert_eq!(app.mode, Mode::SearchBarFocused, "search stays focused");
+        assert!(app.input_panel.is_none(), "no add panel should open");
+        assert_eq!(app.search_buffer.text(), "Brand new task");
+        assert_eq!(
+            app.section_filters[0].as_deref(),
+            Some("Brand new task"),
+            "search filter should remain active"
+        );
+        assert!(
+            app.status.contains("No items match"),
+            "status should explain that no item was opened"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
