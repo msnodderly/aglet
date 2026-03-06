@@ -2918,6 +2918,35 @@ impl App {
         self.status = status.to_string();
     }
 
+    fn apply_link_action_to_sources<F>(
+        &self,
+        source_item_ids: &[ItemId],
+        mut apply: F,
+    ) -> (usize, usize, usize, Option<String>)
+    where
+        F: FnMut(ItemId) -> Result<bool, String>,
+    {
+        let mut created = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+        let mut first_error = None;
+
+        for source_item_id in source_item_ids {
+            match apply(*source_item_id) {
+                Ok(true) => created += 1,
+                Ok(false) => skipped += 1,
+                Err(err) => {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        (created, skipped, failed, first_error)
+    }
+
     fn apply_link_wizard(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         let Some(state) = self.link_wizard_state().cloned() else {
             self.mode = Mode::Normal;
@@ -2938,8 +2967,9 @@ impl App {
         } else {
             anchor_label.clone()
         };
+        let batch_mode = source_item_ids.len() > 1;
 
-        let status = match action {
+        let (status, clear_selection) = match action {
             LinkWizardAction::BlockedBy => {
                 let target_id = self
                     .link_wizard_selected_target_id()
@@ -2950,50 +2980,83 @@ impl App {
                     .find(|item| item.id == target_id)
                     .map(board_item_label)
                     .unwrap_or_else(|| target_id.to_string());
-                let mut created = 0usize;
-                for source_item_id in &source_item_ids {
-                    let result = agenda
-                        .link_items_depends_on(*source_item_id, target_id)
-                        .map_err(|e| e.to_string())?;
-                    if result.created {
-                        created += 1;
-                    }
-                }
-                if source_item_ids.len() > 1 {
-                    format!(
-                        "Linked {} blocked by '{}' (created={created})",
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_depends_on(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} blocked by '{}' (created={created}, skipped={skipped}, failed={failed})",
                         source_label,
                         truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                        "Link failed: {}",
+                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
                     )
                 } else if created > 0 {
-                    format!(
+                    (
+                        format!(
                         "Linked '{}' blocked by '{}'",
                         truncate_board_cell(&anchor_label, 30),
                         truncate_board_cell(&target_label, 30)
+                        ),
+                        true,
                     )
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::DependsOn => {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let mut created = 0usize;
-                for source_item_id in &source_item_ids {
-                    let result = agenda
-                        .link_items_depends_on(*source_item_id, target_id)
-                        .map_err(|e| e.to_string())?;
-                    if result.created {
-                        created += 1;
+                let target_label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == target_id)
+                    .map(board_item_label)
+                    .unwrap_or_else(|| target_id.to_string());
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_depends_on(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} depends on '{}' (created={created}, skipped={skipped}, failed={failed})",
+                        source_label,
+                        truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
                     }
-                }
-                if source_item_ids.len() > 1 {
-                    format!("Linked {} depends on target (created={created})", source_label)
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                        "Link failed: {}",
+                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
+                    )
                 } else if created > 0 {
-                    "Linked depends-on".to_string()
+                    ("Linked depends-on".to_string(), true)
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::Blocks => {
@@ -3006,50 +3069,83 @@ impl App {
                     .find(|item| item.id == target_id)
                     .map(board_item_label)
                     .unwrap_or_else(|| target_id.to_string());
-                let mut created = 0usize;
-                for source_item_id in &source_item_ids {
-                    let result = agenda
-                        .link_items_blocks(*source_item_id, target_id)
-                        .map_err(|e| e.to_string())?;
-                    if result.created {
-                        created += 1;
-                    }
-                }
-                if source_item_ids.len() > 1 {
-                    format!(
-                        "Linked {} blocks '{}' (created={created})",
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_blocks(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} blocks '{}' (created={created}, skipped={skipped}, failed={failed})",
                         source_label,
                         truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
+                    }
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                        "Link failed: {}",
+                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
                     )
                 } else if created > 0 {
-                    format!(
+                    (
+                        format!(
                         "Linked '{}' blocks '{}'",
                         truncate_board_cell(&anchor_label, 30),
                         truncate_board_cell(&target_label, 30)
+                        ),
+                        true,
                     )
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::RelatedTo => {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let mut created = 0usize;
-                for source_item_id in &source_item_ids {
-                    let result = agenda
-                        .link_items_related(*source_item_id, target_id)
-                        .map_err(|e| e.to_string())?;
-                    if result.created {
-                        created += 1;
+                let target_label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == target_id)
+                    .map(board_item_label)
+                    .unwrap_or_else(|| target_id.to_string());
+                let (created, skipped, failed, first_error) =
+                    self.apply_link_action_to_sources(&source_item_ids, |source_item_id| {
+                        agenda
+                            .link_items_related(source_item_id, target_id)
+                            .map(|result| result.created)
+                            .map_err(|e| e.to_string())
+                    });
+                if batch_mode {
+                    let mut summary = format!(
+                        "Linked {} related to '{}' (created={created}, skipped={skipped}, failed={failed})",
+                        source_label,
+                        truncate_board_cell(&target_label, 30)
+                    );
+                    if let Some(err) = first_error {
+                        summary.push_str(&format!(" first_error={err}"));
                     }
-                }
-                if source_item_ids.len() > 1 {
-                    format!("Linked {} related to target (created={created})", source_label)
+                    (summary, failed == 0)
+                } else if failed > 0 {
+                    (
+                        format!(
+                        "Link failed: {}",
+                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                        ),
+                        false,
+                    )
                 } else if created > 0 {
-                    "Linked related items".to_string()
+                    ("Linked related items".to_string(), true)
                 } else {
-                    "Link already exists".to_string()
+                    ("Link already exists".to_string(), true)
                 }
             }
             LinkWizardAction::ClearDependencies => {
@@ -3076,16 +3172,22 @@ impl App {
                     }
                 }
                 if source_item_ids.len() > 1 {
-                    format!(
+                    (
+                        format!(
                         "Cleared dependencies for {} (prereqs={}, blocks={})",
                         source_label, total_prereqs, total_dependents
+                        ),
+                        true,
                     )
                 } else {
-                    format!(
+                    (
+                        format!(
                         "Cleared dependencies for '{}' (prereqs={}, blocks={})",
                         truncate_board_cell(&anchor_label, 30),
                         total_prereqs,
                         total_dependents
+                        ),
+                        true,
                     )
                 }
             }
@@ -3093,7 +3195,7 @@ impl App {
 
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(anchor_id);
-        if source_item_ids.len() > 1 {
+        if batch_mode && clear_selection {
             self.clear_selected_items();
         }
         self.close_link_wizard(&status);
