@@ -775,7 +775,9 @@ impl App {
                                 "  {source_count} selected items blocked by {}",
                                 truncate_board_cell(&target.text, 28)
                             )));
-                            lines.push(Line::from("  (applies one depends-on link per selected item)"));
+                            lines.push(Line::from(
+                                "  (applies one depends-on link per selected item)",
+                            ));
                         } else {
                             lines.push(Line::from(format!(
                                 "  {} blocked by {}",
@@ -824,7 +826,9 @@ impl App {
                                 "  {source_count} selected items block {}",
                                 truncate_board_cell(&target.text, 28)
                             )));
-                            lines.push(Line::from("  (adds one blocked relation per selected item)"));
+                            lines.push(Line::from(
+                                "  (adds one blocked relation per selected item)",
+                            ));
                         } else {
                             lines.push(Line::from(format!(
                                 "  {} blocks {}",
@@ -851,7 +855,9 @@ impl App {
                                 "  {source_count} selected items related to {}",
                                 truncate_board_cell(&target.text, 26)
                             )));
-                            lines.push(Line::from("  (adds one symmetric relation per selected item)"));
+                            lines.push(Line::from(
+                                "  (adds one symmetric relation per selected item)",
+                            ));
                         } else {
                             lines.push(Line::from(format!(
                                 "  {} related to {}",
@@ -867,7 +873,9 @@ impl App {
                 }
                 LinkWizardAction::ClearDependencies => {
                     if source_count > 1 {
-                        lines.push(Line::from("  Remove immediate prereqs and dependents for all selected items"));
+                        lines.push(Line::from(
+                            "  Remove immediate prereqs and dependents for all selected items",
+                        ));
                     } else {
                         lines.push(Line::from("  Remove all immediate prereqs and dependents"));
                     }
@@ -2906,7 +2914,9 @@ impl App {
                 } else if let Some(batch_delete_item_ids) = &self.batch_delete_item_ids {
                     let selected_count = batch_delete_item_ids.len();
                     let item_suffix = if selected_count == 1 { "" } else { "s" };
-                    format!("Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel")
+                    format!(
+                        "Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel"
+                    )
                 } else {
                     "Delete item? y:confirm Esc:cancel".to_string()
                 }
@@ -2919,7 +2929,9 @@ impl App {
                 }
             }
             Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
-            Mode::ItemAssignPicker => "Assign categories (changes apply immediately)".to_string(),
+            Mode::ItemAssignPicker => {
+                "Assign categories (Space applies; Enter/Esc close)".to_string()
+            }
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
                 if let Some(state) = self.link_wizard_state() {
@@ -3013,7 +3025,7 @@ impl App {
                     "S:save  Tab:pane  Esc:close"
                 }
             }
-            Mode::ItemAssignPicker => "Space:toggle  n:new  Enter:done  Esc:cancel",
+            Mode::ItemAssignPicker => "Space:apply  n:new  Enter:close  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign  Esc:cancel",
             Mode::LinkWizard => "Tab:focus  Enter:apply  /:target  Type:search  Esc:cancel",
             Mode::CategoryDirectEdit => "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel",
@@ -3021,7 +3033,7 @@ impl App {
             Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
             Mode::ConfirmDelete => {
                 if self.done_blocks_confirm.is_some() {
-                    "y:remove blocking links + done  n:mark done only  Esc:cancel"
+                    "y:remove links + done  n:done only  Esc:cancel"
                 } else {
                     "y:confirm  Esc:cancel"
                 }

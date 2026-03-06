@@ -3777,18 +3777,14 @@ mod tests {
 
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.selected_count(), 0);
-        assert!(
-            agenda
-                .immediate_prereq_ids(source_a.id)
-                .expect("source A prereqs")
-                .contains(&target.id)
-        );
-        assert!(
-            agenda
-                .immediate_prereq_ids(source_b.id)
-                .expect("source B prereqs")
-                .contains(&target.id)
-        );
+        assert!(agenda
+            .immediate_prereq_ids(source_a.id)
+            .expect("source A prereqs")
+            .contains(&target.id));
+        assert!(agenda
+            .immediate_prereq_ids(source_b.id)
+            .expect("source B prereqs")
+            .contains(&target.id));
         assert!(
             app.status.contains("2 selected items blocked by"),
             "status should summarize batch link result: {}",
@@ -3857,7 +3853,9 @@ mod tests {
 
         app.handle_key(KeyCode::Char('b'), &agenda)
             .expect("open batch link wizard");
-        store.delete_item(source_b.id, "test").expect("delete second source");
+        store
+            .delete_item(source_b.id, "test")
+            .expect("delete second source");
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("focus target");
         app.handle_key(KeyCode::Enter, &agenda)
@@ -3868,12 +3866,10 @@ mod tests {
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.selected_count(), 1);
         assert!(app.is_item_selected(source_a.id));
-        assert!(
-            agenda
-                .immediate_prereq_ids(source_a.id)
-                .expect("source A prereqs")
-                .contains(&target.id)
-        );
+        assert!(agenda
+            .immediate_prereq_ids(source_a.id)
+            .expect("source A prereqs")
+            .contains(&target.id));
         assert!(
             app.status.contains("created=1, skipped=0, failed=1"),
             "status should report partial failure counts: {}",
@@ -7223,6 +7219,80 @@ mod tests {
     }
 
     #[test]
+    fn assign_picker_and_done_confirm_render_updated_footer_copy() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-copy-render-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let blocker = Item::new("Blocker".to_string());
+        let plain = Item::new("Plain".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&plain).expect("create plain");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+        app.mode = Mode::ItemAssignPicker;
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Assign categories (Space applies; Enter/Esc close)"),
+            "assign picker status copy should describe apply/close behavior: {rendered}"
+        );
+        assert!(
+            rendered.contains("Space:apply  n:new  Enter:close  Esc:cancel"),
+            "assign picker footer should describe apply/close controls: {rendered}"
+        );
+
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open batch done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render confirm");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("y:remove links + done  n:done only  Esc:cancel"),
+            "done confirm footer should use compact batch wording: {rendered}"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn batch_assign_picker_esc_preserves_selection_without_changes() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
@@ -7321,10 +7391,16 @@ mod tests {
 
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.selected_count(), 0);
-        assert!(store.get_item(first.id).expect("reload first").assignments.contains_key(&work.id));
-        assert!(
-            store.get_item(second.id).expect("reload second").assignments.contains_key(&work.id)
-        );
+        assert!(store
+            .get_item(first.id)
+            .expect("reload first")
+            .assignments
+            .contains_key(&work.id));
+        assert!(store
+            .get_item(second.id)
+            .expect("reload second")
+            .assignments
+            .contains_key(&work.id));
     }
 
     #[test]
@@ -10218,7 +10294,9 @@ mod tests {
         let work = Category::new("Work".to_string());
         let mut reference = Category::new("Reference".to_string());
         reference.is_actionable = false;
-        store.create_category(&work).expect("create actionable category");
+        store
+            .create_category(&work)
+            .expect("create actionable category");
         store
             .create_category(&reference)
             .expect("create reference category");
@@ -10248,8 +10326,7 @@ mod tests {
         assert!(!store.get_item(second.id).expect("reload second").is_done);
         assert_eq!(app.selected_count(), 2);
         assert!(
-            app.status
-                .contains("changed=1, skipped=0, failed=1"),
+            app.status.contains("changed=1, skipped=0, failed=1"),
             "status should summarize partial failure: {}",
             app.status
         );
@@ -10571,6 +10648,142 @@ mod tests {
                 .expect("load dependents")
                 .len(),
             1
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn batch_item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-batch-d-picker-esc-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let plain = Item::new("Plain".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&plain).expect("create plain");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open batch done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
+            .expect("Esc should cancel batch done prompt");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.selected_count(), 2);
+        assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
+        assert!(!store.get_item(plain.id).expect("load plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents")
+                .len(),
+            1
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn batch_item_assign_done_prompt_n_marks_selected_done_and_clears_selection() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-batch-d-picker-apply-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let blocker = Item::new("Blocker".to_string());
+        let plain = Item::new("Plain".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&plain).expect("create plain");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocker.id, work.id, Some("manual:test".to_string()))
+            .expect("assign blocker");
+        agenda
+            .assign_item_manual(plain.id, work.id, Some("manual:test".to_string()))
+            .expect("assign plain");
+        agenda
+            .link_items_blocks(blocker.id, blocked.id)
+            .expect("create blocker link");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(blocker.id);
+        app.toggle_selected_item(plain.id);
+        app.set_item_selection_by_id(plain.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case("Done"))
+            .expect("Done category row should exist");
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("space should open batch done confirm");
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+
+        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
+            .expect("n should mark selected items done");
+
+        assert!(store.get_item(blocker.id).expect("load blocker").is_done);
+        assert!(store.get_item(plain.id).expect("load plain").is_done);
+        assert_eq!(
+            agenda
+                .immediate_dependent_ids(blocker.id)
+                .expect("load dependents")
+                .len(),
+            1
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Marked 2 selected items done"),
+            "status should summarize batch done result: {}",
+            app.status
         );
 
         drop(store);

@@ -208,7 +208,12 @@ impl App {
                             )?;
                         }
                         DoneBlocksConfirmScope::Batch { item_ids, .. } => {
-                            self.apply_batch_done_action(agenda, &item_ids, true)?;
+                            self.apply_batch_done_action(
+                                agenda,
+                                &item_ids,
+                                true,
+                                done_confirm.origin,
+                            )?;
                         }
                     }
                 }
@@ -225,7 +230,12 @@ impl App {
                             )?;
                         }
                         DoneBlocksConfirmScope::Batch { item_ids, .. } => {
-                            self.apply_batch_done_action(agenda, &item_ids, false)?;
+                            self.apply_batch_done_action(
+                                agenda,
+                                &item_ids,
+                                false,
+                                done_confirm.origin,
+                            )?;
                         }
                     }
                 }
