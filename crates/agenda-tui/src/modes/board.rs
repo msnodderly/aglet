@@ -4493,7 +4493,13 @@ impl App {
                     }
 
                     self.refresh(agenda.store())?;
-                    self.set_item_selection_by_id(item_id);
+                    let successful_batch_change = changed > 0 && failed == 0;
+                    if successful_batch_change {
+                        self.clear_selected_items();
+                        self.mode = Mode::Normal;
+                    } else {
+                        self.set_item_selection_by_id(item_id);
+                    }
                     self.status = if failed == 0 {
                         if should_unassign {
                             format!("Removed category {} from {} items", row.name, changed)
@@ -4658,7 +4664,15 @@ impl App {
                 {
                     self.item_assign_category_index = index;
                 }
-                self.mode = Mode::ItemAssignPicker;
+                let successful_batch_change =
+                    action_item_ids.len() > 1 && assigned > 0 && failed == 0;
+                if successful_batch_change {
+                    self.clear_selected_items();
+                    self.mode = Mode::Normal;
+                } else {
+                    self.set_item_selection_by_id(item_id);
+                    self.mode = Mode::ItemAssignPicker;
+                }
                 self.clear_input();
                 self.status = if action_item_ids.len() > 1 {
                     let mut summary = format!(
