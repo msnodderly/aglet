@@ -2842,6 +2842,10 @@ impl App {
                     format!(
                         "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
                     )
+                } else if let Some(batch_delete_item_ids) = &self.batch_delete_item_ids {
+                    let selected_count = batch_delete_item_ids.len();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    format!("Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel")
                 } else {
                     "Delete item? y:confirm Esc:cancel".to_string()
                 }
@@ -3478,7 +3482,17 @@ impl App {
                     } else {
                         format!(" [{}]", flags.join(","))
                     };
-                    let assigned = if self.selected_item_has_assignment(row.id) {
+                    let (assigned_count, total_count) =
+                        self.effective_action_assignment_counts(row.id);
+                    let assigned = if total_count > 1 {
+                        if assigned_count == 0 {
+                            "[ ]".to_string()
+                        } else if assigned_count == total_count {
+                            "[x]".to_string()
+                        } else {
+                            "[-]".to_string()
+                        }
+                    } else if self.selected_item_has_assignment(row.id) {
                         if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {
                             // Show numeric value for assigned numeric categories
                             let val = self

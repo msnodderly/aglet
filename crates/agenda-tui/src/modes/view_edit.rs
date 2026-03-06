@@ -222,6 +222,48 @@ impl App {
             return Ok(false);
         }
 
+        if let Some(batch_delete_item_ids) = self.batch_delete_item_ids.clone() {
+            match code {
+                KeyCode::Char('y') => {
+                    let mut deleted = 0usize;
+                    let mut failed = 0usize;
+                    let mut first_error = None;
+                    for item_id in &batch_delete_item_ids {
+                        match agenda.delete_item(*item_id, "user:tui") {
+                            Ok(()) => deleted += 1,
+                            Err(err) => {
+                                failed += 1;
+                                if first_error.is_none() {
+                                    first_error = Some(err.to_string());
+                                }
+                            }
+                        }
+                    }
+                    self.batch_delete_item_ids = None;
+                    self.clear_selected_items();
+                    self.refresh(agenda.store())?;
+                    self.mode = Mode::Normal;
+                    self.status = if failed == 0 {
+                        format!("Deleted {deleted} selected items")
+                    } else {
+                        let mut summary =
+                            format!("Deleted {deleted} selected items (failed={failed})");
+                        if let Some(err) = first_error {
+                            summary.push_str(&format!(" first_error={err}"));
+                        }
+                        summary
+                    };
+                }
+                KeyCode::Esc => {
+                    self.batch_delete_item_ids = None;
+                    self.mode = Mode::Normal;
+                    self.status = "Batch delete canceled".to_string();
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         match code {
             KeyCode::Char('y') => {
                 if let Some(item_id) = self.selected_item_id() {
@@ -232,10 +274,12 @@ impl App {
                     self.status = "Item deleted".to_string();
                 }
                 self.done_blocks_confirm = None;
+                self.batch_delete_item_ids = None;
                 self.mode = Mode::Normal;
             }
             KeyCode::Esc => {
                 self.done_blocks_confirm = None;
+                self.batch_delete_item_ids = None;
                 self.mode = Mode::Normal;
                 self.status = "Delete canceled".to_string();
             }
