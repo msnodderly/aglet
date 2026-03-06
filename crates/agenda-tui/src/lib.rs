@@ -10115,6 +10115,135 @@ mod tests {
     }
 
     #[test]
+    fn batch_done_marks_selected_items_done_and_clears_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let first = Item::new("First done target".to_string());
+        let second = Item::new("Second done target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first");
+        agenda
+            .assign_item_manual(second.id, work.id, Some("manual:test".to_string()))
+            .expect("assign second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(second.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+
+        assert!(store.get_item(first.id).expect("reload first").is_done);
+        assert!(store.get_item(second.id).expect("reload second").is_done);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status
+                .contains("Marked 2 selected items done (changed=2, skipped=0, failed=0)"),
+            "status should summarize batch done result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_all_done_marks_selected_items_not_done() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let first = Item::new("First done target".to_string());
+        let second = Item::new("Second done target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first");
+        agenda
+            .assign_item_manual(second.id, work.id, Some("manual:test".to_string()))
+            .expect("assign second");
+        agenda.mark_item_done(first.id).expect("mark first done");
+        agenda.mark_item_done(second.id).expect("mark second done");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(first.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch not-done");
+
+        assert!(!store.get_item(first.id).expect("reload first").is_done);
+        assert!(!store.get_item(second.id).expect("reload second").is_done);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Unmarked 2 selected items not-done"),
+            "status should summarize batch not-done result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_done_partial_failure_preserves_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let mut reference = Category::new("Reference".to_string());
+        reference.is_actionable = false;
+        store.create_category(&work).expect("create actionable category");
+        store
+            .create_category(&reference)
+            .expect("create reference category");
+
+        let first = Item::new("First done target".to_string());
+        let second = Item::new("Second done target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first");
+        agenda
+            .assign_item_manual(second.id, reference.id, Some("manual:test".to_string()))
+            .expect("assign second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(first.id);
+
+        app.handle_normal_key(KeyCode::Char('d'), &agenda)
+            .expect("batch done");
+
+        assert!(store.get_item(first.id).expect("reload first").is_done);
+        assert!(!store.get_item(second.id).expect("reload second").is_done);
+        assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status
+                .contains("changed=1, skipped=0, failed=1"),
+            "status should summarize partial failure: {}",
+            app.status
+        );
+    }
+
+    #[test]
     fn normal_mode_d_prompts_then_y_clears_blocker_links() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -36,6 +36,7 @@ Primary actions in scope:
   `ce94cab` and `b86a68c`
 - Phase B1 batch link fast path completed in commit `ede88ae`
 - Phase B2 batch link result semantics completed in the next checkpoint
+- Phase D batch done fast path completed in the next checkpoint
 
 ### Phase 0 Delivered
 
@@ -89,6 +90,17 @@ Primary actions in scope:
 - Link wizard filtering, navigation, and scrolling behavior remain covered by
   the existing focused tests
 
+### Phase D Delivered
+
+- With 2+ selected items, `d` now applies a safe batch done fast path
+- If not all selected items are done, `d` marks the actionable, non-blocking
+  items done
+- If all selected items are already done, `d` marks them all not-done
+- Batch done reports `changed / skipped / failed` counts explicitly
+- Partial batch-done failures preserve selection so retry is possible
+- Existing single-item `d` confirm behavior remains unchanged for blocker-link
+  cleanup
+
 ### Active Work
 
 - Next likely phase:
@@ -96,6 +108,8 @@ Primary actions in scope:
     testing
   - otherwise continue broadening batch-link parity where the current wizard
     still has single-item assumptions
+  - consider whether batch done should gain an explicit confirm path for
+    blocker-link cleanup, or remain safely non-destructive
 
 ## Delivery Strategy
 
