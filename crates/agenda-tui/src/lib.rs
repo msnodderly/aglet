@@ -838,6 +838,7 @@ struct App {
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
+    selected_item_ids: HashSet<ItemId>,
     horizontal_slot_item_indices: Vec<usize>,
     horizontal_slot_scroll_offsets: RefCell<Vec<usize>>,
     slot_index: usize,
@@ -897,6 +898,7 @@ impl Default for App {
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
+            selected_item_ids: HashSet::new(),
             horizontal_slot_item_indices: Vec::new(),
             horizontal_slot_scroll_offsets: RefCell::new(Vec::new()),
             slot_index: 0,
@@ -917,7 +919,7 @@ impl Default for App {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
@@ -6612,6 +6614,177 @@ mod tests {
         assert!(
             rendered.contains("u:deps"),
             "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
+    }
+
+    #[test]
+    fn normal_mode_space_toggles_selection_and_esc_clears_before_filter() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First task".to_string());
+        let second = Item::new("Second task".to_string());
+        store.create_item(&first).expect("create first item");
+        store.create_item(&second).expect("create second item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+        let focused_item_id = app.selected_item_id().expect("focused item");
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("space selects focused item");
+        assert_eq!(app.selected_count(), 1);
+        assert!(app.is_item_selected(focused_item_id));
+
+        app.section_filters = vec![Some("first".to_string())];
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("esc clears selection first");
+        assert_eq!(app.selected_count(), 0);
+        assert_eq!(app.section_filters, vec![Some("first".to_string())]);
+
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("second esc clears filter");
+        assert_eq!(app.section_filters, vec![None]);
+    }
+
+    #[test]
+    fn refresh_prunes_selected_items_that_are_no_longer_visible() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Transient task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select item");
+        assert_eq!(app.selected_count(), 1);
+
+        agenda.delete_item(item.id, "test").expect("delete item");
+        app.refresh(&store).expect("refresh after delete");
+        assert_eq!(app.selected_count(), 0);
+    }
+
+    #[test]
+    fn cycle_view_clears_transient_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        for name in ["A", "B"] {
+            let mut view = View::new(name.to_string());
+            view.sections.push(Section {
+                title: "All".to_string(),
+                criteria: Query::default(),
+                columns: Vec::new(),
+                item_column_index: 0,
+                on_insert_assign: HashSet::new(),
+                on_remove_unassign: HashSet::new(),
+                show_children: false,
+                board_display_mode_override: None,
+            });
+            store.create_view(&view).expect("create view");
+        }
+
+        let item = Item::new("View switch task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("A");
+        app.refresh(&store).expect("refresh A");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select item");
+        assert_eq!(app.selected_count(), 1);
+
+        app.cycle_view(1, &agenda).expect("cycle to next view");
+        assert_eq!(app.selected_count(), 0);
+    }
+
+    #[test]
+    fn normal_mode_header_and_footer_reflect_active_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Selected task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select item");
+
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("sel:1"),
+            "header should advertise selected item count: {rendered}"
+        );
+        assert!(
+            rendered.contains("Space:toggle"),
+            "footer should advertise selection toggle when active: {rendered}"
+        );
+        assert!(
+            rendered.contains("Esc:clear sel"),
+            "footer should advertise clear-selection when active: {rendered}"
         );
     }
 

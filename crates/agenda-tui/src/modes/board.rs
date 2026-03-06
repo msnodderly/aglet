@@ -2092,6 +2092,26 @@ impl App {
         }
         match code {
             KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char(' ') => {
+                if let Some(item_id) = self.selected_item_id() {
+                    let is_selected = self.toggle_selected_item(item_id);
+                    let selected_count = self.selected_count();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    self.status = if is_selected {
+                        format!(
+                            "Selected {selected_count} item{item_suffix} (Space toggles, Esc clears selection)"
+                        )
+                    } else if selected_count == 0 {
+                        "Selection cleared".to_string()
+                    } else {
+                        format!(
+                            "Selected {selected_count} item{item_suffix} (Space toggles, Esc clears selection)"
+                        )
+                    };
+                } else {
+                    self.status = "No selected item to toggle".to_string();
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.show_preview && self.normal_focus == NormalFocus::Preview {
                     self.scroll_preview(1);
@@ -2191,7 +2211,11 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                if self.global_search_active() {
+                if self.has_selected_items() {
+                    let cleared_count = self.clear_selected_items();
+                    let item_suffix = if cleared_count == 1 { "" } else { "s" };
+                    self.status = format!("Cleared selection ({cleared_count} item{item_suffix})");
+                } else if self.global_search_active() {
                     self.restore_global_search_session(agenda)?;
                 } else {
                     self.search_buffer.clear();

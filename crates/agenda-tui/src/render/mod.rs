@@ -1550,6 +1550,11 @@ impl App {
         } else {
             ""
         };
+        let selection = if self.selected_count() > 0 {
+            format!(" sel:{}", self.selected_item_ids_in_view_order().len())
+        } else {
+            String::new()
+        };
 
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -1557,7 +1562,7 @@ impl App {
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  view:{view_name}{view_flags}  mode:{mode}{filter}"
+                "  view:{view_name}{view_flags}{selection}  mode:{mode}{filter}"
             )),
         ]))
     }
@@ -1878,8 +1883,14 @@ impl App {
                         .iter()
                         .enumerate()
                         .map(|(item_index, item)| {
-                            let is_selected = is_selected_slot && item_index == self.item_index;
-                            let marker_cell = if is_selected { ">" } else { " " };
+                            let is_focused_item = is_selected_slot && item_index == self.item_index;
+                            let is_marked_selected = self.is_item_selected(item.id);
+                            let marker_cell = match (is_focused_item, is_marked_selected) {
+                                (true, true) => "+",
+                                (true, false) => ">",
+                                (false, true) => "*",
+                                (false, false) => " ",
+                            };
                             let note_cell = item_indicator_glyphs(
                                 item.is_done,
                                 self.is_item_blocked(item.id),
@@ -1895,7 +1906,7 @@ impl App {
                             let mut row_height = item_cell_content.lines().count().max(1);
                             let item_cell = {
                                 let mut cell = Cell::from(item_cell_content);
-                                if is_selected && self.column_index == item_board_column_index {
+                                if is_focused_item && self.column_index == item_board_column_index {
                                     cell = cell.style(focused_cell_style());
                                 }
                                 cell
@@ -1956,7 +1967,7 @@ impl App {
                                     } else {
                                         col_idx + 1
                                     };
-                                    if is_selected && self.column_index == board_column_index {
+                                    if is_focused_item && self.column_index == board_column_index {
                                         cell = cell.style(focused_cell_style());
                                     }
                                     cell
@@ -1997,8 +2008,10 @@ impl App {
                             if effective_display_mode == BoardDisplayMode::MultiLine {
                                 row = row.height(row_height.min(u16::MAX as usize) as u16);
                             }
-                            if is_selected {
+                            if is_focused_item {
                                 row = row.style(selected_board_row_style());
+                            } else if is_marked_selected {
+                                row = row.style(marked_board_row_style());
                             }
                             row
                         })
@@ -2176,7 +2189,13 @@ impl App {
                                 .when_date
                                 .map(|dt| dt.date().to_string())
                                 .unwrap_or_else(|| "-".to_string());
-                            let marker_cell = if is_selected { ">" } else { " " };
+                            let is_marked_selected = self.is_item_selected(item.id);
+                            let marker_cell = match (is_selected, is_marked_selected) {
+                                (true, true) => "+",
+                                (true, false) => ">",
+                                (false, true) => "*",
+                                (false, false) => " ",
+                            };
                             let note_cell = item_indicator_glyphs(
                                 item.is_done,
                                 self.is_item_blocked(item.id),
@@ -2225,6 +2244,8 @@ impl App {
                             }
                             if is_selected {
                                 row = row.style(selected_board_row_style());
+                            } else if is_marked_selected {
+                                row = row.style(marked_board_row_style());
                             }
                             row
                         })
@@ -2362,6 +2383,9 @@ impl App {
             let mut card_heights: Vec<usize> = Vec::with_capacity(slot.items.len());
 
             for (item_index, item) in slot.items.iter().enumerate() {
+                let is_focused_item = is_selected_slot && item_index == self.item_index;
+                let is_marked_selected = self.is_item_selected(item.id);
+                let marker_prefix = if is_marked_selected { "* " } else { "" };
                 let item_text = board_item_label(item);
                 let category_count = item_assignment_labels(item, category_display_names).len();
                 let mut meta_parts = vec![format!(
@@ -2394,7 +2418,7 @@ impl App {
                 match effective_display_mode {
                     BoardDisplayMode::SingleLine => {
                         let single_line_text = if glyphs.is_empty() {
-                            truncate_board_cell(&item_text, title_width)
+                            truncate_board_cell(&format!("{marker_prefix}{item_text}"), title_width)
                         } else {
                             let glyph_prefix = format!("{glyphs} ");
                             let reserved_glyph_width = glyph_prefix.chars().count();
@@ -2403,7 +2427,7 @@ impl App {
                                     "{}{}",
                                     glyph_prefix,
                                     truncate_board_cell(
-                                        &item_text,
+                                        &format!("{marker_prefix}{item_text}"),
                                         title_width.saturating_sub(reserved_glyph_width),
                                     )
                                 )
@@ -2414,7 +2438,11 @@ impl App {
                         lines.push(Line::from(single_line_text));
                     }
                     BoardDisplayMode::MultiLine => {
-                        for line in wrap_text_for_board_cell_clamped(&item_text, title_width, 2) {
+                        for line in wrap_text_for_board_cell_clamped(
+                            &format!("{marker_prefix}{item_text}"),
+                            title_width,
+                            2,
+                        ) {
                             lines.push(Line::from(format!(" {}", line)));
                         }
                         lines.push(Line::from(Span::styled(
@@ -2431,7 +2459,11 @@ impl App {
                 }
 
                 card_heights.push(lines.len().max(1));
-                cards.push(ListItem::new(lines));
+                let mut card = ListItem::new(lines);
+                if !is_focused_item && is_marked_selected {
+                    card = card.style(marked_board_row_style());
+                }
+                cards.push(card);
             }
 
             let mut list_state = ListState::default().with_selected(selected_row);
@@ -2884,8 +2916,10 @@ impl App {
                     "S:save  Tab:next  Esc:cancel"
                 }
             }
-            _ => {
-                if self.section_filters.iter().any(|f| f.is_some()) {
+            Mode::Normal => {
+                if self.selected_count() > 0 {
+                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  q:quit"
+                } else if self.section_filters.iter().any(|f| f.is_some()) {
                     "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
                     "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
