@@ -321,6 +321,8 @@ enum NameInputContext {
     WhenDateEdit,
     /// Creating a new category via InputPanel.
     CategoryCreate,
+    /// Editing currency symbol for a numeric category.
+    CurrencySymbol,
 }
 
 /// Pending state for an in-flight numeric cell edit.
@@ -402,34 +404,51 @@ enum CategoryManagerDetailsFocus {
     Exclusive,
     MatchName,
     Actionable,
+    // Numeric format fields (only shown for numeric categories)
+    DecimalPlaces,
+    ThousandsSeparator,
+    CurrencySymbol,
     Note,
 }
 
 impl CategoryManagerDetailsFocus {
-    /// Cycle forward. When the category is numeric, only Note is relevant.
     fn next(self, is_numeric: bool) -> Self {
         if is_numeric {
-            Self::Note
+            match self {
+                Self::DecimalPlaces => Self::ThousandsSeparator,
+                Self::ThousandsSeparator => Self::CurrencySymbol,
+                Self::CurrencySymbol => Self::Note,
+                Self::Note => Self::DecimalPlaces,
+                // If somehow on a tag-only focus, jump to first numeric field
+                _ => Self::DecimalPlaces,
+            }
         } else {
             match self {
                 Self::Exclusive => Self::MatchName,
                 Self::MatchName => Self::Actionable,
                 Self::Actionable => Self::Note,
                 Self::Note => Self::Exclusive,
+                _ => Self::Exclusive,
             }
         }
     }
 
-    /// Cycle backward. When the category is numeric, only Note is relevant.
     fn prev(self, is_numeric: bool) -> Self {
         if is_numeric {
-            Self::Note
+            match self {
+                Self::DecimalPlaces => Self::Note,
+                Self::ThousandsSeparator => Self::DecimalPlaces,
+                Self::CurrencySymbol => Self::ThousandsSeparator,
+                Self::Note => Self::CurrencySymbol,
+                _ => Self::Note,
+            }
         } else {
             match self {
                 Self::Exclusive => Self::Note,
                 Self::MatchName => Self::Exclusive,
                 Self::Actionable => Self::MatchName,
                 Self::Note => Self::Actionable,
+                _ => Self::Actionable,
             }
         }
     }
@@ -5766,32 +5785,60 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_f_toggles_focus_when_preview_is_open() {
+    fn normal_mode_f_cycles_numeric_column_format() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-preview-focus-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        let item = Item::new("test".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 10,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
         let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.mode = Mode::Normal;
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1; // Cost column (item at 0)
 
-        app.handle_normal_key(KeyCode::Char('p'), &agenda)
-            .expect("open preview");
-        assert_eq!(app.normal_focus, super::NormalFocus::Board);
-        assert!(app.show_preview);
-
+        // Default is 2dp → press f → integer (0dp)
         app.handle_normal_key(KeyCode::Char('f'), &agenda)
-            .expect("f focuses preview");
-        assert_eq!(app.normal_focus, super::NormalFocus::Preview);
+            .expect("press f");
+        let cat = store.get_category(cost.id).expect("get cat");
+        assert_eq!(cat.numeric_format.as_ref().unwrap().decimal_places, 0);
 
+        // Press f again → 1dp
         app.handle_normal_key(KeyCode::Char('f'), &agenda)
-            .expect("f focuses board");
-        assert_eq!(app.normal_focus, super::NormalFocus::Board);
+            .expect("press f again");
+        let cat = store.get_category(cost.id).expect("get cat");
+        assert_eq!(cat.numeric_format.as_ref().unwrap().decimal_places, 1);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -8496,6 +8543,118 @@ mod tests {
             app.category_manager_details_focus(),
             Some(CategoryManagerDetailsFocus::Exclusive)
         );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_numeric_initial_focus_is_decimal_places() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(cost.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+        // Numeric category should start on DecimalPlaces, not Exclusive
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::DecimalPlaces)
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_numeric_decimal_places_cycles() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("agenda-tui-catmgr-dp-cycle-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(cost.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::DecimalPlaces);
+
+        // Enter cycles decimal places: 2 → 3 → 0 → 1 → 2
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("cycle decimal places");
+        let loaded = store.get_category(cost.id).expect("load after first cycle");
+        assert_eq!(loaded.numeric_format.unwrap().decimal_places, 3);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("cycle decimal places again");
+        let loaded = store.get_category(cost.id).expect("load after second cycle");
+        assert_eq!(loaded.numeric_format.unwrap().decimal_places, 0);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_numeric_thousands_separator_toggle() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("agenda-tui-catmgr-thousands-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(cost.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::ThousandsSeparator);
+
+        // Default is false; Enter toggles to true
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle thousands separator");
+        let loaded = store.get_category(cost.id).expect("load after toggle");
+        assert!(loaded.numeric_format.unwrap().use_thousands_separator);
+
+        // Toggle back
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle thousands separator again");
+        let loaded = store.get_category(cost.id).expect("load after second toggle");
+        assert!(!loaded.numeric_format.unwrap().use_thousands_separator);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
