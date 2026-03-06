@@ -2259,14 +2259,6 @@ impl App {
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
                     self.status = "No selected item to edit categories".to_string();
-                } else if self.has_selected_items() {
-                    let selected_count = self.selected_count();
-                    let item_suffix = if selected_count == 1 { "" } else { "s" };
-                    self.mode = Mode::ItemAssignInput;
-                    self.clear_input();
-                    self.status = format!(
-                        "Type category name for {selected_count} selected item{item_suffix}: Enter assign/create, Esc cancel"
-                    );
                 } else if self.category_rows.is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
@@ -2274,9 +2266,16 @@ impl App {
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.clear_input();
-                    self.status =
+                    self.status = if self.has_selected_items() {
+                        let selected_count = self.selected_count();
+                        let item_suffix = if selected_count == 1 { "" } else { "s" };
+                        format!(
+                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
+                        )
+                    } else {
                         "Item categories: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
-                            .to_string();
+                            .to_string()
+                    };
                 }
             }
             KeyCode::Char('u') => {
@@ -2326,8 +2325,17 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                if self.selected_item_id().is_some() {
+                if self.has_selected_items() {
                     self.done_blocks_confirm = None;
+                    self.batch_delete_item_ids = Some(self.selected_item_ids_in_view_order());
+                    let selected_count = self.selected_count();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    self.mode = Mode::ConfirmDelete;
+                    self.status =
+                        format!("Delete {selected_count} selected item{item_suffix}? y/n");
+                } else if self.selected_item_id().is_some() {
+                    self.done_blocks_confirm = None;
+                    self.batch_delete_item_ids = None;
                     self.mode = Mode::ConfirmDelete;
                     self.status = "Delete item? y/n".to_string();
                 }
@@ -4423,6 +4431,8 @@ impl App {
                     .to_string();
             }
             KeyCode::Char(' ') => {
+                let batch_mode = self.has_selected_items();
+                let action_item_ids = self.effective_action_item_ids();
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
                     self.status = "Assign failed: no selected item".to_string();
@@ -4438,6 +4448,10 @@ impl App {
                 };
 
                 if row.name.eq_ignore_ascii_case("Done") {
+                    if batch_mode && action_item_ids.len() > 1 {
+                        self.status = "Batch done toggle is not supported".to_string();
+                        return Ok(false);
+                    }
                     if let Err(err) = self.begin_done_toggle_or_confirm(
                         agenda,
                         item_id,
@@ -4448,7 +4462,62 @@ impl App {
                     return Ok(false);
                 }
 
-                if self.selected_item_has_assignment(row.id) {
+                if batch_mode && action_item_ids.len() > 1 {
+                    let (assigned_count, total_count) = self.effective_action_assignment_counts(row.id);
+                    let should_unassign = assigned_count == total_count;
+                    let mut changed = 0usize;
+                    let mut failed = 0usize;
+                    let mut first_error = None;
+
+                    for action_item_id in &action_item_ids {
+                        let result = if should_unassign {
+                            agenda.unassign_item_manual(*action_item_id, row.id)
+                        } else {
+                            agenda
+                                .assign_item_manual(
+                                    *action_item_id,
+                                    row.id,
+                                    Some("manual:tui.assign".to_string()),
+                                )
+                                .map(|_| ())
+                        };
+                        match result {
+                            Ok(()) => changed += 1,
+                            Err(err) => {
+                                failed += 1;
+                                if first_error.is_none() {
+                                    first_error = Some(err.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    self.refresh(agenda.store())?;
+                    self.set_item_selection_by_id(item_id);
+                    self.status = if failed == 0 {
+                        if should_unassign {
+                            format!("Removed category {} from {} items", row.name, changed)
+                        } else {
+                            format!("Applied category {} to {} items", row.name, changed)
+                        }
+                    } else {
+                        let mut summary = if should_unassign {
+                            format!(
+                                "Removed category {} from {} items (failed={failed})",
+                                row.name, changed
+                            )
+                        } else {
+                            format!(
+                                "Applied category {} to {} items (failed={failed})",
+                                row.name, changed
+                            )
+                        };
+                        if let Some(err) = first_error {
+                            summary.push_str(&format!(" first_error={err}"));
+                        }
+                        summary
+                    };
+                } else if self.selected_item_has_assignment(row.id) {
                     match agenda.unassign_item_manual(item_id, row.id) {
                         Ok(()) => {
                             self.refresh(agenda.store())?;
@@ -4461,7 +4530,11 @@ impl App {
                     }
                 } else {
                     let result = agenda
-                        .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
+                        .assign_item_manual(
+                            item_id,
+                            row.id,
+                            Some("manual:tui.assign".to_string()),
+                        )
                         .map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
@@ -4490,16 +4563,11 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
-                self.mode = if self.has_selected_items() {
-                    Mode::Normal
-                } else {
-                    Mode::ItemAssignPicker
-                };
+                self.mode = Mode::ItemAssignPicker;
                 self.clear_input();
                 self.status = "Category name entry canceled".to_string();
             }
             KeyCode::Enter => {
-                let batch_mode = self.has_selected_items();
                 let action_item_ids = self.effective_action_item_ids();
                 let Some(item_id) = self.selected_item_id() else {
                     self.mode = Mode::Normal;
@@ -4509,11 +4577,7 @@ impl App {
                 };
                 let name = self.input.trimmed().to_string();
                 if name.is_empty() {
-                    self.mode = if batch_mode {
-                        Mode::Normal
-                    } else {
-                        Mode::ItemAssignPicker
-                    };
+                    self.mode = Mode::ItemAssignPicker;
                     self.clear_input();
                     self.status = "Category name entry canceled (empty)".to_string();
                     return Ok(false);
@@ -4594,15 +4658,8 @@ impl App {
                 {
                     self.item_assign_category_index = index;
                 }
-                self.mode = if batch_mode {
-                    Mode::Normal
-                } else {
-                    Mode::ItemAssignPicker
-                };
+                self.mode = Mode::ItemAssignPicker;
                 self.clear_input();
-                if batch_mode && assigned > 0 {
-                    self.clear_selected_items();
-                }
                 self.status = if action_item_ids.len() > 1 {
                     let mut summary = format!(
                         "{} category {} to {} items (assigned={}, already={}, failed={})",

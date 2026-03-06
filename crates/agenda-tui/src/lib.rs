@@ -847,6 +847,7 @@ struct App {
     normal_mode_prefix: Option<NormalModePrefix>,
     global_search_session: Option<GlobalSearchSession>,
     done_blocks_confirm: Option<DoneBlocksConfirmState>,
+    batch_delete_item_ids: Option<Vec<ItemId>>,
     board_pending_delete_column_label: Option<String>,
     note_edit_original: String,
     auto_refresh_interval: AutoRefreshInterval,
@@ -907,6 +908,7 @@ impl Default for App {
             normal_mode_prefix: None,
             global_search_session: None,
             done_blocks_confirm: None,
+            batch_delete_item_ids: None,
             board_pending_delete_column_label: None,
             note_edit_original: String::new(),
             auto_refresh_interval: AutoRefreshInterval::Off,
@@ -6803,7 +6805,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_a_with_selection_opens_batch_assign_input() {
+    fn normal_mode_a_with_selection_opens_batch_assign_picker() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6839,18 +6841,18 @@ mod tests {
         app.handle_normal_key(KeyCode::Char(' '), &agenda)
             .expect("select second");
         app.handle_normal_key(KeyCode::Char('a'), &agenda)
-            .expect("open batch assign input");
+            .expect("open batch assign picker");
 
-        assert_eq!(app.mode, Mode::ItemAssignInput);
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
         assert!(
-            app.status.contains("selected items"),
+            app.status.contains("Batch categories"),
             "batch assign status should describe selection scope: {}",
             app.status
         );
     }
 
     #[test]
-    fn batch_assign_input_assigns_existing_category_to_selected_items() {
+    fn batch_assign_picker_space_assigns_existing_category_to_selected_items() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6889,20 +6891,19 @@ mod tests {
         app.handle_normal_key(KeyCode::Char(' '), &agenda)
             .expect("select second");
         app.handle_normal_key(KeyCode::Char('a'), &agenda)
-            .expect("open batch assign");
-        app.set_input("Work".to_string());
-        app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
-            .expect("assign category to selected items");
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle category across selected items");
 
         let first_updated = store.get_item(first.id).expect("reload first");
         let second_updated = store.get_item(second.id).expect("reload second");
         assert!(first_updated.assignments.contains_key(&work.id));
         assert!(second_updated.assignments.contains_key(&work.id));
-        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
         assert_eq!(
             app.selected_count(),
-            0,
-            "successful batch assign clears selection"
+            2,
+            "picker-driven batch assign keeps selection active"
         );
         assert!(
             app.status.contains("Applied category Work to 2 items"),
@@ -6948,7 +6949,9 @@ mod tests {
         app.handle_normal_key(KeyCode::Char(' '), &agenda)
             .expect("select second");
         app.handle_normal_key(KeyCode::Char('a'), &agenda)
-            .expect("open batch assign");
+            .expect("open batch assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char('n'), &agenda)
+            .expect("open typed category entry");
         app.set_input("Sprint".to_string());
         app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
             .expect("create and assign category");
@@ -6962,11 +6965,219 @@ mod tests {
         let second_updated = store.get_item(second.id).expect("reload second");
         assert!(first_updated.assignments.contains_key(&sprint.id));
         assert!(second_updated.assignments.contains_key(&sprint.id));
-        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.selected_count(), 2);
         assert!(
             app.status
                 .contains("Created and applied category Sprint to 2 items"),
             "status should summarize create+assign result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First mixed target".to_string());
+        let second = Item::new("Second mixed target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, work.id, Some("manual:test".to_string()))
+            .expect("assign first only");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
+
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("[-] Work"),
+            "mixed batch checkbox should render tri-state marker: {rendered}"
+        );
+    }
+
+    #[test]
+    fn normal_mode_x_with_selection_opens_batch_delete_confirm() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First delete target".to_string());
+        let second = Item::new("Second delete target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('x'), &agenda)
+            .expect("open batch delete confirm");
+
+        assert_eq!(app.mode, Mode::ConfirmDelete);
+        assert!(
+            app.status.contains("Delete 2 selected items"),
+            "status should describe batch delete scope: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_delete_confirm_y_deletes_selected_items_and_clears_selection() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let keep = Item::new("Keep target".to_string());
+        store.create_item(&keep).expect("create keep");
+        let first = Item::new("First delete target".to_string());
+        let second = Item::new("Second delete target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.toggle_selected_item(first.id);
+        app.toggle_selected_item(second.id);
+        app.set_item_selection_by_id(second.id);
+        app.handle_normal_key(KeyCode::Char('x'), &agenda)
+            .expect("open batch delete confirm");
+        app.handle_confirm_delete_key(KeyCode::Char('y'), &agenda)
+            .expect("confirm batch delete");
+
+        assert!(store.get_item(first.id).is_err());
+        assert!(store.get_item(second.id).is_err());
+        assert!(store.get_item(keep.id).is_ok());
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Deleted 2 selected items"),
+            "status should summarize batch delete result: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_delete_confirm_esc_preserves_selected_items() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First delete target".to_string());
+        let second = Item::new("Second delete target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('x'), &agenda)
+            .expect("open batch delete confirm");
+        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
+            .expect("cancel batch delete");
+
+        assert!(store.get_item(first.id).is_ok());
+        assert!(store.get_item(second.id).is_ok());
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status.contains("Batch delete canceled"),
+            "status should report cancel: {}",
             app.status
         );
     }

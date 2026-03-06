@@ -788,6 +788,20 @@ impl App {
         }
     }
 
+    pub(crate) fn effective_action_assignment_counts(&self, category_id: CategoryId) -> (usize, usize) {
+        let action_item_ids = self.effective_action_item_ids();
+        let assigned = action_item_ids
+            .iter()
+            .filter(|item_id| {
+                self.all_items
+                    .iter()
+                    .find(|item| item.id == **item_id)
+                    .is_some_and(|item| item.assignments.contains_key(&category_id))
+            })
+            .count();
+        (assigned, action_item_ids.len())
+    }
+
     pub(crate) fn prune_selected_items_to_visible_slots(&mut self) {
         if self.selected_item_ids.is_empty() {
             return;
