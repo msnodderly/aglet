@@ -171,6 +171,9 @@ fn run_hierarchy_pass(
         if !can_assign(item_id, category.id, assignments, seen_pairs) {
             continue;
         }
+        if has_manual_exclusive_sibling(category.id, &categories_by_id, assignments) {
+            continue;
+        }
 
         enforce_mutual_exclusion(store, item_id, category.id, &categories_by_id, assignments)?;
 
@@ -388,6 +391,33 @@ fn enforce_mutual_exclusion(
     }
 
     Ok(())
+}
+
+fn has_manual_exclusive_sibling(
+    category_id: CategoryId,
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    assignments: &HashMap<CategoryId, Assignment>,
+) -> bool {
+    let Some(category) = categories_by_id.get(&category_id) else {
+        return false;
+    };
+    let Some(parent_id) = category.parent else {
+        return false;
+    };
+    let Some(parent) = categories_by_id.get(&parent_id) else {
+        return false;
+    };
+    if !parent.is_exclusive {
+        return false;
+    }
+
+    parent.children.iter().any(|sibling_id| {
+        *sibling_id != category_id
+            && assignments
+                .get(sibling_id)
+                .map(|assignment| assignment.source == AssignmentSource::Manual)
+                .unwrap_or(false)
+    })
 }
 
 fn assign_subsumption_ancestors(
@@ -998,7 +1028,46 @@ mod tests {
     }
 
     #[test]
-    fn process_item_mutual_exclusion_three_children_removes_only_assigned_sibling() {
+    fn process_item_implicit_match_does_not_override_manual_exclusive_sibling() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        create_category(&store, &status);
+
+        let ready = child_category("Ready", status.id, true);
+        create_category(&store, &ready);
+
+        let complete = child_category("Complete", status.id, false);
+        create_category(&store, &complete);
+
+        let item = create_item(&store, "Close docs example");
+        set_item_note(
+            &store,
+            item.id,
+            Some("The note includes agenda-cli list --category Ready."),
+        );
+        store
+            .assign_item(item.id, complete.id, &manual_assignment())
+            .unwrap();
+
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&complete.id).map(|assignment| assignment.source),
+            Some(AssignmentSource::Manual),
+            "manual exclusive choice should survive implicit-string matches"
+        );
+        assert!(
+            !assignments.contains_key(&ready.id),
+            "implicit-string sibling should not be re-added over manual status"
+        );
+    }
+
+    #[test]
+    fn process_item_mutual_exclusion_keeps_manual_choice_over_implicit_sibling() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
 
@@ -1023,9 +1092,15 @@ mod tests {
         process_item(&store, &classifier, item.id).unwrap();
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
-        assert!(!assignments.contains_key(&low.id));
+        assert_eq!(
+            assignments.get(&low.id).map(|assignment| assignment.source),
+            Some(AssignmentSource::Manual)
+        );
         assert!(!assignments.contains_key(&medium.id));
-        assert!(assignments.contains_key(&high.id));
+        assert!(
+            !assignments.contains_key(&high.id),
+            "implicit-string sibling should not override the manual choice"
+        );
     }
 
     #[test]
