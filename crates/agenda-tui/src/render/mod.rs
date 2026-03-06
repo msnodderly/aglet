@@ -1480,10 +1480,13 @@ impl App {
     }
 
     fn render_search_bar(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let section_name = self
-            .current_slot()
-            .map(|s| s.title.as_str())
-            .unwrap_or("section");
+        let section_name = if self.global_search_active() {
+            "Global/All Items"
+        } else {
+            self.current_slot()
+                .map(|s| s.title.as_str())
+                .unwrap_or("section")
+        };
         let label = format!("[{section_name}] ");
         let is_focused = self.mode == Mode::SearchBarFocused;
 
@@ -1822,7 +1825,10 @@ impl App {
                                                 .assignments
                                                 .get(&column.heading_id)
                                                 .and_then(|a| a.numeric_value);
-                                            format_numeric_cell(numeric_val, column.numeric_format.as_ref())
+                                            format_numeric_cell(
+                                                numeric_val,
+                                                column.numeric_format.as_ref(),
+                                            )
                                         }
                                         ColumnKind::Standard => standard_column_value(
                                             item,
@@ -1913,99 +1919,96 @@ impl App {
                     c.heading_value_kind == CategoryValueKind::Numeric
                         && c.summary_fn != SummaryFn::None
                 });
-                let summary_spans: Option<Vec<Span>> =
-                    if has_summary_columns && !slot.items.is_empty() {
-                        let item_refs: Vec<&Item> = slot.items.iter().collect();
-                        let aggregates =
-                            compute_column_aggregates(&item_refs, &layout.columns);
-                        let summary_style = Style::default()
-                            .fg(Color::White)
-                            .bg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD);
-                        let pad_style = Style::default().bg(Color::DarkGray);
-                        let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
-                        let mut spans: Vec<Span> = Vec::new();
-                        // Pad for marker + note + spacing (border + left padding of block = 1)
-                        let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
-                        spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
-                        for (col_idx, spec) in layout.columns.iter().enumerate() {
-                            // Item column appears at item_board_column_index; add its width
-                            if col_idx == item_board_column_index {
-                                let w = item_width + spacing;
-                                spans.push(Span::styled(" ".repeat(w), pad_style));
-                            }
-                            let col_w = spec.width;
-                            if spec.summary_fn != SummaryFn::None
-                                && spec.heading_value_kind == CategoryValueKind::Numeric
-                            {
-                                let value = aggregates[col_idx]
-                                    .as_ref()
-                                    .and_then(|agg| agg.value_for(spec.summary_fn));
-                                let label = if let Some(v) = value {
-                                    format!(
-                                        "{}={}",
-                                        spec.summary_fn.label(),
-                                        format_numeric_cell(Some(v), spec.numeric_format.as_ref())
-                                            .trim(),
-                                    )
-                                } else {
-                                    format!("{}=-", spec.summary_fn.label())
-                                };
-                                let display = if label.len() > col_w {
-                                    label[..col_w].to_string()
-                                } else {
-                                    format!("{:>width$}", label, width = col_w)
-                                };
-                                spans.push(Span::styled(display, summary_style));
-                            } else {
-                                spans.push(Span::styled(" ".repeat(col_w), pad_style));
-                            }
-                            // Add inter-column spacing
-                            if col_idx < layout.columns.len() - 1
-                                || synthetic_categories_width > 0
-                            {
-                                spans.push(Span::styled(" ".repeat(spacing), pad_style));
-                            }
-                        }
-                        // Item column after all category columns
-                        if item_board_column_index >= layout.columns.len() {
+                let summary_spans: Option<Vec<Span>> = if has_summary_columns
+                    && !slot.items.is_empty()
+                {
+                    let item_refs: Vec<&Item> = slot.items.iter().collect();
+                    let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
+                    let summary_style = Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD);
+                    let pad_style = Style::default().bg(Color::DarkGray);
+                    let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
+                    let mut spans: Vec<Span> = Vec::new();
+                    // Pad for marker + note + spacing (border + left padding of block = 1)
+                    let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
+                    spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
+                    for (col_idx, spec) in layout.columns.iter().enumerate() {
+                        // Item column appears at item_board_column_index; add its width
+                        if col_idx == item_board_column_index {
                             let w = item_width + spacing;
                             spans.push(Span::styled(" ".repeat(w), pad_style));
                         }
-                        if synthetic_categories_width > 0 {
-                            spans.push(Span::styled(
-                                " ".repeat(synthetic_categories_width),
-                                pad_style,
-                            ));
-                        }
-                        // Fill remaining width with reversed background
-                        spans.push(Span::styled(" ", pad_style));
-                        // Only show footer if at least one column has a computed value
-                        let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
-                            let spec = &layout.columns[i];
-                            spec.summary_fn != SummaryFn::None
-                                && agg.as_ref().and_then(|a| a.value_for(spec.summary_fn)).is_some()
-                        });
-                        if has_any_value {
-                            Some(spans)
+                        let col_w = spec.width;
+                        if spec.summary_fn != SummaryFn::None
+                            && spec.heading_value_kind == CategoryValueKind::Numeric
+                        {
+                            let value = aggregates[col_idx]
+                                .as_ref()
+                                .and_then(|agg| agg.value_for(spec.summary_fn));
+                            let label = if let Some(v) = value {
+                                format!(
+                                    "{}={}",
+                                    spec.summary_fn.label(),
+                                    format_numeric_cell(Some(v), spec.numeric_format.as_ref())
+                                        .trim(),
+                                )
+                            } else {
+                                format!("{}=-", spec.summary_fn.label())
+                            };
+                            let display = if label.len() > col_w {
+                                label[..col_w].to_string()
+                            } else {
+                                format!("{:>width$}", label, width = col_w)
+                            };
+                            spans.push(Span::styled(display, summary_style));
                         } else {
-                            None
+                            spans.push(Span::styled(" ".repeat(col_w), pad_style));
                         }
+                        // Add inter-column spacing
+                        if col_idx < layout.columns.len() - 1 || synthetic_categories_width > 0 {
+                            spans.push(Span::styled(" ".repeat(spacing), pad_style));
+                        }
+                    }
+                    // Item column after all category columns
+                    if item_board_column_index >= layout.columns.len() {
+                        let w = item_width + spacing;
+                        spans.push(Span::styled(" ".repeat(w), pad_style));
+                    }
+                    if synthetic_categories_width > 0 {
+                        spans.push(Span::styled(
+                            " ".repeat(synthetic_categories_width),
+                            pad_style,
+                        ));
+                    }
+                    // Fill remaining width with reversed background
+                    spans.push(Span::styled(" ", pad_style));
+                    // Only show footer if at least one column has a computed value
+                    let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
+                        let spec = &layout.columns[i];
+                        spec.summary_fn != SummaryFn::None
+                            && agg
+                                .as_ref()
+                                .and_then(|a| a.value_for(spec.summary_fn))
+                                .is_some()
+                    });
+                    if has_any_value {
+                        Some(spans)
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 // Split the slot area: table on top, optional 1-line summary footer.
                 let slot_area = columns[slot_index];
-                let (table_area, summary_area) = if summary_spans.is_some()
-                    && slot_area.height > 4
+                let (table_area, summary_area) = if summary_spans.is_some() && slot_area.height > 4
                 {
                     let split = Layout::default()
                         .direction(ratatui::layout::Direction::Vertical)
-                        .constraints([
-                            Constraint::Min(3),
-                            Constraint::Length(1),
-                        ])
+                        .constraints([Constraint::Min(3), Constraint::Length(1)])
                         .split(slot_area);
                     (split[0], Some(split[1]))
                 } else {
@@ -2030,10 +2033,7 @@ impl App {
                     &mut state,
                 );
                 if let (Some(area), Some(spans)) = (summary_area, summary_spans) {
-                    frame.render_widget(
-                        Paragraph::new(Line::from(spans)),
-                        area,
-                    );
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
                 }
                 Self::render_vertical_scrollbar(
                     frame,
@@ -2529,7 +2529,13 @@ impl App {
             Mode::BoardColumnDeleteConfirm | Mode::CategoryCreateConfirm { .. } => {
                 "y:confirm  Esc:cancel"
             }
-            Mode::SearchBarFocused => "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear",
+            Mode::SearchBarFocused => {
+                if self.global_search_active() {
+                    "Enter:jump/create  \u{2193}/Tab:browse  Esc:return"
+                } else {
+                    "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear"
+                }
+            }
             Mode::NoteEdit => "Enter:save  Esc:cancel",
             Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
             Mode::InputPanel => {
@@ -2559,9 +2565,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
@@ -3435,23 +3441,23 @@ impl App {
                         ),
                     ]
                 };
-                let flags_title = if is_numeric { "Numeric Format" } else { "Flags" };
-                let flags_border_focused = !matches!(
-                    details_focus,
-                    CategoryManagerDetailsFocus::Note
-                );
+                let flags_title = if is_numeric {
+                    "Numeric Format"
+                } else {
+                    "Flags"
+                };
+                let flags_border_focused =
+                    !matches!(details_focus, CategoryManagerDetailsFocus::Note);
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
                             .title(flags_title)
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(
-                                if flags_border_focused {
-                                    Color::LightCyan
-                                } else {
-                                    pane_idle
-                                },
-                            )),
+                            .border_style(Style::default().fg(if flags_border_focused {
+                                Color::LightCyan
+                            } else {
+                                pane_idle
+                            })),
                     ),
                     details_chunks[1],
                 );

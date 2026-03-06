@@ -543,6 +543,21 @@ Practical implications:
 - If you edit normal footer hints, preserve preview discoverability and update
   rendering tests that assert `p:preview` is visible.
 
+## Global Search `g/` Uses Temporary All-Items Session (Behavior)
+
+In `Mode::Normal`, `g/` now starts a temporary global search session:
+- Saves the current view context (view + slot/item/column focus + section filters)
+- Switches to `All Items`
+- Opens the search bar
+- Applies the typed filter across **all slots** (not only the active slot)
+
+Practical implications:
+- While this session is active, `Esc` returns to the prior view context instead
+  of only clearing the current slot filter.
+- `Enter` exact-match resolution searches across all visible slots in `All Items`.
+- Keep `ga` behavior unchanged; `g` prefix help/status should mention both
+  commands (`ga` and `g/`).
+
 ## View Creation Wizard Defers Persistence Until `S` In ViewEdit (Behavior)
 
 `ViewPicker` -> `n` now opens a name input, then enters `ViewEdit` with an

@@ -784,6 +784,17 @@ struct SlotSortKey {
     direction: SlotSortDirection,
 }
 
+#[derive(Clone, Debug)]
+struct GlobalSearchSession {
+    return_view_name: Option<String>,
+    return_slot_index: usize,
+    return_item_index: usize,
+    return_column_index: usize,
+    return_section_filters: Vec<Option<String>>,
+    return_slot_sort_keys: Vec<Vec<SlotSortKey>>,
+    return_search_text: String,
+}
+
 struct App {
     mode: Mode,
     status: String,
@@ -829,6 +840,7 @@ struct App {
     item_index: usize,
     column_index: usize,
     normal_mode_prefix: Option<NormalModePrefix>,
+    global_search_session: Option<GlobalSearchSession>,
     done_blocks_confirm: Option<DoneBlocksConfirmState>,
     board_pending_delete_column_label: Option<String>,
     note_edit_original: String,
@@ -885,6 +897,7 @@ impl Default for App {
             item_index: 0,
             column_index: 0,
             normal_mode_prefix: None,
+            global_search_session: None,
             done_blocks_confirm: None,
             board_pending_delete_column_label: None,
             note_edit_original: String::new(),
@@ -4079,7 +4092,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
             .expect("gH should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga)");
+        assert_eq!(app.status, "Unknown g command (use ga or g/)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -4091,7 +4104,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
             .expect("gL should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga)");
+        assert_eq!(app.status, "Unknown g command (use ga or g/)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -5781,8 +5794,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let mut cost = Category::new("Cost".to_string());
@@ -8657,8 +8669,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -8690,8 +8702,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-catmgr-format-cycle-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -8862,6 +8874,111 @@ mod tests {
         );
 
         drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_g_slash_opens_global_search_session() {
+        let (store, db_path) = make_two_section_store("g-slash-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("g/ should open global search");
+
+        assert_eq!(app.mode, Mode::SearchBarFocused);
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("All Items")
+        );
+        assert!(
+            app.global_search_active(),
+            "global search session should be active"
+        );
+        assert!(
+            app.status.contains("Global search"),
+            "status should indicate global search mode"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn global_search_enter_jumps_across_slots_and_esc_restores_previous_view() {
+        let (store, db_path) = make_two_section_store("g-slash-restore");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+        app.slot_index = 0;
+        app.section_filters[0] = Some("timeout".to_string());
+        app.search_buffer.set("timeout".to_string());
+        app.refresh(&store).expect("refresh with local filter");
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("g/ should open global search");
+
+        for ch in "buy groceries".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type global query");
+        }
+        assert!(
+            app.section_filters
+                .iter()
+                .all(|filter| filter.as_deref() == Some("buy groceries")),
+            "global search should apply filter to all slots"
+        );
+
+        app.handle_search_bar_key(KeyCode::Enter, &agenda)
+            .expect("enter should jump exact match");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.selected_item().map(|item| item.text.as_str()),
+            Some("Buy groceries"),
+            "exact match should select item from another slot"
+        );
+        assert!(
+            app.global_search_active(),
+            "session remains active until Esc"
+        );
+
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("Esc should restore previous view");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("TestView")
+        );
+        assert_eq!(app.slot_index, 0, "slot focus should be restored");
+        assert_eq!(
+            app.section_filters[0].as_deref(),
+            Some("timeout"),
+            "previous section filter should be restored"
+        );
+        assert_eq!(
+            app.search_buffer.text(),
+            "timeout",
+            "previous search buffer should be restored"
+        );
+        assert!(
+            !app.global_search_active(),
+            "global search session should be closed after restore"
+        );
+
         let _ = std::fs::remove_file(&db_path);
     }
 
@@ -12836,26 +12953,11 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
-        assert!(
-            rendered.contains("sum=350"),
-            "sum missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("avg=175"),
-            "avg missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("min=100"),
-            "min missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("max=250"),
-            "max missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("count=2"),
-            "count missing: {rendered}"
-        );
+        assert!(rendered.contains("sum=350"), "sum missing: {rendered}");
+        assert!(rendered.contains("avg=175"), "avg missing: {rendered}");
+        assert!(rendered.contains("min=100"), "min missing: {rendered}");
+        assert!(rendered.contains("max=250"), "max missing: {rendered}");
+        assert!(rendered.contains("count=2"), "count missing: {rendered}");
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -12866,8 +12968,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let mut cost = Category::new("Cost".to_string());
@@ -12916,31 +13017,19 @@ mod tests {
         app.column_index = 1;
 
         // Initially summary_fn is None
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, None);
 
         // Press F to cycle: None -> Sum
         app.handle_normal_key(KeyCode::Char('F'), &agenda)
             .expect("press F");
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, Some(SummaryFn::Sum));
 
         // Press F again: Sum -> Avg
         app.handle_normal_key(KeyCode::Char('F'), &agenda)
             .expect("press F again");
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, Some(SummaryFn::Avg));
 
         drop(store);
@@ -12994,13 +13083,13 @@ mod tests {
             .expect("press F on tag column");
 
         // Should remain None — tag columns don't support summary functions
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, None);
-        assert!(app.status.contains("numeric"), "status should mention numeric: {}", app.status);
+        assert!(
+            app.status.contains("numeric"),
+            "status should mention numeric: {}",
+            app.status
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
