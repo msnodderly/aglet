@@ -12760,8 +12760,8 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("✓&♪"),
-            "single-line horizontal cards should preserve done/blocked/note glyphs: {rendered}"
+            rendered.contains("✓&♪ single-line"),
+            "single-line horizontal cards should render glyphs before the title text: {rendered}"
         );
 
         let _ = std::fs::remove_file(&db_path);
