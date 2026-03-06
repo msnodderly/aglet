@@ -2769,8 +2769,10 @@ impl App {
             self.status = "No selected item to link".to_string();
             return;
         };
+        let source_item_ids = self.effective_action_item_ids();
         self.link_wizard = Some(LinkWizardState {
             anchor_item_id,
+            source_item_ids: source_item_ids.clone(),
             focus: LinkWizardFocus::ScopeAction,
             action_index: default_action.index(),
             target_filter: text_buffer::TextBuffer::empty(),
@@ -2781,10 +2783,17 @@ impl App {
             .selected_item()
             .map(board_item_label)
             .unwrap_or_else(|| anchor_item_id.to_string());
-        self.status = format!(
-            "Link wizard for '{}': choose relation, target, then Enter to apply",
-            truncate_board_cell(&anchor_label, 40)
-        );
+        self.status = if source_item_ids.len() > 1 {
+            format!(
+                "Link wizard for {} selected items: choose relation, target, then Enter to apply",
+                source_item_ids.len()
+            )
+        } else {
+            format!(
+                "Link wizard for '{}': choose relation, target, then Enter to apply",
+                truncate_board_cell(&anchor_label, 40)
+            )
+        };
     }
 
     pub(crate) fn link_wizard_state(&self) -> Option<&LinkWizardState> {
@@ -2805,6 +2814,12 @@ impl App {
         self.all_items.iter().find(|item| item.id == anchor_id)
     }
 
+    pub(crate) fn link_wizard_source_count(&self) -> usize {
+        self.link_wizard_state()
+            .map(|state| state.source_item_ids.len())
+            .unwrap_or(0)
+    }
+
     pub(crate) fn link_wizard_target_matches(&self) -> Vec<ItemId> {
         let Some(state) = self.link_wizard_state() else {
             return Vec::new();
@@ -2822,7 +2837,7 @@ impl App {
         let mut rows: Vec<(String, ItemId)> = self
             .all_items
             .iter()
-            .filter(|item| item.id != state.anchor_item_id)
+            .filter(|item| !state.source_item_ids.contains(&item.id))
             .filter(|item| !item.is_done)
             .filter(|item| {
                 !item
@@ -2911,28 +2926,46 @@ impl App {
 
         let action = LinkWizardAction::from_index(state.action_index);
         let anchor_id = state.anchor_item_id;
+        let source_item_ids = state.source_item_ids.clone();
         let anchor_label = self
             .all_items
             .iter()
             .find(|item| item.id == anchor_id)
             .map(board_item_label)
             .unwrap_or_else(|| anchor_id.to_string());
+        let source_label = if source_item_ids.len() > 1 {
+            format!("{} selected items", source_item_ids.len())
+        } else {
+            anchor_label.clone()
+        };
 
         let status = match action {
             LinkWizardAction::BlockedBy => {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_depends_on(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
                 let target_label = self
                     .all_items
                     .iter()
                     .find(|item| item.id == target_id)
                     .map(board_item_label)
                     .unwrap_or_else(|| target_id.to_string());
-                if result.created {
+                let mut created = 0usize;
+                for source_item_id in &source_item_ids {
+                    let result = agenda
+                        .link_items_depends_on(*source_item_id, target_id)
+                        .map_err(|e| e.to_string())?;
+                    if result.created {
+                        created += 1;
+                    }
+                }
+                if source_item_ids.len() > 1 {
+                    format!(
+                        "Linked {} blocked by '{}' (created={created})",
+                        source_label,
+                        truncate_board_cell(&target_label, 30)
+                    )
+                } else if created > 0 {
                     format!(
                         "Linked '{}' blocked by '{}'",
                         truncate_board_cell(&anchor_label, 30),
@@ -2946,10 +2979,18 @@ impl App {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_depends_on(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
-                if result.created {
+                let mut created = 0usize;
+                for source_item_id in &source_item_ids {
+                    let result = agenda
+                        .link_items_depends_on(*source_item_id, target_id)
+                        .map_err(|e| e.to_string())?;
+                    if result.created {
+                        created += 1;
+                    }
+                }
+                if source_item_ids.len() > 1 {
+                    format!("Linked {} depends on target (created={created})", source_label)
+                } else if created > 0 {
                     "Linked depends-on".to_string()
                 } else {
                     "Link already exists".to_string()
@@ -2959,16 +3000,28 @@ impl App {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_blocks(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
                 let target_label = self
                     .all_items
                     .iter()
                     .find(|item| item.id == target_id)
                     .map(board_item_label)
                     .unwrap_or_else(|| target_id.to_string());
-                if result.created {
+                let mut created = 0usize;
+                for source_item_id in &source_item_ids {
+                    let result = agenda
+                        .link_items_blocks(*source_item_id, target_id)
+                        .map_err(|e| e.to_string())?;
+                    if result.created {
+                        created += 1;
+                    }
+                }
+                if source_item_ids.len() > 1 {
+                    format!(
+                        "Linked {} blocks '{}' (created={created})",
+                        source_label,
+                        truncate_board_cell(&target_label, 30)
+                    )
+                } else if created > 0 {
                     format!(
                         "Linked '{}' blocks '{}'",
                         truncate_board_cell(&anchor_label, 30),
@@ -2982,43 +3035,67 @@ impl App {
                 let target_id = self
                     .link_wizard_selected_target_id()
                     .ok_or("No target selected".to_string())?;
-                let result = agenda
-                    .link_items_related(anchor_id, target_id)
-                    .map_err(|e| e.to_string())?;
-                if result.created {
+                let mut created = 0usize;
+                for source_item_id in &source_item_ids {
+                    let result = agenda
+                        .link_items_related(*source_item_id, target_id)
+                        .map_err(|e| e.to_string())?;
+                    if result.created {
+                        created += 1;
+                    }
+                }
+                if source_item_ids.len() > 1 {
+                    format!("Linked {} related to target (created={created})", source_label)
+                } else if created > 0 {
                     "Linked related items".to_string()
                 } else {
                     "Link already exists".to_string()
                 }
             }
             LinkWizardAction::ClearDependencies => {
-                let prereqs = agenda
-                    .immediate_prereq_ids(anchor_id)
-                    .map_err(|e| e.to_string())?;
-                let dependents = agenda
-                    .immediate_dependent_ids(anchor_id)
-                    .map_err(|e| e.to_string())?;
-                for dependency_id in &prereqs {
-                    agenda
-                        .unlink_items_depends_on(anchor_id, *dependency_id)
+                let mut total_prereqs = 0usize;
+                let mut total_dependents = 0usize;
+                for source_item_id in &source_item_ids {
+                    let prereqs = agenda
+                        .immediate_prereq_ids(*source_item_id)
                         .map_err(|e| e.to_string())?;
-                }
-                for blocked_id in &dependents {
-                    agenda
-                        .unlink_items_blocks(anchor_id, *blocked_id)
+                    let dependents = agenda
+                        .immediate_dependent_ids(*source_item_id)
                         .map_err(|e| e.to_string())?;
+                    total_prereqs += prereqs.len();
+                    total_dependents += dependents.len();
+                    for dependency_id in &prereqs {
+                        agenda
+                            .unlink_items_depends_on(*source_item_id, *dependency_id)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    for blocked_id in &dependents {
+                        agenda
+                            .unlink_items_blocks(*source_item_id, *blocked_id)
+                            .map_err(|e| e.to_string())?;
+                    }
                 }
-                format!(
-                    "Cleared dependencies for '{}' (prereqs={}, blocks={})",
-                    truncate_board_cell(&anchor_label, 30),
-                    prereqs.len(),
-                    dependents.len()
-                )
+                if source_item_ids.len() > 1 {
+                    format!(
+                        "Cleared dependencies for {} (prereqs={}, blocks={})",
+                        source_label, total_prereqs, total_dependents
+                    )
+                } else {
+                    format!(
+                        "Cleared dependencies for '{}' (prereqs={}, blocks={})",
+                        truncate_board_cell(&anchor_label, 30),
+                        total_prereqs,
+                        total_dependents
+                    )
+                }
             }
         };
 
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(anchor_id);
+        if source_item_ids.len() > 1 {
+            self.clear_selected_items();
+        }
         self.close_link_wizard(&status);
         Ok(())
     }

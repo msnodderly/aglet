@@ -623,6 +623,7 @@ impl App {
         let anchor_label = anchor
             .map(board_item_label)
             .unwrap_or_else(|| state.anchor_item_id.to_string());
+        let source_count = self.link_wizard_source_count();
         let matches = self.link_wizard_target_matches();
         let selected_target_id = self.link_wizard_selected_target_id();
 
@@ -645,8 +646,16 @@ impl App {
             .split(inner);
 
         let anchor_lines = vec![
-            Line::from("Anchor item"),
-            Line::from(format!("  {}", truncate_board_cell(&anchor_label, 72))),
+            Line::from(if source_count > 1 {
+                format!("Source set ({source_count} items)")
+            } else {
+                "Anchor item".to_string()
+            }),
+            Line::from(if source_count > 1 {
+                format!("  {} (focused)", truncate_board_cell(&anchor_label, 72))
+            } else {
+                format!("  {}", truncate_board_cell(&anchor_label, 72))
+            }),
         ];
         frame.render_widget(
             Paragraph::new(anchor_lines).block(
@@ -761,16 +770,24 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} blocked by {}",
-                            truncate_board_cell(&anchor_label, 28),
-                            truncate_board_cell(&target.text, 28)
-                        )));
-                        lines.push(Line::from(format!(
-                            "  (stores: {} depends-on {})",
-                            truncate_board_cell(&anchor_label, 22),
-                            truncate_board_cell(&target.text, 22)
-                        )));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items blocked by {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from("  (applies one depends-on link per selected item)"));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} blocked by {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(format!(
+                                "  (stores: {} depends-on {})",
+                                truncate_board_cell(&anchor_label, 22),
+                                truncate_board_cell(&target.text, 22)
+                            )));
+                        }
                     } else {
                         lines.push(Line::from("  Select a target item"));
                         lines.push(Line::from(""));
@@ -780,11 +797,18 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} depends on {}",
-                            truncate_board_cell(&anchor_label, 28),
-                            truncate_board_cell(&target.text, 28)
-                        )));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items depend on {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} depends on {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                        }
                         lines.push(Line::from(""));
                     } else {
                         lines.push(Line::from("  Select a target item"));
@@ -795,16 +819,24 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} blocks {}",
-                            truncate_board_cell(&anchor_label, 28),
-                            truncate_board_cell(&target.text, 28)
-                        )));
-                        lines.push(Line::from(format!(
-                            "  (stores: {} depends-on {})",
-                            truncate_board_cell(&target.text, 22),
-                            truncate_board_cell(&anchor_label, 22)
-                        )));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items block {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from("  (adds one blocked relation per selected item)"));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} blocks {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(format!(
+                                "  (stores: {} depends-on {})",
+                                truncate_board_cell(&target.text, 22),
+                                truncate_board_cell(&anchor_label, 22)
+                            )));
+                        }
                     } else {
                         lines.push(Line::from("  Select a target item"));
                         lines.push(Line::from(""));
@@ -814,19 +846,31 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} related to {}",
-                            truncate_board_cell(&anchor_label, 26),
-                            truncate_board_cell(&target.text, 26)
-                        )));
-                        lines.push(Line::from("  (symmetric)"));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items related to {}",
+                                truncate_board_cell(&target.text, 26)
+                            )));
+                            lines.push(Line::from("  (adds one symmetric relation per selected item)"));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} related to {}",
+                                truncate_board_cell(&anchor_label, 26),
+                                truncate_board_cell(&target.text, 26)
+                            )));
+                            lines.push(Line::from("  (symmetric)"));
+                        }
                     } else {
                         lines.push(Line::from("  Select a target item"));
                         lines.push(Line::from(""));
                     }
                 }
                 LinkWizardAction::ClearDependencies => {
-                    lines.push(Line::from("  Remove all immediate prereqs and dependents"));
+                    if source_count > 1 {
+                        lines.push(Line::from("  Remove immediate prereqs and dependents for all selected items"));
+                    } else {
+                        lines.push(Line::from("  Remove all immediate prereqs and dependents"));
+                    }
                     lines.push(Line::from("  (does not remove related links)"));
                 }
             }

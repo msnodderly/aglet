@@ -273,11 +273,11 @@ impl LinkWizardAction {
 
     fn description(self) -> &'static str {
         match self {
-            Self::BlockedBy => "(X blocks selected item)",
-            Self::DependsOn => "(selected item depends on X)",
-            Self::Blocks => "(selected item blocks X)",
-            Self::RelatedTo => "(selected item related to X)",
-            Self::ClearDependencies => "(remove depends-on/blocks links for selected item)",
+            Self::BlockedBy => "(target blocks source item(s))",
+            Self::DependsOn => "(source item(s) depend on target)",
+            Self::Blocks => "(source item(s) block target)",
+            Self::RelatedTo => "(source item(s) relate to target)",
+            Self::ClearDependencies => "(remove depends-on/blocks links for source item(s))",
         }
     }
 
@@ -303,6 +303,7 @@ impl LinkWizardAction {
 #[derive(Clone, Debug)]
 struct LinkWizardState {
     anchor_item_id: ItemId,
+    source_item_ids: Vec<ItemId>,
     focus: LinkWizardFocus,
     action_index: usize,
     target_filter: text_buffer::TextBuffer,
@@ -3699,6 +3700,87 @@ mod tests {
         assert!(
             !matches.contains(&anchor.id),
             "anchor item must never appear in target matches"
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_excludes_all_selected_source_items_from_targets() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_b.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+
+        let matches = app.link_wizard_target_matches();
+        assert_eq!(matches, vec![target.id]);
+        assert_eq!(app.link_wizard_source_count(), 2);
+        assert!(
+            app.status.contains("2 selected items"),
+            "status should describe batch source scope: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn batch_link_wizard_applies_relation_to_all_selected_sources() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source_a = Item::new("Source A".to_string());
+        let source_b = Item::new("Source B".to_string());
+        let target = Item::new("Target item".to_string());
+        for item in [&source_a, &source_b, &target] {
+            store.create_item(item).expect("create item");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.toggle_selected_item(source_a.id);
+        app.toggle_selected_item(source_b.id);
+        app.set_item_selection_by_id(source_b.id);
+
+        app.handle_key(KeyCode::Char('b'), &agenda)
+            .expect("open batch link wizard");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus target");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus confirm");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("apply batch link");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected_count(), 0);
+        assert!(
+            agenda
+                .immediate_prereq_ids(source_a.id)
+                .expect("source A prereqs")
+                .contains(&target.id)
+        );
+        assert!(
+            agenda
+                .immediate_prereq_ids(source_b.id)
+                .expect("source B prereqs")
+                .contains(&target.id)
+        );
+        assert!(
+            app.status.contains("2 selected items blocked by"),
+            "status should summarize batch link result: {}",
+            app.status
         );
     }
 
