@@ -1,50 +1,48 @@
 use crate::*;
 
-/// Cycle through numeric format presets:
-/// 2dp → integer (0dp) → 1dp → 2dp+thousands → 2dp (back to default)
-fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
-    match (
-        current.decimal_places,
-        current.use_thousands_separator,
-    ) {
-        (2, false) => NumericFormat {
-            decimal_places: 0,
-            currency_symbol: current.currency_symbol.clone(),
-            use_thousands_separator: false,
-        },
-        (0, false) => NumericFormat {
+/// Cycle: integer → 1dp → 2dp → 2dp+thousands → currency (2dp+thousands+$) → integer
+pub(super) fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
+    let has_currency = current.currency_symbol.is_some();
+    match (current.decimal_places, current.use_thousands_separator, has_currency) {
+        (0, false, false) => NumericFormat {
             decimal_places: 1,
-            currency_symbol: current.currency_symbol.clone(),
+            currency_symbol: None,
             use_thousands_separator: false,
         },
-        (1, false) => NumericFormat {
+        (1, false, false) => NumericFormat {
             decimal_places: 2,
-            currency_symbol: current.currency_symbol.clone(),
+            currency_symbol: None,
+            use_thousands_separator: false,
+        },
+        (2, false, false) => NumericFormat {
+            decimal_places: 2,
+            currency_symbol: None,
             use_thousands_separator: true,
         },
-        (2, true) => NumericFormat {
+        (2, true, false) => NumericFormat {
             decimal_places: 2,
-            currency_symbol: current.currency_symbol.clone(),
+            currency_symbol: Some("$".to_string()),
+            use_thousands_separator: true,
+        },
+        // Currency or any custom state → back to integer
+        _ => NumericFormat {
+            decimal_places: 0,
+            currency_symbol: None,
             use_thousands_separator: false,
         },
-        _ => NumericFormat::default(),
     }
 }
 
-fn describe_numeric_format(fmt: &NumericFormat) -> String {
-    let mut parts = Vec::new();
-    if fmt.decimal_places == 0 {
-        parts.push("integer".to_string());
-    } else {
-        parts.push(format!("{}dp", fmt.decimal_places));
+pub(crate) fn describe_numeric_format(fmt: &NumericFormat) -> &'static str {
+    let has_currency = fmt.currency_symbol.is_some();
+    match (fmt.decimal_places, fmt.use_thousands_separator, has_currency) {
+        (0, false, false) => "Integer",
+        (1, false, false) => "1 decimal place",
+        (2, false, false) => "2 decimal places",
+        (2, true, false) => "2dp, thousands",
+        (_, _, true) => "Currency",
+        _ => "Custom",
     }
-    if fmt.use_thousands_separator {
-        parts.push("thousands".to_string());
-    }
-    if let Some(sym) = &fmt.currency_symbol {
-        parts.push(format!("currency={sym}"));
-    }
-    parts.join(", ")
 }
 
 enum InlineCreateConfirmKeyAction {
@@ -3834,7 +3832,6 @@ impl App {
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
-            Some(NameInputContext::CurrencySymbol) => Mode::CategoryManager,
             None => Mode::Normal,
         }
     }
@@ -4115,41 +4112,6 @@ impl App {
                 self.name_input_context = None;
                 self.mode = Mode::CategoryManager;
                 self.status = "Unexpected save dispatch for CategoryCreate".to_string();
-            }
-            Some(NameInputContext::CurrencySymbol) => {
-                let name = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.text.text().to_string())
-                    .unwrap_or_default();
-                if let Some(mut cat) = self.selected_category_row().and_then(|row| {
-                    self.categories.iter().find(|c| c.id == row.id).cloned()
-                }) {
-                    let mut fmt = cat.numeric_format.clone().unwrap_or_default();
-                    fmt.currency_symbol = if name.is_empty() {
-                        None
-                    } else {
-                        Some(name.clone())
-                    };
-                    cat.numeric_format = Some(fmt);
-                    // Store directly — format-only change needs no reclassification.
-                    match agenda.store().update_category(&cat) {
-                        Ok(_) => {
-                            self.refresh(agenda.store())?;
-                            self.status = if name.is_empty() {
-                                "Currency symbol cleared".to_string()
-                            } else {
-                                format!("Currency symbol set to '{name}'")
-                            };
-                        }
-                        Err(e) => {
-                            self.status = format!("Failed to save currency: {e}");
-                        }
-                    }
-                }
-                self.input_panel = None;
-                self.name_input_context = None;
-                self.mode = Mode::CategoryManager;
             }
             None => {
                 self.input_panel = None;
