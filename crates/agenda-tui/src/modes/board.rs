@@ -2317,7 +2317,9 @@ impl App {
                 }
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
-                if let Some(item_id) = self.selected_item_id() {
+                if self.selected_count() > 1 {
+                    self.batch_toggle_selected_items_done(agenda)?;
+                } else if let Some(item_id) = self.selected_item_id() {
                     self.begin_done_toggle_or_confirm(
                         agenda,
                         item_id,
@@ -2462,6 +2464,109 @@ impl App {
         }
 
         self.apply_done_toggle_action(agenda, item_id, was_done, origin, &[])
+    }
+
+    fn batch_toggle_selected_items_done(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let action_item_ids = self.selected_item_ids_in_view_order();
+        if action_item_ids.is_empty() {
+            self.status = "No selected items to update".to_string();
+            return Ok(());
+        }
+
+        let mark_done = !action_item_ids.iter().all(|item_id| {
+            self.all_items
+                .iter()
+                .find(|item| item.id == *item_id)
+                .is_some_and(|item| item.is_done)
+        });
+        let anchor_id = self.selected_item_id().unwrap_or(action_item_ids[0]);
+
+        let mut changed = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+        let mut first_error = None;
+
+        for item_id in &action_item_ids {
+            let Some(item) = self.all_items.iter().find(|candidate| candidate.id == *item_id) else {
+                failed += 1;
+                if first_error.is_none() {
+                    first_error = Some(format!("item {} is no longer available", item_id));
+                }
+                continue;
+            };
+
+            if mark_done {
+                if item.is_done {
+                    skipped += 1;
+                    continue;
+                }
+                let has_actionable_assignment = item.assignments.keys().any(|category_id| {
+                    self.categories
+                        .iter()
+                        .find(|category| category.id == *category_id)
+                        .is_some_and(|category| category.is_actionable)
+                });
+                if !has_actionable_assignment {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(format!(
+                            "item '{}' has no actionable category assignments",
+                            truncate_board_cell(&item.text, 24)
+                        ));
+                    }
+                    continue;
+                }
+                let blocked_count = self
+                    .item_links_by_item_id
+                    .get(item_id)
+                    .map(|links| links.blocks.len())
+                    .unwrap_or(0);
+                if blocked_count > 0 {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(format!(
+                            "item '{}' blocks {} other item{}",
+                            truncate_board_cell(&item.text, 24),
+                            blocked_count,
+                            if blocked_count == 1 { "" } else { "s" }
+                        ));
+                    }
+                    continue;
+                }
+            } else if !item.is_done {
+                skipped += 1;
+                continue;
+            }
+
+            match agenda.toggle_item_done(*item_id) {
+                Ok(_) => changed += 1,
+                Err(err) => {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(err.to_string());
+                    }
+                }
+            }
+        }
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(anchor_id);
+        if failed == 0 && changed > 0 {
+            self.clear_selected_items();
+        }
+
+        let mut summary = format!(
+            "{} {} selected items {} (changed={changed}, skipped={skipped}, failed={failed})",
+            if mark_done { "Marked" } else { "Unmarked" },
+            action_item_ids.len(),
+            if mark_done { "done" } else { "not-done" },
+        );
+        if let Some(err) = first_error {
+            summary.push_str(&format!(" first_error={err}"));
+        }
+        self.status = summary;
+        self.mode = Mode::Normal;
+        Ok(())
     }
 
     fn sort_current_slot_by_active_column(
