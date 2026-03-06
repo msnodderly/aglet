@@ -2265,6 +2265,7 @@ impl App {
                     self.mode = Mode::ItemAssignPicker;
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
+                    self.item_assign_dirty = false;
                     self.clear_input();
                     self.status = if self.has_selected_items() {
                         let selected_count = self.selected_count();
@@ -4405,9 +4406,16 @@ impl App {
     ) -> Result<bool, String> {
         match code {
             KeyCode::Esc => {
+                let clear_selection = self.item_assign_dirty && self.has_selected_items();
                 self.mode = Mode::Normal;
+                if clear_selection {
+                    self.clear_selected_items();
+                }
+                self.item_assign_dirty = false;
                 self.clear_input();
-                self.status = "Assign canceled".to_string();
+                if !clear_selection {
+                    self.status = "Assign canceled".to_string();
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.category_rows.is_empty() {
@@ -4493,12 +4501,9 @@ impl App {
                     }
 
                     self.refresh(agenda.store())?;
-                    let successful_batch_change = changed > 0 && failed == 0;
-                    if successful_batch_change {
-                        self.clear_selected_items();
-                        self.mode = Mode::Normal;
-                    } else {
-                        self.set_item_selection_by_id(item_id);
+                    self.set_item_selection_by_id(item_id);
+                    if changed > 0 && failed == 0 {
+                        self.item_assign_dirty = true;
                     }
                     self.status = if failed == 0 {
                         if should_unassign {
@@ -4552,9 +4557,16 @@ impl App {
                 }
             }
             KeyCode::Enter => {
+                let clear_selection = self.item_assign_dirty && self.has_selected_items();
                 self.mode = Mode::Normal;
+                if clear_selection {
+                    self.clear_selected_items();
+                }
+                self.item_assign_dirty = false;
                 self.clear_input();
-                self.status = "Category edit saved".to_string();
+                if !clear_selection {
+                    self.status = "Category edit saved".to_string();
+                }
             }
             _ => {}
         }
@@ -4664,14 +4676,10 @@ impl App {
                 {
                     self.item_assign_category_index = index;
                 }
-                let successful_batch_change =
-                    action_item_ids.len() > 1 && assigned > 0 && failed == 0;
-                if successful_batch_change {
-                    self.clear_selected_items();
-                    self.mode = Mode::Normal;
-                } else {
-                    self.set_item_selection_by_id(item_id);
-                    self.mode = Mode::ItemAssignPicker;
+                self.set_item_selection_by_id(item_id);
+                self.mode = Mode::ItemAssignPicker;
+                if assigned > 0 && failed == 0 {
+                    self.item_assign_dirty = true;
                 }
                 self.clear_input();
                 self.status = if action_item_ids.len() > 1 {
