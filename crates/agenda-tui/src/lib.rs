@@ -8983,6 +8983,81 @@ mod tests {
     }
 
     #[test]
+    fn global_search_create_then_edit_save_still_restores_previous_view_on_esc() {
+        let (store, db_path) = make_two_section_store("g-slash-create-edit-restore");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("g/ should open global search");
+        for ch in "kanban task".chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type global query");
+        }
+        app.handle_search_bar_key(KeyCode::Enter, &agenda)
+            .expect("enter should open add panel");
+
+        assert_eq!(app.mode, Mode::InputPanel, "add panel should open");
+        assert!(
+            app.global_search_active(),
+            "global search session should remain active after create-from-search"
+        );
+
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to note");
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to categories");
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save created item");
+        assert_eq!(app.mode, Mode::Normal, "return to normal after save");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("All Items"),
+            "still in temporary global-search view before Esc restore"
+        );
+        assert!(
+            app.global_search_active(),
+            "global search session should survive add-item save"
+        );
+
+        app.handle_normal_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        assert_eq!(app.mode, Mode::InputPanel, "edit panel should open");
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to note");
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to categories");
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to save");
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("save edited item");
+        assert_eq!(app.mode, Mode::Normal, "back to normal after edit save");
+
+        app.handle_normal_key(KeyCode::Esc, &agenda)
+            .expect("Esc should restore prior view");
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some("TestView")
+        );
+        assert!(
+            !app.global_search_active(),
+            "global search session should be closed after Esc restore"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn normal_mode_d_toggles_done_state() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
