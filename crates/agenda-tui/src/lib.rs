@@ -12838,6 +12838,156 @@ mod tests {
     }
 
     #[test]
+    fn vertical_section_tab_restores_section_item_index() {
+        let (store, db_path) = make_two_section_store("vertical-flow-nav");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        assert_eq!(app.slot_index, 0);
+        assert_eq!(app.item_index, 0);
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move down in first section");
+        assert_eq!(app.item_index, 1, "first section selection should advance");
+
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab to second section");
+        assert_eq!(app.slot_index, 1);
+        assert_eq!(
+            app.item_index, 0,
+            "second section should start at its own remembered row"
+        );
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move down in second section");
+        assert_eq!(app.item_index, 1, "second section selection should advance");
+
+        app.handle_normal_key(KeyCode::BackTab, &agenda)
+            .expect("shift-tab to first section");
+        assert_eq!(app.slot_index, 0);
+        assert_eq!(
+            app.item_index, 1,
+            "first section should restore its remembered row selection"
+        );
+
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab back to second section");
+        assert_eq!(app.slot_index, 1);
+        assert_eq!(
+            app.item_index, 1,
+            "second section should restore its remembered row selection"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn vertical_section_tab_keeps_section_scroll_offset_stable() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-vertical-scroll-memory-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let backlog = Category::new("Backlog".to_string());
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&backlog).expect("backlog");
+        store.create_category(&ready).expect("ready");
+
+        let mut backlog_section = Section {
+            title: "Backlog".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        backlog_section
+            .criteria
+            .set_criterion(CriterionMode::And, backlog.id);
+
+        let mut ready_section = Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        ready_section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+
+        let mut view = View::new("Board".to_string());
+        view.section_flow = SectionFlow::Vertical;
+        view.board_display_mode = BoardDisplayMode::SingleLine;
+        view.sections.push(backlog_section);
+        view.sections.push(ready_section);
+        store.create_view(&view).expect("create view");
+
+        for idx in 0..10 {
+            let item = Item::new(format!("Backlog item {idx:02}"));
+            store.create_item(&item).expect("create backlog item");
+            agenda
+                .assign_item_manual(item.id, backlog.id, None)
+                .expect("assign backlog");
+        }
+        for idx in 0..2 {
+            let item = Item::new(format!("Ready item {idx:02}"));
+            store.create_item(&item).expect("create ready item");
+            agenda
+                .assign_item_manual(item.id, ready.id, None)
+                .expect("assign ready");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        for _ in 0..9 {
+            app.move_item_cursor(1);
+        }
+
+        let backend = TestBackend::new(90, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render selected backlog section");
+        let remembered_before_tab = app.horizontal_slot_scroll_offsets.borrow()[0];
+        assert!(
+            remembered_before_tab > 0,
+            "deep selection should establish a non-zero section scroll offset"
+        );
+
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab to ready section");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render ready section");
+        let remembered_after_tab = app.horizontal_slot_scroll_offsets.borrow()[0];
+        assert_eq!(
+            remembered_after_tab, remembered_before_tab,
+            "tabbing away should preserve the previous section scroll offset"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn horizontal_multiline_cards_wrap_titles_and_use_label_metadata() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -401,15 +401,20 @@ impl App {
             self.column_index = self.current_slot_item_column_index();
             return;
         }
-        self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
-        self.item_index = self.item_index.min(
-            self.current_slot()
-                .map(|slot| slot.items.len().saturating_sub(1))
-                .unwrap_or(0),
-        );
         if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
             *stored = self.item_index;
         }
+        self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
+        self.item_index = self
+            .horizontal_slot_item_indices
+            .get(self.slot_index)
+            .copied()
+            .unwrap_or(0)
+            .min(
+                self.current_slot()
+                    .map(|slot| slot.items.len().saturating_sub(1))
+                    .unwrap_or(0),
+            );
         self.column_index = self.current_slot_item_column_index();
     }
 
