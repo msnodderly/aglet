@@ -83,6 +83,89 @@ impl App {
         state
     }
 
+    fn effective_board_display_mode_for_slot(&self, slot: &Slot) -> BoardDisplayMode {
+        let current_view = self.current_view();
+        match (&slot.context, current_view) {
+            (SlotContext::Section { section_index }, Some(view))
+            | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                .sections
+                .get(*section_index)
+                .and_then(|section| section.board_display_mode_override)
+                .unwrap_or(view.board_display_mode),
+            _ => current_view
+                .map(|view| view.board_display_mode)
+                .unwrap_or(BoardDisplayMode::SingleLine),
+        }
+    }
+
+    fn variable_height_list_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: Option<usize>,
+    ) -> usize {
+        let Some(selected_index) = selected_index else {
+            return 0;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 || item_heights.is_empty() {
+            return 0;
+        }
+
+        let mut offset = selected_index.min(item_heights.len().saturating_sub(1));
+        let mut used_rows = item_heights[offset].max(1);
+        while offset > 0 {
+            let next_rows = item_heights[offset - 1].max(1);
+            if used_rows + next_rows > viewport_rows {
+                break;
+            }
+            used_rows += next_rows;
+            offset -= 1;
+        }
+        offset
+    }
+
+    fn selected_item_visible_with_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: usize,
+        offset: usize,
+    ) -> bool {
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 || item_heights.is_empty() || selected_index < offset {
+            return false;
+        }
+
+        let row_start = item_heights
+            .iter()
+            .skip(offset)
+            .take(selected_index.saturating_sub(offset))
+            .sum::<usize>();
+        let row_end = row_start + item_heights[selected_index].max(1);
+        row_end <= viewport_rows
+    }
+
+    fn stable_variable_height_list_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: Option<usize>,
+        preferred_offset: usize,
+    ) -> usize {
+        let Some(selected_index) = selected_index else {
+            return preferred_offset.min(item_heights.len().saturating_sub(1));
+        };
+        let clamped_preferred = preferred_offset.min(item_heights.len().saturating_sub(1));
+        if Self::selected_item_visible_with_offset(
+            area,
+            item_heights,
+            selected_index,
+            clamped_preferred,
+        ) {
+            clamped_preferred
+        } else {
+            Self::variable_height_list_offset(area, item_heights, Some(selected_index))
+        }
+    }
+
     fn render_vertical_scrollbar(
         frame: &mut ratatui::Frame<'_>,
         area: Rect,
@@ -1601,8 +1684,13 @@ impl App {
         let constraints: Vec<Constraint> = (0..self.slots.len())
             .map(|_| Constraint::Percentage(pct))
             .collect();
+        let slot_direction = if self.is_horizontal_section_flow() {
+            Direction::Horizontal
+        } else {
+            Direction::Vertical
+        };
         let columns = Layout::default()
-            .direction(Direction::Vertical)
+            .direction(slot_direction)
             .constraints(constraints)
             .split(area);
 
@@ -1621,6 +1709,10 @@ impl App {
             .and_then(|v| v.item_column_label.clone())
             .filter(|label| !label.trim().is_empty())
             .unwrap_or_else(|| "Item".to_string());
+        if self.is_horizontal_section_flow() {
+            self.render_horizontal_board_lanes(frame, &columns, &category_display_names);
+            return;
+        }
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let effective_display_mode = match (&slot.context, current_view.as_ref()) {
                 (SlotContext::Section { section_index }, Some(view))
@@ -1822,7 +1914,10 @@ impl App {
                                                 .assignments
                                                 .get(&column.heading_id)
                                                 .and_then(|a| a.numeric_value);
-                                            format_numeric_cell(numeric_val, column.numeric_format.as_ref())
+                                            format_numeric_cell(
+                                                numeric_val,
+                                                column.numeric_format.as_ref(),
+                                            )
                                         }
                                         ColumnKind::Standard => standard_column_value(
                                             item,
@@ -1913,99 +2008,96 @@ impl App {
                     c.heading_value_kind == CategoryValueKind::Numeric
                         && c.summary_fn != SummaryFn::None
                 });
-                let summary_spans: Option<Vec<Span>> =
-                    if has_summary_columns && !slot.items.is_empty() {
-                        let item_refs: Vec<&Item> = slot.items.iter().collect();
-                        let aggregates =
-                            compute_column_aggregates(&item_refs, &layout.columns);
-                        let summary_style = Style::default()
-                            .fg(Color::White)
-                            .bg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD);
-                        let pad_style = Style::default().bg(Color::DarkGray);
-                        let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
-                        let mut spans: Vec<Span> = Vec::new();
-                        // Pad for marker + note + spacing (border + left padding of block = 1)
-                        let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
-                        spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
-                        for (col_idx, spec) in layout.columns.iter().enumerate() {
-                            // Item column appears at item_board_column_index; add its width
-                            if col_idx == item_board_column_index {
-                                let w = item_width + spacing;
-                                spans.push(Span::styled(" ".repeat(w), pad_style));
-                            }
-                            let col_w = spec.width;
-                            if spec.summary_fn != SummaryFn::None
-                                && spec.heading_value_kind == CategoryValueKind::Numeric
-                            {
-                                let value = aggregates[col_idx]
-                                    .as_ref()
-                                    .and_then(|agg| agg.value_for(spec.summary_fn));
-                                let label = if let Some(v) = value {
-                                    format!(
-                                        "{}={}",
-                                        spec.summary_fn.label(),
-                                        format_numeric_cell(Some(v), spec.numeric_format.as_ref())
-                                            .trim(),
-                                    )
-                                } else {
-                                    format!("{}=-", spec.summary_fn.label())
-                                };
-                                let display = if label.len() > col_w {
-                                    label[..col_w].to_string()
-                                } else {
-                                    format!("{:>width$}", label, width = col_w)
-                                };
-                                spans.push(Span::styled(display, summary_style));
-                            } else {
-                                spans.push(Span::styled(" ".repeat(col_w), pad_style));
-                            }
-                            // Add inter-column spacing
-                            if col_idx < layout.columns.len() - 1
-                                || synthetic_categories_width > 0
-                            {
-                                spans.push(Span::styled(" ".repeat(spacing), pad_style));
-                            }
-                        }
-                        // Item column after all category columns
-                        if item_board_column_index >= layout.columns.len() {
+                let summary_spans: Option<Vec<Span>> = if has_summary_columns
+                    && !slot.items.is_empty()
+                {
+                    let item_refs: Vec<&Item> = slot.items.iter().collect();
+                    let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
+                    let summary_style = Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD);
+                    let pad_style = Style::default().bg(Color::DarkGray);
+                    let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
+                    let mut spans: Vec<Span> = Vec::new();
+                    // Pad for marker + note + spacing (border + left padding of block = 1)
+                    let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
+                    spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
+                    for (col_idx, spec) in layout.columns.iter().enumerate() {
+                        // Item column appears at item_board_column_index; add its width
+                        if col_idx == item_board_column_index {
                             let w = item_width + spacing;
                             spans.push(Span::styled(" ".repeat(w), pad_style));
                         }
-                        if synthetic_categories_width > 0 {
-                            spans.push(Span::styled(
-                                " ".repeat(synthetic_categories_width),
-                                pad_style,
-                            ));
-                        }
-                        // Fill remaining width with reversed background
-                        spans.push(Span::styled(" ", pad_style));
-                        // Only show footer if at least one column has a computed value
-                        let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
-                            let spec = &layout.columns[i];
-                            spec.summary_fn != SummaryFn::None
-                                && agg.as_ref().and_then(|a| a.value_for(spec.summary_fn)).is_some()
-                        });
-                        if has_any_value {
-                            Some(spans)
+                        let col_w = spec.width;
+                        if spec.summary_fn != SummaryFn::None
+                            && spec.heading_value_kind == CategoryValueKind::Numeric
+                        {
+                            let value = aggregates[col_idx]
+                                .as_ref()
+                                .and_then(|agg| agg.value_for(spec.summary_fn));
+                            let label = if let Some(v) = value {
+                                format!(
+                                    "{}={}",
+                                    spec.summary_fn.label(),
+                                    format_numeric_cell(Some(v), spec.numeric_format.as_ref())
+                                        .trim(),
+                                )
+                            } else {
+                                format!("{}=-", spec.summary_fn.label())
+                            };
+                            let display = if label.len() > col_w {
+                                label[..col_w].to_string()
+                            } else {
+                                format!("{:>width$}", label, width = col_w)
+                            };
+                            spans.push(Span::styled(display, summary_style));
                         } else {
-                            None
+                            spans.push(Span::styled(" ".repeat(col_w), pad_style));
                         }
+                        // Add inter-column spacing
+                        if col_idx < layout.columns.len() - 1 || synthetic_categories_width > 0 {
+                            spans.push(Span::styled(" ".repeat(spacing), pad_style));
+                        }
+                    }
+                    // Item column after all category columns
+                    if item_board_column_index >= layout.columns.len() {
+                        let w = item_width + spacing;
+                        spans.push(Span::styled(" ".repeat(w), pad_style));
+                    }
+                    if synthetic_categories_width > 0 {
+                        spans.push(Span::styled(
+                            " ".repeat(synthetic_categories_width),
+                            pad_style,
+                        ));
+                    }
+                    // Fill remaining width with reversed background
+                    spans.push(Span::styled(" ", pad_style));
+                    // Only show footer if at least one column has a computed value
+                    let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
+                        let spec = &layout.columns[i];
+                        spec.summary_fn != SummaryFn::None
+                            && agg
+                                .as_ref()
+                                .and_then(|a| a.value_for(spec.summary_fn))
+                                .is_some()
+                    });
+                    if has_any_value {
+                        Some(spans)
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 // Split the slot area: table on top, optional 1-line summary footer.
                 let slot_area = columns[slot_index];
-                let (table_area, summary_area) = if summary_spans.is_some()
-                    && slot_area.height > 4
+                let (table_area, summary_area) = if summary_spans.is_some() && slot_area.height > 4
                 {
                     let split = Layout::default()
                         .direction(ratatui::layout::Direction::Vertical)
-                        .constraints([
-                            Constraint::Min(3),
-                            Constraint::Length(1),
-                        ])
+                        .constraints([Constraint::Min(3), Constraint::Length(1)])
                         .split(slot_area);
                     (split[0], Some(split[1]))
                 } else {
@@ -2030,10 +2122,7 @@ impl App {
                     &mut state,
                 );
                 if let (Some(area), Some(spans)) = (summary_area, summary_spans) {
-                    frame.render_widget(
-                        Paragraph::new(Line::from(spans)),
-                        area,
-                    );
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
                 }
                 Self::render_vertical_scrollbar(
                     frame,
@@ -2168,6 +2257,234 @@ impl App {
                     state.offset(),
                 );
             }
+        }
+    }
+
+    fn render_horizontal_board_lanes(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        columns: &[Rect],
+        category_display_names: &HashMap<CategoryId, String>,
+    ) {
+        let all_slots_empty = self.slots.iter().all(|slot| slot.items.is_empty());
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let slot_area = columns[slot_index];
+            let is_selected_slot = slot_index == self.slot_index;
+            let selected_row = if is_selected_slot && !slot.items.is_empty() {
+                Some(self.item_index.min(slot.items.len().saturating_sub(1)))
+            } else {
+                None
+            };
+            let filter_suffix = self
+                .section_filters
+                .get(slot_index)
+                .and_then(|f| f.as_deref())
+                .map(|needle| format!("  filter:{needle}"))
+                .unwrap_or_default();
+            let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let border_color = if is_selected_slot {
+                Color::Cyan
+            } else {
+                Color::Blue
+            };
+            let effective_display_mode = self.effective_board_display_mode_for_slot(slot);
+            let card_width = slot_area.width.saturating_sub(4) as usize;
+
+            if slot.items.is_empty() {
+                let has_filter = self
+                    .section_filters
+                    .get(slot_index)
+                    .map(|f| f.is_some())
+                    .unwrap_or(false);
+                let empty_lines = if all_slots_empty {
+                    vec![
+                        Line::from(Span::styled(
+                            "empty board",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "n:add item  v:views  q:quit",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
+                } else if has_filter {
+                    vec![
+                        Line::from(Span::styled(
+                            "no matches",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "Esc:clear filter",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
+                } else {
+                    vec![
+                        Line::from(Span::styled(
+                            "empty lane",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "n:add item  /:search other lanes",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
+                };
+                let block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color));
+                let inner = block.inner(slot_area);
+                frame.render_widget(block, slot_area);
+                let content_height = empty_lines.len() as u16;
+                let top_padding = inner.height.saturating_sub(content_height) / 2;
+                let y = inner.y.saturating_add(top_padding);
+                let centered_area = Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: content_height.min(inner.height),
+                };
+                frame.render_widget(
+                    Paragraph::new(empty_lines).alignment(ratatui::layout::Alignment::Center),
+                    centered_area,
+                );
+                continue;
+            }
+
+            let title_width = card_width.saturating_sub(1).max(1);
+            let meta_width = card_width.saturating_sub(3).max(1);
+            let separator_width = card_width.saturating_sub(1).max(1);
+            let mut cards: Vec<ListItem<'_>> = Vec::with_capacity(slot.items.len());
+            let mut card_heights: Vec<usize> = Vec::with_capacity(slot.items.len());
+
+            for (item_index, item) in slot.items.iter().enumerate() {
+                let item_text = board_item_label(item);
+                let category_count = item_assignment_labels(item, category_display_names).len();
+                let mut meta_parts = vec![format!(
+                    "due:{}",
+                    item.when_date
+                        .map(|dt| dt.date().to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                )];
+                let glyphs = item_indicator_glyphs(
+                    item.is_done,
+                    self.is_item_blocked(item.id),
+                    has_note_text(item.note.as_deref()),
+                );
+                if !glyphs.is_empty() {
+                    meta_parts.push(glyphs.clone());
+                }
+                if category_count > 0 {
+                    meta_parts.push(format!(
+                        "{category_count} {}",
+                        if category_count == 1 {
+                            "category"
+                        } else {
+                            "categories"
+                        }
+                    ));
+                }
+                let meta = truncate_board_cell(&meta_parts.join("  "), meta_width);
+
+                let mut lines = Vec::new();
+                match effective_display_mode {
+                    BoardDisplayMode::SingleLine => {
+                        let single_line_text = if glyphs.is_empty() {
+                            truncate_board_cell(&item_text, title_width)
+                        } else {
+                            let reserved_glyph_width = glyphs.chars().count().saturating_add(2);
+                            if title_width > reserved_glyph_width {
+                                format!(
+                                    "{}  {}",
+                                    truncate_board_cell(
+                                        &item_text,
+                                        title_width.saturating_sub(reserved_glyph_width),
+                                    ),
+                                    glyphs
+                                )
+                            } else {
+                                truncate_board_cell(&glyphs, title_width)
+                            }
+                        };
+                        lines.push(Line::from(format!(" {}", single_line_text)));
+                    }
+                    BoardDisplayMode::MultiLine => {
+                        for line in wrap_text_for_board_cell_clamped(&item_text, title_width, 2) {
+                            lines.push(Line::from(format!(" {}", line)));
+                        }
+                        lines.push(Line::from(Span::styled(
+                            format!("   {}", meta),
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                        if item_index + 1 < slot.items.len() {
+                            lines.push(Line::from(Span::styled(
+                                format!(" {}", "-".repeat(separator_width)),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )));
+                        }
+                    }
+                }
+
+                card_heights.push(lines.len().max(1));
+                cards.push(ListItem::new(lines));
+            }
+
+            let mut list_state = ListState::default().with_selected(selected_row);
+            let remembered_index = self
+                .horizontal_slot_item_indices
+                .get(slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(cards.len().saturating_sub(1));
+            let remembered_scroll_offset = self
+                .horizontal_slot_scroll_offsets
+                .borrow()
+                .get(slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(cards.len().saturating_sub(1));
+            *list_state.offset_mut() = if is_selected_slot {
+                Self::stable_variable_height_list_offset(
+                    slot_area,
+                    &card_heights,
+                    selected_row,
+                    remembered_scroll_offset,
+                )
+            } else {
+                remembered_scroll_offset.min(remembered_index)
+            };
+            if let Some(stored) = self
+                .horizontal_slot_scroll_offsets
+                .borrow_mut()
+                .get_mut(slot_index)
+            {
+                *stored = list_state.offset();
+            }
+            let scroll_position = card_heights.iter().take(list_state.offset()).sum::<usize>();
+            let total_card_height = card_heights.iter().sum::<usize>();
+
+            frame.render_stateful_widget(
+                List::new(cards)
+                    .block(
+                        Block::default()
+                            .title(title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(border_color)),
+                    )
+                    .highlight_style(selected_board_row_style())
+                    .highlight_symbol("> ")
+                    .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
+                    .repeat_highlight_symbol(false),
+                slot_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(
+                frame,
+                slot_area,
+                total_card_height.max(1),
+                scroll_position,
+            );
         }
     }
 
@@ -2559,9 +2876,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
@@ -3435,23 +3752,23 @@ impl App {
                         ),
                     ]
                 };
-                let flags_title = if is_numeric { "Numeric Format" } else { "Flags" };
-                let flags_border_focused = !matches!(
-                    details_focus,
-                    CategoryManagerDetailsFocus::Note
-                );
+                let flags_title = if is_numeric {
+                    "Numeric Format"
+                } else {
+                    "Flags"
+                };
+                let flags_border_focused =
+                    !matches!(details_focus, CategoryManagerDetailsFocus::Note);
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
                             .title(flags_title)
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(
-                                if flags_border_focused {
-                                    Color::LightCyan
-                                } else {
-                                    pane_idle
-                                },
-                            )),
+                            .border_style(Style::default().fg(if flags_border_focused {
+                                Color::LightCyan
+                            } else {
+                                pane_idle
+                            })),
                     ),
                     details_chunks[1],
                 );
@@ -3691,6 +4008,10 @@ impl App {
                     BoardDisplayMode::SingleLine => "single-line",
                     BoardDisplayMode::MultiLine => "multi-line",
                 };
+                let section_flow_label = match state.draft.section_flow {
+                    SectionFlow::Vertical => "vertical (stacked lanes)",
+                    SectionFlow::Horizontal => "horizontal (kanban lanes)",
+                };
 
                 let separator_style = Style::default().fg(Color::DarkGray);
                 let pad = 26; // column alignment width
@@ -3849,6 +4170,19 @@ impl App {
                         &mut selected_line,
                     )),
                 );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "  {:<width$}{}",
+                        "Section flow",
+                        section_flow_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        3,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
 
                 let alias_count = state
                     .draft
@@ -3869,7 +4203,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        6,
+                        7,
                         &items,
                         &mut selected_line,
                     )),
@@ -3895,7 +4229,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        3,
+                        4,
                         &items,
                         &mut selected_line,
                     )),
@@ -3914,7 +4248,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -3936,7 +4270,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),

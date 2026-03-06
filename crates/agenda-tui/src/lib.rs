@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
@@ -7,7 +8,8 @@ use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
-    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SummaryFn, View, WhenBucket,
+    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow, SummaryFn, View,
+    WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -825,6 +827,8 @@ struct App {
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
+    horizontal_slot_item_indices: Vec<usize>,
+    horizontal_slot_scroll_offsets: RefCell<Vec<usize>>,
     slot_index: usize,
     item_index: usize,
     column_index: usize,
@@ -881,6 +885,8 @@ impl Default for App {
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
+            horizontal_slot_item_indices: Vec::new(),
+            horizontal_slot_scroll_offsets: RefCell::new(Vec::new()),
             slot_index: 0,
             item_index: 0,
             column_index: 0,
@@ -917,8 +923,8 @@ mod tests {
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
-        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
-        WhenBucket,
+        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, SectionFlow, SummaryFn,
+        View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -5781,8 +5787,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let mut cost = Category::new("Cost".to_string());
@@ -6066,6 +6071,130 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('p'), &agenda)
             .expect("close preview");
         assert!(!app.show_preview);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_z_toggles_view_card_display_mode() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-z-cards-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+
+        let mut section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        section.criteria.set_criterion(CriterionMode::And, ready.id);
+
+        let mut view = View::new("Board".to_string());
+        view.section_flow = SectionFlow::Horizontal;
+        view.board_display_mode = BoardDisplayMode::SingleLine;
+        view.sections.push(section);
+        store.create_view(&view).expect("create view");
+
+        let item = Item::new("test item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ready.id, None)
+            .expect("assign ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_normal_key(KeyCode::Char('z'), &agenda)
+            .expect("toggle to multi-line");
+        let saved = store.get_view(view.id).expect("load view after z");
+        assert_eq!(saved.board_display_mode, BoardDisplayMode::MultiLine);
+        assert!(
+            app.status.contains("multi-line"),
+            "status should report new card display mode: {}",
+            app.status
+        );
+
+        app.handle_normal_key(KeyCode::Char('z'), &agenda)
+            .expect("toggle back to single-line");
+        let saved = store.get_view(view.id).expect("load view after second z");
+        assert_eq!(saved.board_display_mode, BoardDisplayMode::SingleLine);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_m_toggles_view_section_flow() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-m-lanes-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+
+        let mut section = Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        section.criteria.set_criterion(CriterionMode::And, ready.id);
+
+        let mut view = View::new("Board".to_string());
+        view.section_flow = SectionFlow::Vertical;
+        view.board_display_mode = BoardDisplayMode::SingleLine;
+        view.sections.push(section);
+        store.create_view(&view).expect("create view");
+
+        let item = Item::new("test item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ready.id, None)
+            .expect("assign ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_normal_key(KeyCode::Char('m'), &agenda)
+            .expect("toggle to horizontal");
+        let saved = store.get_view(view.id).expect("load view after m");
+        assert_eq!(saved.section_flow, SectionFlow::Horizontal);
+        assert!(
+            app.status.contains("horizontal"),
+            "status should report new board layout: {}",
+            app.status
+        );
+
+        app.handle_normal_key(KeyCode::Char('m'), &agenda)
+            .expect("toggle back to vertical");
+        let saved = store.get_view(view.id).expect("load view after second m");
+        assert_eq!(saved.section_flow, SectionFlow::Vertical);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -6434,6 +6563,14 @@ mod tests {
             "normal footer hints should include preview shortcut: {rendered}"
         );
         assert!(
+            rendered.contains("z:cards"),
+            "normal footer hints should include card display shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("m:lanes"),
+            "normal footer hints should include lane layout shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("u:deps"),
             "normal footer hints should include hide-dependent toggle shortcut: {rendered}"
         );
@@ -6450,6 +6587,14 @@ mod tests {
         assert!(
             rendered.contains("p:preview"),
             "filtered footer hints should include preview shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("z:cards"),
+            "filtered footer hints should include card display shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("m:lanes"),
+            "filtered footer hints should include lane layout shortcut: {rendered}"
         );
         assert!(
             rendered.contains("u:deps"),
@@ -8657,8 +8802,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -8690,8 +8835,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-catmgr-format-cycle-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -10388,10 +10533,12 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to display mode row");
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to section flow row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to unmatched visible row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            3
+            4
         );
 
         let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
@@ -10408,7 +10555,7 @@ mod tests {
             .expect("move past hide dependent to unmatched label row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            5
+            6
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -10417,6 +10564,51 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().inline_input,
             Some(super::ViewEditInlineInput::UnmatchedLabel)
         ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_section_flow_row_enter_toggles_flow_direction() {
+        let (store, db_path) = make_test_store_with_view("view-edit-section-flow-toggle");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = test_view_from_app(&app);
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when include row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when exclude row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to display mode row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to section flow row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            3
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.section_flow,
+            SectionFlow::Vertical
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle section flow to horizontal");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.section_flow,
+            SectionFlow::Horizontal
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle section flow back to vertical");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.section_flow,
+            SectionFlow::Vertical
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -10436,13 +10628,13 @@ mod tests {
         app.open_view_edit(view);
 
         // Move focus to Aliases row in view details.
-        for _ in 0..7 {
+        for _ in 0..8 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move details selection");
         }
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            6
+            7
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -12228,6 +12420,354 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_index() {
+        let (store, db_path) = make_two_section_store("horizontal-flow-nav");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut test_view = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "TestView")
+            .expect("TestView");
+        test_view.section_flow = SectionFlow::Horizontal;
+        store
+            .update_view(&test_view)
+            .expect("persist horizontal flow");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        assert_eq!(app.slot_index, 0);
+        assert_eq!(app.item_index, 0);
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move down in first lane");
+        assert_eq!(app.item_index, 1, "first lane selection should advance");
+
+        app.handle_normal_key(KeyCode::Char('l'), &agenda)
+            .expect("move to second lane");
+        assert_eq!(app.slot_index, 1);
+        assert_eq!(
+            app.item_index, 0,
+            "second lane should start at its own row index"
+        );
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move down in second lane");
+        assert_eq!(app.item_index, 1, "second lane selection should advance");
+
+        app.handle_normal_key(KeyCode::Char('h'), &agenda)
+            .expect("move back to first lane");
+        assert_eq!(app.slot_index, 0);
+        assert_eq!(
+            app.item_index, 1,
+            "first lane should restore its remembered row selection"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn horizontal_multiline_cards_wrap_titles_and_use_label_metadata() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-horizontal-cards-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let in_progress = Category::new("In Progress".to_string());
+        let high = Category::new("High".to_string());
+        let work = Category::new("Work".to_string());
+        store.create_category(&ready).expect("ready");
+        store.create_category(&in_progress).expect("in progress");
+        store.create_category(&high).expect("high");
+        store.create_category(&work).expect("work");
+
+        let mut ready_section = Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        ready_section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+
+        let mut in_progress_section = Section {
+            title: "In Progress".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        in_progress_section
+            .criteria
+            .set_criterion(CriterionMode::And, in_progress.id);
+
+        let mut view = View::new("Board".to_string());
+        view.section_flow = SectionFlow::Horizontal;
+        view.board_display_mode = BoardDisplayMode::MultiLine;
+        view.sections.push(ready_section);
+        view.sections.push(in_progress_section);
+        store.create_view(&view).expect("create view");
+
+        let mut item =
+            Item::new("change auto-refresh timer default rollout window immediately".to_string());
+        item.note = Some("Remember the keyboard shortcut copy".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ready.id, None)
+            .expect("assign ready");
+        agenda
+            .assign_item_manual(item.id, high.id, None)
+            .expect("assign high");
+        agenda
+            .assign_item_manual(item.id, work.id, None)
+            .expect("assign work");
+
+        let second_item = Item::new("follow-up cleanup".to_string());
+        store.create_item(&second_item).expect("create second item");
+        agenda
+            .assign_item_manual(second_item.id, ready.id, None)
+            .expect("assign second ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(72, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+        let lines = terminal_buffer_lines(&terminal);
+        let rendered = lines.join("\n");
+
+        assert!(
+            rendered.contains("change auto-refresh timer"),
+            "first title line should remain visible: {rendered}"
+        );
+        assert!(
+            rendered.contains("default rollout"),
+            "multi-line cards should wrap long titles instead of hard truncating: {rendered}"
+        );
+        assert!(
+            rendered.contains("due:none"),
+            "metadata should use explicit due phrasing: {rendered}"
+        );
+        assert!(
+            rendered.contains("3 categories"),
+            "metadata should use categories language: {rendered}"
+        );
+        assert!(
+            rendered.contains("♪"),
+            "metadata should preserve the note glyph: {rendered}"
+        );
+        assert!(
+            !rendered.contains("labels"),
+            "horizontal cards should not render labels phrasing: {rendered}"
+        );
+        assert!(
+            rendered.contains("----------"),
+            "multi-line cards should render separators consistently: {rendered}"
+        );
+        assert!(
+            rendered.contains("empty lane"),
+            "empty horizontal lanes should render the new empty state: {rendered}"
+        );
+        assert!(
+            lines.iter().filter(|line| line.contains("│>  ")).count() == 1,
+            "selected multi-line card should use a single marker: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn horizontal_section_tab_keeps_lane_scroll_offset_stable() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-horizontal-scroll-memory-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let backlog = Category::new("Backlog".to_string());
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&backlog).expect("backlog");
+        store.create_category(&ready).expect("ready");
+
+        let mut backlog_section = Section {
+            title: "Backlog".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        backlog_section
+            .criteria
+            .set_criterion(CriterionMode::And, backlog.id);
+
+        let mut ready_section = Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        ready_section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+
+        let mut view = View::new("Board".to_string());
+        view.section_flow = SectionFlow::Horizontal;
+        view.board_display_mode = BoardDisplayMode::SingleLine;
+        view.sections.push(backlog_section);
+        view.sections.push(ready_section);
+        store.create_view(&view).expect("create view");
+
+        for idx in 0..10 {
+            let item = Item::new(format!("Backlog item {idx:02}"));
+            store.create_item(&item).expect("create backlog item");
+            agenda
+                .assign_item_manual(item.id, backlog.id, None)
+                .expect("assign backlog");
+        }
+        for idx in 0..2 {
+            let item = Item::new(format!("Ready item {idx:02}"));
+            store.create_item(&item).expect("create ready item");
+            agenda
+                .assign_item_manual(item.id, ready.id, None)
+                .expect("assign ready");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        for _ in 0..9 {
+            app.move_item_cursor(1);
+        }
+
+        let backend = TestBackend::new(90, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render selected backlog lane");
+        let remembered_before_tab = app.horizontal_slot_scroll_offsets.borrow()[0];
+        assert!(
+            remembered_before_tab > 0,
+            "deep selection should establish a non-zero lane scroll offset"
+        );
+
+        app.handle_normal_key(KeyCode::Tab, &agenda)
+            .expect("tab to ready lane");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render ready lane");
+        let remembered_after_tab = app.horizontal_slot_scroll_offsets.borrow()[0];
+        assert_eq!(
+            remembered_after_tab, remembered_before_tab,
+            "tabbing away should preserve the previous lane scroll offset"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn horizontal_singleline_cards_preserve_glyphs() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-horizontal-singleline-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("ready");
+
+        let mut section = Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        section.criteria.set_criterion(CriterionMode::And, ready.id);
+
+        let mut view = View::new("Board".to_string());
+        view.section_flow = SectionFlow::Horizontal;
+        view.board_display_mode = BoardDisplayMode::SingleLine;
+        view.sections.push(section);
+        store.create_view(&view).expect("create view");
+
+        let blocker = Item::new("Blocker".to_string());
+        store.create_item(&blocker).expect("create blocker");
+
+        let mut item = Item::new("single-line glyph visibility check".to_string());
+        item.is_done = true;
+        item.note = Some("remember me".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, ready.id, None)
+            .expect("assign ready");
+        agenda
+            .link_items_depends_on(item.id, blocker.id)
+            .expect("link depends-on");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(60, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("✓&♪"),
+            "single-line horizontal cards should preserve done/blocked/note glyphs: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn section_filters_are_independent() {
         let (store, db_path) = make_two_section_store("independent");
         let classifier = SubstringClassifier;
@@ -12836,26 +13376,11 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
-        assert!(
-            rendered.contains("sum=350"),
-            "sum missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("avg=175"),
-            "avg missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("min=100"),
-            "min missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("max=250"),
-            "max missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("count=2"),
-            "count missing: {rendered}"
-        );
+        assert!(rendered.contains("sum=350"), "sum missing: {rendered}");
+        assert!(rendered.contains("avg=175"), "avg missing: {rendered}");
+        assert!(rendered.contains("min=100"), "min missing: {rendered}");
+        assert!(rendered.contains("max=250"), "max missing: {rendered}");
+        assert!(rendered.contains("count=2"), "count missing: {rendered}");
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -12866,8 +13391,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let mut cost = Category::new("Cost".to_string());
@@ -12916,31 +13440,19 @@ mod tests {
         app.column_index = 1;
 
         // Initially summary_fn is None
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, None);
 
         // Press F to cycle: None -> Sum
         app.handle_normal_key(KeyCode::Char('F'), &agenda)
             .expect("press F");
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, Some(SummaryFn::Sum));
 
         // Press F again: Sum -> Avg
         app.handle_normal_key(KeyCode::Char('F'), &agenda)
             .expect("press F again");
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, Some(SummaryFn::Avg));
 
         drop(store);
@@ -12994,13 +13506,13 @@ mod tests {
             .expect("press F on tag column");
 
         // Should remain None — tag columns don't support summary functions
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, None);
-        assert!(app.status.contains("numeric"), "status should mention numeric: {}", app.status);
+        assert!(
+            app.status.contains("numeric"),
+            "status should mention numeric: {}",
+            app.status
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
