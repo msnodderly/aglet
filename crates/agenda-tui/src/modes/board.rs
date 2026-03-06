@@ -2271,10 +2271,10 @@ impl App {
                         let selected_count = self.selected_count();
                         let item_suffix = if selected_count == 1 { "" } else { "s" };
                         format!(
-                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
+                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
                         )
                     } else {
-                        "Item categories: j/k select, Space toggle, n or / type category, Enter done, Esc cancel"
+                        "Item categories: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
                             .to_string()
                     };
                 }
@@ -2318,7 +2318,7 @@ impl App {
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 if self.selected_count() > 1 {
-                    self.batch_toggle_selected_items_done(agenda)?;
+                    self.batch_toggle_selected_items_done(agenda, DoneToggleOrigin::NormalMode)?;
                 } else if let Some(item_id) = self.selected_item_id() {
                     self.begin_done_toggle_or_confirm(
                         agenda,
@@ -2468,7 +2468,11 @@ impl App {
         self.apply_done_toggle_action(agenda, item_id, was_done, origin, &[])
     }
 
-    fn batch_toggle_selected_items_done(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn batch_toggle_selected_items_done(
+        &mut self,
+        agenda: &Agenda<'_>,
+        origin: DoneToggleOrigin,
+    ) -> Result<(), String> {
         let action_item_ids = self.selected_item_ids_in_view_order();
         if action_item_ids.is_empty() {
             self.status = "No selected items to update".to_string();
@@ -2485,7 +2489,11 @@ impl App {
             let mut blocking_item_count = 0usize;
             let mut blocked_link_count = 0usize;
             for item_id in &action_item_ids {
-                let Some(item) = self.all_items.iter().find(|candidate| candidate.id == *item_id) else {
+                let Some(item) = self
+                    .all_items
+                    .iter()
+                    .find(|candidate| candidate.id == *item_id)
+                else {
                     continue;
                 };
                 if item.is_done {
@@ -2520,7 +2528,7 @@ impl App {
                         blocking_item_count,
                         blocked_link_count,
                     },
-                    origin: DoneToggleOrigin::NormalMode,
+                    origin,
                 });
                 self.mode = Mode::ConfirmDelete;
                 self.status = format!(
@@ -2530,7 +2538,7 @@ impl App {
             }
         }
 
-        self.apply_batch_done_action(agenda, &action_item_ids, false)
+        self.apply_batch_done_action(agenda, &action_item_ids, false, origin)
     }
 
     pub(crate) fn apply_batch_done_action(
@@ -2538,10 +2546,11 @@ impl App {
         agenda: &Agenda<'_>,
         item_ids: &[ItemId],
         remove_blocking_links: bool,
+        origin: DoneToggleOrigin,
     ) -> Result<(), String> {
         if item_ids.is_empty() {
             self.status = "No selected items to update".to_string();
-            self.mode = Mode::Normal;
+            self.mode = Self::done_toggle_return_mode(origin);
             return Ok(());
         }
 
@@ -2559,7 +2568,11 @@ impl App {
         let mut first_error = None;
 
         for item_id in item_ids {
-            let Some(item) = self.all_items.iter().find(|candidate| candidate.id == *item_id) else {
+            let Some(item) = self
+                .all_items
+                .iter()
+                .find(|candidate| candidate.id == *item_id)
+            else {
                 failed += 1;
                 if first_error.is_none() {
                     first_error = Some(format!("item {} is no longer available", item_id));
@@ -2621,7 +2634,8 @@ impl App {
 
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(anchor_id);
-        if failed == 0 && changed > 0 {
+        let clear_selection = failed == 0 && changed > 0;
+        if clear_selection {
             self.clear_selected_items();
         }
 
@@ -2639,7 +2653,11 @@ impl App {
             summary.push_str(&format!(" first_error={err}"));
         }
         self.status = summary;
-        self.mode = Mode::Normal;
+        self.mode = if clear_selection {
+            Mode::Normal
+        } else {
+            Self::done_toggle_return_mode(origin)
+        };
         Ok(())
     }
 
@@ -3179,17 +3197,17 @@ impl App {
                 } else if failed > 0 {
                     (
                         format!(
-                        "Link failed: {}",
-                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
                         ),
                         false,
                     )
                 } else if created > 0 {
                     (
                         format!(
-                        "Linked '{}' blocked by '{}'",
-                        truncate_board_cell(&anchor_label, 30),
-                        truncate_board_cell(&target_label, 30)
+                            "Linked '{}' blocked by '{}'",
+                            truncate_board_cell(&anchor_label, 30),
+                            truncate_board_cell(&target_label, 30)
                         ),
                         true,
                     )
@@ -3227,8 +3245,8 @@ impl App {
                 } else if failed > 0 {
                     (
                         format!(
-                        "Link failed: {}",
-                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
                         ),
                         false,
                     )
@@ -3268,17 +3286,17 @@ impl App {
                 } else if failed > 0 {
                     (
                         format!(
-                        "Link failed: {}",
-                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
                         ),
                         false,
                     )
                 } else if created > 0 {
                     (
                         format!(
-                        "Linked '{}' blocks '{}'",
-                        truncate_board_cell(&anchor_label, 30),
-                        truncate_board_cell(&target_label, 30)
+                            "Linked '{}' blocks '{}'",
+                            truncate_board_cell(&anchor_label, 30),
+                            truncate_board_cell(&target_label, 30)
                         ),
                         true,
                     )
@@ -3316,8 +3334,8 @@ impl App {
                 } else if failed > 0 {
                     (
                         format!(
-                        "Link failed: {}",
-                        first_error.unwrap_or_else(|| "unknown error".to_string())
+                            "Link failed: {}",
+                            first_error.unwrap_or_else(|| "unknown error".to_string())
                         ),
                         false,
                     )
@@ -3353,18 +3371,18 @@ impl App {
                 if source_item_ids.len() > 1 {
                     (
                         format!(
-                        "Cleared dependencies for {} (prereqs={}, blocks={})",
-                        source_label, total_prereqs, total_dependents
+                            "Cleared dependencies for {} (prereqs={}, blocks={})",
+                            source_label, total_prereqs, total_dependents
                         ),
                         true,
                     )
                 } else {
                     (
                         format!(
-                        "Cleared dependencies for '{}' (prereqs={}, blocks={})",
-                        truncate_board_cell(&anchor_label, 30),
-                        total_prereqs,
-                        total_dependents
+                            "Cleared dependencies for '{}' (prereqs={}, blocks={})",
+                            truncate_board_cell(&anchor_label, 30),
+                            total_prereqs,
+                            total_dependents
                         ),
                         true,
                     )
@@ -4815,7 +4833,12 @@ impl App {
 
                 if row.name.eq_ignore_ascii_case("Done") {
                     if batch_mode && action_item_ids.len() > 1 {
-                        self.status = "Batch done toggle is not supported".to_string();
+                        if let Err(err) = self.batch_toggle_selected_items_done(
+                            agenda,
+                            DoneToggleOrigin::ItemAssignPicker,
+                        ) {
+                            self.status = format!("Done toggle failed: {}", err);
+                        }
                         return Ok(false);
                     }
                     if let Err(err) = self.begin_done_toggle_or_confirm(
@@ -4829,7 +4852,8 @@ impl App {
                 }
 
                 if batch_mode && action_item_ids.len() > 1 {
-                    let (assigned_count, total_count) = self.effective_action_assignment_counts(row.id);
+                    let (assigned_count, total_count) =
+                        self.effective_action_assignment_counts(row.id);
                     let should_unassign = assigned_count == total_count;
                     let mut changed = 0usize;
                     let mut failed = 0usize;
@@ -4899,11 +4923,7 @@ impl App {
                     }
                 } else {
                     let result = agenda
-                        .assign_item_manual(
-                            item_id,
-                            row.id,
-                            Some("manual:tui.assign".to_string()),
-                        )
+                        .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
                         .map_err(|e| e.to_string())?;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);

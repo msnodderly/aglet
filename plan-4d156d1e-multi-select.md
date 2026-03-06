@@ -37,6 +37,10 @@ Primary actions in scope:
 - Phase B1 batch link fast path completed in commit `ede88ae`
 - Phase B2 batch link result semantics completed in the next checkpoint
 - Phase D batch done fast path completed in the next checkpoint
+- Final sweep checkpoint completed:
+  - `Done` inside assign picker now reuses the shared batch-`d` flow
+  - assign picker and done-confirm status/footer wording tightened to match the
+    actual interaction model
 
 ### Phase 0 Delivered
 
@@ -104,16 +108,21 @@ Primary actions in scope:
   mirroring the single-item flow
 - `y` removes blocking links and marks the selected set done
 - `n` keeps blocking links and still marks the selected set done
+- The `Done` row inside `a` now reuses the same batch-done path, including
+  blocker confirmation, partial-failure behavior, and selection-clear rules
+- Assign-picker copy now reflects the actual control model:
+  `Space` applies changes, `Enter`/`Esc` close the picker, and done-confirm
+  copy is shorter and clearer
 
 ### Active Work
 
 - Next likely phase:
-  - return to any remaining Phase A2 polish gaps only if they show up in manual
-    testing
-  - otherwise continue broadening batch-link parity where the current wizard
-    still has single-item assumptions
-  - tighten any remaining batch status / footer wording issues that show up in
-    manual testing
+  - broad manual smoke testing across batch assign/link/delete/done in one
+    session
+  - catch any remaining single-item assumptions in batch-mode status, preview,
+    or confirm flows
+  - decide whether the branch is ready for final integration or wants one more
+    UX pass
 
 ## Delivery Strategy
 
