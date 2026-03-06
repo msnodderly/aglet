@@ -7,7 +7,8 @@ use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
-    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SummaryFn, View, WhenBucket,
+    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow, SummaryFn, View,
+    WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -825,6 +826,7 @@ struct App {
     preview_summary_scroll: usize,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
+    horizontal_slot_item_indices: Vec<usize>,
     slot_index: usize,
     item_index: usize,
     column_index: usize,
@@ -881,6 +883,7 @@ impl Default for App {
             preview_summary_scroll: 0,
             inspect_assignment_index: 0,
             slots: Vec::new(),
+            horizontal_slot_item_indices: Vec::new(),
             slot_index: 0,
             item_index: 0,
             column_index: 0,
@@ -917,8 +920,8 @@ mod tests {
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
-        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
-        WhenBucket,
+        Column, ColumnKind, CriterionMode, Item, ItemId, Query, Section, SectionFlow, SummaryFn,
+        View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -5781,8 +5784,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-f-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let mut cost = Category::new("Cost".to_string());
@@ -8657,8 +8659,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-numeric-focus-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -8690,8 +8692,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-catmgr-format-cycle-{nanos}.ag"));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-format-cycle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -10388,10 +10390,12 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to display mode row");
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to section flow row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to unmatched visible row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            3
+            4
         );
 
         let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
@@ -10408,7 +10412,7 @@ mod tests {
             .expect("move past hide dependent to unmatched label row");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            5
+            6
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -10417,6 +10421,51 @@ mod tests {
             app.view_edit_state.as_ref().unwrap().inline_input,
             Some(super::ViewEditInlineInput::UnmatchedLabel)
         ));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_edit_section_flow_row_enter_toggles_flow_direction() {
+        let (store, db_path) = make_test_store_with_view("view-edit-section-flow-toggle");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let view = test_view_from_app(&app);
+        app.open_view_edit(view);
+
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when include row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to when exclude row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to display mode row");
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to section flow row");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+            3
+        );
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.section_flow,
+            SectionFlow::Vertical
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle section flow to horizontal");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.section_flow,
+            SectionFlow::Horizontal
+        );
+
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("toggle section flow back to vertical");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.section_flow,
+            SectionFlow::Vertical
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -10436,13 +10485,13 @@ mod tests {
         app.open_view_edit(view);
 
         // Move focus to Aliases row in view details.
-        for _ in 0..7 {
+        for _ in 0..8 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move details selection");
         }
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-            6
+            7
         );
 
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -12228,6 +12277,58 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_index() {
+        let (store, db_path) = make_two_section_store("horizontal-flow-nav");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut test_view = store
+            .list_views()
+            .expect("list views")
+            .into_iter()
+            .find(|view| view.name == "TestView")
+            .expect("TestView");
+        test_view.section_flow = SectionFlow::Horizontal;
+        store
+            .update_view(&test_view)
+            .expect("persist horizontal flow");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        assert_eq!(app.slot_index, 0);
+        assert_eq!(app.item_index, 0);
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move down in first lane");
+        assert_eq!(app.item_index, 1, "first lane selection should advance");
+
+        app.handle_normal_key(KeyCode::Char('l'), &agenda)
+            .expect("move to second lane");
+        assert_eq!(app.slot_index, 1);
+        assert_eq!(
+            app.item_index, 0,
+            "second lane should start at its own row index"
+        );
+
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("move down in second lane");
+        assert_eq!(app.item_index, 1, "second lane selection should advance");
+
+        app.handle_normal_key(KeyCode::Char('h'), &agenda)
+            .expect("move back to first lane");
+        assert_eq!(app.slot_index, 0);
+        assert_eq!(
+            app.item_index, 1,
+            "first lane should restore its remembered row selection"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn section_filters_are_independent() {
         let (store, db_path) = make_two_section_store("independent");
         let classifier = SubstringClassifier;
@@ -12836,26 +12937,11 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
-        assert!(
-            rendered.contains("sum=350"),
-            "sum missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("avg=175"),
-            "avg missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("min=100"),
-            "min missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("max=250"),
-            "max missing: {rendered}"
-        );
-        assert!(
-            rendered.contains("count=2"),
-            "count missing: {rendered}"
-        );
+        assert!(rendered.contains("sum=350"), "sum missing: {rendered}");
+        assert!(rendered.contains("avg=175"), "avg missing: {rendered}");
+        assert!(rendered.contains("min=100"), "min missing: {rendered}");
+        assert!(rendered.contains("max=250"), "max missing: {rendered}");
+        assert!(rendered.contains("count=2"), "count missing: {rendered}");
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -12866,8 +12952,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let db_path =
-            std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!("agenda-tui-shift-f-summary-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
 
         let mut cost = Category::new("Cost".to_string());
@@ -12916,31 +13001,19 @@ mod tests {
         app.column_index = 1;
 
         // Initially summary_fn is None
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, None);
 
         // Press F to cycle: None -> Sum
         app.handle_normal_key(KeyCode::Char('F'), &agenda)
             .expect("press F");
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, Some(SummaryFn::Sum));
 
         // Press F again: Sum -> Avg
         app.handle_normal_key(KeyCode::Char('F'), &agenda)
             .expect("press F again");
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, Some(SummaryFn::Avg));
 
         drop(store);
@@ -12994,13 +13067,13 @@ mod tests {
             .expect("press F on tag column");
 
         // Should remain None — tag columns don't support summary functions
-        let col = &store
-            .get_view(view.id)
-            .expect("get view")
-            .sections[0]
-            .columns[0];
+        let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
         assert_eq!(col.summary_fn, None);
-        assert!(app.status.contains("numeric"), "status should mention numeric: {}", app.status);
+        assert!(
+            app.status.contains("numeric"),
+            "status should mention numeric: {}",
+            app.status
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
