@@ -623,6 +623,7 @@ impl App {
         let anchor_label = anchor
             .map(board_item_label)
             .unwrap_or_else(|| state.anchor_item_id.to_string());
+        let source_count = self.link_wizard_source_count();
         let matches = self.link_wizard_target_matches();
         let selected_target_id = self.link_wizard_selected_target_id();
 
@@ -645,8 +646,16 @@ impl App {
             .split(inner);
 
         let anchor_lines = vec![
-            Line::from("Anchor item"),
-            Line::from(format!("  {}", truncate_board_cell(&anchor_label, 72))),
+            Line::from(if source_count > 1 {
+                format!("Source set ({source_count} items)")
+            } else {
+                "Anchor item".to_string()
+            }),
+            Line::from(if source_count > 1 {
+                format!("  {} (focused)", truncate_board_cell(&anchor_label, 72))
+            } else {
+                format!("  {}", truncate_board_cell(&anchor_label, 72))
+            }),
         ];
         frame.render_widget(
             Paragraph::new(anchor_lines).block(
@@ -761,16 +770,26 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} blocked by {}",
-                            truncate_board_cell(&anchor_label, 28),
-                            truncate_board_cell(&target.text, 28)
-                        )));
-                        lines.push(Line::from(format!(
-                            "  (stores: {} depends-on {})",
-                            truncate_board_cell(&anchor_label, 22),
-                            truncate_board_cell(&target.text, 22)
-                        )));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items blocked by {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(
+                                "  (applies one depends-on link per selected item)",
+                            ));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} blocked by {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(format!(
+                                "  (stores: {} depends-on {})",
+                                truncate_board_cell(&anchor_label, 22),
+                                truncate_board_cell(&target.text, 22)
+                            )));
+                        }
                     } else {
                         lines.push(Line::from("  Select a target item"));
                         lines.push(Line::from(""));
@@ -780,11 +799,18 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} depends on {}",
-                            truncate_board_cell(&anchor_label, 28),
-                            truncate_board_cell(&target.text, 28)
-                        )));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items depend on {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} depends on {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                        }
                         lines.push(Line::from(""));
                     } else {
                         lines.push(Line::from("  Select a target item"));
@@ -795,16 +821,26 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} blocks {}",
-                            truncate_board_cell(&anchor_label, 28),
-                            truncate_board_cell(&target.text, 28)
-                        )));
-                        lines.push(Line::from(format!(
-                            "  (stores: {} depends-on {})",
-                            truncate_board_cell(&target.text, 22),
-                            truncate_board_cell(&anchor_label, 22)
-                        )));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items block {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(
+                                "  (adds one blocked relation per selected item)",
+                            ));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} blocks {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(format!(
+                                "  (stores: {} depends-on {})",
+                                truncate_board_cell(&target.text, 22),
+                                truncate_board_cell(&anchor_label, 22)
+                            )));
+                        }
                     } else {
                         lines.push(Line::from("  Select a target item"));
                         lines.push(Line::from(""));
@@ -814,19 +850,35 @@ impl App {
                     let target = selected_target_id
                         .and_then(|id| self.all_items.iter().find(|item| item.id == id));
                     if let Some(target) = target {
-                        lines.push(Line::from(format!(
-                            "  {} related to {}",
-                            truncate_board_cell(&anchor_label, 26),
-                            truncate_board_cell(&target.text, 26)
-                        )));
-                        lines.push(Line::from("  (symmetric)"));
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items related to {}",
+                                truncate_board_cell(&target.text, 26)
+                            )));
+                            lines.push(Line::from(
+                                "  (adds one symmetric relation per selected item)",
+                            ));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} related to {}",
+                                truncate_board_cell(&anchor_label, 26),
+                                truncate_board_cell(&target.text, 26)
+                            )));
+                            lines.push(Line::from("  (symmetric)"));
+                        }
                     } else {
                         lines.push(Line::from("  Select a target item"));
                         lines.push(Line::from(""));
                     }
                 }
                 LinkWizardAction::ClearDependencies => {
-                    lines.push(Line::from("  Remove all immediate prereqs and dependents"));
+                    if source_count > 1 {
+                        lines.push(Line::from(
+                            "  Remove immediate prereqs and dependents for all selected items",
+                        ));
+                    } else {
+                        lines.push(Line::from("  Remove all immediate prereqs and dependents"));
+                    }
                     lines.push(Line::from("  (does not remove related links)"));
                 }
             }
@@ -1576,7 +1628,6 @@ impl App {
         } else {
             ""
         };
-
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "Agenda Reborn",
@@ -1904,8 +1955,13 @@ impl App {
                         .iter()
                         .enumerate()
                         .map(|(item_index, item)| {
-                            let is_selected = is_selected_slot && item_index == self.item_index;
-                            let marker_cell = if is_selected { ">" } else { " " };
+                            let is_focused_item = is_selected_slot && item_index == self.item_index;
+                            let is_marked_selected = self.is_item_selected(item.id);
+                            let marker_cell = match (is_focused_item, is_marked_selected) {
+                                (true, _) => ">",
+                                (false, true) => "+",
+                                (false, false) => " ",
+                            };
                             let note_cell = item_indicator_glyphs(
                                 item.is_done,
                                 self.is_item_blocked(item.id),
@@ -1921,7 +1977,7 @@ impl App {
                             let mut row_height = item_cell_content.lines().count().max(1);
                             let item_cell = {
                                 let mut cell = Cell::from(item_cell_content);
-                                if is_selected && self.column_index == item_board_column_index {
+                                if is_focused_item && self.column_index == item_board_column_index {
                                     cell = cell.style(focused_cell_style());
                                 }
                                 cell
@@ -1982,7 +2038,7 @@ impl App {
                                     } else {
                                         col_idx + 1
                                     };
-                                    if is_selected && self.column_index == board_column_index {
+                                    if is_focused_item && self.column_index == board_column_index {
                                         cell = cell.style(focused_cell_style());
                                     }
                                     cell
@@ -2023,8 +2079,10 @@ impl App {
                             if effective_display_mode == BoardDisplayMode::MultiLine {
                                 row = row.height(row_height.min(u16::MAX as usize) as u16);
                             }
-                            if is_selected {
+                            if is_focused_item {
                                 row = row.style(selected_board_row_style());
+                            } else if is_marked_selected {
+                                row = row.style(marked_board_row_style());
                             }
                             row
                         })
@@ -2232,7 +2290,12 @@ impl App {
                                 .when_date
                                 .map(|dt| dt.date().to_string())
                                 .unwrap_or_else(|| "-".to_string());
-                            let marker_cell = if is_selected { ">" } else { " " };
+                            let is_marked_selected = self.is_item_selected(item.id);
+                            let marker_cell = match (is_selected, is_marked_selected) {
+                                (true, _) => ">",
+                                (false, true) => "+",
+                                (false, false) => " ",
+                            };
                             let note_cell = item_indicator_glyphs(
                                 item.is_done,
                                 self.is_item_blocked(item.id),
@@ -2281,6 +2344,8 @@ impl App {
                             }
                             if is_selected {
                                 row = row.style(selected_board_row_style());
+                            } else if is_marked_selected {
+                                row = row.style(marked_board_row_style());
                             }
                             row
                         })
@@ -2448,6 +2513,13 @@ impl App {
             let mut card_heights: Vec<usize> = Vec::with_capacity(slot.items.len());
 
             for (item_index, item) in slot.items.iter().enumerate() {
+                let is_focused_item = is_selected_slot && item_index == self.item_index;
+                let is_marked_selected = self.is_item_selected(item.id);
+                let marker_prefix = if is_marked_selected && !is_focused_item {
+                    "+ "
+                } else {
+                    ""
+                };
                 let item_text = board_item_label(item);
                 let category_count = item_assignment_labels(item, category_display_names).len();
                 let mut meta_parts = vec![format!(
@@ -2480,7 +2552,7 @@ impl App {
                 match effective_display_mode {
                     BoardDisplayMode::SingleLine => {
                         let single_line_text = if glyphs.is_empty() {
-                            truncate_board_cell(&item_text, title_width)
+                            truncate_board_cell(&format!("{marker_prefix}{item_text}"), title_width)
                         } else {
                             let glyph_prefix = format!("{glyphs} ");
                             let reserved_glyph_width = glyph_prefix.chars().count();
@@ -2489,7 +2561,7 @@ impl App {
                                     "{}{}",
                                     glyph_prefix,
                                     truncate_board_cell(
-                                        &item_text,
+                                        &format!("{marker_prefix}{item_text}"),
                                         title_width.saturating_sub(reserved_glyph_width),
                                     )
                                 )
@@ -2500,7 +2572,11 @@ impl App {
                         lines.push(Line::from(single_line_text));
                     }
                     BoardDisplayMode::MultiLine => {
-                        for line in wrap_text_for_board_cell_clamped(&item_text, title_width, 2) {
+                        for line in wrap_text_for_board_cell_clamped(
+                            &format!("{marker_prefix}{item_text}"),
+                            title_width,
+                            2,
+                        ) {
                             lines.push(Line::from(format!(" {}", line)));
                         }
                         lines.push(Line::from(Span::styled(
@@ -2517,7 +2593,11 @@ impl App {
                 }
 
                 card_heights.push(lines.len().max(1));
-                cards.push(ListItem::new(lines));
+                let mut card = ListItem::new(lines);
+                if !is_focused_item && is_marked_selected {
+                    card = card.style(marked_board_row_style());
+                }
+                cards.push(card);
             }
 
             let mut list_state = ListState::default().with_selected(selected_row);
@@ -2809,10 +2889,33 @@ impl App {
             }
             Mode::ConfirmDelete => {
                 if let Some(done_confirm) = &self.done_blocks_confirm {
-                    let blocked_count = done_confirm.blocked_item_ids.len();
-                    let suffix = if blocked_count == 1 { "" } else { "s" };
+                    match &done_confirm.scope {
+                        DoneBlocksConfirmScope::Single {
+                            blocked_item_ids, ..
+                        } => {
+                            let blocked_count = blocked_item_ids.len();
+                            let suffix = if blocked_count == 1 { "" } else { "s" };
+                            format!(
+                                "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                            )
+                        }
+                        DoneBlocksConfirmScope::Batch {
+                            blocking_item_count,
+                            blocked_link_count,
+                            ..
+                        } => {
+                            let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
+                            let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
+                            format!(
+                                "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                            )
+                        }
+                    }
+                } else if let Some(batch_delete_item_ids) = &self.batch_delete_item_ids {
+                    let selected_count = batch_delete_item_ids.len();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
                     format!(
-                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                        "Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel"
                     )
                 } else {
                     "Delete item? y:confirm Esc:cancel".to_string()
@@ -2826,7 +2929,9 @@ impl App {
                 }
             }
             Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
-            Mode::ItemAssignPicker => "Assign categories (changes apply immediately)".to_string(),
+            Mode::ItemAssignPicker => {
+                "Assign categories (Space applies; Enter/Esc close)".to_string()
+            }
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
                 if let Some(state) = self.link_wizard_state() {
@@ -2920,7 +3025,7 @@ impl App {
                     "S:save  Tab:pane  Esc:close"
                 }
             }
-            Mode::ItemAssignPicker => "Space:toggle  n:new  Enter:done  Esc:cancel",
+            Mode::ItemAssignPicker => "Space:apply  n:new  Enter:close  Esc:cancel",
             Mode::ItemAssignInput => "Enter:assign  Esc:cancel",
             Mode::LinkWizard => "Tab:focus  Enter:apply  /:target  Type:search  Esc:cancel",
             Mode::CategoryDirectEdit => "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel",
@@ -2928,7 +3033,7 @@ impl App {
             Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
             Mode::ConfirmDelete => {
                 if self.done_blocks_confirm.is_some() {
-                    "y:remove blocking links + done  n:mark done only  Esc:cancel"
+                    "y:remove links + done  n:done only  Esc:cancel"
                 } else {
                     "y:confirm  Esc:cancel"
                 }
@@ -2970,8 +3075,10 @@ impl App {
                     "S:save  Tab:next  Esc:cancel"
                 }
             }
-            _ => {
-                if self.section_filters.iter().any(|f| f.is_some()) {
+            Mode::Normal => {
+                if self.selected_count() > 0 {
+                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  q:quit"
+                } else if self.section_filters.iter().any(|f| f.is_some()) {
                     "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
                     "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
@@ -3448,7 +3555,17 @@ impl App {
                     } else {
                         format!(" [{}]", flags.join(","))
                     };
-                    let assigned = if self.selected_item_has_assignment(row.id) {
+                    let (assigned_count, total_count) =
+                        self.effective_action_assignment_counts(row.id);
+                    let assigned = if total_count > 1 {
+                        if assigned_count == 0 {
+                            "[ ]".to_string()
+                        } else if assigned_count == total_count {
+                            "[x]".to_string()
+                        } else {
+                            "[~]".to_string()
+                        }
+                    } else if self.selected_item_has_assignment(row.id) {
                         if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {
                             // Show numeric value for assigned numeric categories
                             let val = self

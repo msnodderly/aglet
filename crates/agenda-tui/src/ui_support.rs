@@ -726,6 +726,12 @@ pub(super) fn selected_board_row_style() -> Style {
     Style::default().bg(Color::DarkGray)
 }
 
+pub(super) fn marked_board_row_style() -> Style {
+    Style::default()
+        .fg(Color::White)
+        .bg(Color::Rgb(40, 70, 120))
+}
+
 pub(super) fn focused_cell_style() -> Style {
     Style::default()
         .fg(Color::Black)
