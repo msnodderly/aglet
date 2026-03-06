@@ -220,17 +220,20 @@ cargo run ... show <id2> 2>/dev/null | head -5
 cargo run ... show <id1> 2>&1 | head -5 && cargo run ... show <id2> 2>&1 | head -5
 ```
 
-## `cargo fmt` File-Scoped Runs Can Touch Sibling Modules (Surprising)
+## `cargo fmt` / `rustfmt` File-Scoped Runs Can Touch Sibling Modules (Surprising)
 
 Running `cargo fmt --all -- <file>` in this workspace can still reformat other
 Rust files in the same crate/module tree (not just the listed file), because
 rustfmt follows `mod` declarations from the entry file.
 
+Surprising follow-up observed in this repo: direct `rustfmt <entry-file>` can
+also spill into sibling module files when the entry file declares `mod ...`.
+
 Practical implications:
 - After file-scoped fmt runs, always check `git status` for incidental
   formatting diffs outside your task scope.
-- If you need strict single-file formatting, run `rustfmt <file>` directly and
-  still verify for spillover changes.
+- `rustfmt <file>` is not guaranteed to stay single-file here; still verify for
+  spillover changes.
 
 ## `agenda-cli edit --note-stdin` Semantics (Surprising)
 

@@ -1,5 +1,50 @@
 use crate::*;
 
+/// Cycle: integer → 1dp → 2dp → 2dp+thousands → currency (2dp+thousands+$) → integer
+pub(super) fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
+    let has_currency = current.currency_symbol.is_some();
+    match (current.decimal_places, current.use_thousands_separator, has_currency) {
+        (0, false, false) => NumericFormat {
+            decimal_places: 1,
+            currency_symbol: None,
+            use_thousands_separator: false,
+        },
+        (1, false, false) => NumericFormat {
+            decimal_places: 2,
+            currency_symbol: None,
+            use_thousands_separator: false,
+        },
+        (2, false, false) => NumericFormat {
+            decimal_places: 2,
+            currency_symbol: None,
+            use_thousands_separator: true,
+        },
+        (2, true, false) => NumericFormat {
+            decimal_places: 2,
+            currency_symbol: Some("$".to_string()),
+            use_thousands_separator: true,
+        },
+        // Currency or any custom state → back to integer
+        _ => NumericFormat {
+            decimal_places: 0,
+            currency_symbol: None,
+            use_thousands_separator: false,
+        },
+    }
+}
+
+pub(crate) fn describe_numeric_format(fmt: &NumericFormat) -> &'static str {
+    let has_currency = fmt.currency_symbol.is_some();
+    match (fmt.decimal_places, fmt.use_thousands_separator, has_currency) {
+        (0, false, false) => "Integer",
+        (1, false, false) => "1 decimal place",
+        (2, false, false) => "2 decimal places",
+        (2, true, false) => "2dp, thousands",
+        (_, _, true) => "Currency",
+        _ => "Custom",
+    }
+}
+
 enum InlineCreateConfirmKeyAction {
     Confirm,
     Cancel,
@@ -795,21 +840,6 @@ impl App {
         self.status = match self.preview_mode {
             PreviewMode::Summary => "Preview mode: Summary".to_string(),
             PreviewMode::Provenance => "Preview mode: Info".to_string(),
-        };
-    }
-
-    pub(crate) fn toggle_normal_focus(&mut self) {
-        if !self.show_preview {
-            self.status = "Preview is closed (press p to open)".to_string();
-            return;
-        }
-        self.normal_focus = match self.normal_focus {
-            NormalFocus::Board => NormalFocus::Preview,
-            NormalFocus::Preview => NormalFocus::Board,
-        };
-        self.status = match self.normal_focus {
-            NormalFocus::Board => "Focus: Board".to_string(),
-            NormalFocus::Preview => "Focus: Preview".to_string(),
         };
     }
 
@@ -2167,7 +2197,9 @@ impl App {
             }
             KeyCode::Tab => self.move_slot_cursor(1),
             KeyCode::BackTab => self.move_slot_cursor(-1),
-            KeyCode::Char('f') => self.toggle_normal_focus(),
+            KeyCode::Char('f') => {
+                self.cycle_column_numeric_format(agenda)?;
+            }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
                 self.status = "g-prefix: ga=All Items".to_string();
@@ -2484,6 +2516,64 @@ impl App {
             .map_err(|e| e.to_string())?;
         self.refresh(agenda.store())?;
         self.status = format!("Column summary: {}", next.label());
+        Ok(())
+    }
+
+    fn cycle_column_numeric_format(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let slot = match self.current_slot() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let section_index = match slot.context {
+            SlotContext::Section { section_index }
+            | SlotContext::GeneratedSection { section_index, .. } => section_index,
+            SlotContext::Unmatched => {
+                self.status = "No columns on unmatched lane".to_string();
+                return Ok(());
+            }
+        };
+        let view = match self.current_view() {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+        let section = match view.sections.get(section_index) {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let section_column_index =
+            match Self::board_column_to_section_column_index(section, self.column_index) {
+                Some(i) => i,
+                None => {
+                    self.status = "No column selected".to_string();
+                    return Ok(());
+                }
+            };
+        let column = match section.columns.get(section_column_index) {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let category = match self.categories.iter().find(|c| c.id == column.heading) {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        if category.value_kind != CategoryValueKind::Numeric {
+            self.status = "Format cycling only applies to numeric columns".to_string();
+            return Ok(());
+        }
+        let mut updated_cat = category.clone();
+        let current = updated_cat.numeric_format.clone().unwrap_or_default();
+        let next = cycle_numeric_format_preset(&current);
+        updated_cat.numeric_format = Some(next.clone());
+        // Use store directly — format-only change needs no reclassification.
+        agenda
+            .store()
+            .update_category(&updated_cat)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.status = format!("Column format: {}", describe_numeric_format(&next));
         Ok(())
     }
 

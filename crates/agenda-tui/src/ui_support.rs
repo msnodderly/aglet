@@ -294,6 +294,7 @@ pub(super) struct BoardColumnSpec {
     pub(super) heading_id: CategoryId,
     pub(super) heading_value_kind: CategoryValueKind,
     pub(super) summary_fn: SummaryFn,
+    pub(super) numeric_format: Option<NumericFormat>,
 }
 
 pub(super) fn board_table_spacing_budget(column_count: usize) -> usize {
@@ -382,6 +383,9 @@ pub(super) fn compute_board_layout(
                 .get(&col.heading)
                 .map(|c| c.value_kind)
                 .unwrap_or_default();
+            let numeric_format = cat_by_id
+                .get(&col.heading)
+                .and_then(|c| c.numeric_format.clone());
             BoardColumnSpec {
                 label,
                 width,
@@ -390,6 +394,7 @@ pub(super) fn compute_board_layout(
                 heading_id: col.heading,
                 heading_value_kind,
                 summary_fn: col.summary_fn.unwrap_or(SummaryFn::None),
+                numeric_format,
             }
         })
         .collect();
@@ -1366,6 +1371,7 @@ mod tests {
             child_ids: vec![],
             heading_id: cat_id,
             heading_value_kind: CategoryValueKind::Tag,
+            numeric_format: None,
         };
         let items: Vec<&Item> = vec![&item];
         let result = compute_column_aggregates(&items, &[col]);
@@ -1408,6 +1414,7 @@ mod tests {
             child_ids: vec![],
             heading_id: cat_id,
             heading_value_kind: CategoryValueKind::Numeric,
+            numeric_format: None,
         };
         let items: Vec<&Item> = vec![&item1, &item2, &item3];
         let result = compute_column_aggregates(&items, &[col]);

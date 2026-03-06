@@ -717,13 +717,22 @@ impl App {
             .and_then(|id| self.categories.iter().find(|c| c.id == id))
             .and_then(|c| c.note.clone())
             .unwrap_or_default();
+        let is_numeric = selected_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        let initial_details_focus = if is_numeric {
+            CategoryManagerDetailsFocus::NumericFormat
+        } else {
+            CategoryManagerDetailsFocus::Exclusive
+        };
         self.category_manager = Some(CategoryManagerState {
             focus: CategoryManagerFocus::Tree,
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
             structure_move_prefix: None,
             discard_confirm: false,
-            details_focus: CategoryManagerDetailsFocus::Exclusive,
+            details_focus: initial_details_focus,
             details_note_category_id: selected_category_id,
             details_note: text_buffer::TextBuffer::new(initial_note),
             details_note_dirty: false,
@@ -774,15 +783,24 @@ impl App {
         }
 
         if let Some(next_category_id) = reload_details_for {
-            let next_note = next_category_id
-                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            let next_cat = next_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id));
+            let next_note = next_cat
                 .and_then(|c| c.note.clone())
                 .unwrap_or_default();
+            let is_numeric = next_cat
+                .map(|c| c.value_kind == CategoryValueKind::Numeric)
+                .unwrap_or(false);
             if let Some(state) = &mut self.category_manager {
                 state.details_note_category_id = next_category_id;
                 state.details_note = text_buffer::TextBuffer::new(next_note);
                 state.details_note_dirty = false;
                 state.details_note_editing = false;
+                state.details_focus = if is_numeric {
+                    CategoryManagerDetailsFocus::NumericFormat
+                } else {
+                    CategoryManagerDetailsFocus::Exclusive
+                };
             }
             if dropped_dirty_note {
                 self.status =
