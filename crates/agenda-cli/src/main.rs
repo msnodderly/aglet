@@ -426,6 +426,43 @@ enum ViewCommand {
         /// View name (case-insensitive).
         name: String,
     },
+
+    /// Set a summary function on a section column
+    #[command(name = "set-summary")]
+    SetSummary {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section index (0-based).
+        section: usize,
+        /// Column category name (case-insensitive).
+        column: String,
+        /// Summary function: none, sum, avg, min, max, count.
+        #[arg(value_enum)]
+        func: CliSummaryFn,
+    },
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy)]
+enum CliSummaryFn {
+    None,
+    Sum,
+    Avg,
+    Min,
+    Max,
+    Count,
+}
+
+impl CliSummaryFn {
+    fn to_model(self) -> SummaryFn {
+        match self {
+            Self::None => SummaryFn::None,
+            Self::Sum => SummaryFn::Sum,
+            Self::Avg => SummaryFn::Avg,
+            Self::Min => SummaryFn::Min,
+            Self::Max => SummaryFn::Max,
+            Self::Count => SummaryFn::Count,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1931,6 +1968,55 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             println!("deleted view {}", name);
             Ok(())
         }
+        ViewCommand::SetSummary {
+            name,
+            section,
+            column,
+            func,
+        } => {
+            let mut view = view_by_name(store, &name)?;
+            let num_sections = view.sections.len();
+            if section >= num_sections {
+                return Err(format!(
+                    "section index {} out of range (view has {} sections)",
+                    section, num_sections
+                ));
+            }
+            let col_lower = column.to_lowercase();
+            let category_names: HashMap<CategoryId, String> = store
+                .get_hierarchy()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|c| (c.id, c.name))
+                .collect();
+            let col_idx = view.sections[section]
+                .columns
+                .iter()
+                .position(|c| {
+                    category_names
+                        .get(&c.heading)
+                        .map(|n| n.to_lowercase() == col_lower)
+                        .unwrap_or(false)
+                })
+                .ok_or_else(|| {
+                    format!("column '{}' not found in section {}", column, section)
+                })?;
+            let heading_id = view.sections[section].columns[col_idx].heading;
+            view.sections[section].columns[col_idx].summary_fn = Some(func.to_model());
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            let col_name = category_names
+                .get(&heading_id)
+                .cloned()
+                .unwrap_or_else(|| "?".to_string());
+            println!(
+                "set summary on view '{}' section {} column '{}' to {}",
+                view.name,
+                section,
+                col_name,
+                func.to_model().label()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -2980,8 +3066,8 @@ mod tests {
         retain_items_with_any_categories, section_summary_entries, section_summary_line,
         unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
         write_stdout_allow_broken_pipe, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
-        DependencyStateFilter, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
-        OutputFormatArg, UnlinkCommand, ViewCommand,
+        CliSummaryFn, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
+        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4149,6 +4235,86 @@ mod tests {
             section_summary_line(&view, 0, &items, &categories, &category_names),
             None
         );
+    }
+
+    #[test]
+    fn cmd_view_set_summary_updates_column_summary_fn() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let mut view = View::new("TestView".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::SetSummary {
+                name: "TestView".to_string(),
+                section: 0,
+                column: "Cost".to_string(),
+                func: CliSummaryFn::Sum,
+            },
+        )
+        .expect("set-summary should succeed");
+
+        let updated = store.get_view(view.id).expect("get view");
+        assert_eq!(
+            updated.sections[0].columns[0].summary_fn,
+            Some(SummaryFn::Sum)
+        );
+    }
+
+    #[test]
+    fn cmd_view_set_summary_errors_on_missing_column() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("TestView".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let result = cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::SetSummary {
+                name: "TestView".to_string(),
+                section: 0,
+                column: "Nonexistent".to_string(),
+                func: CliSummaryFn::Sum,
+            },
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
     }
 
     #[test]
