@@ -109,6 +109,19 @@ impl App {
         }
     }
 
+    fn clamp_horizontal_slot_scroll_offsets(&self) {
+        let mut offsets = self.horizontal_slot_scroll_offsets.borrow_mut();
+        if offsets.len() != self.slots.len() {
+            offsets.resize(self.slots.len(), 0);
+        }
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let max_index = slot.items.len().saturating_sub(1);
+            if let Some(stored) = offsets.get_mut(slot_index) {
+                *stored = (*stored).min(max_index);
+            }
+        }
+    }
+
     pub(crate) fn run(
         &mut self,
         terminal: &mut TuiTerminal,
@@ -319,6 +332,7 @@ impl App {
 
         self.slots = slots;
         self.clamp_horizontal_slot_item_indices();
+        self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
         if self.is_horizontal_section_flow() {
             self.item_index = self

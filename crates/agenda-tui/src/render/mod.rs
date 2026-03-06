@@ -83,6 +83,89 @@ impl App {
         state
     }
 
+    fn effective_board_display_mode_for_slot(&self, slot: &Slot) -> BoardDisplayMode {
+        let current_view = self.current_view();
+        match (&slot.context, current_view) {
+            (SlotContext::Section { section_index }, Some(view))
+            | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                .sections
+                .get(*section_index)
+                .and_then(|section| section.board_display_mode_override)
+                .unwrap_or(view.board_display_mode),
+            _ => current_view
+                .map(|view| view.board_display_mode)
+                .unwrap_or(BoardDisplayMode::SingleLine),
+        }
+    }
+
+    fn variable_height_list_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: Option<usize>,
+    ) -> usize {
+        let Some(selected_index) = selected_index else {
+            return 0;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 || item_heights.is_empty() {
+            return 0;
+        }
+
+        let mut offset = selected_index.min(item_heights.len().saturating_sub(1));
+        let mut used_rows = item_heights[offset].max(1);
+        while offset > 0 {
+            let next_rows = item_heights[offset - 1].max(1);
+            if used_rows + next_rows > viewport_rows {
+                break;
+            }
+            used_rows += next_rows;
+            offset -= 1;
+        }
+        offset
+    }
+
+    fn selected_item_visible_with_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: usize,
+        offset: usize,
+    ) -> bool {
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 || item_heights.is_empty() || selected_index < offset {
+            return false;
+        }
+
+        let row_start = item_heights
+            .iter()
+            .skip(offset)
+            .take(selected_index.saturating_sub(offset))
+            .sum::<usize>();
+        let row_end = row_start + item_heights[selected_index].max(1);
+        row_end <= viewport_rows
+    }
+
+    fn stable_variable_height_list_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: Option<usize>,
+        preferred_offset: usize,
+    ) -> usize {
+        let Some(selected_index) = selected_index else {
+            return preferred_offset.min(item_heights.len().saturating_sub(1));
+        };
+        let clamped_preferred = preferred_offset.min(item_heights.len().saturating_sub(1));
+        if Self::selected_item_visible_with_offset(
+            area,
+            item_heights,
+            selected_index,
+            clamped_preferred,
+        ) {
+            clamped_preferred
+        } else {
+            Self::variable_height_list_offset(area, item_heights, Some(selected_index))
+        }
+    }
+
     fn render_vertical_scrollbar(
         frame: &mut ratatui::Frame<'_>,
         area: Rect,
@@ -2183,6 +2266,7 @@ impl App {
         columns: &[Rect],
         category_display_names: &HashMap<CategoryId, String>,
     ) {
+        let all_slots_empty = self.slots.iter().all(|slot| slot.items.is_empty());
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let slot_area = columns[slot_index];
             let is_selected_slot = slot_index == self.slot_index;
@@ -2203,70 +2287,182 @@ impl App {
             } else {
                 Color::Blue
             };
+            let effective_display_mode = self.effective_board_display_mode_for_slot(slot);
             let card_width = slot_area.width.saturating_sub(4) as usize;
-            let cards: Vec<ListItem<'_>> = if slot.items.is_empty() {
+
+            if slot.items.is_empty() {
                 let has_filter = self
                     .section_filters
                     .get(slot_index)
                     .map(|f| f.is_some())
                     .unwrap_or(false);
-                let all_slots_empty = self.slots.iter().all(|s| s.items.is_empty());
-                let empty_msg = if all_slots_empty {
-                    "No items. n:add item  v:switch view  q:quit"
+                let empty_lines = if all_slots_empty {
+                    vec![
+                        Line::from(Span::styled(
+                            "empty board",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "n:add item  v:views  q:quit",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
                 } else if has_filter {
-                    "No matches. Esc:clear filter"
+                    vec![
+                        Line::from(Span::styled(
+                            "no matches",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "Esc:clear filter",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
                 } else {
-                    "No items in this section."
+                    vec![
+                        Line::from(Span::styled(
+                            "empty lane",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "n:add item  /:search other lanes",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
                 };
-                vec![ListItem::new(Line::from(Span::styled(
-                    format!(" {}", truncate_board_cell(empty_msg, card_width.max(1))),
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                )))]
-            } else {
-                slot.items
-                    .iter()
-                    .map(|item| {
-                        let item_text =
-                            truncate_board_cell(&board_item_label(item), card_width.max(1));
-                        let when = item
-                            .when_date
-                            .map(|dt| dt.date().to_string())
-                            .unwrap_or_else(|| "-".to_string());
-                        let flags = item_indicator_glyphs(
-                            item.is_done,
-                            self.is_item_blocked(item.id),
-                            has_note_text(item.note.as_deref()),
-                        );
-                        let category_count =
-                            item_assignment_labels(item, category_display_names).len();
-                        let meta = truncate_board_cell(
-                            &format!("{when}  {flags}  {category_count} cats"),
-                            card_width.max(1),
-                        );
-                        ListItem::new(vec![
-                            Line::from(format!(" {}", item_text)),
-                            Line::from(Span::styled(
-                                format!(" {}", meta),
+                let block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color));
+                let inner = block.inner(slot_area);
+                frame.render_widget(block, slot_area);
+                let content_height = empty_lines.len() as u16;
+                let top_padding = inner.height.saturating_sub(content_height) / 2;
+                let y = inner.y.saturating_add(top_padding);
+                let centered_area = Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: content_height.min(inner.height),
+                };
+                frame.render_widget(
+                    Paragraph::new(empty_lines).alignment(ratatui::layout::Alignment::Center),
+                    centered_area,
+                );
+                continue;
+            }
+
+            let title_width = card_width.saturating_sub(1).max(1);
+            let meta_width = card_width.saturating_sub(3).max(1);
+            let separator_width = card_width.saturating_sub(1).max(1);
+            let mut cards: Vec<ListItem<'_>> = Vec::with_capacity(slot.items.len());
+            let mut card_heights: Vec<usize> = Vec::with_capacity(slot.items.len());
+
+            for (item_index, item) in slot.items.iter().enumerate() {
+                let item_text = board_item_label(item);
+                let category_count = item_assignment_labels(item, category_display_names).len();
+                let mut meta_parts = vec![format!(
+                    "due:{}",
+                    item.when_date
+                        .map(|dt| dt.date().to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                )];
+                let glyphs = item_indicator_glyphs(
+                    item.is_done,
+                    self.is_item_blocked(item.id),
+                    has_note_text(item.note.as_deref()),
+                );
+                if !glyphs.is_empty() {
+                    meta_parts.push(glyphs.clone());
+                }
+                if category_count > 0 {
+                    meta_parts.push(format!(
+                        "{category_count} {}",
+                        if category_count == 1 {
+                            "category"
+                        } else {
+                            "categories"
+                        }
+                    ));
+                }
+                let meta = truncate_board_cell(&meta_parts.join("  "), meta_width);
+
+                let mut lines = Vec::new();
+                match effective_display_mode {
+                    BoardDisplayMode::SingleLine => {
+                        let single_line_text = if glyphs.is_empty() {
+                            truncate_board_cell(&item_text, title_width)
+                        } else {
+                            let reserved_glyph_width = glyphs.chars().count().saturating_add(2);
+                            if title_width > reserved_glyph_width {
+                                format!(
+                                    "{}  {}",
+                                    truncate_board_cell(
+                                        &item_text,
+                                        title_width.saturating_sub(reserved_glyph_width),
+                                    ),
+                                    glyphs
+                                )
+                            } else {
+                                truncate_board_cell(&glyphs, title_width)
+                            }
+                        };
+                        lines.push(Line::from(format!(" {}", single_line_text)));
+                    }
+                    BoardDisplayMode::MultiLine => {
+                        for line in wrap_text_for_board_cell_clamped(&item_text, title_width, 2) {
+                            lines.push(Line::from(format!(" {}", line)));
+                        }
+                        lines.push(Line::from(Span::styled(
+                            format!("   {}", meta),
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                        if item_index + 1 < slot.items.len() {
+                            lines.push(Line::from(Span::styled(
+                                format!(" {}", "-".repeat(separator_width)),
                                 Style::default().fg(MUTED_TEXT_COLOR),
-                            )),
-                        ])
-                    })
-                    .collect()
-            };
+                            )));
+                        }
+                    }
+                }
+
+                card_heights.push(lines.len().max(1));
+                cards.push(ListItem::new(lines));
+            }
 
             let mut list_state = ListState::default().with_selected(selected_row);
-            let item_count = slot.items.len().max(cards.len());
             let remembered_index = self
                 .horizontal_slot_item_indices
                 .get(slot_index)
                 .copied()
                 .unwrap_or(0)
-                .min(item_count.saturating_sub(1));
+                .min(cards.len().saturating_sub(1));
+            let remembered_scroll_offset = self
+                .horizontal_slot_scroll_offsets
+                .borrow()
+                .get(slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(cards.len().saturating_sub(1));
             *list_state.offset_mut() = if is_selected_slot {
-                list_scroll_for_selected_line(slot_area, selected_row) as usize
+                Self::stable_variable_height_list_offset(
+                    slot_area,
+                    &card_heights,
+                    selected_row,
+                    remembered_scroll_offset,
+                )
             } else {
-                remembered_index
+                remembered_scroll_offset.min(remembered_index)
             };
+            if let Some(stored) = self
+                .horizontal_slot_scroll_offsets
+                .borrow_mut()
+                .get_mut(slot_index)
+            {
+                *stored = list_state.offset();
+            }
+            let scroll_position = card_heights.iter().take(list_state.offset()).sum::<usize>();
+            let total_card_height = card_heights.iter().sum::<usize>();
 
             frame.render_stateful_widget(
                 List::new(cards)
@@ -2277,16 +2473,17 @@ impl App {
                             .border_style(Style::default().fg(border_color)),
                     )
                     .highlight_style(selected_board_row_style())
-                    .highlight_symbol(">")
-                    .repeat_highlight_symbol(true),
+                    .highlight_symbol("> ")
+                    .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
+                    .repeat_highlight_symbol(false),
                 slot_area,
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(
                 frame,
                 slot_area,
-                slot.items.len().max(1),
-                list_state.offset(),
+                total_card_height.max(1),
+                scroll_position,
             );
         }
     }
@@ -2679,9 +2876,9 @@ impl App {
             }
             _ => {
                 if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
