@@ -386,6 +386,10 @@ impl App {
                     self.toggle_selected_category_actionable(agenda)?;
                     return Ok(true);
                 }
+                CategoryManagerDetailsFocus::NumericFormat => {
+                    self.cycle_numeric_format(agenda)?;
+                    return Ok(true);
+                }
                 CategoryManagerDetailsFocus::Note => {
                     self.start_category_manager_details_note_edit();
                     return Ok(true);
@@ -395,6 +399,27 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    fn selected_category_mut(&self) -> Option<Category> {
+        let row = self.selected_category_row()?;
+        self.categories.iter().find(|c| c.id == row.id).cloned()
+    }
+
+    fn cycle_numeric_format(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        use crate::modes::board::describe_numeric_format;
+        let mut cat = self.selected_category_mut().ok_or("No category")?;
+        let current = cat.numeric_format.clone().unwrap_or_default();
+        let next = super::board::cycle_numeric_format_preset(&current);
+        cat.numeric_format = Some(next.clone());
+        // Store directly — format-only change needs no reclassification.
+        agenda
+            .store()
+            .update_category(&cat)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.status = format!("Format: {}", describe_numeric_format(&next));
+        Ok(())
     }
 
     fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
