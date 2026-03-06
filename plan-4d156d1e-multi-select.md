@@ -31,6 +31,9 @@ Primary actions in scope:
   - selected but unfocused rows show `+`
   - header no longer repeats `sel:N`
 - Phase A1 fast-path batch assign completed in commit `c87052d`
+- Restored picker-first batch assign and added batch delete in commit `40342b6`
+- Refined batch-assign tri-state marker and exit semantics in commits
+  `ce94cab` and `b86a68c`
 
 ### Phase 0 Delivered
 
@@ -49,18 +52,29 @@ Primary actions in scope:
 - Typed category entry resolves or creates the category once, then applies it
   to every selected item
 - Existing single-item picker flow remains intact when no selection exists
+- Batch picker rows now show tri-state checkbox state:
+  - `[ ]` none
+  - `[x]` all
+  - `[~]` mixed
+- `Space` applies the category change but keeps the picker open
+- `Enter` / `Esc` exit assign mode explicitly
+- Exiting after successful batch changes clears selection
+- `Esc` without changes preserves selection
+
+### Phase X Delivered
+
+- `x` with active selection opens batch delete confirmation
+- `y` deletes the full selected set in one pass
+- `Esc` cancels batch delete and preserves selection
+- Existing single-item delete flow remains intact
 
 ### Active Work
 
-- Reconcile Phase A1 with the intended `a` UX:
-  - with active selection, users must still be able to navigate the category
-    picker
-  - picker `Space` must apply to the selected set rather than only the focused
-    item
-- Finish Phase X batch delete:
-  - with active selection, `x` should open delete confirm for the selected set
-  - `y` should delete the selected set in one pass
-  - `Esc` should cancel without clearing selection
+- Phase B1 minimal batch link:
+  - open the existing link wizard against a selected source set
+  - exclude all selected source items from target matches
+  - apply one chosen relation from every selected source item to one target
+  - clear selection after a successful batch link apply
 
 ## Delivery Strategy
 
@@ -177,6 +191,13 @@ pairwise or wizard-complete semantics immediately.
 4. Confirm.
 5. Both selected items receive the chosen link relation.
 
+### Current Implementation Target
+
+- Reuse the existing wizard UI and keyboard model
+- Treat the selected set as the source set and the chosen target as a single
+  destination
+- Preserve single-item wizard behavior unchanged when no selection exists
+
 ## Phase B2: Full Batch Link Wizard
 
 Purpose: complete the link workflow promised by the issue.
@@ -184,10 +205,9 @@ Purpose: complete the link workflow promised by the issue.
 ## Recommended Order From Here
 
 1. Keep the branch green after the `main` merge.
-2. Fix `a` so batch mode can still use the picker.
-3. Commit Phase X batch delete.
-4. Implement minimal batch linking for the next demo.
-5. Return to full tri-state assign picker behavior.
+2. Implement minimal batch linking for the next demo.
+3. Return to deeper Phase A2 polish only if remaining gaps matter in practice.
+4. Complete full batch link wizard parity after the basic demo path is solid.
 
 ## Notes
 
