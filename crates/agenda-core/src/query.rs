@@ -317,10 +317,28 @@ fn matches_text_search(item: &Item, search_term: &str) -> bool {
         return true;
     }
 
+    let item_id = item.id.to_string();
+    if item_id.contains(search_term) {
+        return true;
+    }
+
+    if is_hexish_uuid_query(search_term) {
+        let compact_search = search_term.replace('-', "");
+        if !compact_search.is_empty() && item.id.as_simple().to_string().contains(&compact_search) {
+            return true;
+        }
+    }
+
     item.note
         .as_ref()
         .map(|note| note.to_ascii_lowercase().contains(search_term))
         .unwrap_or(false)
+}
+
+fn is_hexish_uuid_query(search_term: &str) -> bool {
+    search_term
+        .chars()
+        .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
 }
 
 fn start_of_iso_week(date: NaiveDate) -> NaiveDate {
@@ -611,6 +629,42 @@ mod tests {
 
         let query = Query {
             text_search: Some("URGENT".to_string()),
+            ..Query::default()
+        };
+
+        let result = evaluate_query(&query, &items, reference);
+        assert_eq!(ids(&result), vec![items[0].id]);
+    }
+
+    #[test]
+    fn evaluate_query_text_search_matches_item_uuid_prefix() {
+        let reference = day(2026, 2, 11);
+        let mut matching = item_with_assignments("uuid target", None, None, &[]);
+        matching.id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").expect("valid uuid");
+        let mut other = item_with_assignments("other", None, None, &[]);
+        other.id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").expect("valid uuid");
+        let items = vec![matching, other];
+
+        let query = Query {
+            text_search: Some("123e4567".to_string()),
+            ..Query::default()
+        };
+
+        let result = evaluate_query(&query, &items, reference);
+        assert_eq!(ids(&result), vec![items[0].id]);
+    }
+
+    #[test]
+    fn evaluate_query_text_search_matches_compact_uuid() {
+        let reference = day(2026, 2, 11);
+        let mut matching = item_with_assignments("uuid target", None, None, &[]);
+        matching.id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").expect("valid uuid");
+        let mut other = item_with_assignments("other", None, None, &[]);
+        other.id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").expect("valid uuid");
+        let items = vec![matching, other];
+
+        let query = Query {
+            text_search: Some("123e4567e89b12d3a456426614174000".to_string()),
             ..Query::default()
         };
 
