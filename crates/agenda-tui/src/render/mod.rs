@@ -4109,7 +4109,8 @@ impl App {
                 let flag_lines = if is_numeric {
                     let inline_input = self.category_manager_details_inline_input();
                     let integer_focused = details_focus == CategoryManagerDetailsFocus::Integer;
-                    let decimal_focused = details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let decimal_focused =
+                        details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
                     let currency_focused =
                         details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
                     let thousands_focused =
@@ -4125,9 +4126,13 @@ impl App {
                             input.field == CategoryManagerDetailsInlineField::CurrencySymbol
                         })
                         .map(|input| input.buffer.text().to_string())
-                        .unwrap_or_else(|| numeric_format.currency_symbol.clone().unwrap_or_default());
+                        .unwrap_or_else(|| {
+                            numeric_format.currency_symbol.clone().unwrap_or_default()
+                        });
                     let decimal_style = if integer_mode {
-                        Style::default().fg(MUTED_TEXT_COLOR).add_modifier(Modifier::DIM)
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
                     } else if decimal_focused {
                         focused_cell_style()
                     } else {
