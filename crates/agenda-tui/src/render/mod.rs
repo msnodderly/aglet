@@ -1695,13 +1695,14 @@ impl App {
         } else {
             ""
         };
+        let workflow_hint = self.ready_queue_header_hint().unwrap_or_default();
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "Agenda Reborn",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  view:{view_name}{view_flags}  mode:{mode}{filter}"
+                "  view:{view_name}{view_flags}{workflow_hint}  mode:{mode}{filter}"
             )),
         ]))
     }
@@ -3071,7 +3072,7 @@ impl App {
                         CategoryInlineAction::DeleteConfirm { .. } => "y:confirm  Esc:cancel",
                     }
                 } else {
-                    "S:save  n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
+                    "S:save  n:new  r:rename  x:delete  Tab:pane  /:filter  w:configure workflow roles  Esc:close"
                 }
             }
             Mode::ViewPicker => {
@@ -4004,7 +4005,15 @@ impl App {
                 };
                 let integer_mode = is_numeric_category && numeric_format.decimal_places == 0;
                 let info_height = if is_numeric_category { 6 } else { 5 };
-                let flags_height = if is_numeric_category { 7 } else { 6 };
+                let is_ready_queue_role = self.selected_category_is_ready_queue_role();
+                let is_claim_target_role = self.selected_category_is_claim_target_role();
+                let workflow_role_height: u16 =
+                    if is_ready_queue_role { 2 } else { 0 } + if is_claim_target_role { 2 } else { 0 };
+                let flags_height = if is_numeric_category {
+                    7
+                } else {
+                    5 + workflow_role_height
+                };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -4142,7 +4151,7 @@ impl App {
                         )),
                     ]
                 } else {
-                    vec![
+                    let mut lines = vec![
                         flag_line(
                             details_focus == CategoryManagerDetailsFocus::Exclusive,
                             "Exclusive",
@@ -4158,7 +4167,28 @@ impl App {
                             "Actionable",
                             row.is_actionable,
                         ),
-                    ]
+                    ];
+                    if is_ready_queue_role {
+                        lines.push(Line::from(Span::styled(
+                            "  Workflow: Ready Queue",
+                            Style::default().fg(Color::LightCyan),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  (items need this to be claimable)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                    }
+                    if is_claim_target_role {
+                        lines.push(Line::from(Span::styled(
+                            "  Workflow: Claim Target",
+                            Style::default().fg(Color::LightCyan),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  (assigned by claim, cleared by done)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                    }
+                    lines
                 };
                 let flags_title = if is_numeric {
                     "Numeric Format"
@@ -4311,6 +4341,84 @@ impl App {
                         .title(" Confirm ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if self.workflow_setup_open {
+            let ready_name = self
+                .workflow_config
+                .ready_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)");
+            let claim_name = self
+                .workflow_config
+                .claim_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)");
+            let tree_selection = self
+                .selected_category_row()
+                .map(|row| row.name.as_str())
+                .unwrap_or("(none)");
+            let focus = self.workflow_setup_focus;
+            let ready_style = if focus == 0 {
+                focused_cell_style()
+            } else {
+                Style::default()
+            };
+            let claim_style = if focus == 1 {
+                focused_cell_style()
+            } else {
+                Style::default()
+            };
+            let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
+            let w = area.width.min(50);
+            let h = 14u16;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        "Assign categories to workflow roles.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("{}Ready Queue:   {}", indicator(0), ready_name),
+                        ready_style,
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Claim Target:  {}", indicator(1), claim_name),
+                        claim_style,
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("  Tree selection: {}", tree_selection),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Close (Esc), navigate to a category,",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "reopen (w), Enter to assign/unassign.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from("j/k:slot  Enter:assign/unassign  Esc:close"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Workflow Setup ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::LightCyan)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,

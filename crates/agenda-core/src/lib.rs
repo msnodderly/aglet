@@ -7,3 +7,4 @@ pub mod model;
 pub mod query;
 pub mod store;
 pub mod undo;
+pub mod workflow;
