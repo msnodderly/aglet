@@ -9950,6 +9950,54 @@ mod tests {
     }
 
     #[test]
+    fn workflow_popup_does_not_unset_other_role_from_current_selection() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-popup-no-cross-unset-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let claim = Category::new("In Progress".to_string());
+        store.create_category(&ready).expect("create ready");
+        store.create_category(&claim).expect("create claim");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(claim.id),
+            })
+            .expect("set workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("focus claim target");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("cross-role enter should be blocked");
+
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
+        assert_eq!(
+            app.status,
+            "Ready is already the Ready Queue category. Select In Progress to unset Claim Target, or another category to replace it"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn workflow_role_replacement_only_sanitizes_new_category() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

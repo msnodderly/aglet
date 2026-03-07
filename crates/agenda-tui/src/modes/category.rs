@@ -96,6 +96,46 @@ impl App {
         message
     }
 
+    fn workflow_setup_cross_role_conflict_status(
+        &self,
+        agenda: &Agenda<'_>,
+        selected_category_id: CategoryId,
+    ) -> Result<Option<String>, String> {
+        let (role_label, current_role_id, other_role_label, other_role_id) = if self.workflow_setup_focus == 0 {
+            (
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+                "Claim Target",
+                self.workflow_config.claim_category_id,
+            )
+        } else {
+            (
+                "Claim Target",
+                self.workflow_config.claim_category_id,
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+            )
+        };
+
+        if other_role_id != Some(selected_category_id) || current_role_id == Some(selected_category_id) {
+            return Ok(None);
+        }
+
+        let selected_name = agenda
+            .store()
+            .get_category(selected_category_id)
+            .map_err(|e| e.to_string())?
+            .name;
+        let current_name = current_role_id
+            .and_then(|category_id| agenda.store().get_category(category_id).ok())
+            .map(|category| category.name)
+            .unwrap_or_else(|| "(unset)".to_string());
+
+        Ok(Some(format!(
+            "{selected_name} is already the {other_role_label} category. Select {current_name} to unset {role_label}, or another category to replace it"
+        )))
+    }
+
     fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
         matches!(code, KeyCode::Char('S'))
             || (matches!(code, KeyCode::Char('s'))
@@ -949,16 +989,22 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Enter => {
-                if self.selected_category_id().is_none() {
+                let Some(selected_category_id) = self.selected_category_id() else {
                     self.status = "No category selected in tree".to_string();
                     return Ok(true);
-                }
+                };
                 if self.selected_category_is_reserved() {
                     self.status = "Reserved categories cannot be workflow roles".to_string();
                     return Ok(true);
                 }
                 if self.selected_category_is_numeric() {
                     self.status = "Numeric categories cannot be workflow roles".to_string();
+                    return Ok(true);
+                }
+                if let Some(status) =
+                    self.workflow_setup_cross_role_conflict_status(agenda, selected_category_id)?
+                {
+                    self.status = status;
                     return Ok(true);
                 }
                 if self.workflow_setup_focus == 0 {
