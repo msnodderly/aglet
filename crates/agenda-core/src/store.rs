@@ -15,9 +15,24 @@ use crate::model::{
     NumericFormat, Query, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
     RESERVED_CATEGORY_NAME_WHEN,
 };
+use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
 const SCHEMA_VERSION: i32 = 10;
-const DEFAULT_VIEW_NAME: &str = "All Items";
+pub const DEFAULT_VIEW_NAME: &str = "All Items";
+
+pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
+    if name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME) {
+        Some(DEFAULT_VIEW_NAME)
+    } else if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
+        Some(READY_QUEUE_VIEW_NAME)
+    } else {
+        None
+    }
+}
+
+pub fn is_system_view_name(name: &str) -> bool {
+    canonical_system_view_name(name).is_some()
+}
 
 const SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS items (
@@ -167,6 +182,20 @@ impl Store {
             )
             .optional()
             .map_err(AgendaError::from)
+    }
+
+    pub fn set_workflow_config(&self, config: &WorkflowConfig) -> Result<()> {
+        let body = serde_json::to_string(config).map_err(|err| AgendaError::StorageError {
+            source: Box::new(err),
+        })?;
+        self.set_app_setting(WORKFLOW_CONFIG_KEY, &body)
+    }
+
+    pub fn get_workflow_config(&self) -> Result<WorkflowConfig> {
+        let Some(raw) = self.get_app_setting(WORKFLOW_CONFIG_KEY)? else {
+            return Ok(WorkflowConfig::default());
+        };
+        Ok(serde_json::from_str(&raw).unwrap_or_default())
     }
 
     // ── Item CRUD ──────────────────────────────────────────────
@@ -718,9 +747,9 @@ impl Store {
     // ── View CRUD ───────────────────────────────────────────────
 
     pub fn create_view(&self, view: &View) -> Result<()> {
-        if Self::is_system_view_name(&view.name) {
+        if let Some(system_name) = canonical_system_view_name(&view.name) {
             return Err(AgendaError::InvalidOperation {
-                message: format!("cannot create system view: {DEFAULT_VIEW_NAME}"),
+                message: format!("cannot create system view: {system_name}"),
             });
         }
 
@@ -805,16 +834,16 @@ impl Store {
 
     pub fn update_view(&self, view: &View) -> Result<()> {
         let existing = self.get_view(view.id)?;
-        if Self::is_system_view_name(&existing.name) {
+        if is_system_view_name(&existing.name) {
             return Err(AgendaError::InvalidOperation {
                 message: format!("cannot modify system view: {}", existing.name),
             });
         }
-        if Self::is_system_view_name(&view.name) {
+        if let Some(system_name) = canonical_system_view_name(&view.name) {
             return Err(AgendaError::InvalidOperation {
                 message: format!(
-                    "cannot rename view {} to reserved system view name: {DEFAULT_VIEW_NAME}",
-                    existing.name
+                    "cannot rename view {} to reserved system view name: {system_name}",
+                    existing.name,
                 ),
             });
         }
@@ -900,7 +929,7 @@ impl Store {
 
     pub fn delete_view(&self, id: Uuid) -> Result<()> {
         let existing = self.get_view(id)?;
-        if Self::is_system_view_name(&existing.name) {
+        if is_system_view_name(&existing.name) {
             return Err(AgendaError::InvalidOperation {
                 message: format!("cannot modify system view: {}", existing.name),
             });
@@ -1749,10 +1778,6 @@ impl Store {
         RESERVED_CATEGORY_NAMES
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(name))
-    }
-
-    fn is_system_view_name(name: &str) -> bool {
-        name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME)
     }
 
     fn init(&self) -> Result<()> {
