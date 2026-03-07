@@ -13,6 +13,7 @@ use agenda_core::model::{
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
+use agenda_core::workflow::WorkflowConfig;
 use chrono::{Local, NaiveDateTime, Utc};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -405,6 +406,8 @@ enum CategoryManagerDetailsFocus {
     Exclusive,
     MatchName,
     Actionable,
+    ReadyQueue,
+    ClaimTarget,
     // Single format preset field for numeric categories (Enter cycles presets)
     NumericFormat,
     Note,
@@ -422,7 +425,9 @@ impl CategoryManagerDetailsFocus {
             match self {
                 Self::Exclusive => Self::MatchName,
                 Self::MatchName => Self::Actionable,
-                Self::Actionable => Self::Note,
+                Self::Actionable => Self::ReadyQueue,
+                Self::ReadyQueue => Self::ClaimTarget,
+                Self::ClaimTarget => Self::Note,
                 Self::Note => Self::Exclusive,
                 _ => Self::Exclusive,
             }
@@ -441,8 +446,10 @@ impl CategoryManagerDetailsFocus {
                 Self::Exclusive => Self::Note,
                 Self::MatchName => Self::Exclusive,
                 Self::Actionable => Self::MatchName,
-                Self::Note => Self::Actionable,
-                _ => Self::Actionable,
+                Self::ReadyQueue => Self::Actionable,
+                Self::ClaimTarget => Self::ReadyQueue,
+                Self::Note => Self::ClaimTarget,
+                _ => Self::ClaimTarget,
             }
         }
     }
@@ -837,6 +844,7 @@ struct App {
     categories: Vec<Category>,
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
+    workflow_config: WorkflowConfig,
     category_manager: Option<CategoryManagerState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
@@ -899,6 +907,7 @@ impl Default for App {
             categories: Vec::new(),
             category_rows: Vec::new(),
             category_index: 0,
+            workflow_config: WorkflowConfig::default(),
             category_manager: None,
             category_suggest: None,
             category_direct_edit: None,
@@ -5166,6 +5175,70 @@ mod tests {
 
         assert_eq!(app.mode, Mode::ViewEdit);
         assert!(app.view_edit_state.is_some());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_enter_switches_to_ready_queue_and_filters_blocked_items() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-ready-queue-switch-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+        let in_progress = Category::new("In Progress".to_string());
+        store
+            .create_category(&in_progress)
+            .expect("create in progress");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(in_progress.id),
+            })
+            .expect("set workflow config");
+
+        let claimable = Item::new("Claimable".to_string());
+        store.create_item(&claimable).expect("create claimable");
+        agenda
+            .assign_item_manual(claimable.id, ready.id, Some("manual:test".to_string()))
+            .expect("assign ready to claimable");
+
+        let blocked = Item::new("Blocked follow-up".to_string());
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .assign_item_manual(blocked.id, ready.id, Some("manual:test".to_string()))
+            .expect("assign ready to blocked");
+        agenda
+            .link_items_depends_on(blocked.id, claimable.id)
+            .expect("create dependency");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = app
+            .views
+            .iter()
+            .position(|view| view.name == agenda_core::workflow::READY_QUEUE_VIEW_NAME)
+            .expect("Ready Queue view should exist");
+
+        app.handle_view_picker_key(KeyCode::Enter, &agenda)
+            .expect("switch to Ready Queue");
+
+        assert_eq!(
+            app.current_view().map(|view| view.name.as_str()),
+            Some(agenda_core::workflow::READY_QUEUE_VIEW_NAME)
+        );
+        assert_eq!(app.slots.len(), 1);
+        assert_eq!(app.slots[0].items.len(), 1);
+        assert_eq!(app.slots[0].items[0].text, "Claimable");
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

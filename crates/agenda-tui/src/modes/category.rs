@@ -300,6 +300,8 @@ impl App {
                 CategoryManagerDetailsFocus::Exclusive
                     | CategoryManagerDetailsFocus::MatchName
                     | CategoryManagerDetailsFocus::Actionable
+                    | CategoryManagerDetailsFocus::ReadyQueue
+                    | CategoryManagerDetailsFocus::ClaimTarget
             )
         {
             details_focus = CategoryManagerDetailsFocus::Note;
@@ -384,6 +386,14 @@ impl App {
                 }
                 CategoryManagerDetailsFocus::Actionable => {
                     self.toggle_selected_category_actionable(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::ReadyQueue => {
+                    self.toggle_selected_category_ready_queue_role(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::ClaimTarget => {
+                    self.toggle_selected_category_claim_target_role(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::NumericFormat => {
@@ -970,6 +980,122 @@ impl App {
             "{} actionable={} (processed_items={}, affected_items={})",
             updated.name, updated.is_actionable, result.processed_items, result.affected_items
         );
+        Ok(())
+    }
+
+    pub(crate) fn toggle_selected_category_ready_queue_role(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        if self.selected_category_is_numeric() {
+            self.status = "Workflow roles are not applicable to numeric categories".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        let mut workflow = self.workflow_config.clone();
+        let previous_ready_category_name = workflow
+            .ready_category_id
+            .filter(|existing_id| *existing_id != category_id)
+            .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
+            .map(|existing| existing.name);
+        if workflow.claim_category_id == Some(category_id) && workflow.ready_category_id != Some(category_id)
+        {
+            self.status = format!(
+                "{} is already the Claim Target category and cannot also be Ready Queue",
+                category.name
+            );
+            return Ok(());
+        }
+
+        let enabled = workflow.ready_category_id != Some(category_id);
+        workflow.ready_category_id = if enabled { Some(category_id) } else { None };
+        agenda
+            .store()
+            .set_workflow_config(&workflow)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.status = if enabled {
+            if let Some(previous_name) = previous_ready_category_name {
+                format!(
+                    "{} is now the Ready Queue category (replaced {})",
+                    category.name, previous_name
+                )
+            } else {
+                format!("{} is now the Ready Queue category", category.name)
+            }
+        } else {
+            format!("{} is no longer the Ready Queue category", category.name)
+        };
+        Ok(())
+    }
+
+    pub(crate) fn toggle_selected_category_claim_target_role(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        if self.selected_category_is_numeric() {
+            self.status = "Workflow roles are not applicable to numeric categories".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        let mut workflow = self.workflow_config.clone();
+        let previous_claim_category_name = workflow
+            .claim_category_id
+            .filter(|existing_id| *existing_id != category_id)
+            .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
+            .map(|existing| existing.name);
+        if workflow.ready_category_id == Some(category_id) && workflow.claim_category_id != Some(category_id)
+        {
+            self.status = format!(
+                "{} is already the Ready Queue category and cannot also be Claim Target",
+                category.name
+            );
+            return Ok(());
+        }
+
+        let enabled = workflow.claim_category_id != Some(category_id);
+        workflow.claim_category_id = if enabled { Some(category_id) } else { None };
+        agenda
+            .store()
+            .set_workflow_config(&workflow)
+            .map_err(|e| e.to_string())?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.status = if enabled {
+            if let Some(previous_name) = previous_claim_category_name {
+                format!(
+                    "{} is now the Claim Target category (replaced {})",
+                    category.name, previous_name
+                )
+            } else {
+                format!("{} is now the Claim Target category", category.name)
+            }
+        } else {
+            format!("{} is no longer the Claim Target category", category.name)
+        };
         Ok(())
     }
 }

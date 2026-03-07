@@ -1628,13 +1628,14 @@ impl App {
         } else {
             ""
         };
+        let workflow_hint = self.ready_queue_header_hint().unwrap_or_default();
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "Agenda Reborn",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  view:{view_name}{view_flags}  mode:{mode}{filter}"
+                "  view:{view_name}{view_flags}{workflow_hint}  mode:{mode}{filter}"
             )),
         ]))
     }
@@ -3880,7 +3881,7 @@ impl App {
                 } else {
                     NumericFormat::default()
                 };
-                let flags_height = if is_numeric_category { 5 } else { 6 };
+                let flags_height = if is_numeric_category { 5 } else { 8 };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -3923,6 +3924,14 @@ impl App {
                         style,
                     ))
                 };
+                let subheading_line = |label: &str| {
+                    Line::from(Span::styled(
+                        format!("  {label}"),
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                };
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
                     use crate::modes::board::describe_numeric_format;
@@ -3962,6 +3971,17 @@ impl App {
                             details_focus == CategoryManagerDetailsFocus::Actionable,
                             "Actionable",
                             row.is_actionable,
+                        ),
+                        subheading_line("Targets"),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::ReadyQueue,
+                            "Ready Queue",
+                            self.selected_category_is_ready_queue_role(),
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::ClaimTarget,
+                            "Claim Target",
+                            self.selected_category_is_claim_target_role(),
                         ),
                     ]
                 };
@@ -4059,6 +4079,12 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
+                        }
+                        CategoryManagerDetailsFocus::ReadyQueue => {
+                            "Marks the manual category required for claim eligibility"
+                        }
+                        CategoryManagerDetailsFocus::ClaimTarget => {
+                            "Assigned by claim and removed by release/done"
                         }
                         CategoryManagerDetailsFocus::NumericFormat => {
                             "Enter/Space: cycle format (int → 1dp → 2dp → thousands → currency)"
