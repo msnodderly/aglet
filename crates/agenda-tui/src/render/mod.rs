@@ -293,6 +293,9 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::HelpPanel {
+            self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
+        }
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
@@ -1439,6 +1442,70 @@ impl App {
         }
 
         None
+    }
+
+    pub(crate) fn category_manager_details_cursor_position(
+        &self,
+        area: Rect,
+    ) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
+            return None;
+        }
+        let input = self.category_manager_details_inline_input()?;
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+
+        let is_numeric_category = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if !is_numeric_category {
+            return None;
+        }
+        let info_height = 6;
+        let flags_height = 7;
+        let details_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(info_height),
+                Constraint::Length(flags_height),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let flags_inner = Rect {
+            x: details_chunks[1].x.saturating_add(1),
+            y: details_chunks[1].y.saturating_add(1),
+            width: details_chunks[1].width.saturating_sub(2),
+            height: details_chunks[1].height.saturating_sub(2),
+        };
+        if flags_inner.width == 0 || flags_inner.height == 0 {
+            return None;
+        }
+        let max_x = flags_inner
+            .x
+            .saturating_add(flags_inner.width.saturating_sub(1));
+        let (line_offset, prefix) = match input.field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => (1u16, "  Decimal places: "),
+            CategoryManagerDetailsInlineField::CurrencySymbol => (2u16, "  Currency symbol: "),
+        };
+        let prefix_len = prefix.chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = input.buffer.cursor().min(u16::MAX as usize) as u16;
+        Some((
+            flags_inner
+                .x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            flags_inner.y.saturating_add(line_offset),
+        ))
     }
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
@@ -2993,6 +3060,7 @@ impl App {
 
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
+            Mode::HelpPanel => "Esc:close  Enter:close  ?:close",
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
                     "y:save & close  n:discard  Esc:keep editing"
@@ -3078,14 +3146,106 @@ impl App {
             }
             Mode::Normal => {
                 if self.selected_count() > 0 {
-                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  q:quit"
+                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  ?:help  q:quit"
                 } else if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:col fmt  F:col summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:col fmt  F:col summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
+    }
+
+    fn render_help_panel(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if area.width < 8 || area.height < 8 {
+            return;
+        }
+
+        let header = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let help_entry = |key: &str, desc: &str| -> Line<'static> {
+            let pad = 12_usize.saturating_sub(key.len());
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(key.to_string(), key_style),
+                Span::raw(" ".repeat(pad)),
+                Span::raw(desc.to_string()),
+            ])
+        };
+
+        let lines: Vec<Line<'static>> = vec![
+            // -- CURRENT ITEM --
+            Line::from(Span::styled("CURRENT ITEM", header)),
+            help_entry("n", "Add a new item to the focused section"),
+            help_entry("e", "Edit the selected item (text, note, categories)"),
+            help_entry("Enter", "Edit item / edit column value / add item"),
+            help_entry("a", "Assign categories to current item or selection"),
+            help_entry("d", "Mark item as done"),
+            help_entry("x", "Delete selected item(s)"),
+            help_entry("p", "Toggle the preview sidebar"),
+            Line::from(""),
+            // -- SELECTION --
+            Line::from(Span::styled("SELECTION", header)),
+            help_entry("Space", "Toggle selection on current item"),
+            help_entry("b / B", "Link / unlink selected items (dependency)"),
+            help_entry("x", "Delete selected items"),
+            help_entry("Esc", "Clear selection"),
+            Line::from(""),
+            // -- NAVIGATION --
+            Line::from(Span::styled("NAVIGATION", header)),
+            help_entry("\u{2191}/k \u{2193}/j", "Move between items"),
+            help_entry("\u{2190}/h \u{2192}/l", "Move between sections (lanes)"),
+            help_entry("Tab/S-Tab", "Next / previous section"),
+            help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
+            help_entry("z", "Cycle card size (compact \u{2194} detail)"),
+            Line::from(""),
+            // -- SEARCH --
+            Line::from(Span::styled("SEARCH", header)),
+            help_entry("/", "Search within the focused section"),
+            help_entry("g/", "Search across all sections (global)"),
+            help_entry("Esc", "Clear active section filter"),
+            Line::from(""),
+            // -- COLUMNS --
+            Line::from(Span::styled("COLUMNS", header)),
+            help_entry("Enter", "Edit column value (on a column cell)"),
+            help_entry("f", "Cycle numeric column format"),
+            help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
+            Line::from(""),
+            // -- VIEWS --
+            Line::from(Span::styled("VIEWS", header)),
+            help_entry("v / F8", "Open the view picker"),
+            help_entry(",/.", "Cycle to previous / next view"),
+            Line::from(""),
+            // -- GLOBAL --
+            Line::from(Span::styled("GLOBAL", header)),
+            help_entry("c / F9", "Open the category manager"),
+            help_entry("s", "Cycle sort order for the focused section"),
+            help_entry("u", "Show / edit item dependencies"),
+            help_entry("Ctrl-L", "Reload data from disk"),
+            help_entry("Ctrl-R", "Toggle auto-refresh interval"),
+            help_entry("?", "Toggle this help panel"),
+            help_entry("q", "Quit"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "              Esc / Enter / ? to close",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+
+        let block = Block::default()
+            .title("Keyboard Shortcuts")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 
     pub(crate) fn render_input_panel(
@@ -3770,32 +3930,29 @@ impl App {
             },
         );
         frame.render_stateful_widget(
-            Table::new(
-                rows,
-                vec![Constraint::Min(20)],
-            )
-            .header(
-                Row::new(vec![Cell::from("Category")])
-                    .style(Style::default().add_modifier(Modifier::BOLD)),
-            )
-            .highlight_symbol("> ")
-            .row_highlight_style(selected_row_style())
-            .block(
-                Block::default()
-                    .title(if manager_focus == CategoryManagerFocus::Tree {
-                        format!("> Category Manager{title_suffix}")
-                    } else {
-                        format!("Category Manager{title_suffix}")
-                    })
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(tree_border).add_modifier(
-                        if manager_focus == CategoryManagerFocus::Tree {
-                            Modifier::BOLD
+            Table::new(rows, vec![Constraint::Min(20)])
+                .header(
+                    Row::new(vec![Cell::from("Category")])
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                )
+                .highlight_symbol("> ")
+                .row_highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(if manager_focus == CategoryManagerFocus::Tree {
+                            format!("> Category Manager{title_suffix}")
                         } else {
-                            Modifier::empty()
-                        },
-                    )),
-            ),
+                            format!("Category Manager{title_suffix}")
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(tree_border).add_modifier(
+                            if manager_focus == CategoryManagerFocus::Tree {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            },
+                        )),
+                ),
             table_area,
             &mut state,
         );
@@ -3857,33 +4014,54 @@ impl App {
                 } else {
                     NumericFormat::default()
                 };
+                let integer_mode = is_numeric_category && numeric_format.decimal_places == 0;
+                let info_height = if is_numeric_category { 6 } else { 5 };
                 let is_ready_queue_role = self.workflow_config.ready_category_id == Some(row.id);
                 let is_claim_target_role = self.workflow_config.claim_category_id == Some(row.id);
-                let workflow_role_height: u16 =
-                    if is_ready_queue_role { 2 } else { 0 } + if is_claim_target_role { 2 } else { 0 };
-                let flags_height = if is_numeric_category { 5 } else { 5 + workflow_role_height };
+                let workflow_role_height: u16 = if is_ready_queue_role { 2 } else { 0 }
+                    + if is_claim_target_role { 2 } else { 0 };
+                let flags_height = if is_numeric_category {
+                    7
+                } else {
+                    5 + workflow_role_height
+                };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(5),
+                        Constraint::Length(info_height),
                         Constraint::Length(flags_height),
                         Constraint::Min(5),
                         Constraint::Length(2),
                     ])
                     .split(details_inner);
 
+                let mut info_lines = vec![
+                    Line::from(format!("Selected: {}", row.name)),
+                    Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
+                    Line::from(format!("Parent: {}", parent_name)),
+                    Line::from(if row.is_reserved {
+                        "Reserved: yes (read-only config)".to_string()
+                    } else {
+                        "Reserved: no".to_string()
+                    }),
+                ];
+                if is_numeric_category {
+                    let preview_val = rust_decimal::Decimal::new(123456, 2);
+                    let preview = format_numeric_cell(Some(preview_val), Some(&numeric_format));
+                    let decimals_label = if numeric_format.decimal_places == 1 {
+                        "1dp".to_string()
+                    } else {
+                        format!("{}dp", numeric_format.decimal_places)
+                    };
+                    info_lines.push(Line::from(format!(
+                        "Format: {} ({})",
+                        preview.trim(),
+                        decimals_label
+                    )));
+                }
+
                 frame.render_widget(
-                    Paragraph::new(vec![
-                        Line::from(format!("Selected: {}", row.name)),
-                        Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
-                        Line::from(format!("Parent: {}", parent_name)),
-                        Line::from(if row.is_reserved {
-                            "Reserved: yes (read-only config)".to_string()
-                        } else {
-                            "Reserved: no".to_string()
-                        }),
-                    ])
-                    .wrap(Wrap { trim: false }),
+                    Paragraph::new(info_lines).wrap(Wrap { trim: false }),
                     details_chunks[0],
                 );
 
@@ -3906,25 +4084,86 @@ impl App {
                 };
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
-                    use crate::modes::board::describe_numeric_format;
-                    let preview_val = rust_decimal::Decimal::new(123456, 2);
-                    let preview = format_numeric_cell(Some(preview_val), Some(&numeric_format));
-                    let format_label = describe_numeric_format(&numeric_format);
-                    let focused = details_focus == CategoryManagerDetailsFocus::NumericFormat;
-                    let format_style = if focused {
+                    let inline_input = self.category_manager_details_inline_input();
+                    let integer_focused = details_focus == CategoryManagerDetailsFocus::Integer;
+                    let decimal_focused =
+                        details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let currency_focused =
+                        details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
+                    let thousands_focused =
+                        details_focus == CategoryManagerDetailsFocus::ThousandsSeparator;
+                    let decimal_value = inline_input
+                        .filter(|input| {
+                            input.field == CategoryManagerDetailsInlineField::DecimalPlaces
+                        })
+                        .map(|input| input.buffer.text().to_string())
+                        .unwrap_or_else(|| numeric_format.decimal_places.to_string());
+                    let currency_value = inline_input
+                        .filter(|input| {
+                            input.field == CategoryManagerDetailsInlineField::CurrencySymbol
+                        })
+                        .map(|input| input.buffer.text().to_string())
+                        .unwrap_or_else(|| {
+                            numeric_format.currency_symbol.clone().unwrap_or_default()
+                        });
+                    let decimal_style = if integer_mode {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if decimal_focused {
                         focused_cell_style()
                     } else {
                         Style::default()
                     };
-                    let indicator = if focused { "> " } else { "  " };
+                    let currency_style = if currency_focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    let thousands_style = if thousands_focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
                     vec![
+                        flag_line(integer_focused, "Integer", integer_mode),
                         Line::from(Span::styled(
-                            format!("  Preview: {}", preview.trim()),
-                            Style::default().fg(Color::White),
+                            format!(
+                                "{}Decimal places: {}",
+                                if decimal_focused { "> " } else { "  " },
+                                if integer_mode {
+                                    "(disabled in Integer mode)".to_string()
+                                } else if decimal_value.is_empty() {
+                                    "_".to_string()
+                                } else {
+                                    decimal_value
+                                }
+                            ),
+                            decimal_style,
                         )),
                         Line::from(Span::styled(
-                            format!("{indicator}{format_label}"),
-                            format_style,
+                            format!(
+                                "{}Currency symbol: {}",
+                                if currency_focused { "> " } else { "  " },
+                                if currency_value.is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    currency_value
+                                }
+                            ),
+                            currency_style,
+                        )),
+                        Line::from(Span::styled(
+                            format!(
+                                "{}{} Thousands separator",
+                                if thousands_focused { "> " } else { "  " },
+                                if numeric_format.use_thousands_separator {
+                                    "[x]"
+                                } else {
+                                    "[ ]"
+                                }
+                            ),
+                            thousands_style,
                         )),
                     ]
                 } else {
@@ -4062,8 +4301,21 @@ impl App {
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
                         }
-                        CategoryManagerDetailsFocus::NumericFormat => {
-                            "Enter/Space: cycle format (int → 1dp → 2dp → thousands → currency)"
+                        CategoryManagerDetailsFocus::Integer => {
+                            "Enter/Space: toggle Integer mode (on sets 0dp, off restores 2dp)"
+                        }
+                        CategoryManagerDetailsFocus::DecimalPlaces => {
+                            if integer_mode {
+                                "Disabled while Integer mode is enabled"
+                            } else {
+                                "Enter: edit decimal places  Esc: cancel edit"
+                            }
+                        }
+                        CategoryManagerDetailsFocus::CurrencySymbol => {
+                            "Enter: edit currency symbol  Empty value clears symbol"
+                        }
+                        CategoryManagerDetailsFocus::ThousandsSeparator => {
+                            "Enter/Space: toggle thousands separator"
                         }
                         CategoryManagerDetailsFocus::Note => {
                             "j/k: focus field  Enter/Space: toggle/edit"
@@ -4071,6 +4323,9 @@ impl App {
                     }
                 };
                 frame.render_widget(Paragraph::new(details_hint), details_chunks[3]);
+                if let Some((x, y)) = self.category_manager_details_cursor_position(body[1]) {
+                    frame.set_cursor_position((x, y));
+                }
             } else {
                 frame.render_widget(
                     Paragraph::new(vec![

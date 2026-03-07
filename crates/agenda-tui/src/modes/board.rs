@@ -2164,6 +2164,9 @@ impl App {
             KeyCode::Char('n') => {
                 self.open_input_panel_add_item();
             }
+            KeyCode::Char('?') => {
+                self.mode = Mode::HelpPanel;
+            }
             KeyCode::Char('m') => {
                 self.toggle_current_view_section_flow(agenda)?;
             }
@@ -3534,6 +3537,16 @@ impl App {
                     }
                 }
             }
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn handle_help_panel_key(&mut self, code: KeyCode) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+            }
+            _ => {}
         }
         Ok(false)
     }
