@@ -1,7 +1,7 @@
 use crate::*;
 
 fn is_immutable_view(view: &View) -> bool {
-    view.name.eq_ignore_ascii_case("All Items")
+    agenda_core::store::is_system_view_name(&view.name)
 }
 
 impl App {
@@ -17,7 +17,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if !self.views.is_empty() {
-                    self.view_index = self.picker_index.min(self.views.len() - 1);
+                    self.set_active_view_index(self.picker_index.min(self.views.len() - 1));
                     self.slot_index = 0;
                     self.item_index = 0;
                     self.slot_sort_keys.clear();
@@ -46,7 +46,7 @@ impl App {
             KeyCode::Char('r') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
                     if is_immutable_view(&view) {
-                        self.status = "All Items view is immutable".to_string();
+                        self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
                     }
                     self.view_pending_edit_name = Some(view.name.clone());
@@ -67,7 +67,7 @@ impl App {
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
                     if is_immutable_view(&view) {
-                        self.status = "All Items view is immutable".to_string();
+                        self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
                     }
                     self.open_view_edit(view);
@@ -78,7 +78,7 @@ impl App {
             KeyCode::Char('V') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
                     if is_immutable_view(&view) {
-                        self.status = "All Items view is immutable".to_string();
+                        self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
                     }
                     self.open_view_edit(view);
@@ -88,6 +88,10 @@ impl App {
             }
             KeyCode::Char('c') => {
                 if let Some(view) = self.views.get(self.picker_index).cloned() {
+                    if is_immutable_view(&view) {
+                        self.status = format!("{} view is immutable", view.name);
+                        return Ok(false);
+                    }
                     self.view_pending_clone_id = Some(view.id);
                     self.input_panel = Some(input_panel::InputPanel::new_name_input(
                         "",
@@ -106,7 +110,7 @@ impl App {
             KeyCode::Char('x') => {
                 if let Some(view) = self.views.get(self.picker_index) {
                     if is_immutable_view(view) {
-                        self.status = "All Items view is immutable".to_string();
+                        self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
                     }
                     self.mode = Mode::ViewDeleteConfirm;
@@ -144,7 +148,7 @@ impl App {
                 };
                 if is_immutable_view(&view) {
                     self.mode = Mode::ViewPicker;
-                    self.status = "Delete failed: All Items view is immutable".to_string();
+                    self.status = format!("Delete failed: {} view is immutable", view.name);
                     return Ok(false);
                 }
                 let deleted_index = self.picker_index.min(self.views.len().saturating_sub(1));
