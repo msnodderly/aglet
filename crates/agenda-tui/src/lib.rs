@@ -193,6 +193,7 @@ enum BucketEditTarget {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
+    HelpPanel,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
     // TODO(feature): inline note editor not yet implemented
@@ -406,18 +407,29 @@ enum CategoryManagerDetailsFocus {
     Exclusive,
     MatchName,
     Actionable,
-    // Single format preset field for numeric categories (Enter cycles presets)
-    NumericFormat,
+    Integer,
+    DecimalPlaces,
+    CurrencySymbol,
+    ThousandsSeparator,
     Note,
 }
 
 impl CategoryManagerDetailsFocus {
-    fn next(self, is_numeric: bool) -> Self {
+    fn next(self, is_numeric: bool, integer_mode: bool) -> Self {
         if is_numeric {
             match self {
-                Self::NumericFormat => Self::Note,
-                Self::Note => Self::NumericFormat,
-                _ => Self::NumericFormat,
+                Self::Integer => {
+                    if integer_mode {
+                        Self::CurrencySymbol
+                    } else {
+                        Self::DecimalPlaces
+                    }
+                }
+                Self::DecimalPlaces => Self::CurrencySymbol,
+                Self::CurrencySymbol => Self::ThousandsSeparator,
+                Self::ThousandsSeparator => Self::Note,
+                Self::Note => Self::Integer,
+                _ => Self::Integer,
             }
         } else {
             match self {
@@ -430,12 +442,21 @@ impl CategoryManagerDetailsFocus {
         }
     }
 
-    fn prev(self, is_numeric: bool) -> Self {
+    fn prev(self, is_numeric: bool, integer_mode: bool) -> Self {
         if is_numeric {
             match self {
-                Self::NumericFormat => Self::Note,
-                Self::Note => Self::NumericFormat,
-                _ => Self::Note,
+                Self::Integer => Self::Note,
+                Self::DecimalPlaces => Self::Integer,
+                Self::CurrencySymbol => {
+                    if integer_mode {
+                        Self::Integer
+                    } else {
+                        Self::DecimalPlaces
+                    }
+                }
+                Self::ThousandsSeparator => Self::CurrencySymbol,
+                Self::Note => Self::ThousandsSeparator,
+                _ => Self::Integer,
             }
         } else {
             match self {
@@ -447,6 +468,18 @@ impl CategoryManagerDetailsFocus {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CategoryManagerDetailsInlineField {
+    DecimalPlaces,
+    CurrencySymbol,
+}
+
+#[derive(Clone)]
+struct CategoryManagerDetailsInlineInput {
+    field: CategoryManagerDetailsInlineField,
+    buffer: text_buffer::TextBuffer,
 }
 
 #[derive(Clone)]
@@ -474,6 +507,7 @@ struct CategoryManagerState {
     details_note: text_buffer::TextBuffer,
     details_note_dirty: bool,
     details_note_editing: bool,
+    details_inline_input: Option<CategoryManagerDetailsInlineInput>,
     tree_index: usize,
     visible_row_indices: Vec<usize>,
     selected_category_id: Option<CategoryId>,
@@ -962,8 +996,8 @@ mod tests {
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
-        CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId, Query,
-        Section, SectionFlow, SummaryFn, View, WhenBucket,
+        CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
+        NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -4768,6 +4802,40 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_details_cursor_position_tracks_numeric_inline_input() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let mut app = App {
+            mode: Mode::CategoryManager,
+            ..App::default()
+        };
+        app.refresh(&store).expect("refresh");
+        app.ensure_category_manager_session();
+        app.set_category_selection_by_id(cost.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::DecimalPlaces);
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("start decimal edit");
+        if let Some(input) = app.category_manager_details_inline_input_mut() {
+            input.buffer = text_buffer::TextBuffer::with_cursor("12".to_string(), 1);
+        }
+
+        let details_area = Rect::new(40, 4, 40, 24);
+        let prefix_len = "  Decimal places: ".chars().count() as u16;
+        let expected = (details_area.x + 2 + prefix_len + 1, details_area.y + 9);
+        assert_eq!(
+            app.category_manager_details_cursor_position(details_area),
+            Some(expected)
+        );
+    }
+
+    #[test]
     fn input_panel_edit_tab_switches_to_note_and_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6828,6 +6896,10 @@ mod tests {
             "normal footer hints should include preview shortcut: {rendered}"
         );
         assert!(
+            rendered.contains("?:help"),
+            "normal footer hints should include help shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("z:cards"),
             "normal footer hints should include card display shortcut: {rendered}"
         );
@@ -6854,6 +6926,10 @@ mod tests {
             "filtered footer hints should include preview shortcut: {rendered}"
         );
         assert!(
+            rendered.contains("?:help"),
+            "filtered footer hints should include help shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("z:cards"),
             "filtered footer hints should include card display shortcut: {rendered}"
         );
@@ -6864,6 +6940,66 @@ mod tests {
         assert!(
             rendered.contains("u:deps"),
             "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
+    }
+
+    #[test]
+    fn question_mark_opens_help_panel_from_normal_mode() {
+        let (store, db_path) = make_two_section_store("help-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.handle_normal_key(KeyCode::Char('?'), &agenda)
+            .expect("open help panel");
+        assert_eq!(app.mode, Mode::HelpPanel);
+
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("close help panel");
+        assert_eq!(app.mode, Mode::Normal);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn help_panel_render_contains_shortcut_cheat_sheet() {
+        let app = App {
+            mode: Mode::HelpPanel,
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(120, 60);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Keyboard Shortcuts"),
+            "help panel title should render: {rendered}"
+        );
+        assert!(
+            rendered.contains("CURRENT ITEM"),
+            "help panel should include CURRENT ITEM group header: {rendered}"
+        );
+        assert!(
+            rendered.contains("NAVIGATION"),
+            "help panel should include NAVIGATION group header: {rendered}"
+        );
+        assert!(
+            rendered.contains("GLOBAL"),
+            "help panel should include GLOBAL group header: {rendered}"
+        );
+        assert!(
+            rendered.contains("Search across all sections"),
+            "help panel should include global search description: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assign categories to current item or selection"),
+            "help panel should include updated assign description: {rendered}"
         );
     }
 
@@ -10162,7 +10298,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_numeric_initial_focus_is_numeric_format() {
+    fn category_manager_numeric_initial_focus_is_integer_toggle() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10184,10 +10320,10 @@ mod tests {
         app.set_category_selection_by_id(cost.id);
         app.set_category_manager_focus(CategoryManagerFocus::Details);
 
-        // Numeric category should start on NumericFormat, not Exclusive
+        // Numeric category should start on Integer, not Exclusive.
         assert_eq!(
             app.category_manager_details_focus(),
-            Some(CategoryManagerDetailsFocus::NumericFormat)
+            Some(CategoryManagerDetailsFocus::Integer)
         );
 
         drop(store);
@@ -10195,7 +10331,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_numeric_format_preset_cycles() {
+    fn category_manager_numeric_integer_toggle_restores_two_decimal_default() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10216,48 +10352,106 @@ mod tests {
             .expect("open category manager");
         app.set_category_selection_by_id(cost.id);
         app.set_category_manager_focus(CategoryManagerFocus::Details);
-        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::NumericFormat);
 
-        // Default is 2dp. Cycle: int → 1dp → 2dp → 2dp+thousands → currency → int
-        // From 2dp default, first press → 2dp+thousands
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cycle to 2dp+thousands");
-        let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
-        assert_eq!(fmt.decimal_places, 2);
-        assert!(fmt.use_thousands_separator);
-        assert!(fmt.currency_symbol.is_none());
-
-        // 2dp+thousands → currency ($+2dp+thousands)
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cycle to currency");
-        let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
-        assert_eq!(fmt.decimal_places, 2);
-        assert!(fmt.use_thousands_separator);
-        assert_eq!(fmt.currency_symbol.as_deref(), Some("$"));
-
-        // currency → integer
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cycle to integer");
+            .expect("toggle integer on");
         let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
         assert_eq!(fmt.decimal_places, 0);
-        assert!(!fmt.use_thousands_separator);
-        assert!(fmt.currency_symbol.is_none());
 
-        // integer → 1dp
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cycle to 1dp");
-        let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
-        assert_eq!(fmt.decimal_places, 1);
-
-        // 1dp → 2dp
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cycle to 2dp");
+            .expect("toggle integer off");
         let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
         assert_eq!(fmt.decimal_places, 2);
-        assert!(!fmt.use_thousands_separator);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_numeric_fields_edit_and_persist() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-catmgr-format-fields-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(cost.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::DecimalPlaces);
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("start decimal edit");
+        if let Some(input) = app.category_manager_details_inline_input_mut() {
+            input.buffer.set("3".to_string());
+        }
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("save decimal edit");
+
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::CurrencySymbol);
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("start currency edit");
+        if let Some(input) = app.category_manager_details_inline_input_mut() {
+            input.buffer.set("EUR".to_string());
+        }
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("save currency edit");
+
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::ThousandsSeparator);
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle thousands");
+
+        let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
+        assert_eq!(fmt.decimal_places, 3);
+        assert_eq!(fmt.currency_symbol.as_deref(), Some("EUR"));
+        assert!(fmt.use_thousands_separator);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_numeric_details_render_preview_line() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        cost.numeric_format = Some(NumericFormat {
+            decimal_places: 2,
+            currency_symbol: Some("$".to_string()),
+            use_thousands_separator: true,
+        });
+        store.create_category(&cost).expect("create cost");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(cost.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Format: $1,234.56 (2dp)"),
+            "numeric details should render preview line: {rendered}"
+        );
     }
 
     #[test]
@@ -10316,11 +10510,11 @@ mod tests {
             .expect("open category manager");
         app.set_category_selection_by_id(cost.id);
         app.set_category_manager_focus(CategoryManagerFocus::Details);
-        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::NumericFormat);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::ThousandsSeparator);
 
-        // Cycle format — should NOT trigger reclassification
+        // Toggle format-only field — should NOT trigger reclassification.
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cycle format");
+            .expect("toggle thousands");
 
         let after = store
             .get_assignments_for_item(item.id)
