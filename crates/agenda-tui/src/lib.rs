@@ -14666,6 +14666,41 @@ mod tests {
     }
 
     #[test]
+    fn search_bar_filters_match_item_uuid_prefix() {
+        let (store, db_path) = make_two_section_store("uuid-prefix-match");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work_items = store
+            .list_items()
+            .expect("list items for uuid search test")
+            .into_iter()
+            .filter(|item| item.text == "Fix timeout bug")
+            .collect::<Vec<_>>();
+        assert_eq!(work_items.len(), 1, "expected fixture item");
+        let uuid_prefix = work_items[0].id.to_string()[..3].to_string();
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+        for ch in uuid_prefix.chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+
+        assert_eq!(app.section_filters[0], Some(uuid_prefix));
+        assert_eq!(app.slots[0].items.len(), 1, "uuid prefix should match one item");
+        assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn search_bar_enter_opens_top_visible_item() {
         let (store, db_path) = make_two_section_store("exact-match");
         let classifier = SubstringClassifier;
