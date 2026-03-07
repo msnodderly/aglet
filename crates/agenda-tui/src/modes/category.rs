@@ -722,29 +722,6 @@ impl App {
                 }
                 return Ok(true);
             }
-            KeyCode::Char('x') => {
-                let mut workflow = self.workflow_config.clone();
-                let (role_name, cleared) = if self.workflow_setup_focus == 0 {
-                    let had = workflow.ready_category_id.is_some();
-                    workflow.ready_category_id = None;
-                    ("Ready Queue", had)
-                } else {
-                    let had = workflow.claim_category_id.is_some();
-                    workflow.claim_category_id = None;
-                    ("Claim Target", had)
-                };
-                if cleared {
-                    agenda
-                        .store()
-                        .set_workflow_config(&workflow)
-                        .map_err(|e| e.to_string())?;
-                    self.refresh(agenda.store())?;
-                    self.status = format!("{} cleared", role_name);
-                } else {
-                    self.status = format!("{} is already unset", role_name);
-                }
-                return Ok(true);
-            }
             _ => {}
         }
         Ok(true)
