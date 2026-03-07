@@ -2479,7 +2479,7 @@ impl App {
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )),
                         Line::from(Span::styled(
-                            "n:add item  /:search other lanes",
+                            "n:add item",
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )),
                     ]
