@@ -3844,12 +3844,7 @@ impl App {
             .map(|rows| rows.to_vec())
             .unwrap_or_else(|| (0..self.category_rows.len()).collect());
         let rows: Vec<Row<'_>> = if visible_row_indices.is_empty() {
-            vec![Row::new(vec![
-                Cell::from("(no categories)"),
-                Cell::from(String::new()),
-                Cell::from(String::new()),
-                Cell::from(String::new()),
-            ])]
+            vec![Row::new(vec![Cell::from("(no categories)")])]
         } else {
             visible_row_indices
                 .iter()
@@ -3857,38 +3852,34 @@ impl App {
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
                     label = with_note_marker(label, row.has_note);
+                    let mut badges = Vec::new();
                     if row.is_reserved {
-                        label.push_str(" [reserved]");
+                        badges.push("reserved");
                     }
-                    let is_numeric = row.value_kind == CategoryValueKind::Numeric;
-                    Row::new(vec![
-                        Cell::from(if is_numeric {
-                            format!("{} [numeric]", label)
-                        } else {
-                            label
-                        }),
-                        Cell::from(if is_numeric {
-                            " - "
-                        } else if row.is_exclusive {
-                            "[x]"
-                        } else {
-                            "[ ]"
-                        }),
-                        Cell::from(if is_numeric {
-                            " - "
-                        } else if row.enable_implicit_string {
-                            "[x]"
-                        } else {
-                            "[ ]"
-                        }),
-                        Cell::from(if is_numeric {
-                            " - "
-                        } else if row.is_actionable {
-                            "[x]"
-                        } else {
-                            "[ ]"
-                        }),
-                    ])
+                    if row.value_kind == CategoryValueKind::Numeric {
+                        badges.push("numeric");
+                    } else {
+                        if row.is_exclusive {
+                            badges.push("exclusive");
+                        }
+                        if self.workflow_config.ready_category_id == Some(row.id) {
+                            badges.push("ready-queue");
+                        }
+                        if self.workflow_config.claim_category_id == Some(row.id) {
+                            badges.push("claim-target");
+                        }
+                    }
+                    if !badges.is_empty() {
+                        label.push(' ');
+                        label.push_str(
+                            &badges
+                                .into_iter()
+                                .map(|badge| format!("[{badge}]"))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        );
+                    }
+                    Row::new(vec![Cell::from(label)])
                 })
                 .collect()
         };
@@ -3908,21 +3899,10 @@ impl App {
         frame.render_stateful_widget(
             Table::new(
                 rows,
-                vec![
-                    Constraint::Min(20),
-                    Constraint::Length(6),
-                    Constraint::Length(7),
-                    Constraint::Length(6),
-                ],
+                vec![Constraint::Min(20)],
             )
             .header(
-                Row::new(vec![
-                    Cell::from("Category"),
-                    Cell::from("Excl"),
-                    Cell::from("Match"),
-                    Cell::from("Todo"),
-                ])
-                .style(Style::default().add_modifier(Modifier::BOLD)),
+                Row::new(vec![Cell::from("Category")]).style(Style::default().add_modifier(Modifier::BOLD)),
             )
             .highlight_symbol("> ")
             .row_highlight_style(selected_row_style())

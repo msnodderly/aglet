@@ -10444,6 +10444,57 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Ready".to_string());
+        category.is_exclusive = true;
+        category.is_actionable = true;
+        store.create_category(&category).expect("create category");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(category.id),
+                claim_category_id: None,
+            })
+            .expect("set workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Ready [exclusive] [ready-queue]"),
+            "tree should render non-default/special suffix badges on the category row: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Excl   Match   Todo"),
+            "tree should no longer render separate checkbox columns: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ready [exclusive] [auto-match]"),
+            "tree should not render default-state auto-match badge: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ready [exclusive] [actionable]"),
+            "tree should not render default-state actionable badge: {rendered}"
+        );
+        assert!(
+            rendered.contains("[x] Exclusive"),
+            "details pane should still use checkbox rows: {rendered}"
+        );
+    }
+
+    #[test]
     fn category_manager_format_cycle_does_not_reclassify_items() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
