@@ -6911,20 +6911,24 @@ mod tests {
             "help panel title should render: {rendered}"
         );
         assert!(
-            rendered.contains("ITEMS"),
-            "help panel should include ITEMS group header: {rendered}"
+            rendered.contains("CURRENT ITEM"),
+            "help panel should include CURRENT ITEM group header: {rendered}"
         );
         assert!(
             rendered.contains("NAVIGATION"),
             "help panel should include NAVIGATION group header: {rendered}"
         );
         assert!(
-            rendered.contains("Toggle this help panel"),
-            "help panel should include verbose help description: {rendered}"
+            rendered.contains("GLOBAL"),
+            "help panel should include GLOBAL group header: {rendered}"
         );
         assert!(
             rendered.contains("Search across all sections"),
             "help panel should include global search description: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assign categories to current item or selection"),
+            "help panel should include updated assign description: {rendered}"
         );
     }
 
