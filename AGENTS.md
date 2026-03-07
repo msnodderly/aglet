@@ -95,6 +95,19 @@ Practical implications:
   `agenda-cli show` assignment provenance before assuming the visible category
   was manually assigned
 
+## CLI Search vs TUI Search Matchers Diverge (Surprising)
+
+CLI `agenda-cli search <query>` uses `agenda-core` query text matching, but the
+TUI per-lane `/` search uses a separate helper in `crates/agenda-tui/src/ui_support.rs`
+(`item_text_matches`).
+
+Practical implications:
+- Search behavior can drift between CLI and TUI if you only patch one path
+- UUID/prefix search support must be updated in both places unless the matching
+  logic is centralized first
+- Re-run both `agenda-core` text-search tests and `agenda-tui` search-bar tests
+  after changing item search semantics
+
 ## Database Files
 
 Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts

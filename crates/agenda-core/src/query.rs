@@ -317,12 +317,12 @@ fn matches_text_search(item: &Item, search_term: &str) -> bool {
         return true;
     }
 
-    let item_id = item.id.to_string();
-    if item_id.contains(search_term) {
-        return true;
-    }
+    if is_uuid_search_candidate(search_term) {
+        let item_id = item.id.to_string();
+        if item_id.contains(search_term) {
+            return true;
+        }
 
-    if is_hexish_uuid_query(search_term) {
         let compact_search = search_term.replace('-', "");
         if !compact_search.is_empty() && item.id.as_simple().to_string().contains(&compact_search) {
             return true;
@@ -335,10 +335,12 @@ fn matches_text_search(item: &Item, search_term: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn is_hexish_uuid_query(search_term: &str) -> bool {
-    search_term
-        .chars()
-        .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
+fn is_uuid_search_candidate(search_term: &str) -> bool {
+    let compact_len = search_term.chars().filter(|ch| *ch != '-').count();
+    compact_len >= 3
+        && search_term
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
 }
 
 fn start_of_iso_week(date: NaiveDate) -> NaiveDate {

@@ -88,6 +88,18 @@ pub(super) fn item_text_matches(
         return true;
     }
 
+    if is_uuid_search_candidate(needle_lower_ascii) {
+        let item_id = item.id.to_string();
+        if item_id.contains(needle_lower_ascii) {
+            return true;
+        }
+
+        let compact_search = needle_lower_ascii.replace('-', "");
+        if !compact_search.is_empty() && item.id.as_simple().to_string().contains(&compact_search) {
+            return true;
+        }
+    }
+
     if item
         .note
         .as_ref()
@@ -103,6 +115,14 @@ pub(super) fn item_text_matches(
             .map(|name| name.contains(needle_lower_ascii))
             .unwrap_or(false)
     })
+}
+
+fn is_uuid_search_candidate(search_term: &str) -> bool {
+    let compact_len = search_term.chars().filter(|ch| *ch != '-').count();
+    compact_len >= 3
+        && search_term
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
 }
 
 pub(super) fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
