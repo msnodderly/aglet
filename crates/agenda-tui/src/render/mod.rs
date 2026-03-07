@@ -294,7 +294,7 @@ impl App {
             }
         }
         if self.mode == Mode::HelpPanel {
-            self.render_help_panel(frame, centered_rect(74, 78, frame.area()));
+            self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
         }
     }
 
@@ -3148,9 +3148,9 @@ impl App {
                 if self.selected_count() > 0 {
                     "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  ?:help  q:quit"
                 } else if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:col fmt  F:col summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:col fmt  F:col summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
@@ -3161,43 +3161,73 @@ impl App {
             return;
         }
 
-        let lines = vec![
+        let header = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let help_entry = |key: &str, desc: &str| -> Line<'static> {
+            let pad = 12_usize.saturating_sub(key.len());
             Line::from(vec![
-                Span::styled("Normal", Style::default().fg(Color::Yellow)),
-                Span::raw(": "),
-                Span::raw(
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done",
-                ),
-            ]),
-            Line::from("a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  q:quit"),
+                Span::raw("  "),
+                Span::styled(key.to_string(), key_style),
+                Span::raw(" ".repeat(pad)),
+                Span::raw(desc.to_string()),
+            ])
+        };
+
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(Span::styled("CURRENT ITEM", header)),
+            help_entry("n", "Add a new item to the focused section"),
+            help_entry("e", "Edit the selected item (text, note, categories)"),
+            help_entry("Enter", "Edit item / edit column value / add item"),
+            help_entry("a", "Assign categories to current item or selection"),
+            help_entry("d", "Mark item as done"),
+            help_entry("x", "Delete selected item(s)"),
+            help_entry("p", "Toggle the preview sidebar"),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Selection", Style::default().fg(Color::Yellow)),
-                Span::raw(": "),
-                Span::raw("Space:toggle  a:assign  b/B:link  x:delete  Esc:clear selection"),
-            ]),
+            Line::from(Span::styled("SELECTION", header)),
+            help_entry("Space", "Toggle selection on current item"),
+            help_entry("b / B", "Link / unlink selected items (dependency)"),
+            help_entry("x", "Delete selected items"),
+            help_entry("Esc", "Clear selection"),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Search", Style::default().fg(Color::Yellow)),
-                Span::raw(": "),
-                Span::raw("/:current lane  g/:all lanes  Enter:jump  Down/Tab:browse  Esc:clear/return"),
-            ]),
+            Line::from(Span::styled("NAVIGATION", header)),
+            help_entry("\u{2191}/k \u{2193}/j", "Move between items"),
+            help_entry("\u{2190}/h \u{2192}/l", "Move between sections (lanes)"),
+            help_entry("Tab/S-Tab", "Next / previous section"),
+            help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
+            help_entry("z", "Cycle card size (compact \u{2194} detail)"),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Views", Style::default().fg(Color::Yellow)),
-                Span::raw(": "),
-                Span::raw("v/F8:view picker  ,/.:cycle views"),
-            ]),
-            Line::from(vec![
-                Span::styled("Categories", Style::default().fg(Color::Yellow)),
-                Span::raw(": "),
-                Span::raw("c/F9:category manager"),
-            ]),
-            Line::from(vec![
-                Span::styled("Panel", Style::default().fg(Color::Yellow)),
-                Span::raw(": "),
-                Span::raw("Esc, Enter, or ?:close"),
-            ]),
+            Line::from(Span::styled("SEARCH", header)),
+            help_entry("/", "Search within the focused section"),
+            help_entry("g/", "Search across all sections (global)"),
+            help_entry("Esc", "Clear active section filter"),
+            Line::from(""),
+            Line::from(Span::styled("COLUMNS", header)),
+            help_entry("Enter", "Edit column value (on a column cell)"),
+            help_entry("f", "Cycle numeric column format"),
+            help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
+            Line::from(""),
+            Line::from(Span::styled("VIEWS", header)),
+            help_entry("v / F8", "Open the view picker"),
+            help_entry(",/.", "Cycle to previous / next view"),
+            Line::from(""),
+            Line::from(Span::styled("GLOBAL", header)),
+            help_entry("c / F9", "Open the category manager"),
+            help_entry("s", "Cycle sort order for the focused section"),
+            help_entry("u", "Show / edit item dependencies"),
+            help_entry("Ctrl-L", "Reload data from disk"),
+            help_entry("Ctrl-R", "Toggle auto-refresh interval"),
+            help_entry("?", "Toggle this help panel"),
+            help_entry("q", "Quit"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "              Esc / Enter / ? to close",
+                Style::default().fg(Color::DarkGray),
+            )),
         ];
 
         let block = Block::default()
@@ -3207,7 +3237,7 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 
     pub(crate) fn render_input_panel(

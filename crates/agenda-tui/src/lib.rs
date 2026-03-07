@@ -6973,7 +6973,7 @@ mod tests {
             ..App::default()
         };
 
-        let backend = TestBackend::new(120, 40);
+        let backend = TestBackend::new(120, 60);
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal.draw(|frame| app.draw(frame)).expect("draw");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
@@ -6983,12 +6983,24 @@ mod tests {
             "help panel title should render: {rendered}"
         );
         assert!(
-            rendered.contains("?:help"),
-            "help panel should include help shortcut copy: {rendered}"
+            rendered.contains("CURRENT ITEM"),
+            "help panel should include CURRENT ITEM group header: {rendered}"
         );
         assert!(
-            rendered.contains("g/:global"),
-            "help panel should include global search shortcut: {rendered}"
+            rendered.contains("NAVIGATION"),
+            "help panel should include NAVIGATION group header: {rendered}"
+        );
+        assert!(
+            rendered.contains("GLOBAL"),
+            "help panel should include GLOBAL group header: {rendered}"
+        );
+        assert!(
+            rendered.contains("Search across all sections"),
+            "help panel should include global search description: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assign categories to current item or selection"),
+            "help panel should include updated assign description: {rendered}"
         );
     }
 
