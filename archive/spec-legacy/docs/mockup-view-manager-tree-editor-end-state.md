@@ -5,7 +5,7 @@ Status: Design sketch / implementation mockup (revised split architecture)
 Related plan:
 - `/Users/mds/src/aglet/docs/plan-view-manager-tree-editor-ux-streamlining.md`
 Reference inspiration:
-- `/Users/mds/src/aglet/reference/lotus-agenda-view-creation-workflow.md`
+- external Lotus Agenda view-creation workflow notes (not included in repo)
 
 ## 1. Purpose
 
@@ -49,7 +49,7 @@ Default editor layout should be **2 panes** (Sections + Details), with optional/
 
 ## 3. Lotus Agenda Patterns To Borrow (Without Copying Literally)
 
-From `/Users/mds/src/aglet/reference/lotus-agenda-view-creation-workflow.md`:
+From external Lotus Agenda view-creation workflow notes (not included in repo):
 
 - Lightweight view manager for quick switching, with a separate deeper properties/edit path
 - Progressive disclosure: quick command path and full properties path

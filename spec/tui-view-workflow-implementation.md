@@ -3,7 +3,7 @@
 Date: 2026-02-17
 Status: Active implementation contract
 Scope: Unified spec for TUI board/view/category workflows, view-manager UX, and column evolution.
-Primary reference: `/Users/mds/src/aglet/reference/lotus-agenda-paper.txt`
+Primary reference: external Lotus Agenda material (not included in this repo).
 
 ## 1. Purpose
 

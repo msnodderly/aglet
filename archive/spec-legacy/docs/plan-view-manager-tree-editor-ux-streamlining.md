@@ -11,7 +11,7 @@ Primary code areas:
 - `/Users/mds/src/aglet/crates/agenda-core/src/model.rs`
 - `/Users/mds/src/aglet/crates/agenda-core/src/query.rs`
 Reference inspiration:
-- `/Users/mds/src/aglet/reference/lotus-agenda-view-creation-workflow.md`
+- external Lotus Agenda view-creation workflow notes (not included in repo)
 
 ## 1. Objective
 
@@ -123,7 +123,7 @@ Rationale:
 
 ### 5.1 What To Borrow From Lotus Agenda
 
-From `/Users/mds/src/aglet/reference/lotus-agenda-view-creation-workflow.md`, the most useful patterns are:
+From external Lotus Agenda view-creation workflow notes (not included in repo), the most useful patterns are:
 
 - lightweight view manager for quick switching
 - separate deeper properties/editing path

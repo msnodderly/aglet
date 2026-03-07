@@ -8,6 +8,6 @@ Flat docs layout by prefix:
 - `process-*.md`: team workflow/process notes
 - `status-*.md`: implementation status and deferred items
 
-External source material lives in `reference/`.
+External source material was removed from this repo before open sourcing.
 Current product source-of-truth specs live in `spec/`.
 Legacy specs are in `archive/spec-legacy/`.

@@ -75,9 +75,7 @@ This means numeric support touches:
 
 Reviewed:
 
-- `/Users/mds/src/aglet-numeric-categories-plan/reference/AgendaHelp.htm#columns`
-- `/Users/mds/src/aglet-numeric-categories-plan/reference/AgendaHelp.htm#numeric%20columns`
-- numeric column property dialog content in the same file
+- external Lotus Agenda documentation on columns and numeric columns (not included in repo)
 
 Relevant Lotus Agenda behaviors (paraphrased):
 

@@ -1,6 +1,6 @@
 # Lotus Agenda Views — Feature Behavior Summary
 
-Extracted from `AgendaHelp.htm` for potential implementation in Aglet.
+Extracted from external Lotus Agenda documentation (not included in repo) for potential implementation in Aglet.
 
 Date: 2026-02-17
 

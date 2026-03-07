@@ -134,7 +134,8 @@ The project has two binaries: `agenda-cli` and `agenda-tui`. Use
 ## Aglet Features Database
 
 `aglet-features.ag` in the project root is the canonical issue-tracking database
-for aglet. Categories:
+for aglet. The DB file is local-only and is not committed to git; create it
+locally as needed (see `scripts/init-aglet-features-db.sh`). Categories:
 
 - **Issue type** (non-exclusive): Bug, Idea, Feature request
 - **Priority** (exclusive): Critical, High, Normal, Low

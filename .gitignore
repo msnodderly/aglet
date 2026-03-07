@@ -4,3 +4,10 @@
 *.ag
 *.ag-wal
 *.ag-shm
+*.db
+*.sqlite
+*.sqlite3
+.beads/
+agenda.db
+tmp/**/*.ag
+tmp/**/*.db

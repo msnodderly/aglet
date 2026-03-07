@@ -513,8 +513,8 @@ These map directly to Lotus Agenda “Show Prereqs / Show Depends” menus.
 
 ## Lotus Agenda Reference Findings (2026-02-26)
 
-Relevant Lotus Agenda behavior (from `reference/AgendaHelp.htm`) that informs
-Aglet's design:
+Relevant Lotus Agenda behavior (from external material not included in this
+repo) that informs Aglet's design:
 
 - Dependency creation is a **view-level command** (`ALT-O`), not a note/item-edit subfeature.
 - Lotus workflow is **mark items first**, then run dependency command against the
