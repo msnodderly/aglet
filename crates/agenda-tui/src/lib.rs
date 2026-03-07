@@ -995,8 +995,9 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
-        Column, ColumnKind, CriterionMode, Item, ItemId, NumericFormat, Query, Section,
+        Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
+        CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
+        NumericFormat, Query, Section,
         SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
@@ -9830,6 +9831,348 @@ mod tests {
         );
         assert_eq!(loaded.is_actionable, !initial.is_actionable);
         assert_eq!(app.mode, Mode::CategoryManager);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_ready_role_assignment_disables_implicit_match() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-ready-disables-implicit-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign ready role");
+
+        let updated = store.get_category(ready.id).expect("load ready");
+        assert!(!updated.enable_implicit_string);
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert!(app.status.contains("Auto-match disabled for workflow role"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_claim_role_assignment_disables_implicit_match() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-claim-disables-implicit-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let claim = Category::new("In Progress".to_string());
+        store.create_category(&claim).expect("create claim target");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(claim.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("focus claim target");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign claim target role");
+
+        let updated = store.get_category(claim.id).expect("load claim target");
+        assert!(!updated.enable_implicit_string);
+        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
+        assert!(app.status.contains("Auto-match disabled for workflow role"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_role_disable_does_not_reenable_implicit_match() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-disable-keeps-implicit-off-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign ready role");
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("remove ready role");
+
+        let updated = store.get_category(ready.id).expect("load ready");
+        assert!(!updated.enable_implicit_string);
+        assert_eq!(app.workflow_config.ready_category_id, None);
+        assert_eq!(app.status, "Ready is no longer the Ready Queue category");
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_role_replacement_only_sanitizes_new_category() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-replace-sanitizes-new-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready_a = Category::new("ReadyA".to_string());
+        let ready_b = Category::new("ReadyB".to_string());
+        store.create_category(&ready_a).expect("create ready a");
+        store.create_category(&ready_b).expect("create ready b");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready_a.id),
+                claim_category_id: None,
+            })
+            .expect("set existing workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready_b.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("replace ready role");
+
+        let updated_a = store.get_category(ready_a.id).expect("load ready a");
+        let updated_b = store.get_category(ready_b.id).expect("load ready b");
+        assert!(updated_a.enable_implicit_string);
+        assert!(!updated_b.enable_implicit_string);
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready_b.id));
+        assert!(app.status.contains("(replaced ReadyA)"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_role_assignment_warns_when_conditions_exist() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-workflow-warning-conditions-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut ready = Category::new("Ready".to_string());
+        ready.enable_implicit_string = false;
+        ready.conditions.push(Condition::Profile {
+            criteria: Box::new(Query::default()),
+        });
+        store.create_category(&ready).expect("create ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign ready role");
+
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert!(app
+            .status
+            .contains("warning: profile rules/actions can still assign it"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_role_assignment_warns_when_actions_exist() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-workflow-warning-actions-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let target = Category::new("Target".to_string());
+        store
+            .create_category(&target)
+            .expect("create action target");
+        let mut ready = Category::new("Ready".to_string());
+        ready.enable_implicit_string = false;
+        ready.actions.push(Action::Assign {
+            targets: HashSet::from([target.id]),
+        });
+        store.create_category(&ready).expect("create ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign ready role");
+
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert!(app
+            .status
+            .contains("warning: profile rules/actions can still assign it"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_role_assignment_combines_cleanup_and_single_warning() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-workflow-warning-combined-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let target = Category::new("Target".to_string());
+        store
+            .create_category(&target)
+            .expect("create action target");
+        let mut ready = Category::new("Ready".to_string());
+        ready.conditions.push(Condition::Profile {
+            criteria: Box::new(Query::default()),
+        });
+        ready.actions.push(Action::Assign {
+            targets: HashSet::from([target.id]),
+        });
+        store.create_category(&ready).expect("create ready");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign ready role");
+
+        let updated = store.get_category(ready.id).expect("load ready");
+        assert!(!updated.enable_implicit_string);
+        assert!(app.status.contains("Auto-match disabled for workflow role"));
+        let warning_count = app
+            .status
+            .match_indices("warning: profile rules/actions can still assign it")
+            .count();
+        assert_eq!(warning_count, 1, "warning should appear once");
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_role_assignment_reclassifies_items_after_disabling_implicit_match() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-reclassifies-after-implicit-disable-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+
+        let item = Item::new("Ready task".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .update_category(&store.get_category(ready.id).expect("load ready"))
+            .expect("classify ready");
+        assert!(
+            store
+                .get_assignments_for_item(item.id)
+                .expect("assignments before")
+                .contains_key(&ready.id),
+            "item should start with implicit Ready assignment"
+        );
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign ready role");
+
+        assert!(
+            !store
+                .get_assignments_for_item(item.id)
+                .expect("assignments after")
+                .contains_key(&ready.id),
+            "auto-assigned workflow role should be reclassified away when implicit match is disabled"
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
