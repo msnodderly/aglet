@@ -1054,6 +1054,15 @@ fn cmd_list(
             .or_else(|| views.into_iter().next())
     };
 
+    if let Some(ref view) = resolved_view {
+        if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
+            if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
+                let claimable = claimable_item_ids(store, &items, workflow).map_err(|e| e.to_string())?;
+                items.retain(|item| claimable.contains(&item.id));
+            }
+        }
+    }
+
     if let Some(view) = resolved_view {
         print_items_for_view(
             &view,
@@ -1888,7 +1897,12 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
     let _ = agenda;
     match command {
         ViewCommand::List => {
-            let views = store.list_views().map_err(|e| e.to_string())?;
+            let mut views = store.list_views().map_err(|e| e.to_string())?;
+            if let Ok(Some(workflow)) = resolve_workflow_config(store) {
+                if let Ok(rq_view) = build_ready_queue_view(store, workflow) {
+                    views.insert(0, rq_view);
+                }
+            }
             if views.is_empty() {
                 println!("no views");
                 return Ok(());
@@ -2142,6 +2156,10 @@ fn names_to_category_ids(
 }
 
 fn view_by_name(store: &Store, name: &str) -> Result<View, String> {
+    if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
+        let workflow = resolved_workflow_or_err(store)?;
+        return build_ready_queue_view(store, workflow).map_err(|e| e.to_string());
+    }
     store
         .list_views()
         .map_err(|e| e.to_string())?
