@@ -27,6 +27,7 @@ impl App {
     ) -> Result<bool, String> {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
+            Mode::HelpPanel => self.handle_help_panel_key(code),
             Mode::InputPanel => self.handle_input_panel_key(code, agenda),
             Mode::LinkWizard => self.handle_link_wizard_key(code, agenda),
             Mode::NoteEdit => self.handle_note_edit_key(code, agenda),

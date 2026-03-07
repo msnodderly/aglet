@@ -192,6 +192,7 @@ enum BucketEditTarget {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
+    HelpPanel,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
     // TODO(feature): inline note editor not yet implemented
@@ -6757,6 +6758,10 @@ mod tests {
             "normal footer hints should include preview shortcut: {rendered}"
         );
         assert!(
+            rendered.contains("?:help"),
+            "normal footer hints should include help shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("z:cards"),
             "normal footer hints should include card display shortcut: {rendered}"
         );
@@ -6783,6 +6788,10 @@ mod tests {
             "filtered footer hints should include preview shortcut: {rendered}"
         );
         assert!(
+            rendered.contains("?:help"),
+            "filtered footer hints should include help shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("z:cards"),
             "filtered footer hints should include card display shortcut: {rendered}"
         );
@@ -6793,6 +6802,54 @@ mod tests {
         assert!(
             rendered.contains("u:deps"),
             "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
+    }
+
+    #[test]
+    fn question_mark_opens_help_panel_from_normal_mode() {
+        let (store, db_path) = make_two_section_store("help-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.handle_normal_key(KeyCode::Char('?'), &agenda)
+            .expect("open help panel");
+        assert_eq!(app.mode, Mode::HelpPanel);
+
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("close help panel");
+        assert_eq!(app.mode, Mode::Normal);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn help_panel_render_contains_shortcut_cheat_sheet() {
+        let app = App {
+            mode: Mode::HelpPanel,
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Keyboard Shortcuts"),
+            "help panel title should render: {rendered}"
+        );
+        assert!(
+            rendered.contains("?:help"),
+            "help panel should include help shortcut copy: {rendered}"
+        );
+        assert!(
+            rendered.contains("g/:global"),
+            "help panel should include global search shortcut: {rendered}"
         );
     }
 
