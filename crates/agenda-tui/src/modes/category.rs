@@ -1,9 +1,15 @@
 use crate::*;
+use agenda_core::model::AssignmentSource;
 
 enum CategoryInlineConfirmKeyAction {
     Confirm,
     Cancel,
     None,
+}
+
+struct WorkflowRolePrepResult {
+    auto_match_disabled: bool,
+    warn_other_derived_sources: bool,
 }
 
 fn category_inline_confirm_key_action(code: KeyCode) -> CategoryInlineConfirmKeyAction {
@@ -15,6 +21,81 @@ fn category_inline_confirm_key_action(code: KeyCode) -> CategoryInlineConfirmKey
 }
 
 impl App {
+    fn prepare_category_for_workflow_role(
+        &mut self,
+        category_id: CategoryId,
+        agenda: &Agenda<'_>,
+    ) -> Result<WorkflowRolePrepResult, String> {
+        let mut category = agenda
+            .store()
+            .get_category(category_id)
+            .map_err(|e| e.to_string())?;
+        let warn_other_derived_sources =
+            !category.conditions.is_empty() || !category.actions.is_empty();
+        let auto_match_disabled = category.enable_implicit_string;
+        if auto_match_disabled {
+            category.enable_implicit_string = false;
+            agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            let implicit_origin = format!("cat:{}", category.name);
+            let implicit_assigned_item_ids: Vec<_> = agenda
+                .store()
+                .list_items()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .filter_map(|item| {
+                    item.assignments.get(&category_id).and_then(|assignment| {
+                        (assignment.source == AssignmentSource::AutoMatch
+                            && assignment.origin.as_deref() == Some(implicit_origin.as_str()))
+                        .then_some(item.id)
+                    })
+                })
+                .collect();
+            if !implicit_assigned_item_ids.is_empty() {
+                for item_id in implicit_assigned_item_ids {
+                    agenda
+                        .store()
+                        .unassign_item(item_id, category_id)
+                        .map_err(|e| e.to_string())?;
+                }
+                let refreshed_category = agenda
+                    .store()
+                    .get_category(category_id)
+                    .map_err(|e| e.to_string())?;
+                agenda
+                    .update_category(&refreshed_category)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(WorkflowRolePrepResult {
+            auto_match_disabled,
+            warn_other_derived_sources,
+        })
+    }
+
+    fn workflow_role_status_message(
+        role_label: &str,
+        category_name: &str,
+        previous_name: Option<&str>,
+        prep: Option<&WorkflowRolePrepResult>,
+    ) -> String {
+        let mut message = if let Some(previous_name) = previous_name {
+            format!("{category_name} is now the {role_label} category (replaced {previous_name})")
+        } else {
+            format!("{category_name} is now the {role_label} category")
+        };
+        if let Some(prep) = prep {
+            if prep.auto_match_disabled {
+                message.push_str("; Auto-match disabled for workflow role");
+            }
+            if prep.warn_other_derived_sources {
+                message.push_str("; warning: profile rules/actions can still assign it");
+            }
+        }
+        message
+    }
+
     fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
         matches!(code, KeyCode::Char('S'))
             || (matches!(code, KeyCode::Char('s'))
@@ -300,8 +381,7 @@ impl App {
                 details_focus,
                 CategoryManagerDetailsFocus::Exclusive
                     | CategoryManagerDetailsFocus::MatchName
-                    | CategoryManagerDetailsFocus::Actionable
-                    // (ReadyQueue/ClaimTarget removed — now in workflow popup)
+                    | CategoryManagerDetailsFocus::Actionable // (ReadyQueue/ClaimTarget removed — now in workflow popup)
             )
         {
             details_focus = CategoryManagerDetailsFocus::Note;
@@ -711,8 +791,7 @@ impl App {
                     return Ok(true);
                 }
                 if self.selected_category_is_numeric() {
-                    self.status =
-                        "Numeric categories cannot be workflow roles".to_string();
+                    self.status = "Numeric categories cannot be workflow roles".to_string();
                     return Ok(true);
                 }
                 if self.workflow_setup_focus == 0 {
@@ -929,8 +1008,8 @@ impl App {
             KeyCode::Char('w') => {
                 self.workflow_setup_open = true;
                 self.workflow_setup_focus = 0;
-                self.status = "Workflow setup: navigate tree then Enter to assign, x to clear"
-                    .to_string();
+                self.status =
+                    "Workflow setup: navigate tree then Enter to assign, x to clear".to_string();
             }
             _ => {}
         }
@@ -1056,7 +1135,8 @@ impl App {
             .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.claim_category_id == Some(category_id) && workflow.ready_category_id != Some(category_id)
+        if workflow.claim_category_id == Some(category_id)
+            && workflow.ready_category_id != Some(category_id)
         {
             self.status = format!(
                 "{} is already the Claim Target category and cannot also be Ready Queue",
@@ -1066,6 +1146,11 @@ impl App {
         }
 
         let enabled = workflow.ready_category_id != Some(category_id);
+        let prep = if enabled {
+            Some(self.prepare_category_for_workflow_role(category_id, agenda)?)
+        } else {
+            None
+        };
         workflow.ready_category_id = if enabled { Some(category_id) } else { None };
         agenda
             .store()
@@ -1074,14 +1159,12 @@ impl App {
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if enabled {
-            if let Some(previous_name) = previous_ready_category_name {
-                format!(
-                    "{} is now the Ready Queue category (replaced {})",
-                    category.name, previous_name
-                )
-            } else {
-                format!("{} is now the Ready Queue category", category.name)
-            }
+            Self::workflow_role_status_message(
+                "Ready Queue",
+                &category.name,
+                previous_ready_category_name.as_deref(),
+                prep.as_ref(),
+            )
         } else {
             format!("{} is no longer the Ready Queue category", category.name)
         };
@@ -1114,7 +1197,8 @@ impl App {
             .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.ready_category_id == Some(category_id) && workflow.claim_category_id != Some(category_id)
+        if workflow.ready_category_id == Some(category_id)
+            && workflow.claim_category_id != Some(category_id)
         {
             self.status = format!(
                 "{} is already the Ready Queue category and cannot also be Claim Target",
@@ -1124,6 +1208,11 @@ impl App {
         }
 
         let enabled = workflow.claim_category_id != Some(category_id);
+        let prep = if enabled {
+            Some(self.prepare_category_for_workflow_role(category_id, agenda)?)
+        } else {
+            None
+        };
         workflow.claim_category_id = if enabled { Some(category_id) } else { None };
         agenda
             .store()
@@ -1132,14 +1221,12 @@ impl App {
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if enabled {
-            if let Some(previous_name) = previous_claim_category_name {
-                format!(
-                    "{} is now the Claim Target category (replaced {})",
-                    category.name, previous_name
-                )
-            } else {
-                format!("{} is now the Claim Target category", category.name)
-            }
+            Self::workflow_role_status_message(
+                "Claim Target",
+                &category.name,
+                previous_claim_category_name.as_deref(),
+                prep.as_ref(),
+            )
         } else {
             format!("{} is no longer the Claim Target category", category.name)
         };
