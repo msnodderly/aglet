@@ -883,16 +883,16 @@ impl App {
 
     pub(crate) fn open_category_manager_session(&mut self) {
         let selected_category_id = self.selected_category_id();
-        let initial_note = selected_category_id
-            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+        let selected_category = selected_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id));
+        let initial_note = selected_category
             .and_then(|c| c.note.clone())
             .unwrap_or_default();
-        let is_numeric = selected_category_id
-            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+        let is_numeric = selected_category
             .map(|c| c.value_kind == CategoryValueKind::Numeric)
             .unwrap_or(false);
         let initial_details_focus = if is_numeric {
-            CategoryManagerDetailsFocus::NumericFormat
+            CategoryManagerDetailsFocus::Integer
         } else {
             CategoryManagerDetailsFocus::Exclusive
         };
@@ -907,6 +907,7 @@ impl App {
             details_note: text_buffer::TextBuffer::new(initial_note),
             details_note_dirty: false,
             details_note_editing: false,
+            details_inline_input: None,
             tree_index: self.category_index,
             visible_row_indices: Vec::new(),
             selected_category_id,
@@ -964,8 +965,9 @@ impl App {
                 state.details_note = text_buffer::TextBuffer::new(next_note);
                 state.details_note_dirty = false;
                 state.details_note_editing = false;
+                state.details_inline_input = None;
                 state.details_focus = if is_numeric {
-                    CategoryManagerDetailsFocus::NumericFormat
+                    CategoryManagerDetailsFocus::Integer
                 } else {
                     CategoryManagerDetailsFocus::Exclusive
                 };
@@ -1064,6 +1066,7 @@ impl App {
             }
             if focus != CategoryManagerFocus::Details {
                 state.details_note_editing = false;
+                state.details_inline_input = None;
             }
         }
     }
@@ -1075,17 +1078,29 @@ impl App {
     }
 
     pub(crate) fn cycle_category_manager_details_focus(&mut self, delta: i32) {
-        let is_numeric = self
-            .selected_category_row()
-            .map(|row| row.value_kind == CategoryValueKind::Numeric)
-            .unwrap_or(false);
+        let (is_numeric, integer_mode) = self
+            .selected_category_id()
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|category| {
+                (
+                    category.value_kind == CategoryValueKind::Numeric,
+                    category
+                        .numeric_format
+                        .as_ref()
+                        .map(|format| format.decimal_places)
+                        .unwrap_or_else(|| NumericFormat::default().decimal_places)
+                        == 0,
+                )
+            })
+            .unwrap_or((false, false));
         if let Some(state) = &mut self.category_manager {
             state.details_focus = match delta.signum() {
-                d if d > 0 => state.details_focus.next(is_numeric),
-                d if d < 0 => state.details_focus.prev(is_numeric),
+                d if d > 0 => state.details_focus.next(is_numeric, integer_mode),
+                d if d < 0 => state.details_focus.prev(is_numeric, integer_mode),
                 _ => state.details_focus,
             };
             state.details_note_editing = false;
+            state.details_inline_input = None;
         }
     }
 
@@ -1097,6 +1112,13 @@ impl App {
             state.details_focus = focus;
             if focus != CategoryManagerDetailsFocus::Note {
                 state.details_note_editing = false;
+            }
+            if !matches!(
+                focus,
+                CategoryManagerDetailsFocus::DecimalPlaces
+                    | CategoryManagerDetailsFocus::CurrencySymbol
+            ) {
+                state.details_inline_input = None;
             }
         }
     }
@@ -1113,6 +1135,7 @@ impl App {
             state.details_note_editing = editing;
             if editing {
                 state.details_focus = CategoryManagerDetailsFocus::Note;
+                state.details_inline_input = None;
             }
         }
     }
@@ -1155,6 +1178,35 @@ impl App {
             state.details_note = text_buffer::TextBuffer::new(note);
             state.details_note_dirty = false;
             state.details_note_editing = false;
+            state.details_inline_input = None;
+        }
+    }
+
+    pub(crate) fn category_manager_details_inline_input(
+        &self,
+    ) -> Option<&CategoryManagerDetailsInlineInput> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.details_inline_input.as_ref())
+    }
+
+    pub(crate) fn category_manager_details_inline_input_mut(
+        &mut self,
+    ) -> Option<&mut CategoryManagerDetailsInlineInput> {
+        self.category_manager
+            .as_mut()
+            .and_then(|state| state.details_inline_input.as_mut())
+    }
+
+    pub(crate) fn set_category_manager_details_inline_input(
+        &mut self,
+        input: Option<CategoryManagerDetailsInlineInput>,
+    ) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_inline_input = input;
+            if state.details_inline_input.is_some() {
+                state.details_note_editing = false;
+            }
         }
     }
 

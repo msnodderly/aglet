@@ -229,6 +229,168 @@ impl App {
         self.status = "Edit category note: type text, Esc:discard, Tab:leave".to_string();
     }
 
+    fn selected_category_numeric_format(&self) -> Option<NumericFormat> {
+        self.selected_category_id()
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .and_then(|c| c.numeric_format.clone())
+            .or_else(|| {
+                self.selected_category_row().and_then(|row| {
+                    (row.value_kind == CategoryValueKind::Numeric).then(NumericFormat::default)
+                })
+            })
+    }
+
+    fn start_category_manager_numeric_inline_edit(
+        &mut self,
+        field: CategoryManagerDetailsInlineField,
+    ) {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return;
+        }
+        let Some(format) = self.selected_category_numeric_format() else {
+            self.status = "Selected category is not numeric".to_string();
+            return;
+        };
+        if field == CategoryManagerDetailsInlineField::DecimalPlaces && format.decimal_places == 0 {
+            self.status = "Disable Integer mode before editing decimal places".to_string();
+            return;
+        }
+
+        let buffer_text = match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => format.decimal_places.to_string(),
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                format.currency_symbol.unwrap_or_default()
+            }
+        };
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_inline_input(Some(CategoryManagerDetailsInlineInput {
+            field,
+            buffer: text_buffer::TextBuffer::new(buffer_text),
+        }));
+        self.status = match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                "Edit decimal places: Enter save, Esc cancel".to_string()
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                "Edit currency symbol: Enter save, Esc cancel".to_string()
+            }
+        };
+    }
+
+    fn save_category_manager_numeric_format(
+        &mut self,
+        agenda: &Agenda<'_>,
+        next_format: NumericFormat,
+        status: String,
+    ) -> Result<(), String> {
+        let mut category = self.selected_category_mut().ok_or("No category")?;
+        category.numeric_format = Some(next_format);
+        agenda
+            .store()
+            .update_category(&category)
+            .map_err(|e| e.to_string())?;
+        let category_id = category.id;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.status = status;
+        Ok(())
+    }
+
+    fn save_category_manager_numeric_inline_edit(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(input) = self.category_manager_details_inline_input().cloned() else {
+            return Ok(());
+        };
+        let raw_value = input.buffer.text().trim().to_string();
+        let mut next_format = self
+            .selected_category_numeric_format()
+            .ok_or("Selected category is not numeric")?;
+        match input.field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                let decimal_places = raw_value
+                    .parse::<u8>()
+                    .map_err(|_| format!("Invalid decimal places: {}", raw_value))?;
+                next_format.decimal_places = decimal_places;
+                self.set_category_manager_details_inline_input(None);
+                self.save_category_manager_numeric_format(
+                    agenda,
+                    next_format,
+                    format!("Decimal places set to {}", decimal_places),
+                )
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                next_format.currency_symbol = if raw_value.is_empty() {
+                    None
+                } else {
+                    Some(raw_value.clone())
+                };
+                self.set_category_manager_details_inline_input(None);
+                self.save_category_manager_numeric_format(
+                    agenda,
+                    next_format,
+                    if raw_value.is_empty() {
+                        "Currency symbol cleared".to_string()
+                    } else {
+                        format!("Currency symbol set to {}", raw_value)
+                    },
+                )
+            }
+        }
+    }
+
+    fn toggle_selected_category_integer_mode(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        let Some(mut next_format) = self.selected_category_numeric_format() else {
+            self.status = "Selected category is not numeric".to_string();
+            return Ok(());
+        };
+        let integer_mode = next_format.decimal_places == 0;
+        next_format.decimal_places = if integer_mode { 2 } else { 0 };
+        self.save_category_manager_numeric_format(
+            agenda,
+            next_format,
+            if integer_mode {
+                "Integer mode disabled (restored 2 decimal places)".to_string()
+            } else {
+                "Integer mode enabled".to_string()
+            },
+        )
+    }
+
+    fn toggle_selected_category_thousands_separator(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        let Some(mut next_format) = self.selected_category_numeric_format() else {
+            self.status = "Selected category is not numeric".to_string();
+            return Ok(());
+        };
+        next_format.use_thousands_separator = !next_format.use_thousands_separator;
+        let enabled = next_format.use_thousands_separator;
+        self.save_category_manager_numeric_format(
+            agenda,
+            next_format,
+            if enabled {
+                "Thousands separator enabled".to_string()
+            } else {
+                "Thousands separator disabled".to_string()
+            },
+        )
+    }
+
     fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
@@ -302,8 +464,27 @@ impl App {
                     | CategoryManagerDetailsFocus::Actionable
             )
         {
-            details_focus = CategoryManagerDetailsFocus::Note;
+            details_focus = CategoryManagerDetailsFocus::Integer;
             self.set_category_manager_details_focus(details_focus);
+        }
+
+        if self.category_manager_details_inline_input().is_some() {
+            match code {
+                KeyCode::Esc => {
+                    self.set_category_manager_details_inline_input(None);
+                    self.status = "Numeric format edit canceled".to_string();
+                }
+                KeyCode::Enter => {
+                    self.save_category_manager_numeric_inline_edit(agenda)?;
+                }
+                _ => {
+                    let text_key = self.text_key_event(code);
+                    if let Some(input) = self.category_manager_details_inline_input_mut() {
+                        input.buffer.handle_key_event(text_key, false);
+                    }
+                }
+            }
+            return Ok(true);
         }
 
         if details_focus == CategoryManagerDetailsFocus::Note
@@ -386,8 +567,24 @@ impl App {
                     self.toggle_selected_category_actionable(agenda)?;
                     return Ok(true);
                 }
-                CategoryManagerDetailsFocus::NumericFormat => {
-                    self.cycle_numeric_format(agenda)?;
+                CategoryManagerDetailsFocus::Integer => {
+                    self.toggle_selected_category_integer_mode(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::DecimalPlaces => {
+                    self.start_category_manager_numeric_inline_edit(
+                        CategoryManagerDetailsInlineField::DecimalPlaces,
+                    );
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::CurrencySymbol => {
+                    self.start_category_manager_numeric_inline_edit(
+                        CategoryManagerDetailsInlineField::CurrencySymbol,
+                    );
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::ThousandsSeparator => {
+                    self.toggle_selected_category_thousands_separator(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Note => {
@@ -404,22 +601,6 @@ impl App {
     fn selected_category_mut(&self) -> Option<Category> {
         let row = self.selected_category_row()?;
         self.categories.iter().find(|c| c.id == row.id).cloned()
-    }
-
-    fn cycle_numeric_format(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        use crate::modes::board::describe_numeric_format;
-        let mut cat = self.selected_category_mut().ok_or("No category")?;
-        let current = cat.numeric_format.clone().unwrap_or_default();
-        let next = super::board::cycle_numeric_format_preset(&current);
-        cat.numeric_format = Some(next.clone());
-        // Store directly — format-only change needs no reclassification.
-        agenda
-            .store()
-            .update_category(&cat)
-            .map_err(|e| e.to_string())?;
-        self.refresh(agenda.store())?;
-        self.status = format!("Format: {}", describe_numeric_format(&next));
-        Ok(())
     }
 
     fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
