@@ -13,6 +13,10 @@ use crate::model::{
     RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
+use crate::workflow::{
+    claimability_for_item, resolve_workflow_config, workflow_setup_error_message, Claimability,
+    ResolvedWorkflowConfig,
+};
 
 /// Synchronous integration layer that wires Store mutations to engine execution.
 pub struct Agenda<'a> {
@@ -187,6 +191,49 @@ impl<'a> Agenda<'a> {
         })
     }
 
+    pub fn claim_item_workflow(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let Some(workflow) = resolve_workflow_config(self.store)? else {
+            return Err(AgendaError::InvalidOperation {
+                message: workflow_setup_error_message().to_string(),
+            });
+        };
+
+        self.store.with_immediate_transaction(|store| {
+            let item = store.get_item(item_id)?;
+            match claimability_for_item(store, &item, workflow)? {
+                Claimability::Claimable => self.assign_item_manual(
+                    item_id,
+                    workflow.claim_category_id,
+                    Some("manual:cli.claim".to_string()),
+                ),
+                outcome => Err(AgendaError::InvalidOperation {
+                    message: outcome
+                        .error_message()
+                        .unwrap_or("claim precondition failed")
+                        .to_string(),
+                }),
+            }
+        })
+    }
+
+    pub fn release_item_claim(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let Some(workflow) = resolve_workflow_config(self.store)? else {
+            return Err(AgendaError::InvalidOperation {
+                message: workflow_setup_error_message().to_string(),
+            });
+        };
+
+        let item = self.store.get_item(item_id)?;
+        if !item.assignments.contains_key(&workflow.claim_category_id) {
+            return Err(AgendaError::InvalidOperation {
+                message: "release precondition failed: item is not currently claimed".to_string(),
+            });
+        }
+
+        self.store.unassign_item(item_id, workflow.claim_category_id)?;
+        process_item(self.store, self.classifier, item_id)
+    }
+
     pub fn assign_item_numeric_manual(
         &self,
         item_id: ItemId,
@@ -316,6 +363,7 @@ impl<'a> Agenda<'a> {
         };
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
+        self.clear_claim_assignment_if_configured(item_id)?;
         process_item(self.store, self.classifier, item_id)
     }
 
@@ -683,6 +731,16 @@ impl<'a> Agenda<'a> {
 
     fn done_category_id(&self) -> Result<CategoryId> {
         self.category_id_by_name(RESERVED_CATEGORY_NAME_DONE)
+    }
+
+    fn clear_claim_assignment_if_configured(&self, item_id: ItemId) -> Result<()> {
+        if let Some(ResolvedWorkflowConfig {
+            claim_category_id, ..
+        }) = resolve_workflow_config(self.store)?
+        {
+            self.store.unassign_item(item_id, claim_category_id)?;
+        }
+        Ok(())
     }
 
     fn item_is_actionable(&self, item_id: ItemId) -> Result<bool> {
@@ -2102,6 +2160,104 @@ mod tests {
                 .and_then(|assignment| assignment.origin.as_deref()),
             Some("manual:done")
         );
+    }
+
+    #[test]
+    fn claim_item_workflow_assigns_claim_target_for_ready_item() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = category("Ready", false);
+        store.create_category(&ready).unwrap();
+        let in_progress = category("In Progress", false);
+        store.create_category(&in_progress).unwrap();
+        store
+            .set_workflow_config(&crate::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(in_progress.id),
+            })
+            .unwrap();
+
+        let item = Item::new("Claim me".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, ready.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        agenda.claim_item_workflow(item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&in_progress.id));
+    }
+
+    #[test]
+    fn claim_item_workflow_honors_exclusive_status_parent() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut status = category("Status", false);
+        status.is_exclusive = true;
+        store.create_category(&status).unwrap();
+
+        let ready = child_category("Ready", status.id, false);
+        store.create_category(&ready).unwrap();
+        let in_progress = child_category("In Progress", status.id, false);
+        store.create_category(&in_progress).unwrap();
+        store
+            .set_workflow_config(&crate::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(in_progress.id),
+            })
+            .unwrap();
+
+        let item = Item::new("Claim me exclusively".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, ready.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        agenda.claim_item_workflow(item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&in_progress.id));
+        assert!(!assignments.contains_key(&ready.id));
+    }
+
+    #[test]
+    fn mark_item_done_clears_workflow_claim_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = category("Ready", false);
+        store.create_category(&ready).unwrap();
+        let in_progress = category("In Progress", false);
+        store.create_category(&in_progress).unwrap();
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        store
+            .set_workflow_config(&crate::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(in_progress.id),
+            })
+            .unwrap();
+
+        let item = Item::new("Finish me".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, ready.id, Some("manual:test".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+        agenda.claim_item_workflow(item.id).unwrap();
+
+        agenda.mark_item_done(item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&in_progress.id));
     }
 
     #[test]
