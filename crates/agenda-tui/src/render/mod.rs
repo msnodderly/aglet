@@ -4169,11 +4169,11 @@ impl App {
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(Span::styled(
-                        "reopen (w), then Enter to assign.",
+                        "reopen (w), Enter to assign/unassign.",
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(""),
-                    Line::from("j/k:slot  Enter:assign  x:clear  Esc:close"),
+                    Line::from("j/k:slot  Enter:assign/unassign  Esc:close"),
                 ])
                 .block(
                     Block::default()
