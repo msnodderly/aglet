@@ -4517,12 +4517,12 @@ impl App {
                     self.status = "View rename failed: selected view not found".to_string();
                     return Ok(());
                 };
-                if view.name.eq_ignore_ascii_case("All Items") {
+                if agenda_core::store::is_system_view_name(&view.name) {
                     self.input_panel = None;
                     self.name_input_context = None;
                     self.view_pending_edit_name = None;
                     self.mode = Mode::ViewPicker;
-                    self.status = "View rename failed: All Items view is immutable".to_string();
+                    self.status = format!("View rename failed: {} view is immutable", view.name);
                     return Ok(());
                 }
                 if view.name == name {
