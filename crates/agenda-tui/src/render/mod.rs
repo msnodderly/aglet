@@ -2547,7 +2547,7 @@ impl App {
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )),
                         Line::from(Span::styled(
-                            "n:add item  /:search other lanes",
+                            "n:add item",
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )),
                     ]
@@ -3179,7 +3179,6 @@ impl App {
         };
 
         let lines: Vec<Line<'static>> = vec![
-            // -- CURRENT ITEM --
             Line::from(Span::styled("CURRENT ITEM", header)),
             help_entry("n", "Add a new item to the focused section"),
             help_entry("e", "Edit the selected item (text, note, categories)"),
@@ -3189,14 +3188,12 @@ impl App {
             help_entry("x", "Delete selected item(s)"),
             help_entry("p", "Toggle the preview sidebar"),
             Line::from(""),
-            // -- SELECTION --
             Line::from(Span::styled("SELECTION", header)),
             help_entry("Space", "Toggle selection on current item"),
             help_entry("b / B", "Link / unlink selected items (dependency)"),
             help_entry("x", "Delete selected items"),
             help_entry("Esc", "Clear selection"),
             Line::from(""),
-            // -- NAVIGATION --
             Line::from(Span::styled("NAVIGATION", header)),
             help_entry("\u{2191}/k \u{2193}/j", "Move between items"),
             help_entry("\u{2190}/h \u{2192}/l", "Move between sections (lanes)"),
@@ -3204,24 +3201,20 @@ impl App {
             help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
             help_entry("z", "Cycle card size (compact \u{2194} detail)"),
             Line::from(""),
-            // -- SEARCH --
             Line::from(Span::styled("SEARCH", header)),
             help_entry("/", "Search within the focused section"),
             help_entry("g/", "Search across all sections (global)"),
             help_entry("Esc", "Clear active section filter"),
             Line::from(""),
-            // -- COLUMNS --
             Line::from(Span::styled("COLUMNS", header)),
             help_entry("Enter", "Edit column value (on a column cell)"),
             help_entry("f", "Cycle numeric column format"),
             help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
             Line::from(""),
-            // -- VIEWS --
             Line::from(Span::styled("VIEWS", header)),
             help_entry("v / F8", "Open the view picker"),
             help_entry(",/.", "Cycle to previous / next view"),
             Line::from(""),
-            // -- GLOBAL --
             Line::from(Span::styled("GLOBAL", header)),
             help_entry("c / F9", "Open the category manager"),
             help_entry("s", "Cycle sort order for the focused section"),
@@ -3244,7 +3237,6 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
-
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
@@ -3890,27 +3882,32 @@ impl App {
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
                     label = with_note_marker(label, row.has_note);
-                    let is_numeric = row.value_kind == CategoryValueKind::Numeric;
+                    let mut badges = Vec::new();
                     if row.is_reserved {
-                        label.push_str(" [reserved]");
-                    } else if is_numeric {
-                        label.push_str(" [numeric]");
+                        badges.push("reserved");
+                    }
+                    if row.value_kind == CategoryValueKind::Numeric {
+                        badges.push("numeric");
                     } else {
                         if row.is_exclusive {
-                            label.push_str(" [exclusive]");
-                        }
-                        if !row.enable_implicit_string {
-                            label.push_str(" [no-match]");
-                        }
-                        if !row.is_actionable {
-                            label.push_str(" [no-todo]");
+                            badges.push("exclusive");
                         }
                         if self.workflow_config.ready_category_id == Some(row.id) {
-                            label.push_str(" [ready-queue]");
+                            badges.push("ready-queue");
                         }
                         if self.workflow_config.claim_category_id == Some(row.id) {
-                            label.push_str(" [claim-target]");
+                            badges.push("claim-target");
                         }
+                    }
+                    if !badges.is_empty() {
+                        label.push(' ');
+                        label.push_str(
+                            &badges
+                                .into_iter()
+                                .map(|badge| format!("[{badge}]"))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        );
                     }
                     Row::new(vec![Cell::from(label)])
                 })
@@ -3930,29 +3927,31 @@ impl App {
             },
         );
         frame.render_stateful_widget(
-            Table::new(rows, vec![Constraint::Min(20)])
-                .header(
-                    Row::new(vec![Cell::from("Category")])
-                        .style(Style::default().add_modifier(Modifier::BOLD)),
-                )
-                .highlight_symbol("> ")
-                .row_highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title(if manager_focus == CategoryManagerFocus::Tree {
-                            format!("> Category Manager{title_suffix}")
+            Table::new(
+                rows,
+                vec![Constraint::Min(20)],
+            )
+            .header(
+                Row::new(vec![Cell::from("Category")]).style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+            .highlight_symbol("> ")
+            .row_highlight_style(selected_row_style())
+            .block(
+                Block::default()
+                    .title(if manager_focus == CategoryManagerFocus::Tree {
+                        format!("> Category Manager{title_suffix}")
+                    } else {
+                        format!("Category Manager{title_suffix}")
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(tree_border).add_modifier(
+                        if manager_focus == CategoryManagerFocus::Tree {
+                            Modifier::BOLD
                         } else {
-                            format!("Category Manager{title_suffix}")
-                        })
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(tree_border).add_modifier(
-                            if manager_focus == CategoryManagerFocus::Tree {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            },
-                        )),
-                ),
+                            Modifier::empty()
+                        },
+                    )),
+            ),
             table_area,
             &mut state,
         );
@@ -4016,10 +4015,10 @@ impl App {
                 };
                 let integer_mode = is_numeric_category && numeric_format.decimal_places == 0;
                 let info_height = if is_numeric_category { 6 } else { 5 };
-                let is_ready_queue_role = self.workflow_config.ready_category_id == Some(row.id);
-                let is_claim_target_role = self.workflow_config.claim_category_id == Some(row.id);
-                let workflow_role_height: u16 = if is_ready_queue_role { 2 } else { 0 }
-                    + if is_claim_target_role { 2 } else { 0 };
+                let is_ready_queue_role = self.selected_category_is_ready_queue_role();
+                let is_claim_target_role = self.selected_category_is_claim_target_role();
+                let workflow_role_height: u16 =
+                    if is_ready_queue_role { 2 } else { 0 } + if is_claim_target_role { 2 } else { 0 };
                 let flags_height = if is_numeric_category {
                     7
                 } else {
@@ -4086,8 +4085,7 @@ impl App {
                 let flag_lines = if is_numeric {
                     let inline_input = self.category_manager_details_inline_input();
                     let integer_focused = details_focus == CategoryManagerDetailsFocus::Integer;
-                    let decimal_focused =
-                        details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let decimal_focused = details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
                     let currency_focused =
                         details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
                     let thousands_focused =
@@ -4103,13 +4101,9 @@ impl App {
                             input.field == CategoryManagerDetailsInlineField::CurrencySymbol
                         })
                         .map(|input| input.buffer.text().to_string())
-                        .unwrap_or_else(|| {
-                            numeric_format.currency_symbol.clone().unwrap_or_default()
-                        });
+                        .unwrap_or_else(|| numeric_format.currency_symbol.clone().unwrap_or_default());
                     let decimal_style = if integer_mode {
-                        Style::default()
-                            .fg(MUTED_TEXT_COLOR)
-                            .add_modifier(Modifier::DIM)
+                        Style::default().fg(MUTED_TEXT_COLOR).add_modifier(Modifier::DIM)
                     } else if decimal_focused {
                         focused_cell_style()
                     } else {
@@ -4184,7 +4178,7 @@ impl App {
                             row.is_actionable,
                         ),
                     ];
-                    if self.workflow_config.ready_category_id == Some(row.id) {
+                    if is_ready_queue_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Ready Queue",
                             Style::default().fg(Color::LightCyan),
@@ -4194,7 +4188,7 @@ impl App {
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )));
                     }
-                    if self.workflow_config.claim_category_id == Some(row.id) {
+                    if is_claim_target_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Claim Target",
                             Style::default().fg(Color::LightCyan),

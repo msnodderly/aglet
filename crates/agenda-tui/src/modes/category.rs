@@ -96,6 +96,46 @@ impl App {
         message
     }
 
+    fn workflow_setup_cross_role_conflict_status(
+        &self,
+        agenda: &Agenda<'_>,
+        selected_category_id: CategoryId,
+    ) -> Result<Option<String>, String> {
+        let (role_label, current_role_id, other_role_label, other_role_id) = if self.workflow_setup_focus == 0 {
+            (
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+                "Claim Target",
+                self.workflow_config.claim_category_id,
+            )
+        } else {
+            (
+                "Claim Target",
+                self.workflow_config.claim_category_id,
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+            )
+        };
+
+        if other_role_id != Some(selected_category_id) || current_role_id == Some(selected_category_id) {
+            return Ok(None);
+        }
+
+        let selected_name = agenda
+            .store()
+            .get_category(selected_category_id)
+            .map_err(|e| e.to_string())?
+            .name;
+        let current_name = current_role_id
+            .and_then(|category_id| agenda.store().get_category(category_id).ok())
+            .map(|category| category.name)
+            .unwrap_or_else(|| "(unset)".to_string());
+
+        Ok(Some(format!(
+            "{selected_name} is already the {other_role_label} category. Select {current_name} to unset {role_label}, or another category to replace it"
+        )))
+    }
+
     fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
         matches!(code, KeyCode::Char('S'))
             || (matches!(code, KeyCode::Char('s'))
@@ -311,165 +351,6 @@ impl App {
         self.status = "Edit category note: type text, Esc:discard, Tab:leave".to_string();
     }
 
-    fn selected_category_numeric_format(&self) -> Option<NumericFormat> {
-        self.selected_category_id()
-            .and_then(|id| self.categories.iter().find(|c| c.id == id))
-            .and_then(|c| c.numeric_format.clone())
-            .or_else(|| {
-                self.selected_category_row().and_then(|row| {
-                    (row.value_kind == CategoryValueKind::Numeric).then(NumericFormat::default)
-                })
-            })
-    }
-
-    fn start_category_manager_numeric_inline_edit(
-        &mut self,
-        field: CategoryManagerDetailsInlineField,
-    ) {
-        if self.selected_category_is_reserved() {
-            self.status = "Reserved category config is read-only".to_string();
-            return;
-        }
-        let Some(format) = self.selected_category_numeric_format() else {
-            self.status = "Selected category is not numeric".to_string();
-            return;
-        };
-        if field == CategoryManagerDetailsInlineField::DecimalPlaces && format.decimal_places == 0 {
-            self.status = "Disable Integer mode before editing decimal places".to_string();
-            return;
-        }
-
-        let buffer_text = match field {
-            CategoryManagerDetailsInlineField::DecimalPlaces => format.decimal_places.to_string(),
-            CategoryManagerDetailsInlineField::CurrencySymbol => {
-                format.currency_symbol.unwrap_or_default()
-            }
-        };
-        self.set_category_manager_focus(CategoryManagerFocus::Details);
-        self.set_category_manager_details_inline_input(Some(CategoryManagerDetailsInlineInput {
-            field,
-            buffer: text_buffer::TextBuffer::new(buffer_text),
-        }));
-        self.status = match field {
-            CategoryManagerDetailsInlineField::DecimalPlaces => {
-                "Edit decimal places: Enter save, Esc cancel".to_string()
-            }
-            CategoryManagerDetailsInlineField::CurrencySymbol => {
-                "Edit currency symbol: Enter save, Esc cancel".to_string()
-            }
-        };
-    }
-
-    fn save_category_manager_numeric_format(
-        &mut self,
-        agenda: &Agenda<'_>,
-        next_format: NumericFormat,
-        status: String,
-    ) -> Result<(), String> {
-        let mut category = self.selected_category_mut().ok_or("No category")?;
-        category.numeric_format = Some(next_format);
-        agenda
-            .store()
-            .update_category(&category)
-            .map_err(|e| e.to_string())?;
-        let category_id = category.id;
-        self.refresh(agenda.store())?;
-        self.set_category_selection_by_id(category_id);
-        self.status = status;
-        Ok(())
-    }
-
-    fn save_category_manager_numeric_inline_edit(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
-        let Some(input) = self.category_manager_details_inline_input().cloned() else {
-            return Ok(());
-        };
-        let raw_value = input.buffer.text().trim().to_string();
-        let mut next_format = self
-            .selected_category_numeric_format()
-            .ok_or("Selected category is not numeric")?;
-        match input.field {
-            CategoryManagerDetailsInlineField::DecimalPlaces => {
-                let decimal_places = raw_value
-                    .parse::<u8>()
-                    .map_err(|_| format!("Invalid decimal places: {}", raw_value))?;
-                next_format.decimal_places = decimal_places;
-                self.set_category_manager_details_inline_input(None);
-                self.save_category_manager_numeric_format(
-                    agenda,
-                    next_format,
-                    format!("Decimal places set to {}", decimal_places),
-                )
-            }
-            CategoryManagerDetailsInlineField::CurrencySymbol => {
-                next_format.currency_symbol = if raw_value.is_empty() {
-                    None
-                } else {
-                    Some(raw_value.clone())
-                };
-                self.set_category_manager_details_inline_input(None);
-                self.save_category_manager_numeric_format(
-                    agenda,
-                    next_format,
-                    if raw_value.is_empty() {
-                        "Currency symbol cleared".to_string()
-                    } else {
-                        format!("Currency symbol set to {}", raw_value)
-                    },
-                )
-            }
-        }
-    }
-
-    fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        if self.selected_category_is_reserved() {
-            self.status = "Reserved category config is read-only".to_string();
-            return Ok(());
-        }
-        let Some(mut next_format) = self.selected_category_numeric_format() else {
-            self.status = "Selected category is not numeric".to_string();
-            return Ok(());
-        };
-        let integer_mode = next_format.decimal_places == 0;
-        next_format.decimal_places = if integer_mode { 2 } else { 0 };
-        self.save_category_manager_numeric_format(
-            agenda,
-            next_format,
-            if integer_mode {
-                "Integer mode disabled (restored 2 decimal places)".to_string()
-            } else {
-                "Integer mode enabled".to_string()
-            },
-        )
-    }
-
-    fn toggle_selected_category_thousands_separator(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
-        if self.selected_category_is_reserved() {
-            self.status = "Reserved category config is read-only".to_string();
-            return Ok(());
-        }
-        let Some(mut next_format) = self.selected_category_numeric_format() else {
-            self.status = "Selected category is not numeric".to_string();
-            return Ok(());
-        };
-        next_format.use_thousands_separator = !next_format.use_thousands_separator;
-        let enabled = next_format.use_thousands_separator;
-        self.save_category_manager_numeric_format(
-            agenda,
-            next_format,
-            if enabled {
-                "Thousands separator enabled".to_string()
-            } else {
-                "Thousands separator disabled".to_string()
-            },
-        )
-    }
-
     fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
@@ -540,10 +421,10 @@ impl App {
                 details_focus,
                 CategoryManagerDetailsFocus::Exclusive
                     | CategoryManagerDetailsFocus::MatchName
-                    | CategoryManagerDetailsFocus::Actionable // (ReadyQueue/ClaimTarget removed — now in workflow popup)
+                    | CategoryManagerDetailsFocus::Actionable
             )
         {
-            details_focus = CategoryManagerDetailsFocus::Integer;
+            details_focus = CategoryManagerDetailsFocus::Note;
             self.set_category_manager_details_focus(details_focus);
         }
 
@@ -552,18 +433,22 @@ impl App {
                 KeyCode::Esc => {
                     self.set_category_manager_details_inline_input(None);
                     self.status = "Numeric format edit canceled".to_string();
+                    return Ok(true);
                 }
                 KeyCode::Enter => {
                     self.save_category_manager_numeric_inline_edit(agenda)?;
+                    return Ok(true);
                 }
                 _ => {
                     let text_key = self.text_key_event(code);
                     if let Some(input) = self.category_manager_details_inline_input_mut() {
-                        input.buffer.handle_key_event(text_key, false);
+                        if input.buffer.handle_key_event(text_key, false) {
+                            return Ok(true);
+                        }
                     }
                 }
             }
-            return Ok(true);
+            return Ok(false);
         }
 
         if details_focus == CategoryManagerDetailsFocus::Note
@@ -651,15 +536,19 @@ impl App {
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::DecimalPlaces => {
-                    self.start_category_manager_numeric_inline_edit(
-                        CategoryManagerDetailsInlineField::DecimalPlaces,
-                    );
+                    if matches!(code, KeyCode::Enter) {
+                        self.start_category_manager_numeric_inline_edit(
+                            CategoryManagerDetailsInlineField::DecimalPlaces,
+                        )?;
+                    }
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::CurrencySymbol => {
-                    self.start_category_manager_numeric_inline_edit(
-                        CategoryManagerDetailsInlineField::CurrencySymbol,
-                    );
+                    if matches!(code, KeyCode::Enter) {
+                        self.start_category_manager_numeric_inline_edit(
+                            CategoryManagerDetailsInlineField::CurrencySymbol,
+                        )?;
+                    }
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::ThousandsSeparator => {
@@ -680,6 +569,146 @@ impl App {
     fn selected_category_mut(&self) -> Option<Category> {
         let row = self.selected_category_row()?;
         self.categories.iter().find(|c| c.id == row.id).cloned()
+    }
+
+    fn persist_selected_category_numeric_format(
+        &mut self,
+        agenda: &Agenda<'_>,
+        next: NumericFormat,
+        status: String,
+    ) -> Result<(), String> {
+        let mut cat = self.selected_category_mut().ok_or("No category")?;
+        cat.numeric_format = Some(next);
+        agenda
+            .store()
+            .update_category(&cat)
+            .map_err(|e| e.to_string())?;
+        let category_id = cat.id;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.normalize_category_manager_details_focus();
+        self.status = status;
+        Ok(())
+    }
+
+    fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        let mut next = current.clone();
+        next.decimal_places = if current.decimal_places == 0 { 2 } else { 0 };
+        self.persist_selected_category_numeric_format(
+            agenda,
+            next,
+            format!(
+                "Format: {}",
+                if current.decimal_places == 0 {
+                    "decimal mode"
+                } else {
+                    "integer mode"
+                }
+            ),
+        )
+    }
+
+    fn toggle_selected_category_thousands_separator(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        let mut next = current.clone();
+        next.use_thousands_separator = !next.use_thousands_separator;
+        self.persist_selected_category_numeric_format(
+            agenda,
+            next,
+            if current.use_thousands_separator {
+                "Thousands separator disabled".to_string()
+            } else {
+                "Thousands separator enabled".to_string()
+            },
+        )
+    }
+
+    fn start_category_manager_numeric_inline_edit(
+        &mut self,
+        field: CategoryManagerDetailsInlineField,
+    ) -> Result<(), String> {
+        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        if field == CategoryManagerDetailsInlineField::DecimalPlaces && current.decimal_places == 0 {
+            self.status = "Decimal places is disabled while Integer is enabled".to_string();
+            self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
+            return Ok(());
+        }
+        let buffer = match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                text_buffer::TextBuffer::new(current.decimal_places.to_string())
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => text_buffer::TextBuffer::new(
+                current.currency_symbol.unwrap_or_default(),
+            ),
+        };
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                CategoryManagerDetailsFocus::DecimalPlaces
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                CategoryManagerDetailsFocus::CurrencySymbol
+            }
+        });
+        self.set_category_manager_details_inline_input(Some(CategoryManagerDetailsInlineInput {
+            field,
+            buffer,
+        }));
+        self.status = match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                "Editing decimal places: Enter save, Esc cancel".to_string()
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                "Editing currency symbol: Enter save, Esc cancel".to_string()
+            }
+        };
+        Ok(())
+    }
+
+    fn save_category_manager_numeric_inline_edit(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(input) = self.category_manager_details_inline_input().cloned() else {
+            return Ok(());
+        };
+        let mut next = self.selected_category_numeric_format().ok_or("No category")?;
+        match input.field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                let raw = input.buffer.trimmed();
+                let Ok(parsed) = raw.parse::<u8>() else {
+                    self.status = "Decimal places must be a non-negative integer".to_string();
+                    return Ok(());
+                };
+                next.decimal_places = parsed;
+                self.set_category_manager_details_inline_input(None);
+                self.persist_selected_category_numeric_format(
+                    agenda,
+                    next,
+                    format!("Decimal places set to {parsed}"),
+                )?;
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                let trimmed = input.buffer.trimmed();
+                next.currency_symbol = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.set_category_manager_details_inline_input(None);
+                self.persist_selected_category_numeric_format(
+                    agenda,
+                    next,
+                    "Updated currency symbol".to_string(),
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
@@ -960,16 +989,22 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Enter => {
-                if self.selected_category_id().is_none() {
+                let Some(selected_category_id) = self.selected_category_id() else {
                     self.status = "No category selected in tree".to_string();
                     return Ok(true);
-                }
+                };
                 if self.selected_category_is_reserved() {
                     self.status = "Reserved categories cannot be workflow roles".to_string();
                     return Ok(true);
                 }
                 if self.selected_category_is_numeric() {
                     self.status = "Numeric categories cannot be workflow roles".to_string();
+                    return Ok(true);
+                }
+                if let Some(status) =
+                    self.workflow_setup_cross_role_conflict_status(agenda, selected_category_id)?
+                {
+                    self.status = status;
                     return Ok(true);
                 }
                 if self.workflow_setup_focus == 0 {
@@ -1174,6 +1209,13 @@ impl App {
                     self.toggle_selected_category_actionable(agenda)?;
                 }
             }
+            KeyCode::Char('w') => {
+                self.workflow_setup_open = true;
+                self.workflow_setup_focus = 0;
+                self.status =
+                    "Workflow setup: j/k select role, Enter assign/unassign, Esc close"
+                        .to_string();
+            }
             KeyCode::Enter => {
                 self.set_category_manager_focus(CategoryManagerFocus::Details);
                 self.status =
@@ -1182,12 +1224,6 @@ impl App {
             }
             KeyCode::Char('x') => {
                 self.start_category_inline_delete_confirm();
-            }
-            KeyCode::Char('w') => {
-                self.workflow_setup_open = true;
-                self.workflow_setup_focus = 0;
-                self.status =
-                    "Workflow setup: navigate tree then Enter to assign, x to clear".to_string();
             }
             _ => {}
         }
@@ -1313,8 +1349,7 @@ impl App {
             .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.claim_category_id == Some(category_id)
-            && workflow.ready_category_id != Some(category_id)
+        if workflow.claim_category_id == Some(category_id) && workflow.ready_category_id != Some(category_id)
         {
             self.status = format!(
                 "{} is already the Claim Target category and cannot also be Ready Queue",
@@ -1375,8 +1410,7 @@ impl App {
             .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.ready_category_id == Some(category_id)
-            && workflow.claim_category_id != Some(category_id)
+        if workflow.ready_category_id == Some(category_id) && workflow.claim_category_id != Some(category_id)
         {
             self.status = format!(
                 "{} is already the Ready Queue category and cannot also be Claim Target",

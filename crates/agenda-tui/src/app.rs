@@ -829,10 +829,7 @@ impl App {
         }
     }
 
-    pub(crate) fn effective_action_assignment_counts(
-        &self,
-        category_id: CategoryId,
-    ) -> (usize, usize) {
+    pub(crate) fn effective_action_assignment_counts(&self, category_id: CategoryId) -> (usize, usize) {
         let action_item_ids = self.effective_action_item_ids();
         let assigned = action_item_ids
             .iter()
@@ -874,6 +871,16 @@ impl App {
 
     pub(crate) fn current_view(&self) -> Option<&View> {
         self.views.get(self.view_index)
+    }
+
+    pub(crate) fn selected_category_is_ready_queue_role(&self) -> bool {
+        self.selected_category_row()
+            .is_some_and(|row| self.workflow_config.ready_category_id == Some(row.id))
+    }
+
+    pub(crate) fn selected_category_is_claim_target_role(&self) -> bool {
+        self.selected_category_row()
+            .is_some_and(|row| self.workflow_config.claim_category_id == Some(row.id))
     }
 
     fn workflow_role_category_name(&self, category_id: Option<CategoryId>) -> Option<&str> {
@@ -945,12 +952,12 @@ impl App {
 
     pub(crate) fn open_category_manager_session(&mut self) {
         let selected_category_id = self.selected_category_id();
-        let selected_category =
-            selected_category_id.and_then(|id| self.categories.iter().find(|c| c.id == id));
-        let initial_note = selected_category
+        let initial_note = selected_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
             .and_then(|c| c.note.clone())
             .unwrap_or_default();
-        let is_numeric = selected_category
+        let is_numeric = selected_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
             .map(|c| c.value_kind == CategoryValueKind::Numeric)
             .unwrap_or(false);
         let initial_details_focus = if is_numeric {
@@ -1128,7 +1135,6 @@ impl App {
             }
             if focus != CategoryManagerFocus::Details {
                 state.details_note_editing = false;
-                state.details_inline_input = None;
             }
         }
     }
@@ -1140,21 +1146,15 @@ impl App {
     }
 
     pub(crate) fn cycle_category_manager_details_focus(&mut self, delta: i32) {
-        let (is_numeric, integer_mode) = self
+        let is_numeric = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        let integer_mode = self
             .selected_category_id()
             .and_then(|id| self.categories.iter().find(|c| c.id == id))
-            .map(|category| {
-                (
-                    category.value_kind == CategoryValueKind::Numeric,
-                    category
-                        .numeric_format
-                        .as_ref()
-                        .map(|format| format.decimal_places)
-                        .unwrap_or_else(|| NumericFormat::default().decimal_places)
-                        == 0,
-                )
-            })
-            .unwrap_or((false, false));
+            .map(|c| c.numeric_format.clone().unwrap_or_default().decimal_places == 0)
+            .unwrap_or(false);
         if let Some(state) = &mut self.category_manager {
             state.details_focus = match delta.signum() {
                 d if d > 0 => state.details_focus.next(is_numeric, integer_mode),
@@ -1164,6 +1164,7 @@ impl App {
             state.details_note_editing = false;
             state.details_inline_input = None;
         }
+        self.normalize_category_manager_details_focus();
     }
 
     pub(crate) fn set_category_manager_details_focus(
@@ -1175,14 +1176,27 @@ impl App {
             if focus != CategoryManagerDetailsFocus::Note {
                 state.details_note_editing = false;
             }
-            if !matches!(
-                focus,
-                CategoryManagerDetailsFocus::DecimalPlaces
-                    | CategoryManagerDetailsFocus::CurrencySymbol
-            ) {
+            let keep_inline = matches!(
+                (&state.details_inline_input, focus),
+                (
+                    Some(CategoryManagerDetailsInlineInput {
+                        field: CategoryManagerDetailsInlineField::DecimalPlaces,
+                        ..
+                    }),
+                    CategoryManagerDetailsFocus::DecimalPlaces
+                ) | (
+                    Some(CategoryManagerDetailsInlineInput {
+                        field: CategoryManagerDetailsInlineField::CurrencySymbol,
+                        ..
+                    }),
+                    CategoryManagerDetailsFocus::CurrencySymbol
+                )
+            );
+            if !keep_inline {
                 state.details_inline_input = None;
             }
         }
+        self.normalize_category_manager_details_focus();
     }
 
     pub(crate) fn category_manager_details_note_editing(&self) -> bool {
@@ -1199,6 +1213,56 @@ impl App {
                 state.details_focus = CategoryManagerDetailsFocus::Note;
                 state.details_inline_input = None;
             }
+        }
+    }
+
+    pub(crate) fn category_manager_details_inline_input(
+        &self,
+    ) -> Option<&CategoryManagerDetailsInlineInput> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.details_inline_input.as_ref())
+    }
+
+    pub(crate) fn category_manager_details_inline_input_mut(
+        &mut self,
+    ) -> Option<&mut CategoryManagerDetailsInlineInput> {
+        self.category_manager
+            .as_mut()
+            .and_then(|state| state.details_inline_input.as_mut())
+    }
+
+    pub(crate) fn set_category_manager_details_inline_input(
+        &mut self,
+        input: Option<CategoryManagerDetailsInlineInput>,
+    ) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_inline_input = input;
+        }
+    }
+
+    pub(crate) fn selected_category_numeric_format(&self) -> Option<NumericFormat> {
+        self.selected_category_id()
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|category| category.numeric_format.clone().unwrap_or_default())
+    }
+
+    pub(crate) fn normalize_category_manager_details_focus(&mut self) {
+        let is_numeric = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if !is_numeric {
+            return;
+        }
+        let integer_mode = self
+            .selected_category_numeric_format()
+            .map(|fmt| fmt.decimal_places == 0)
+            .unwrap_or(false);
+        if integer_mode
+            && self.category_manager_details_focus() == Some(CategoryManagerDetailsFocus::DecimalPlaces)
+        {
+            self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
         }
     }
 
@@ -1240,35 +1304,6 @@ impl App {
             state.details_note = text_buffer::TextBuffer::new(note);
             state.details_note_dirty = false;
             state.details_note_editing = false;
-            state.details_inline_input = None;
-        }
-    }
-
-    pub(crate) fn category_manager_details_inline_input(
-        &self,
-    ) -> Option<&CategoryManagerDetailsInlineInput> {
-        self.category_manager
-            .as_ref()
-            .and_then(|state| state.details_inline_input.as_ref())
-    }
-
-    pub(crate) fn category_manager_details_inline_input_mut(
-        &mut self,
-    ) -> Option<&mut CategoryManagerDetailsInlineInput> {
-        self.category_manager
-            .as_mut()
-            .and_then(|state| state.details_inline_input.as_mut())
-    }
-
-    pub(crate) fn set_category_manager_details_inline_input(
-        &mut self,
-        input: Option<CategoryManagerDetailsInlineInput>,
-    ) {
-        if let Some(state) = &mut self.category_manager {
-            state.details_inline_input = input;
-            if state.details_inline_input.is_some() {
-                state.details_note_editing = false;
-            }
         }
     }
 

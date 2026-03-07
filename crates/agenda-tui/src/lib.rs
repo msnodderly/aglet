@@ -874,7 +874,7 @@ struct App {
     category_index: usize,
     workflow_config: WorkflowConfig,
     workflow_setup_open: bool,
-    workflow_setup_focus: usize, // 0 = Ready Queue, 1 = Claim Target
+    workflow_setup_focus: usize,
     category_manager: Option<CategoryManagerState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
@@ -997,7 +997,8 @@ mod tests {
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
         CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
-        NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
+        NumericFormat, Query, Section,
+        SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -9961,6 +9962,54 @@ mod tests {
     }
 
     #[test]
+    fn workflow_popup_does_not_unset_other_role_from_current_selection() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-workflow-popup-no-cross-unset-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let claim = Category::new("In Progress".to_string());
+        store.create_category(&ready).expect("create ready");
+        store.create_category(&claim).expect("create claim");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(claim.id),
+            })
+            .expect("set workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(ready.id);
+
+        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
+            .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("focus claim target");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("cross-role enter should be blocked");
+
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
+        assert_eq!(
+            app.status,
+            "Ready is already the Ready Queue category. Select In Progress to unset Claim Target, or another category to replace it"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn workflow_role_replacement_only_sanitizes_new_category() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -10451,6 +10500,57 @@ mod tests {
         assert!(
             rendered.contains("Format: $1,234.56 (2dp)"),
             "numeric details should render preview line: {rendered}"
+        );
+    }
+
+    #[test]
+    fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Ready".to_string());
+        category.is_exclusive = true;
+        category.is_actionable = true;
+        store.create_category(&category).expect("create category");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(category.id),
+                claim_category_id: None,
+            })
+            .expect("set workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Ready [exclusive] [ready-queue]"),
+            "tree should render non-default/special suffix badges on the category row: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Excl   Match   Todo"),
+            "tree should no longer render separate checkbox columns: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ready [exclusive] [auto-match]"),
+            "tree should not render default-state auto-match badge: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ready [exclusive] [actionable]"),
+            "tree should not render default-state actionable badge: {rendered}"
+        );
+        assert!(
+            rendered.contains("[x] Exclusive"),
+            "details pane should still use checkbox rows: {rendered}"
         );
     }
 
@@ -14892,6 +14992,10 @@ mod tests {
             "empty horizontal lanes should render the new empty state: {rendered}"
         );
         assert!(
+            !rendered.contains("search other lanes"),
+            "empty horizontal lanes should not suggest searching other lanes: {rendered}"
+        );
+        assert!(
             lines.iter().filter(|line| line.contains("│>  ")).count() == 1,
             "selected multi-line card should use a single marker: {rendered}"
         );
@@ -15264,6 +15368,41 @@ mod tests {
             2,
             "items should match by assigned Personal category name"
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn search_bar_filters_match_item_uuid_prefix() {
+        let (store, db_path) = make_two_section_store("uuid-prefix-match");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work_items = store
+            .list_items()
+            .expect("list items for uuid search test")
+            .into_iter()
+            .filter(|item| item.text == "Fix timeout bug")
+            .collect::<Vec<_>>();
+        assert_eq!(work_items.len(), 1, "expected fixture item");
+        let uuid_prefix = work_items[0].id.to_string()[..3].to_string();
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh TestView");
+
+        app.slot_index = 0;
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("open search bar");
+        for ch in uuid_prefix.chars() {
+            app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
+                .expect("type char");
+        }
+
+        assert_eq!(app.section_filters[0], Some(uuid_prefix));
+        assert_eq!(app.slots[0].items.len(), 1, "uuid prefix should match one item");
+        assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
 
         let _ = std::fs::remove_file(&db_path);
     }
