@@ -873,16 +873,6 @@ impl App {
         self.views.get(self.view_index)
     }
 
-    pub(crate) fn selected_category_is_ready_queue_role(&self) -> bool {
-        self.selected_category_row()
-            .is_some_and(|row| self.workflow_config.ready_category_id == Some(row.id))
-    }
-
-    pub(crate) fn selected_category_is_claim_target_role(&self) -> bool {
-        self.selected_category_row()
-            .is_some_and(|row| self.workflow_config.claim_category_id == Some(row.id))
-    }
-
     fn workflow_role_category_name(&self, category_id: Option<CategoryId>) -> Option<&str> {
         let category_id = category_id?;
         self.categories

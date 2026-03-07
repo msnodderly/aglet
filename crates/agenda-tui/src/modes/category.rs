@@ -24,6 +24,7 @@ impl App {
     fn close_category_manager_with_status(&mut self, status: &str) {
         self.mode = Mode::Normal;
         self.close_category_manager_session();
+        self.workflow_setup_open = false;
         self.clear_input();
         self.status = status.to_string();
     }
@@ -300,8 +301,7 @@ impl App {
                 CategoryManagerDetailsFocus::Exclusive
                     | CategoryManagerDetailsFocus::MatchName
                     | CategoryManagerDetailsFocus::Actionable
-                    | CategoryManagerDetailsFocus::ReadyQueue
-                    | CategoryManagerDetailsFocus::ClaimTarget
+                    // (ReadyQueue/ClaimTarget removed — now in workflow popup)
             )
         {
             details_focus = CategoryManagerDetailsFocus::Note;
@@ -386,14 +386,6 @@ impl App {
                 }
                 CategoryManagerDetailsFocus::Actionable => {
                     self.toggle_selected_category_actionable(agenda)?;
-                    return Ok(true);
-                }
-                CategoryManagerDetailsFocus::ReadyQueue => {
-                    self.toggle_selected_category_ready_queue_role(agenda)?;
-                    return Ok(true);
-                }
-                CategoryManagerDetailsFocus::ClaimTarget => {
-                    self.toggle_selected_category_claim_target_role(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::NumericFormat => {
@@ -690,6 +682,74 @@ impl App {
         }
     }
 
+    fn handle_workflow_setup_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> Result<bool, String> {
+        match code {
+            KeyCode::Esc | KeyCode::Char('w') => {
+                self.workflow_setup_open = false;
+                self.status = "Workflow setup closed".to_string();
+                return Ok(true);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.workflow_setup_focus = 1;
+                return Ok(true);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.workflow_setup_focus = 0;
+                return Ok(true);
+            }
+            KeyCode::Enter => {
+                if self.selected_category_id().is_none() {
+                    self.status = "No category selected in tree".to_string();
+                    return Ok(true);
+                }
+                if self.selected_category_is_reserved() {
+                    self.status = "Reserved categories cannot be workflow roles".to_string();
+                    return Ok(true);
+                }
+                if self.selected_category_is_numeric() {
+                    self.status =
+                        "Numeric categories cannot be workflow roles".to_string();
+                    return Ok(true);
+                }
+                if self.workflow_setup_focus == 0 {
+                    self.toggle_selected_category_ready_queue_role(agenda)?;
+                } else {
+                    self.toggle_selected_category_claim_target_role(agenda)?;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('x') => {
+                let mut workflow = self.workflow_config.clone();
+                let (role_name, cleared) = if self.workflow_setup_focus == 0 {
+                    let had = workflow.ready_category_id.is_some();
+                    workflow.ready_category_id = None;
+                    ("Ready Queue", had)
+                } else {
+                    let had = workflow.claim_category_id.is_some();
+                    workflow.claim_category_id = None;
+                    ("Claim Target", had)
+                };
+                if cleared {
+                    agenda
+                        .store()
+                        .set_workflow_config(&workflow)
+                        .map_err(|e| e.to_string())?;
+                    self.refresh(agenda.store())?;
+                    self.status = format!("{} cleared", role_name);
+                } else {
+                    self.status = format!("{} is already unset", role_name);
+                }
+                return Ok(true);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
     pub(crate) fn handle_category_manager_key(
         &mut self,
         code: KeyCode,
@@ -701,6 +761,10 @@ impl App {
         }
         if self.category_manager_discard_confirm() {
             self.handle_category_manager_discard_confirm_key(code, agenda)?;
+            return Ok(false);
+        }
+        if self.workflow_setup_open {
+            self.handle_workflow_setup_key(code, agenda)?;
             return Ok(false);
         }
         if self.handle_category_manager_details_key(code, agenda)? {
@@ -884,6 +948,12 @@ impl App {
             }
             KeyCode::Char('x') => {
                 self.start_category_inline_delete_confirm();
+            }
+            KeyCode::Char('w') => {
+                self.workflow_setup_open = true;
+                self.workflow_setup_focus = 0;
+                self.status = "Workflow setup: navigate tree then Enter to assign, x to clear"
+                    .to_string();
             }
             _ => {}
         }
