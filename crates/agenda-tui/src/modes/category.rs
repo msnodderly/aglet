@@ -306,6 +306,29 @@ impl App {
             self.set_category_manager_details_focus(details_focus);
         }
 
+        if self.category_manager_details_inline_input().is_some() {
+            match code {
+                KeyCode::Esc => {
+                    self.set_category_manager_details_inline_input(None);
+                    self.status = "Numeric format edit canceled".to_string();
+                    return Ok(true);
+                }
+                KeyCode::Enter => {
+                    self.save_category_manager_numeric_inline_edit(agenda)?;
+                    return Ok(true);
+                }
+                _ => {
+                    let text_key = self.text_key_event(code);
+                    if let Some(input) = self.category_manager_details_inline_input_mut() {
+                        if input.buffer.handle_key_event(text_key, false) {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            return Ok(false);
+        }
+
         if details_focus == CategoryManagerDetailsFocus::Note
             && self.category_manager_details_note_editing()
         {
@@ -386,8 +409,28 @@ impl App {
                     self.toggle_selected_category_actionable(agenda)?;
                     return Ok(true);
                 }
-                CategoryManagerDetailsFocus::NumericFormat => {
-                    self.cycle_numeric_format(agenda)?;
+                CategoryManagerDetailsFocus::Integer => {
+                    self.toggle_selected_category_integer_mode(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::DecimalPlaces => {
+                    if matches!(code, KeyCode::Enter) {
+                        self.start_category_manager_numeric_inline_edit(
+                            CategoryManagerDetailsInlineField::DecimalPlaces,
+                        )?;
+                    }
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::CurrencySymbol => {
+                    if matches!(code, KeyCode::Enter) {
+                        self.start_category_manager_numeric_inline_edit(
+                            CategoryManagerDetailsInlineField::CurrencySymbol,
+                        )?;
+                    }
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::ThousandsSeparator => {
+                    self.toggle_selected_category_thousands_separator(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Note => {
@@ -406,19 +449,143 @@ impl App {
         self.categories.iter().find(|c| c.id == row.id).cloned()
     }
 
-    fn cycle_numeric_format(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        use crate::modes::board::describe_numeric_format;
+    fn persist_selected_category_numeric_format(
+        &mut self,
+        agenda: &Agenda<'_>,
+        next: NumericFormat,
+        status: String,
+    ) -> Result<(), String> {
         let mut cat = self.selected_category_mut().ok_or("No category")?;
-        let current = cat.numeric_format.clone().unwrap_or_default();
-        let next = super::board::cycle_numeric_format_preset(&current);
-        cat.numeric_format = Some(next.clone());
-        // Store directly — format-only change needs no reclassification.
+        cat.numeric_format = Some(next);
         agenda
             .store()
             .update_category(&cat)
             .map_err(|e| e.to_string())?;
+        let category_id = cat.id;
         self.refresh(agenda.store())?;
-        self.status = format!("Format: {}", describe_numeric_format(&next));
+        self.set_category_selection_by_id(category_id);
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.normalize_category_manager_details_focus();
+        self.status = status;
+        Ok(())
+    }
+
+    fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        let mut next = current.clone();
+        next.decimal_places = if current.decimal_places == 0 { 2 } else { 0 };
+        self.persist_selected_category_numeric_format(
+            agenda,
+            next,
+            format!(
+                "Format: {}",
+                if current.decimal_places == 0 {
+                    "decimal mode"
+                } else {
+                    "integer mode"
+                }
+            ),
+        )
+    }
+
+    fn toggle_selected_category_thousands_separator(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        let mut next = current.clone();
+        next.use_thousands_separator = !next.use_thousands_separator;
+        self.persist_selected_category_numeric_format(
+            agenda,
+            next,
+            if current.use_thousands_separator {
+                "Thousands separator disabled".to_string()
+            } else {
+                "Thousands separator enabled".to_string()
+            },
+        )
+    }
+
+    fn start_category_manager_numeric_inline_edit(
+        &mut self,
+        field: CategoryManagerDetailsInlineField,
+    ) -> Result<(), String> {
+        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        if field == CategoryManagerDetailsInlineField::DecimalPlaces && current.decimal_places == 0 {
+            self.status = "Decimal places is disabled while Integer is enabled".to_string();
+            self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
+            return Ok(());
+        }
+        let buffer = match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                text_buffer::TextBuffer::new(current.decimal_places.to_string())
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => text_buffer::TextBuffer::new(
+                current.currency_symbol.unwrap_or_default(),
+            ),
+        };
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                CategoryManagerDetailsFocus::DecimalPlaces
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                CategoryManagerDetailsFocus::CurrencySymbol
+            }
+        });
+        self.set_category_manager_details_inline_input(Some(CategoryManagerDetailsInlineInput {
+            field,
+            buffer,
+        }));
+        self.status = match field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                "Editing decimal places: Enter save, Esc cancel".to_string()
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                "Editing currency symbol: Enter save, Esc cancel".to_string()
+            }
+        };
+        Ok(())
+    }
+
+    fn save_category_manager_numeric_inline_edit(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> Result<(), String> {
+        let Some(input) = self.category_manager_details_inline_input().cloned() else {
+            return Ok(());
+        };
+        let mut next = self.selected_category_numeric_format().ok_or("No category")?;
+        match input.field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => {
+                let raw = input.buffer.trimmed();
+                let Ok(parsed) = raw.parse::<u8>() else {
+                    self.status = "Decimal places must be a non-negative integer".to_string();
+                    return Ok(());
+                };
+                next.decimal_places = parsed;
+                self.set_category_manager_details_inline_input(None);
+                self.persist_selected_category_numeric_format(
+                    agenda,
+                    next,
+                    format!("Decimal places set to {parsed}"),
+                )?;
+            }
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                let trimmed = input.buffer.trimmed();
+                next.currency_symbol = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.set_category_manager_details_inline_input(None);
+                self.persist_selected_category_numeric_format(
+                    agenda,
+                    next,
+                    "Updated currency symbol".to_string(),
+                )?;
+            }
+        }
         Ok(())
     }
 
