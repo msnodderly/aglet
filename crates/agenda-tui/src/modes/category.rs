@@ -341,10 +341,7 @@ impl App {
         }
     }
 
-    fn toggle_selected_category_integer_mode(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             return Ok(());

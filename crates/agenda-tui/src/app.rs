@@ -788,7 +788,10 @@ impl App {
         }
     }
 
-    pub(crate) fn effective_action_assignment_counts(&self, category_id: CategoryId) -> (usize, usize) {
+    pub(crate) fn effective_action_assignment_counts(
+        &self,
+        category_id: CategoryId,
+    ) -> (usize, usize) {
         let action_item_ids = self.effective_action_item_ids();
         let assigned = action_item_ids
             .iter()
@@ -883,8 +886,8 @@ impl App {
 
     pub(crate) fn open_category_manager_session(&mut self) {
         let selected_category_id = self.selected_category_id();
-        let selected_category = selected_category_id
-            .and_then(|id| self.categories.iter().find(|c| c.id == id));
+        let selected_category =
+            selected_category_id.and_then(|id| self.categories.iter().find(|c| c.id == id));
         let initial_note = selected_category
             .and_then(|c| c.note.clone())
             .unwrap_or_default();
