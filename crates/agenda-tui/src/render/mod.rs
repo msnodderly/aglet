@@ -3178,14 +3178,22 @@ impl App {
         };
 
         let lines: Vec<Line<'static>> = vec![
-            // -- ITEMS --
-            Line::from(Span::styled("ITEMS", header)),
+            // -- CURRENT ITEM --
+            Line::from(Span::styled("CURRENT ITEM", header)),
             help_entry("n", "Add a new item to the focused section"),
             help_entry("e", "Edit the selected item (text, note, categories)"),
             help_entry("Enter", "Edit item / edit column value / add item"),
+            help_entry("a", "Assign categories to current item or selection"),
             help_entry("d", "Mark item as done"),
             help_entry("x", "Delete selected item(s)"),
             help_entry("p", "Toggle the preview sidebar"),
+            Line::from(""),
+            // -- SELECTION --
+            Line::from(Span::styled("SELECTION", header)),
+            help_entry("Space", "Toggle selection on current item"),
+            help_entry("b / B", "Link / unlink selected items (dependency)"),
+            help_entry("x", "Delete selected items"),
+            help_entry("Esc", "Clear selection"),
             Line::from(""),
             // -- NAVIGATION --
             Line::from(Span::styled("NAVIGATION", header)),
@@ -3194,20 +3202,17 @@ impl App {
             help_entry("Tab/S-Tab", "Next / previous section"),
             help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
             help_entry("z", "Cycle card size (compact \u{2194} detail)"),
-            help_entry(",/.", "Cycle to previous / next view"),
             Line::from(""),
-            // -- SEARCH & FILTER --
-            Line::from(Span::styled("SEARCH & FILTER", header)),
+            // -- SEARCH --
+            Line::from(Span::styled("SEARCH", header)),
             help_entry("/", "Search within the focused section"),
             help_entry("g/", "Search across all sections (global)"),
             help_entry("Esc", "Clear active section filter"),
             Line::from(""),
-            // -- CATEGORIES & COLUMNS --
-            Line::from(Span::styled("CATEGORIES & COLUMNS", header)),
-            help_entry("a", "Open category assign picker for selected item"),
-            help_entry("c / F9", "Open the category manager"),
+            // -- COLUMNS --
+            Line::from(Span::styled("COLUMNS", header)),
             help_entry("Enter", "Edit column value (on a column cell)"),
-            help_entry("f", "Cycle numeric column format (on numeric col)"),
+            help_entry("f", "Cycle numeric column format"),
             help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
             Line::from(""),
             // -- VIEWS --
@@ -3215,23 +3220,13 @@ impl App {
             help_entry("v / F8", "Open the view picker"),
             help_entry(",/.", "Cycle to previous / next view"),
             Line::from(""),
-            // -- SELECTION (multi-select) --
-            Line::from(Span::styled("SELECTION", header)),
-            help_entry("Space", "Toggle selection on current item"),
-            help_entry("a", "Bulk-assign categories to selection"),
-            help_entry("b / B", "Link / unlink selected items (dependency)"),
-            help_entry("x", "Delete selected items"),
-            help_entry("Esc", "Clear selection"),
-            Line::from(""),
-            // -- DISPLAY & DATA --
-            Line::from(Span::styled("DISPLAY & DATA", header)),
+            // -- GLOBAL --
+            Line::from(Span::styled("GLOBAL", header)),
+            help_entry("c / F9", "Open the category manager"),
             help_entry("s", "Cycle sort order for the focused section"),
             help_entry("u", "Show / edit item dependencies"),
             help_entry("Ctrl-L", "Reload data from disk"),
             help_entry("Ctrl-R", "Toggle auto-refresh interval"),
-            Line::from(""),
-            // -- GENERAL --
-            Line::from(Span::styled("GENERAL", header)),
             help_entry("?", "Toggle this help panel"),
             help_entry("q", "Quit"),
             Line::from(""),
