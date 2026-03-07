@@ -293,6 +293,9 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::HelpPanel {
+            self.render_help_panel(frame, centered_rect(74, 78, frame.area()));
+        }
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
@@ -2992,6 +2995,7 @@ impl App {
 
     fn footer_hint_text(&self) -> &'static str {
         match self.mode {
+            Mode::HelpPanel => "Esc:close  Enter:close  ?:close",
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
                     "y:save & close  n:discard  Esc:keep editing"
@@ -3077,14 +3081,68 @@ impl App {
             }
             Mode::Normal => {
                 if self.selected_count() > 0 {
-                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  q:quit"
+                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  ?:help  q:quit"
                 } else if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
                 } else {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
                 }
             }
         }
+    }
+
+    fn render_help_panel(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if area.width < 8 || area.height < 8 {
+            return;
+        }
+
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("Normal", Style::default().fg(Color::Yellow)),
+                Span::raw(": "),
+                Span::raw(
+                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:format  F:summary  d:done",
+                ),
+            ]),
+            Line::from("a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  q:quit"),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Selection", Style::default().fg(Color::Yellow)),
+                Span::raw(": "),
+                Span::raw("Space:toggle  a:assign  b/B:link  x:delete  Esc:clear selection"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Search", Style::default().fg(Color::Yellow)),
+                Span::raw(": "),
+                Span::raw("/:current lane  g/:all lanes  Enter:jump  Down/Tab:browse  Esc:clear/return"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Views", Style::default().fg(Color::Yellow)),
+                Span::raw(": "),
+                Span::raw("v/F8:view picker  ,/.:cycle views"),
+            ]),
+            Line::from(vec![
+                Span::styled("Categories", Style::default().fg(Color::Yellow)),
+                Span::raw(": "),
+                Span::raw("c/F9:category manager"),
+            ]),
+            Line::from(vec![
+                Span::styled("Panel", Style::default().fg(Color::Yellow)),
+                Span::raw(": "),
+                Span::raw("Esc, Enter, or ?:close"),
+            ]),
+        ];
+
+        let block = Block::default()
+            .title("Keyboard Shortcuts")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
     pub(crate) fn render_input_panel(
