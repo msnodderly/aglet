@@ -14285,6 +14285,10 @@ mod tests {
             "empty horizontal lanes should render the new empty state: {rendered}"
         );
         assert!(
+            !rendered.contains("search other lanes"),
+            "empty horizontal lanes should not suggest searching other lanes: {rendered}"
+        );
+        assert!(
             lines.iter().filter(|line| line.contains("│>  ")).count() == 1,
             "selected multi-line card should use a single marker: {rendered}"
         );
