@@ -406,8 +406,6 @@ enum CategoryManagerDetailsFocus {
     Exclusive,
     MatchName,
     Actionable,
-    ReadyQueue,
-    ClaimTarget,
     // Single format preset field for numeric categories (Enter cycles presets)
     NumericFormat,
     Note,
@@ -425,9 +423,7 @@ impl CategoryManagerDetailsFocus {
             match self {
                 Self::Exclusive => Self::MatchName,
                 Self::MatchName => Self::Actionable,
-                Self::Actionable => Self::ReadyQueue,
-                Self::ReadyQueue => Self::ClaimTarget,
-                Self::ClaimTarget => Self::Note,
+                Self::Actionable => Self::Note,
                 Self::Note => Self::Exclusive,
                 _ => Self::Exclusive,
             }
@@ -446,10 +442,8 @@ impl CategoryManagerDetailsFocus {
                 Self::Exclusive => Self::Note,
                 Self::MatchName => Self::Exclusive,
                 Self::Actionable => Self::MatchName,
-                Self::ReadyQueue => Self::Actionable,
-                Self::ClaimTarget => Self::ReadyQueue,
-                Self::Note => Self::ClaimTarget,
-                _ => Self::ClaimTarget,
+                Self::Note => Self::Actionable,
+                _ => Self::Actionable,
             }
         }
     }
@@ -845,6 +839,8 @@ struct App {
     category_rows: Vec<CategoryListRow>,
     category_index: usize,
     workflow_config: WorkflowConfig,
+    workflow_setup_open: bool,
+    workflow_setup_focus: usize, // 0 = Ready Queue, 1 = Claim Target
     category_manager: Option<CategoryManagerState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
@@ -908,6 +904,8 @@ impl Default for App {
             category_rows: Vec::new(),
             category_index: 0,
             workflow_config: WorkflowConfig::default(),
+            workflow_setup_open: false,
+            workflow_setup_focus: 0,
             category_manager: None,
             category_suggest: None,
             category_direct_edit: None,

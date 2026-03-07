@@ -3004,7 +3004,7 @@ impl App {
                         CategoryInlineAction::DeleteConfirm { .. } => "y:confirm  Esc:cancel",
                     }
                 } else {
-                    "S:save  n:new  r:rename  x:delete  Tab:pane  /:filter  Esc:close"
+                    "S:save  n:new  r:rename  x:delete  Tab:pane  /:filter  w:configure workflow roles  Esc:close"
                 }
             }
             Mode::ViewPicker => {
@@ -3722,12 +3722,7 @@ impl App {
             .map(|rows| rows.to_vec())
             .unwrap_or_else(|| (0..self.category_rows.len()).collect());
         let rows: Vec<Row<'_>> = if visible_row_indices.is_empty() {
-            vec![Row::new(vec![
-                Cell::from("(no categories)"),
-                Cell::from(String::new()),
-                Cell::from(String::new()),
-                Cell::from(String::new()),
-            ])]
+            vec![Row::new(vec![Cell::from("(no categories)")])]
         } else {
             visible_row_indices
                 .iter()
@@ -3735,38 +3730,29 @@ impl App {
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
                     label = with_note_marker(label, row.has_note);
+                    let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                     if row.is_reserved {
                         label.push_str(" [reserved]");
+                    } else if is_numeric {
+                        label.push_str(" [numeric]");
+                    } else {
+                        if row.is_exclusive {
+                            label.push_str(" [exclusive]");
+                        }
+                        if !row.enable_implicit_string {
+                            label.push_str(" [no-match]");
+                        }
+                        if !row.is_actionable {
+                            label.push_str(" [no-todo]");
+                        }
+                        if self.workflow_config.ready_category_id == Some(row.id) {
+                            label.push_str(" [ready-queue]");
+                        }
+                        if self.workflow_config.claim_category_id == Some(row.id) {
+                            label.push_str(" [claim-target]");
+                        }
                     }
-                    let is_numeric = row.value_kind == CategoryValueKind::Numeric;
-                    Row::new(vec![
-                        Cell::from(if is_numeric {
-                            format!("{} [numeric]", label)
-                        } else {
-                            label
-                        }),
-                        Cell::from(if is_numeric {
-                            " - "
-                        } else if row.is_exclusive {
-                            "[x]"
-                        } else {
-                            "[ ]"
-                        }),
-                        Cell::from(if is_numeric {
-                            " - "
-                        } else if row.enable_implicit_string {
-                            "[x]"
-                        } else {
-                            "[ ]"
-                        }),
-                        Cell::from(if is_numeric {
-                            " - "
-                        } else if row.is_actionable {
-                            "[x]"
-                        } else {
-                            "[ ]"
-                        }),
-                    ])
+                    Row::new(vec![Cell::from(label)])
                 })
                 .collect()
         };
@@ -3786,21 +3772,11 @@ impl App {
         frame.render_stateful_widget(
             Table::new(
                 rows,
-                vec![
-                    Constraint::Min(20),
-                    Constraint::Length(6),
-                    Constraint::Length(7),
-                    Constraint::Length(6),
-                ],
+                vec![Constraint::Min(20)],
             )
             .header(
-                Row::new(vec![
-                    Cell::from("Category"),
-                    Cell::from("Excl"),
-                    Cell::from("Match"),
-                    Cell::from("Todo"),
-                ])
-                .style(Style::default().add_modifier(Modifier::BOLD)),
+                Row::new(vec![Cell::from("Category")])
+                    .style(Style::default().add_modifier(Modifier::BOLD)),
             )
             .highlight_symbol("> ")
             .row_highlight_style(selected_row_style())
@@ -3881,7 +3857,11 @@ impl App {
                 } else {
                     NumericFormat::default()
                 };
-                let flags_height = if is_numeric_category { 5 } else { 8 };
+                let is_ready_queue_role = self.workflow_config.ready_category_id == Some(row.id);
+                let is_claim_target_role = self.workflow_config.claim_category_id == Some(row.id);
+                let workflow_role_height: u16 =
+                    if is_ready_queue_role { 2 } else { 0 } + if is_claim_target_role { 2 } else { 0 };
+                let flags_height = if is_numeric_category { 5 } else { 5 + workflow_role_height };
                 let details_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -3924,14 +3904,6 @@ impl App {
                         style,
                     ))
                 };
-                let subheading_line = |label: &str| {
-                    Line::from(Span::styled(
-                        format!("  {label}"),
-                        Style::default()
-                            .fg(MUTED_TEXT_COLOR)
-                            .add_modifier(Modifier::BOLD),
-                    ))
-                };
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
                     use crate::modes::board::describe_numeric_format;
@@ -3956,7 +3928,7 @@ impl App {
                         )),
                     ]
                 } else {
-                    vec![
+                    let mut lines = vec![
                         flag_line(
                             details_focus == CategoryManagerDetailsFocus::Exclusive,
                             "Exclusive",
@@ -3972,18 +3944,28 @@ impl App {
                             "Actionable",
                             row.is_actionable,
                         ),
-                        subheading_line("Targets"),
-                        flag_line(
-                            details_focus == CategoryManagerDetailsFocus::ReadyQueue,
-                            "Ready Queue",
-                            self.selected_category_is_ready_queue_role(),
-                        ),
-                        flag_line(
-                            details_focus == CategoryManagerDetailsFocus::ClaimTarget,
-                            "Claim Target",
-                            self.selected_category_is_claim_target_role(),
-                        ),
-                    ]
+                    ];
+                    if self.workflow_config.ready_category_id == Some(row.id) {
+                        lines.push(Line::from(Span::styled(
+                            "  Workflow: Ready Queue",
+                            Style::default().fg(Color::LightCyan),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  (items need this to be claimable)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                    }
+                    if self.workflow_config.claim_category_id == Some(row.id) {
+                        lines.push(Line::from(Span::styled(
+                            "  Workflow: Claim Target",
+                            Style::default().fg(Color::LightCyan),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  (assigned by claim, cleared by done)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                    }
+                    lines
                 };
                 let flags_title = if is_numeric {
                     "Numeric Format"
@@ -4080,12 +4062,6 @@ impl App {
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
                         }
-                        CategoryManagerDetailsFocus::ReadyQueue => {
-                            "Marks the manual category required for claim eligibility"
-                        }
-                        CategoryManagerDetailsFocus::ClaimTarget => {
-                            "Assigned by claim and removed by release/done"
-                        }
                         CategoryManagerDetailsFocus::NumericFormat => {
                             "Enter/Space: cycle format (int → 1dp → 2dp → thousands → currency)"
                         }
@@ -4126,6 +4102,84 @@ impl App {
                         .title(" Confirm ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if self.workflow_setup_open {
+            let ready_name = self
+                .workflow_config
+                .ready_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)");
+            let claim_name = self
+                .workflow_config
+                .claim_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)");
+            let tree_selection = self
+                .selected_category_row()
+                .map(|row| row.name.as_str())
+                .unwrap_or("(none)");
+            let focus = self.workflow_setup_focus;
+            let ready_style = if focus == 0 {
+                focused_cell_style()
+            } else {
+                Style::default()
+            };
+            let claim_style = if focus == 1 {
+                focused_cell_style()
+            } else {
+                Style::default()
+            };
+            let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
+            let w = area.width.min(50);
+            let h = 14u16;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        "Assign categories to workflow roles.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("{}Ready Queue:   {}", indicator(0), ready_name),
+                        ready_style,
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Claim Target:  {}", indicator(1), claim_name),
+                        claim_style,
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("  Tree selection: {}", tree_selection),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Close (Esc), navigate to a category,",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "reopen (w), then Enter to assign.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from("j/k:slot  Enter:assign  x:clear  Esc:close"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Workflow Setup ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::LightCyan)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
