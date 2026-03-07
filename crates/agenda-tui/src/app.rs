@@ -3,6 +3,11 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use agenda_core::store::DEFAULT_VIEW_NAME;
+use agenda_core::workflow::{
+    build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
+};
+
 impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
@@ -170,6 +175,27 @@ impl App {
 
     pub(crate) fn refresh(&mut self, store: &Store) -> Result<(), String> {
         self.views = store.list_views().map_err(|e| e.to_string())?;
+        self.workflow_config = store.get_workflow_config().map_err(|e| e.to_string())?;
+        if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
+            let ready_queue_view = build_ready_queue_view(store, workflow).map_err(|e| e.to_string())?;
+            let insert_at = self
+                .views
+                .iter()
+                .position(|view| view.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME))
+                .map(|index| index + 1)
+                .unwrap_or(0)
+                .min(self.views.len());
+            self.views.insert(insert_at, ready_queue_view);
+        }
+        if let Some(active_view_name) = self.active_view_name.clone() {
+            if let Some(index) = self
+                .views
+                .iter()
+                .position(|view| view.name.eq_ignore_ascii_case(&active_view_name))
+            {
+                self.view_index = index;
+            }
+        }
         self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
         self.category_rows = build_category_rows(&self.categories);
         if let Some(category_id) = self
@@ -229,7 +255,22 @@ impl App {
                 .cloned()
                 .ok_or("No active view".to_string())?;
             let reference_date = Local::now().date_naive();
-            let mut result = resolve_view(&view, &items, &self.categories, reference_date);
+            let view_items = if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
+                if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
+                    let claimable_ids =
+                        claimable_item_ids(store, &items, workflow).map_err(|e| e.to_string())?;
+                    items
+                        .iter()
+                        .filter(|item| claimable_ids.contains(&item.id))
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                items.clone()
+            };
+            let mut result = resolve_view(&view, &view_items, &self.categories, reference_date);
             if self.effective_hide_dependent_items() {
                 for section in &mut result.sections {
                     section.items.retain(|item| !self.is_item_blocked(item.id));
@@ -832,6 +873,34 @@ impl App {
         self.views.get(self.view_index)
     }
 
+    pub(crate) fn selected_category_is_ready_queue_role(&self) -> bool {
+        self.selected_category_row()
+            .is_some_and(|row| self.workflow_config.ready_category_id == Some(row.id))
+    }
+
+    pub(crate) fn selected_category_is_claim_target_role(&self) -> bool {
+        self.selected_category_row()
+            .is_some_and(|row| self.workflow_config.claim_category_id == Some(row.id))
+    }
+
+    fn workflow_role_category_name(&self, category_id: Option<CategoryId>) -> Option<&str> {
+        let category_id = category_id?;
+        self.categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .map(|category| category.name.as_str())
+    }
+
+    pub(crate) fn ready_queue_header_hint(&self) -> Option<String> {
+        let current_view = self.current_view()?;
+        if !current_view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
+            return None;
+        }
+        let ready_name = self.workflow_role_category_name(self.workflow_config.ready_category_id)?;
+        let claim_name = self.workflow_role_category_name(self.workflow_config.claim_category_id)?;
+        Some(format!("  workflow:{ready_name}->{claim_name}"))
+    }
+
     pub(crate) fn effective_hide_dependent_items(&self) -> bool {
         self.session_hide_dependent_items_override
             .unwrap_or_else(|| {
@@ -841,7 +910,7 @@ impl App {
             })
     }
 
-    fn set_active_view_index(&mut self, index: usize) {
+    pub(crate) fn set_active_view_index(&mut self, index: usize) {
         if self.views.is_empty() {
             self.view_index = 0;
             self.picker_index = 0;
