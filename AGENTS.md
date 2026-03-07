@@ -95,6 +95,21 @@ Practical implications:
   `agenda-cli show` assignment provenance before assuming the visible category
   was manually assigned
 
+## Disabling Implicit Match Does Not Evict Existing `AutoMatch` Assignments (Surprising)
+
+Turning a category's `enable_implicit_string` flag off and re-running category
+evaluation does **not** automatically remove already-persisted implicit-string
+assignments for that category.
+
+Practical implications:
+- Engine/evaluate-all paths treat derived assignments as sticky once written.
+- If you need "disable implicit match" to stop current `cat:<Category>` matches
+  from staying assigned, you must explicitly clear those assignments and then
+  re-run evaluation.
+- This came up in TUI workflow-role setup: disabling `Auto-match` for a
+  workflow role required targeted cleanup of existing `AssignmentSource::AutoMatch`
+  rows with `origin=cat:<Category>` before reevaluation.
+
 ## CLI Search vs TUI Search Matchers Diverge (Surprising)
 
 CLI `agenda-cli search <query>` uses `agenda-core` query text matching, but the
