@@ -5,7 +5,7 @@ Status: Consolidated into single source-of-truth
 
 This document has been merged into:
 
-- `/Users/mds/src/aglet/spec/tui-view-workflow-implementation.md`
+- `/Users/mds/src/aglet/docs/specs/tui/view-workflow-implementation.md`
 
 Use that file for all implementation work.
 

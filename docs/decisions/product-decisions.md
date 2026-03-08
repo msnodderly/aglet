@@ -834,18 +834,19 @@ Scope guard for bd-1b5 implementation:
 **Date**: 2026-02-16
 **Relevant tasks**: T004 (`bd-3ih`)
 
-`spec/scenario-capability-matrix.md` is the canonical mapping between
-`spec/product-spec-complete.md` scenarios and current implementation status
-(`implemented`, `partial`, `deferred`).
+Scenario-level conformance should be tracked directly in the active product
+docs, using `docs/specs/product/target.md` as the reference point and
+`docs/specs/product/roadmap.md`, `docs/specs/product/tasks.md`, and
+`docs/specs/product/gaps.md` as the current execution record.
 
 Policy:
 
-- Product conformance claims in `spec/product-current.md` should summarize from
-  this matrix rather than maintain a separate unsourced list.
-- Roadmap and gap prioritization should reference scenario clusters in this
-  matrix when sequencing next phases.
-- Any issue that materially changes scenario status should update the matrix in
-  the same change as code/docs updates.
+- Product conformance claims should be grounded in current implementation
+  evidence, not in a separate snapshot file.
+- Roadmap and gap prioritization should reference scenario clusters in the
+  active product docs when sequencing next phases.
+- Any issue that materially changes scenario status should update the relevant
+  active product docs in the same change as code/docs updates.
 
 ---
 
@@ -1051,7 +1052,7 @@ Rationale:
 All TUI view workflow documentation is consolidated into a single
 implementation contract:
 
-- `/Users/mds/src/aglet/spec/tui-view-workflow-implementation.md`
+- `/Users/mds/src/aglet/docs/specs/tui/view-workflow-implementation.md`
 
 Previously split docs remain as lightweight pointers for historical continuity,
 but implementation work should use the consolidated document.
@@ -1080,7 +1081,7 @@ Implementation strategy for the View Manager refactor is:
 Tracking and execution requirements:
 
 - keep a detailed task checklist in docs
-- update `spec/tasks.md` task state as work progresses
+- update `docs/specs/product/tasks.md` task state as work progresses
 - commit frequently at each vertical slice/test-passing checkpoint
 
 Rationale:

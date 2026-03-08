@@ -320,7 +320,7 @@ enum InputPanelAction {
 4. Enter on SaveButton: keep as secondary save binding
 5. Enter on CancelButton: cancel (unchanged)
 6. Update all status messages and footer hint bar text to show `S:save`
-7. **Breaking change for existing users**: document in `spec/tui-ux-redesign.md §14`
+7. **Breaking change for existing users**: document in `docs/specs/proposals/tui-ux-redesign.md` §14
 8. **Test**: S saves from Text/Note focus; Enter in Text/Note does not save; Enter on SaveButton still saves
 
 ---

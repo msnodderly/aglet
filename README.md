@@ -51,6 +51,6 @@ cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> \
 
 ## Workflow Docs
 
-- [PM process](/Users/mds/src/aglet-ec938313-atomic-claim/PM.md)
-- [Agent workflow prompt](/Users/mds/src/aglet-ec938313-atomic-claim/prompt.md)
-- [Open-item query reference](/Users/mds/src/aglet-ec938313-atomic-claim/docs/open-project-items-by-priority.md)
+- [PM process](/Users/mds/src/aglet/docs/process/project-management.md)
+- [Agent workflow prompt](/Users/mds/src/aglet/docs/process/agent-workflow.md)
+- [Open-item query reference](/Users/mds/src/aglet/docs/reference/open-project-items-by-priority.md)

@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-20
 **Status**: Analysis complete
-**Full details**: See `spec/tui-add-workflow-analysis.md`
+**Full details**: See `docs/specs/proposals/tui-add-workflow-analysis.md`
 
 ## Key Findings
 
@@ -105,7 +105,7 @@ Each phase is testable independently; keeps existing tests passing throughout.
 
 ## Recommendations
 
-1. **Review the full spec**: `spec/tui-add-workflow-analysis.md` has examples, risks, and open questions.
+1. **Review the full spec**: `docs/specs/proposals/tui-add-workflow-analysis.md` has examples, risks, and open questions.
 
 2. **Pilot with add workflow**: Start with Phase 5a–5b. This immediately addresses feature request #1 and provides user feedback without breaking existing edit workflow.
 

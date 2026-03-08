@@ -284,7 +284,7 @@ cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet -
 cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --category "Needs Refinement" --view "All Items" --sort Priority
 cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --exclude-category Complexity --view "All Items" --sort Priority
 
-git add PM.md docs/questions.md aglet-features.ag
+git add docs/process/project-management.md archive/notes/questions.md aglet-features.ag
 git commit -m "PM grooming: <summary>"
 git push -u origin HEAD
 gh pr create --title "PM Grooming: <date>" --body "<summary>"

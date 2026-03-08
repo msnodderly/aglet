@@ -16,11 +16,11 @@ but TUI still uses split-pane section selector and include-only view editing.
 ## What To Read
 
 1. `spec/tui-view-category-workflow.md`
-2. `spec/roadmap-current.md` (R3 section)
-3. `spec/tasks.md` (Phase 2)
+2. `docs/specs/product/roadmap.md` (R3 section)
+3. `docs/specs/product/tasks.md` (Phase 2)
 4. `crates/agenda-tui/src/lib.rs`
 5. `docs/test-script-tui-smoke-e2e.md`
-6. `spec/decisions.md` (TUI workflow and terminology decisions)
+6. `docs/decisions/product-decisions.md` (TUI workflow and terminology decisions)
 
 ## What To Build
 

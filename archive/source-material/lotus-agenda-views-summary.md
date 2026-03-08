@@ -185,7 +185,7 @@ Though not view-specific, these directly affect what appears in views:
 
 ## 11. Gap Analysis vs. Current Aglet Implementation
 
-Based on `spec/product-current.md`, the following view behaviors are already implemented or partially implemented:
+Based on implementation snapshots captured in the active product docs, the following view behaviors are already implemented or partially implemented:
 
 | Feature | Status |
 |---------|--------|

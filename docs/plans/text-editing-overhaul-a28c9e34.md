@@ -9,7 +9,7 @@
 
 ## Execution Steps
 1. Create plan file in main repo:
-- Path: `/Users/mds/src/aglet/plans/a28c9e34-text-editing-overhaul.md`
+- Path: `/Users/mds/src/aglet/docs/plans/text-editing-overhaul-a28c9e34.md`
 - Content: the full approved implementation plan (worktree, migration, dead-code cleanup, test gates).
 
 2. Create implementation worktree:

@@ -25,7 +25,7 @@ This plan is designed for the current aglet architecture:
 ## Codebase Sync Notes (2026-02-26)
 
 This plan was originally drafted before several unrelated core changes landed.
-The walkthrough (`walkthrough.md`) is now the best onboarding reference for the
+The walkthrough (`docs/reference/codebase-walkthrough.md`) is now the best onboarding reference for the
 current architecture.
 
 Important updates for implementation on the current branch:
@@ -1257,7 +1257,7 @@ Deferred follow-up phase (do not block current single-item linking/readiness wor
 
 ### Cross-Cutting Documentation Tasks
 
-- [ ] Update `walkthrough.md` after implementation to mention `item_links` schema and link APIs.
+- [ ] Update `docs/reference/codebase-walkthrough.md` after implementation to mention `item_links` schema and link APIs.
 - [ ] Update `AGENTS.md` if any operational surprises are discovered during implementation (e.g., migration caveats, CLI direction confusion).
 - [ ] Add CLI usage examples for links to docs (if project has a suitable CLI reference file for aglet).
 - [ ] Document exact semantics (`A depends-on B` means `B blocks A`) in user-facing text to prevent direction mistakes.

@@ -38,7 +38,7 @@ git -C /Users/mds/src/aglet worktree add /Users/mds/src/aglet-r3 -b codex/t070-r
 ### T070 Contract Adoption
 - Confirm `/Users/mds/src/aglet/spec/tui-view-category-workflow.md` as active implementation contract.
 - Add a small scope note in the spec/docs: unmatched “always-show-empty” pin mode is deferred; this phase ships hide-empty default and label/show toggle behavior without schema changes.
-- Update `/Users/mds/src/aglet/spec/tasks.md` statuses as tasks are completed.
+- Update `/Users/mds/src/aglet/docs/specs/product/tasks.md` statuses as tasks are completed.
 
 ### T071 Board Layout Redesign
 - Replace split-pane section selector + item pane in `/Users/mds/src/aglet/crates/agenda-tui/src/lib.rs` with board-first section columns.

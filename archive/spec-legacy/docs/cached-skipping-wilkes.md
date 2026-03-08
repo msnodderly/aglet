@@ -4,7 +4,7 @@
 
 All changes: `/Users/mds/src/aglet-tui-redesign-phase1`
 Branch: `tui-redesign-phase1`
-Spec: `/Users/mds/src/aglet/spec/tui-ux-redesign.md`
+Spec: `/Users/mds/src/aglet/docs/specs/proposals/tui-ux-redesign.md`
 
 ---
 

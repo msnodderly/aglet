@@ -28,11 +28,11 @@ is claimed.
 2. **Read each ready issue** — `br show <id>`.
 
 3. **Read current product context** — use current docs first:
-   - `spec/product-current.md`
-   - `spec/roadmap-current.md`
-   - `spec/gaps.md`
-   - `spec/tasks.md`
-   - `spec/product-spec-complete.md` (relevant scenario sections)
+   - `docs/specs/product/target.md`
+   - `docs/specs/product/roadmap.md`
+   - `docs/specs/product/gaps.md`
+   - `docs/specs/product/tasks.md`
+   - `docs/specs/product/target.md` (relevant scenario sections)
 
 4. **Read relevant code/tests** — inspect files the implementer is expected to
    touch plus neighboring tests and integration paths.

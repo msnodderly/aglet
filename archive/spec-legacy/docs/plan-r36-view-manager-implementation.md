@@ -3,7 +3,7 @@
 Date: 2026-02-17
 Worktree: `/Users/mds/src/aglet-view-ui`
 Branch: `codex/view-ui-r36`
-Primary contract: `/Users/mds/src/aglet-view-ui/spec/tui-view-workflow-implementation.md`
+Primary contract: `/Users/mds/src/aglet/docs/specs/tui/view-workflow-implementation.md`
 
 ## 1. Objective
 

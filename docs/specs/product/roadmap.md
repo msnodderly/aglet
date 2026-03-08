@@ -12,7 +12,7 @@ Already implemented:
 - Usable TUI daily loop and management/editing workflows (navigate/add/move/remove/done/delete/filter/inspect/view switch/category manager/edit/unassign).
 - Broad automated coverage (`cargo test` passes workspace).
 - Multiple manual/e2e scenario logs under `docs/`.
-- Scenario-to-capability matrix for `product-spec-complete` scenarios (`spec/scenario-capability-matrix.md`).
+- Scenario-driven conformance notes captured alongside the active product docs.
 
 Therefore, roadmap emphasis shifts from "build from scratch" to "close targeted completion and hardening gaps".
 
@@ -27,8 +27,8 @@ Therefore, roadmap emphasis shifts from "build from scratch" to "close targeted 
 
 Exit criteria:
 
-- `spec/product-current.md`, `spec/gaps.md`, `spec/roadmap-current.md` reflect current code truth.
-- `spec/scenario-capability-matrix.md` exists and is kept current as conformance reference.
+- `docs/specs/product/gaps.md`, `docs/specs/product/roadmap.md`, and `docs/specs/product/tasks.md` reflect current code truth and execution priorities.
+- Scenario-level conformance notes are kept with the active product docs rather than in a separate matrix file.
 
 ## R2. TUI Completion For SLC
 
@@ -44,7 +44,7 @@ Exit criteria:
 
 ## R3. TUI View + Category Workflow Streamlining (Completed, Maintain)
 
-- Adopt the consolidated workflow spec in `spec/tui-view-workflow-implementation.md`.
+- Adopt the consolidated workflow spec in `docs/specs/tui/view-workflow-implementation.md`.
 - Replace split-pane section navigation with section-first horizontal board layout.
 - Implement full in-TUI view criteria editing (multi include/exclude + virtual include/exclude).
 - Reduce shortcut friction with laptop-friendly bindings and retain F-key aliases.
@@ -63,8 +63,8 @@ Exit criteria:
 
 Exit criteria:
 
-- A detailed consolidated design spec exists (`spec/tui-view-workflow-implementation.md`).
-- A sequenced experiment plan exists in `spec/tasks.md` (`T077-T083`).
+- A detailed consolidated design spec exists (`docs/specs/tui/view-workflow-implementation.md`).
+- A sequenced experiment plan exists in `docs/specs/product/tasks.md` (`T077-T083`).
 - Team has a clear decision path for "UI-only vs model extension" for column workflows.
 
 ## R4. Safety Contract (v1)
@@ -110,7 +110,8 @@ Roadmap priorities were set using current implementation and executed demos, inc
 - `docs/demo-literate-cli-demo-global-priority-reuse.md`
 - `docs/test-cross-domain-scenarios-run-results.md`
 - `docs/test-script-tui-smoke-e2e.md`
-- `spec/scenario-capability-matrix.md`
+- `docs/specs/product/target.md`
+- `docs/specs/product/gaps.md`
 
 ## 7. Recommended Sequencing
 

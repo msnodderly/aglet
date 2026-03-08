@@ -1,7 +1,7 @@
 # Domain + Product Gaps (Current Reality)
 
 Date: 2026-02-16
-Scope: gaps between `spec/product-spec-complete.md` and the current implementation.
+Scope: gaps between `docs/specs/product/target.md` and the current implementation.
 
 ## 1. Purpose
 

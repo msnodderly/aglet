@@ -1,6 +1,6 @@
 # Plan: Per-Section Text Filters
 
-**Spec:** `spec/tui-ux-redesign.md §10`
+**Spec:** `docs/specs/proposals/tui-ux-redesign.md` §10
 **Status:** Spec complete, implementation pending.
 
 ## Context

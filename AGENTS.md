@@ -131,6 +131,25 @@ Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts
 The project has two binaries: `agenda-cli` and `agenda-tui`. Use
 `cargo run --bin agenda-cli` or `cargo run --bin agenda-tui` to run them.
 
+## Documentation Layout
+
+Active project docs now live under `docs/` grouped by purpose:
+
+- `docs/process/` for workflow/process docs
+- `docs/reference/` for codebase/reference docs
+- `docs/plans/` for active implementation plans
+- `docs/specs/` for active product/TUI specs and proposals
+- `docs/decisions/` for implementation/product decisions
+- `docs/backlog/` for feature/backlog notes
+- `docs/demos/` for executable demos
+
+Practical implications:
+- If you are looking for a former `spec/*.md` or root-level planning doc, check
+  `docs/` first; many files were moved there in the March 2026 doc reorg.
+- `spec/` now contains only lightweight pointer docs kept for continuity.
+- `archive/` is historical material; prefer `archive/source-material/` for
+  raw references and `archive/superseded/` for replaced plans/docs.
+
 ## Aglet Features Database
 
 `aglet-features.ag` in the project root is the canonical issue-tracking database
@@ -290,7 +309,7 @@ Practical implications:
 
 ## TUI Spec vs. Implementation
 
-`spec/tui-ux-redesign.md` is the design target. The Phase 2a implementation
+`docs/specs/proposals/tui-ux-redesign.md` is the design target. The Phase 2a implementation
 deviated from spec in several places. **Read the implementation notes at the
 bottom of each phase section** before assuming the spec describes current code:
 

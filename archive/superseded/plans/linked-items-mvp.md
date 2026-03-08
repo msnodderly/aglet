@@ -1008,7 +1008,7 @@ Phase 8 exit criteria:
 
 ### Cross-Cutting Documentation Tasks
 
-- [ ] Update `/Users/mds/src/aglet/walkthrough.md` after implementation to mention `item_links` schema and link APIs.
+- [ ] Update `/Users/mds/src/aglet/docs/reference/codebase-walkthrough.md` after implementation to mention `item_links` schema and link APIs.
 - [ ] Update `/Users/mds/src/aglet/AGENTS.md` if any operational surprises are discovered during implementation (e.g., migration caveats, CLI direction confusion).
 - [ ] Add CLI usage examples for links to docs (if project has a suitable CLI reference file for aglet).
 - [ ] Document exact semantics (`A depends-on B` means `B blocks A`) in user-facing text to prevent direction mistakes.

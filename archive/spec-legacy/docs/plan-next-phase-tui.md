@@ -18,10 +18,10 @@ Date: 2026-02-16
   deterministic end-to-end TUI smoke script in `docs/test-script-tui-smoke-e2e.md`.
 
 This note references:
-- `spec/product-current.md`
-- `spec/gaps.md`
-- `spec/roadmap-current.md`
-- `spec/tasks.md`
+- `docs/specs/product/target.md`
+- `docs/specs/product/gaps.md`
+- `docs/specs/product/roadmap.md`
+- `docs/specs/product/tasks.md`
 - CLI demos in `docs/demo-*.md` (especially `demo-complete-cli-e2e-demo-log.md`, `demo-view-logic-demo-run.md`, and `demo-literate-cli-demo-global-priority-reuse.md`)
 
 ## Phase Summary

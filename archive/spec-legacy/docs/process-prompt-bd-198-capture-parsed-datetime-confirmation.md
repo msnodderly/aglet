@@ -9,7 +9,7 @@ Date parsing already sets `when_date` during create/update, but capture surfaces
 1. `crates/agenda-cli/src/main.rs` - `cmd_add` behavior and output format.
 2. `crates/agenda-tui/src/lib.rs` - add mode (`handle_add_key`, `create_item_in_current_context`) and status messaging.
 3. `crates/agenda-core/src/agenda.rs` - create path and reference-date variants.
-4. `spec/decisions.md` sections 22-23 - parser defaults and reference-date behavior.
+4. `docs/decisions/product-decisions.md` sections 22-23 - parser defaults and reference-date behavior.
 5. `docs/guide-cli-manpage.md` - user-facing CLI docs.
 
 ## What to build

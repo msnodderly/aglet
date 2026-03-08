@@ -8,8 +8,8 @@
 
 1. `crates/agenda-core/src/dates.rs` - current relative weekday parsing and tests.
 2. `crates/agenda-core/src/agenda.rs` - default parser construction used in create/update flows.
-3. `spec/decisions.md` sections 20-22 - current date parser decisions and where to document defaults.
-4. `AGENTS.md` and `PROMPT.md` - workflow and completion rules.
+3. `docs/decisions/product-decisions.md` sections 20-22 - current date parser decisions and where to document defaults.
+4. `AGENTS.md` and `docs/process/agent-workflow.md` - workflow and completion rules.
 
 ## What to build
 

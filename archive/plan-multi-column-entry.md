@@ -50,11 +50,11 @@ Checkbox-style hierarchy toggling should remain a separate item-level workflow
 
 ## Companion Docs
 
-- `decisions.md`: accepted decisions and defaults that this plan assumes during implementation
-- `questions.md`: open questions (and resolved history) to review before starting new phases
+- `docs/decisions/implementation-decisions.md`: accepted decisions and defaults that this plan assumes during implementation
+- `archive/notes/questions.md`: open questions (and resolved history) to review before starting new phases
 
-When `plan.md` and `decisions.md` differ, treat `decisions.md` as the current
-source of truth for confirmed choices and update `plan.md` accordingly.
+When `archive/plan-multi-column-entry.md` and `docs/decisions/implementation-decisions.md` differ, treat `docs/decisions/implementation-decisions.md` as the current
+source of truth for confirmed choices and update `archive/plan-multi-column-entry.md` accordingly.
 
 ### Why the current `CategoryDirectEdit` is insufficient
 

@@ -11,11 +11,11 @@ This document is intended to prevent re-litigating decisions while avoiding a ri
 1. PR #48 title/body/commit metadata and implementation claims.
 2. PR #48 branch (`377ceac`) diff and test outcomes.
 3. Current `origin/main` state at `af080a3` (Merge PR #49).
-4. Existing plan in [`docs/code-quality-plan.md`](../code-quality-plan.md).
+4. Existing plan in [`docs/plans/code-quality-improvement.md`](/Users/mds/src/aglet/docs/plans/code-quality-improvement.md).
 
 ## What PR #48 Implemented (Per PR Description)
 
-PR #48 explicitly stated it implemented items **A, C, D, E, F** from `docs/code-quality-plan.md`.
+PR #48 explicitly stated it implemented items **A, C, D, E, F** from `docs/plans/code-quality-improvement.md`.
 
 ### A. Reserved category constants exported and used
 

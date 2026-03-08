@@ -7,7 +7,7 @@ and produce implementer prompts only for currently unblocked work.
 Act as the specify-on-ready reviewer.
 
 1) Read `AGENTS.md` and `docs/process-specify-on-ready.md` first.
-2) Read current product docs: `spec/product-current.md`, `spec/roadmap-current.md`, `spec/gaps.md`, `spec/tasks.md`, and relevant sections of `spec/product-spec-complete.md`.
+2) Read current product docs: `docs/specs/product/target.md`, `docs/specs/product/roadmap.md`, `docs/specs/product/gaps.md`, `docs/specs/product/tasks.md`, and relevant sections of `docs/specs/product/target.md`.
 3) Run `br ready` and treat it as the scheduling source of truth.
 4) For each currently ready issue only:
    - Run `br show <id>`
@@ -37,5 +37,5 @@ Act as the specify-on-ready reviewer.
 ## Short Variant
 
 ```text
-Run specify-on-ready: read `AGENTS.md`, `docs/process-specify-on-ready.md`, `spec/product-current.md`, `spec/roadmap-current.md`, `spec/gaps.md`, `spec/tasks.md`, and relevant sections of `spec/product-spec-complete.md`; run `br ready`; then create/update prompts only for those ready issues in `docs/process-prompt-*.md` (one per issue unless tightly coupled), using the filename pattern `docs/process-prompt-<issue-id>-<short-name>.md`. No `br` write commands. End with a report of ready IDs and files changed.
+Run specify-on-ready: read `AGENTS.md`, `docs/process-specify-on-ready.md`, `docs/specs/product/target.md`, `docs/specs/product/roadmap.md`, `docs/specs/product/gaps.md`, `docs/specs/product/tasks.md`, and relevant sections of `docs/specs/product/target.md`; run `br ready`; then create/update prompts only for those ready issues in `docs/process-prompt-*.md` (one per issue unless tightly coupled), using the filename pattern `docs/process-prompt-<issue-id>-<short-name>.md`. No `br` write commands. End with a report of ready IDs and files changed.
 ```
