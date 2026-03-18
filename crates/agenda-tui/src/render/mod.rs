@@ -3700,6 +3700,9 @@ impl App {
                     if row.is_reserved {
                         flags.push("reserved");
                     }
+                    if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {
+                        flags.push("numeric");
+                    }
                     if row.is_exclusive {
                         flags.push("exclusive");
                     }
@@ -3719,19 +3722,7 @@ impl App {
                             "[~]".to_string()
                         }
                     } else if self.selected_item_has_assignment(row.id) {
-                        if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {
-                            // Show numeric value for assigned numeric categories
-                            let val = self
-                                .selected_item()
-                                .and_then(|item| item.assignments.get(&row.id))
-                                .and_then(|a| a.numeric_value);
-                            match val {
-                                Some(v) => format!("[{}]", v),
-                                None => "[x]".to_string(),
-                            }
-                        } else {
-                            "[x]".to_string()
-                        }
+                        "[x]".to_string()
                     } else {
                         "[ ]".to_string()
                     };

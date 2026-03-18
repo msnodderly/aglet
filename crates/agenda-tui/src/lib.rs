@@ -7501,6 +7501,61 @@ mod tests {
     }
 
     #[test]
+    fn assign_picker_shows_numeric_category_as_toggle_not_inline_value() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-numeric-row-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                cost.id,
+                rust_decimal::Decimal::new(24596, 2),
+                Some("manual:test".to_string()),
+            )
+            .expect("assign numeric value");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == cost.id)
+            .expect("Cost row should exist");
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("[x] Cost [numeric]"),
+            "assign picker should render numeric categories as toggle rows: {rendered}"
+        );
+        assert!(
+            !rendered.contains("[245.96] Cost"),
+            "assign picker should not render inline numeric values: {rendered}"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn batch_assign_picker_esc_preserves_selection_without_changes() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;

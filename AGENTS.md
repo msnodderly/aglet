@@ -307,6 +307,20 @@ Practical implications:
 - Empty stdin payload is a no-op (note content is preserved).
 - Useful shell form: `printf "line one\nline two\n" | cargo run --bin agenda-cli -- --db <db> edit <ITEM_ID> --note-stdin`
 
+## Direct SQLite `when_date` Imports Need Store Format + Do Not Sync `When` Assignment (Surprising)
+
+If you write `items.when_date` directly with SQLite, the value must use the
+store's exact datetime format: `YYYY-MM-DD HH:MM:SS`.
+
+Practical implications:
+- ISO-style strings like `2025-10-11T00:00:00` are present in SQLite but load as
+  `when: -` in CLI/TUI because `Store::row_to_item` currently parses
+  `"%Y-%m-%d %H:%M:%S"` only.
+- Direct SQLite updates to `items.when_date` do **not** create/update the
+  reserved `When` assignment or provenance rows; use agenda/CLI app logic if
+  you need the item to carry a synced `When | Manual | ...` assignment in
+  addition to the datetime value itself.
+
 ## TUI Spec vs. Implementation
 
 `docs/specs/proposals/tui-ux-redesign.md` is the design target. The Phase 2a implementation
