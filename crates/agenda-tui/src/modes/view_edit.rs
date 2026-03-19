@@ -256,6 +256,13 @@ impl App {
         if let Some(batch_delete_item_ids) = self.batch_delete_item_ids.clone() {
             match code {
                 KeyCode::Char('y') => {
+                    // Capture items for undo before deletion
+                    let mut captured_items = Vec::new();
+                    for item_id in &batch_delete_item_ids {
+                        if let Ok(item) = agenda.store().get_item(*item_id) {
+                            captured_items.push(item);
+                        }
+                    }
                     let mut deleted = 0usize;
                     let mut failed = 0usize;
                     let mut first_error = None;
@@ -269,6 +276,11 @@ impl App {
                                 }
                             }
                         }
+                    }
+                    // Push undo entries for successfully deleted items (reverse
+                    // order so undoing pops them back in original order)
+                    for item in captured_items.into_iter().rev() {
+                        self.push_undo(UndoEntry::ItemDeleted { item });
                     }
                     self.batch_delete_item_ids = None;
                     self.clear_selected_items();

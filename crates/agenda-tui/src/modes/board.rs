@@ -2570,6 +2570,7 @@ impl App {
         let mut failed = 0usize;
         let mut removed_links = 0usize;
         let mut first_error = None;
+        let mut toggled_ids: Vec<ItemId> = Vec::new();
 
         for item_id in item_ids {
             let Some(item) = self
@@ -2613,6 +2614,7 @@ impl App {
             match agenda.toggle_item_done(*item_id) {
                 Ok(_) => {
                     changed += 1;
+                    toggled_ids.push(*item_id);
                     if mark_done && remove_blocking_links {
                         let blocked_ids = self
                             .item_links_by_item_id
@@ -2634,6 +2636,12 @@ impl App {
                     }
                 }
             }
+        }
+
+        if !toggled_ids.is_empty() {
+            self.push_undo(UndoEntry::BatchDone {
+                item_ids: toggled_ids,
+            });
         }
 
         self.refresh(agenda.store())?;
@@ -3865,47 +3873,6 @@ impl App {
         Ok(false)
     }
 
-    pub(crate) fn handle_category_create_confirm_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Char('y') => {
-                if let Mode::CategoryCreateConfirm { name, parent_id } = self.mode.clone() {
-                    let mut category = Category::new(name.clone());
-                    category.parent = Some(parent_id);
-                    category.enable_implicit_string = true;
-                    let cat_id = category.id;
-
-                    agenda
-                        .create_category(&category)
-                        .map_err(|e| e.to_string())?;
-
-                    if let Some(item_id) = self.selected_item_id() {
-                        agenda
-                            .assign_item_manual(
-                                item_id,
-                                cat_id,
-                                Some("manual:tui.direct_edit".to_string()),
-                            )
-                            .map_err(|e| e.to_string())?;
-                    }
-
-                    self.mode = Mode::Normal;
-                    self.status = format!("Created and assigned '{}'", name);
-                    self.refresh(agenda.store())?;
-                }
-            }
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
-                self.status = "Cancelled creation".to_string();
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
     /// Open an InputPanel for editing the currently selected item.
     pub(crate) fn open_input_panel_edit_item(&mut self) {
         if let Some(item) = self.selected_item() {
@@ -4752,69 +4719,6 @@ impl App {
             }
         }
         Ok(())
-    }
-
-    pub(crate) fn handle_note_edit_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
-        match code {
-            KeyCode::Esc => {
-                let dirty = self.input.text() != self.note_edit_original;
-                self.mode = Mode::Normal;
-                self.clear_input();
-                if dirty {
-                    self.status = "Note changes discarded".to_string();
-                } else {
-                    self.status = "Note edit canceled".to_string();
-                }
-            }
-            KeyCode::Char('S') | KeyCode::Enter => {
-                let Some(item_id) = self.selected_item_id() else {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = "Note edit failed: no selected item".to_string();
-                    return Ok(false);
-                };
-
-                let new_note = if self.input.trimmed().is_empty() {
-                    None
-                } else {
-                    Some(self.input.text().to_string())
-                };
-
-                let mut item = agenda
-                    .store()
-                    .get_item(item_id)
-                    .map_err(|e| e.to_string())?;
-                if item.note == new_note {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = "Note edit canceled: no note change".to_string();
-                    return Ok(false);
-                }
-
-                item.note = new_note;
-                item.modified_at = Utc::now();
-                let reference_date = Local::now().date_naive();
-                agenda
-                    .update_item_with_reference_date(&item, reference_date)
-                    .map_err(|e| e.to_string())?;
-                self.refresh(agenda.store())?;
-                self.set_item_selection_by_id(item_id);
-                self.mode = Mode::Normal;
-                self.clear_input();
-                self.status = if item.note.is_some() {
-                    "Note updated".to_string()
-                } else {
-                    "Note cleared".to_string()
-                };
-            }
-            _ if self.handle_text_input_key(code) => {}
-            _ => {}
-        }
-        Ok(false)
     }
 
     pub(crate) fn handle_item_assign_category_key(

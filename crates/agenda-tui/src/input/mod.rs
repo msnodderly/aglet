@@ -30,7 +30,6 @@ impl App {
             Mode::HelpPanel => self.handle_help_panel_key(code),
             Mode::InputPanel => self.handle_input_panel_key(code, agenda),
             Mode::LinkWizard => self.handle_link_wizard_key(code, agenda),
-            Mode::NoteEdit => self.handle_note_edit_key(code, agenda),
             Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),
             Mode::ItemAssignInput => self.handle_item_assign_category_input_key(code, agenda),
             Mode::InspectUnassign => self.handle_inspect_unassign_key(code, agenda),
@@ -46,9 +45,6 @@ impl App {
             Mode::CategoryDirectEdit => self.handle_category_direct_edit_key(code, agenda),
             Mode::CategoryColumnPicker => self.handle_category_column_picker_key(code, agenda),
             Mode::BoardAddColumnPicker => self.handle_board_add_column_key(code, agenda),
-            Mode::CategoryCreateConfirm { .. } => {
-                self.handle_category_create_confirm_key(code, agenda)
-            }
         }
     }
 

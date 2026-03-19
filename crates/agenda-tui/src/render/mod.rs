@@ -1510,11 +1510,6 @@ impl App {
 
     pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
         match self.mode {
-            Mode::NoteEdit => {
-                let dirty = self.input.text() != self.note_edit_original;
-                let marker = if dirty { " *" } else { "" };
-                Some(format!("Note{marker}> "))
-            }
             Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
             Mode::ItemAssignInput => Some("Category> ".to_string()),
             _ => None,
@@ -2980,11 +2975,6 @@ impl App {
 
     fn footer_status_text(&self) -> String {
         match self.mode {
-            Mode::NoteEdit => {
-                let dirty = self.input.text() != self.note_edit_original;
-                let marker = if dirty { " *" } else { "" };
-                format!("Note{marker}> {}", self.input.text())
-            }
             Mode::SearchBarFocused => {
                 let section_name = self
                     .slots
@@ -3146,7 +3136,7 @@ impl App {
                     vec![("y", "confirm"), ("Esc", "cancel")]
                 }
             }
-            Mode::BoardColumnDeleteConfirm | Mode::CategoryCreateConfirm { .. } => {
+            Mode::BoardColumnDeleteConfirm => {
                 vec![("y", "confirm"), ("Esc", "cancel")]
             }
             Mode::SearchBarFocused => {
@@ -3156,7 +3146,6 @@ impl App {
                     vec![("Enter", "jump/create"), ("\u{2193}/Tab", "browse"), ("Esc", "clear")]
                 }
             }
-            Mode::NoteEdit => vec![("Enter", "save"), ("Esc", "cancel")],
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
             Mode::InputPanel => {
                 if self

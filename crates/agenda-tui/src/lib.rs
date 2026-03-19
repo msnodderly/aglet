@@ -197,9 +197,6 @@ enum Mode {
     HelpPanel,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
-    // TODO(feature): inline note editor not yet implemented
-    #[allow(dead_code)]
-    NoteEdit,
     ItemAssignPicker,
     ItemAssignInput,
     InspectUnassign,
@@ -213,12 +210,6 @@ enum Mode {
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
-    // TODO(feature): confirmation dialog before creating a category not yet implemented
-    #[allow(dead_code)]
-    CategoryCreateConfirm {
-        name: String,
-        parent_id: CategoryId,
-    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -983,7 +974,6 @@ struct App {
     done_blocks_confirm: Option<DoneBlocksConfirmState>,
     batch_delete_item_ids: Option<Vec<ItemId>>,
     board_pending_delete_column_label: Option<String>,
-    note_edit_original: String,
     auto_refresh_interval: AutoRefreshInterval,
     auto_refresh_last_tick: Instant,
     transient_status: Option<TransientStatus>,
@@ -1051,7 +1041,6 @@ impl Default for App {
             done_blocks_confirm: None,
             batch_delete_item_ids: None,
             board_pending_delete_column_label: None,
-            note_edit_original: String::new(),
             auto_refresh_interval: AutoRefreshInterval::Off,
             auto_refresh_last_tick: Instant::now(),
             transient_status: None,
@@ -4949,27 +4938,17 @@ mod tests {
         let input = "abc";
         // InputPanel (add/edit) uses a popup cursor, not the footer cursor.
         // Footer cursor applies to the remaining text-in-footer modes.
-        let cases = [
-            (Mode::NoteEdit, "Note> "),
-            (Mode::ItemAssignInput, "Category> "),
-        ];
-
-        for (mode, prefix) in cases {
-            let app = App {
-                mode: mode.clone(),
-                input: text_buffer::TextBuffer::new(input.to_string()),
-                // Set note_edit_original to match input so NoteEdit isn't dirty
-                note_edit_original: input.to_string(),
-                ..App::default()
-            };
-            let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
-            assert_eq!(
-                app.input_cursor_position(footer),
-                Some((expected_x, footer.y + 1)),
-                "mode {:?}",
-                mode,
-            );
-        }
+        let app = App {
+            mode: Mode::ItemAssignInput,
+            input: text_buffer::TextBuffer::new(input.to_string()),
+            ..App::default()
+        };
+        let prefix = "Category> ";
+        let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
+        assert_eq!(
+            app.input_cursor_position(footer),
+            Some((expected_x, footer.y + 1)),
+        );
     }
 
     #[test]
@@ -4997,9 +4976,9 @@ mod tests {
     fn input_cursor_position_clamps_to_footer_inner_width() {
         let footer = Rect::new(0, 0, 8, 3);
         // cursor clamps to text length (26), which overflows the 8-wide footer → x=6
-        // NoteEdit still uses footer text input
+        // "Category> " prefix = 10 chars; inner_x=1; 1+10+26=37 → clamped to 6
         let app = App {
-            mode: Mode::NoteEdit,
+            mode: Mode::ItemAssignInput,
             input: text_buffer::TextBuffer::new("abcdefghijklmnopqrstuvwxyz".to_string()),
             ..App::default()
         };
@@ -5009,14 +4988,13 @@ mod tests {
     #[test]
     fn input_cursor_position_tracks_edit_cursor_not_just_input_end() {
         let footer = Rect::new(0, 0, 40, 3);
-        // NoteEdit prefix = "Note> " (6 chars); inner_x=1; cursor=2 → 1+6+2=9
+        // "Category> " prefix = 10 chars; inner_x=1; cursor=2 → 1+10+2=13
         let app = App {
-            mode: Mode::NoteEdit,
+            mode: Mode::ItemAssignInput,
             input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
-            note_edit_original: "abcd".to_string(),
             ..App::default()
         };
-        assert_eq!(app.input_cursor_position(footer), Some((9, 1)));
+        assert_eq!(app.input_cursor_position(footer), Some((13, 1)));
     }
 
     #[test]
@@ -11905,49 +11883,6 @@ mod tests {
             "status should summarize batch done result: {}",
             app.status
         );
-
-        drop(store);
-        let _ = std::fs::remove_file(&db_path);
-    }
-
-    #[test]
-    fn note_edit_esc_discards_dirty_text_in_one_step() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after epoch")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("agenda-tui-note-edit-esc-{nanos}.ag"));
-        let store = Store::open(&db_path).expect("open temp db");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut item = Item::new("Draft".to_string());
-        item.note = Some("seed".to_string());
-        store.create_item(&item).expect("create item");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh app");
-        app.set_item_selection_by_id(item.id);
-
-        app.mode = Mode::NoteEdit;
-        app.note_edit_original = "seed".to_string();
-        app.set_input("seed".to_string());
-
-        app.handle_note_edit_key(KeyCode::Char('!'), &agenda)
-            .expect("edit note text");
-        app.handle_note_edit_key(KeyCode::Esc, &agenda)
-            .expect("discard note edit");
-
-        assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(
-            store
-                .get_item(item.id)
-                .expect("reload item")
-                .note
-                .as_deref(),
-            Some("seed")
-        );
-        assert!(app.status.contains("discarded"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);

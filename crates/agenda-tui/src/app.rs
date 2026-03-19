@@ -11,6 +11,7 @@ use agenda_core::workflow::{
 impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
+    const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
 
     fn is_auto_refresh_cycle_key(key: KeyEvent) -> bool {
         key.modifiers.contains(KeyModifiers::CONTROL)
@@ -84,6 +85,31 @@ impl App {
             .map_err(|e| e.to_string())
     }
 
+    pub(crate) fn load_last_view_name(&mut self, store: &Store) -> Result<(), String> {
+        let persisted = store
+            .get_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY)
+            .map_err(|e| e.to_string())?;
+        if let Some(view_name) = persisted {
+            if let Some(index) = self
+                .views
+                .iter()
+                .position(|view| view.name.eq_ignore_ascii_case(&view_name))
+            {
+                self.set_active_view_index(index);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn persist_last_view_name(&self, store: &Store) -> Result<(), String> {
+        if let Some(view_name) = &self.active_view_name {
+            store
+                .set_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY, view_name)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> Result<(), String> {
         if self.should_auto_refresh_now() {
             self.refresh(store)?;
@@ -133,6 +159,8 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> Result<(), String> {
         self.refresh(agenda.store())?;
+        self.load_last_view_name(agenda.store())?;
+        self.refresh(agenda.store())?; // re-resolve slots for the restored view
         self.load_auto_refresh_interval(agenda.store())?;
         self.auto_refresh_last_tick = Instant::now();
 
@@ -164,6 +192,7 @@ impl App {
                 }
             };
             if should_quit {
+                let _ = self.persist_last_view_name(agenda.store());
                 break;
             }
 
