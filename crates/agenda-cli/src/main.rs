@@ -6,11 +6,12 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
+use agenda_core::dates::{BasicDateParser, DateParser};
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, ColumnKind, CriterionMode, Item, ItemId, Query,
-    SummaryFn, View,
+    Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, ItemId,
+    Query, Section, SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
@@ -18,11 +19,18 @@ use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config,
     workflow_setup_error_message, READY_QUEUE_VIEW_NAME,
 };
-use chrono::{Local, NaiveDateTime};
+use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{Parser, Subcommand, ValueEnum};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NumericValueAssignment {
+    category_id: CategoryId,
+    category_name: String,
+    value: Decimal,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "agenda")]
@@ -66,6 +74,15 @@ enum Command {
         /// Optional note/body text stored with the item.
         #[arg(long)]
         note: Option<String>,
+        /// Explicit date/time override for the item's `when` value.
+        #[arg(long)]
+        when: Option<String>,
+        /// Category to assign after item creation. Repeat for multiple categories.
+        #[arg(long = "category")]
+        categories: Vec<String>,
+        /// Numeric category assignment in CATEGORY=NUMBER form. Repeat as needed.
+        #[arg(long = "value")]
+        values: Vec<String>,
     },
 
     /// Edit an existing item's text, note, and/or done state
@@ -92,6 +109,12 @@ enum Command {
         /// Mark item done (`true`) or not done (`false`).
         #[arg(long)]
         done: Option<bool>,
+        /// Explicit date/time override for the item's `when` value.
+        #[arg(long)]
+        when: Option<String>,
+        /// Clear the item's explicit `when` value.
+        #[arg(long = "clear-when")]
+        clear_when: bool,
     },
 
     /// Show a single item with its assignments
@@ -242,6 +265,12 @@ enum Command {
         command: ViewCommand,
     },
 
+    /// Structured import commands
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
+
     /// Item-to-item link commands
     Link {
         #[command(subcommand)]
@@ -352,6 +381,27 @@ enum CategoryCommand {
         value: String,
     },
 
+    /// Configure numeric formatting for a numeric category
+    Format {
+        /// Numeric category name (case-insensitive).
+        name: String,
+        /// Number of decimal places to render.
+        #[arg(long)]
+        decimals: Option<u8>,
+        /// Currency symbol to render before numeric values.
+        #[arg(long)]
+        currency: Option<String>,
+        /// Clear any configured currency symbol.
+        #[arg(long = "clear-currency")]
+        clear_currency: bool,
+        /// Enable thousands separators.
+        #[arg(long, conflicts_with = "no_thousands")]
+        thousands: bool,
+        /// Disable thousands separators.
+        #[arg(long = "no-thousands", conflicts_with = "thousands")]
+        no_thousands: bool,
+    },
+
     /// Unassign an item from a category
     Unassign {
         /// Item id (full UUID or unique hex prefix).
@@ -392,6 +442,9 @@ enum ViewCommand {
         /// Include-category criterion (repeat for AND semantics).
         #[arg(long = "include")]
         include: Vec<String>,
+        /// OR-include criterion (repeat for OR semantics).
+        #[arg(long = "or-include")]
+        or_include: Vec<String>,
         /// Exclude-category criterion (repeat for NOT semantics).
         #[arg(long = "exclude")]
         exclude: Vec<String>,
@@ -450,6 +503,48 @@ enum ViewCommand {
         #[arg(value_enum)]
         func: CliSummaryFn,
     },
+
+    /// Section authoring commands
+    Section {
+        #[command(subcommand)]
+        command: ViewSectionCommand,
+    },
+
+    /// Column authoring commands
+    Column {
+        #[command(subcommand)]
+        command: ViewColumnCommand,
+    },
+
+    /// View alias commands
+    Alias {
+        #[command(subcommand)]
+        command: ViewAliasCommand,
+    },
+
+    /// Set or clear the item column label for a view
+    #[command(name = "set-item-label")]
+    SetItemLabel {
+        /// View name (case-insensitive).
+        name: String,
+        /// New item column label.
+        label: Option<String>,
+        /// Clear the configured item column label.
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Replace the remove-from-view category set
+    #[command(name = "set-remove-from-view")]
+    SetRemoveFromView {
+        /// View name (case-insensitive).
+        name: String,
+        /// Categories to remove when an item is removed from the view.
+        categories: Vec<String>,
+        /// Clear the remove-from-view set.
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
@@ -473,6 +568,189 @@ impl CliSummaryFn {
             Self::Count => SummaryFn::Count,
         }
     }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliColumnKind {
+    Standard,
+    When,
+}
+
+impl CliColumnKind {
+    fn to_model(self) -> ColumnKind {
+        match self {
+            Self::Standard => ColumnKind::Standard,
+            Self::When => ColumnKind::When,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum ViewSectionCommand {
+    /// Add a section to a view
+    Add {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section title.
+        title: String,
+        /// Include-category criterion (repeat for AND semantics).
+        #[arg(long = "include")]
+        include: Vec<String>,
+        /// OR-include criterion (repeat for OR semantics).
+        #[arg(long = "or-include")]
+        or_include: Vec<String>,
+        /// Exclude-category criterion (repeat for NOT semantics).
+        #[arg(long = "exclude")]
+        exclude: Vec<String>,
+        /// Show child-generated subsections for this section.
+        #[arg(long = "show-children")]
+        show_children: bool,
+    },
+
+    /// Remove a section from a view
+    Remove {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section index (0-based).
+        section: usize,
+    },
+
+    /// Update a section in a view
+    Update {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section index (0-based).
+        section: usize,
+        /// New section title.
+        #[arg(long)]
+        title: Option<String>,
+        /// Replace include criteria (repeat for AND semantics).
+        #[arg(long = "include")]
+        include: Vec<String>,
+        /// Replace OR criteria (repeat for OR semantics).
+        #[arg(long = "or-include")]
+        or_include: Vec<String>,
+        /// Replace exclude criteria (repeat for NOT semantics).
+        #[arg(long = "exclude")]
+        exclude: Vec<String>,
+        /// Clear all section criteria before applying any provided criteria flags.
+        #[arg(long = "clear-criteria")]
+        clear_criteria: bool,
+        /// Set whether this section should show children.
+        #[arg(long = "show-children")]
+        show_children: Option<bool>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ViewColumnCommand {
+    /// Add a column to a view section
+    Add {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section index (0-based).
+        section: usize,
+        /// Column heading category name (case-insensitive).
+        column: String,
+        /// Column kind (`standard` or `when`).
+        #[arg(long = "kind", value_enum)]
+        kind: Option<CliColumnKind>,
+        /// Column width.
+        #[arg(long)]
+        width: Option<u16>,
+        /// Summary function for the column.
+        #[arg(long = "summary", value_enum)]
+        summary: Option<CliSummaryFn>,
+    },
+
+    /// Remove a column from a view section
+    Remove {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section index (0-based).
+        section: usize,
+        /// Column heading category name (case-insensitive).
+        column: String,
+    },
+
+    /// Update a column in a view section
+    Update {
+        /// View name (case-insensitive).
+        name: String,
+        /// Section index (0-based).
+        section: usize,
+        /// Column heading category name (case-insensitive).
+        column: String,
+        /// New column kind (`standard` or `when`).
+        #[arg(long = "kind", value_enum)]
+        kind: Option<CliColumnKind>,
+        /// New column width.
+        #[arg(long)]
+        width: Option<u16>,
+        /// New summary function for the column.
+        #[arg(long = "summary", value_enum)]
+        summary: Option<CliSummaryFn>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ViewAliasCommand {
+    /// Set a display alias for a category inside a view
+    Set {
+        /// View name (case-insensitive).
+        name: String,
+        /// Category name (case-insensitive).
+        category: String,
+        /// Alias text.
+        alias: String,
+    },
+
+    /// Clear a display alias for a category inside a view
+    Clear {
+        /// View name (case-insensitive).
+        name: String,
+        /// Category name (case-insensitive).
+        category: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ImportCommand {
+    /// Import rows from a CSV file
+    Csv {
+        /// CSV file path.
+        path: PathBuf,
+        /// Column containing the item title/text.
+        #[arg(long = "title-col")]
+        title_col: String,
+        /// Column containing explicit item date/time values.
+        #[arg(long = "date-col")]
+        date_col: Option<String>,
+        /// Column containing item note text.
+        #[arg(long = "note-col")]
+        note_col: Option<String>,
+        /// Column containing category tokens.
+        #[arg(long = "category-col")]
+        category_cols: Vec<String>,
+        /// Parent category to use for tokens coming from `--category-col`.
+        #[arg(long = "category-parent")]
+        category_parent: Option<String>,
+        /// Separator used to split `--category-col` values.
+        #[arg(long = "category-separator", default_value = ",")]
+        category_separator: String,
+        /// Vendor column mapping in SOURCE=PARENT form.
+        #[arg(long = "vendor-col")]
+        vendor_cols: Vec<String>,
+        /// Numeric value column mapping in SOURCE=CATEGORY form.
+        #[arg(long = "value-col")]
+        value_cols: Vec<String>,
+        /// Categories to assign to every imported row.
+        #[arg(long = "assign")]
+        assign: Vec<String>,
+        /// Print what would be imported without writing changes.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -565,7 +843,13 @@ fn run() -> Result<(), String> {
     let agenda = Agenda::new(&store, &classifier);
 
     match command {
-        Command::Add { text, note } => cmd_add(&agenda, text, note),
+        Command::Add {
+            text,
+            note,
+            when,
+            categories,
+            values,
+        } => cmd_add(&agenda, text, note, when, categories, values),
         Command::Edit {
             item_id,
             text,
@@ -574,6 +858,8 @@ fn run() -> Result<(), String> {
             note_stdin: note_stdin_flag,
             clear_note,
             done,
+            when,
+            clear_when,
         } => {
             let note_stdin = if note_stdin_flag {
                 let mut stdin = io::stdin().lock();
@@ -590,6 +876,8 @@ fn run() -> Result<(), String> {
                 note_stdin,
                 clear_note,
                 done,
+                when,
+                clear_when,
             )
         }
         Command::Show { item_id } => cmd_show(&store, item_id),
@@ -647,13 +935,21 @@ fn run() -> Result<(), String> {
         Command::Restore { log_id } => cmd_restore(&store, log_id),
         Command::Category { command } => cmd_category(&agenda, &store, command),
         Command::View { command } => cmd_view(&agenda, &store, command),
+        Command::Import { command } => cmd_import(&agenda, &store, command),
         Command::Link { command } => cmd_link(&agenda, command),
         Command::Unlink { command } => cmd_unlink(&agenda, command),
         Command::Tui => Ok(()),
     }
 }
 
-fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<(), String> {
+fn cmd_add(
+    agenda: &Agenda<'_>,
+    text: String,
+    note: Option<String>,
+    when: Option<String>,
+    categories: Vec<String>,
+    values: Vec<String>,
+) -> Result<(), String> {
     let category_names: Vec<String> = agenda
         .store()
         .get_hierarchy()
@@ -662,6 +958,10 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
         .map(|category| category.name)
         .collect();
     let unknown_hashtags = unknown_hashtag_tokens(&text, &category_names);
+    let categories_hierarchy = agenda.store().get_hierarchy().map_err(|e| e.to_string())?;
+    let tag_assignments = resolve_tag_category_assignments(&categories_hierarchy, &categories)?;
+    let value_assignments = resolve_value_assignments(&categories_hierarchy, &values)?;
+    let parsed_when = when.as_deref().map(parse_when_datetime_input).transpose()?;
 
     let mut item = Item::new(text);
     item.note = note;
@@ -670,6 +970,21 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
     let result = agenda
         .create_item_with_reference_date(&item, reference_date)
         .map_err(|e| e.to_string())?;
+    if let Some(explicit_when) = parsed_when {
+        agenda
+            .set_item_when_date(
+                item.id,
+                Some(explicit_when),
+                Some("manual:cli.when".to_string()),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    for (category_id, category_name) in tag_assignments {
+        apply_tag_category_assignment(agenda, item.id, category_id, &category_name)?;
+    }
+    for assignment in value_assignments {
+        apply_numeric_value_assignment(agenda, item.id, assignment)?;
+    }
     let created = agenda
         .store()
         .get_item(item.id)
@@ -706,6 +1021,8 @@ fn cmd_edit(
     note_stdin: Option<String>,
     clear_note: bool,
     done: Option<bool>,
+    when: Option<String>,
+    clear_when: bool,
 ) -> Result<(), String> {
     let item_id = resolve_item_id(&item_id_str, agenda.store())?;
 
@@ -715,10 +1032,16 @@ fn cmd_edit(
         && note_stdin.is_none()
         && !clear_note
         && done.is_none()
+        && when.is_none()
+        && !clear_when
     {
         return Err(
-            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false".to_string()
+            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false\n  agenda edit <id> --when 2026-02-20\n  agenda edit <id> --clear-when".to_string()
         );
+    }
+
+    if when.is_some() && clear_when {
+        return Err("--when and --clear-when are mutually exclusive".to_string());
     }
 
     // Validate mutually exclusive note flags
@@ -800,6 +1123,26 @@ fn cmd_edit(
         }
     }
 
+    if let Some(explicit_when) = when {
+        let parsed = parse_when_datetime_input(&explicit_when)?;
+        agenda
+            .set_item_when_date(item_id, Some(parsed), Some("manual:cli.when".to_string()))
+            .map_err(|e| e.to_string())?;
+        let updated = agenda
+            .store()
+            .get_item(item_id)
+            .map_err(|e| e.to_string())?;
+        println!("updated {}", item_id);
+        if let Some(line) = parsed_when_feedback_line(updated.when_date) {
+            println!("{line}");
+        }
+    } else if clear_when {
+        agenda
+            .set_item_when_date(item_id, None, Some("manual:cli.when-clear".to_string()))
+            .map_err(|e| e.to_string())?;
+        println!("updated {}", item_id);
+    }
+
     Ok(())
 }
 
@@ -857,7 +1200,9 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     Ok(())
 }
 
-fn resolved_workflow_or_err(store: &Store) -> Result<agenda_core::workflow::ResolvedWorkflowConfig, String> {
+fn resolved_workflow_or_err(
+    store: &Store,
+) -> Result<agenda_core::workflow::ResolvedWorkflowConfig, String> {
     resolve_workflow_config(store)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| workflow_setup_error_message().to_string())
@@ -877,7 +1222,8 @@ fn ready_queue_data(store: &Store) -> Result<ReadyQueueData, String> {
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let category_names = category_name_map(&categories);
     let all_items = store.list_items().map_err(|e| e.to_string())?;
-    let claimable_ids = claimable_item_ids(store, &all_items, workflow).map_err(|e| e.to_string())?;
+    let claimable_ids =
+        claimable_item_ids(store, &all_items, workflow).map_err(|e| e.to_string())?;
     let items = all_items
         .into_iter()
         .filter(|item| claimable_ids.contains(&item.id))
@@ -891,7 +1237,9 @@ fn cmd_claim(agenda: &Agenda<'_>, store: &Store, item_id_str: String) -> Result<
     let claim_category = store
         .get_category(workflow.claim_category_id)
         .map_err(|e| e.to_string())?;
-    let result = agenda.claim_item_workflow(item_id).map_err(|e| e.to_string())?;
+    let result = agenda
+        .claim_item_workflow(item_id)
+        .map_err(|e| e.to_string())?;
     println!(
         "claimed item {} to category {}",
         item_id, claim_category.name
@@ -921,7 +1269,11 @@ fn cmd_release(agenda: &Agenda<'_>, store: &Store, item_id_str: String) -> Resul
     Ok(())
 }
 
-fn cmd_ready(store: &Store, sort_args: Vec<String>, output_format: OutputFormatArg) -> Result<(), String> {
+fn cmd_ready(
+    store: &Store,
+    sort_args: Vec<String>,
+    output_format: OutputFormatArg,
+) -> Result<(), String> {
     let (view, items, categories, category_names, blocked_item_ids) = ready_queue_data(store)?;
     let sort_keys = parse_sort_specs(&sort_args, &categories)?;
     print_items_for_view(
@@ -1057,7 +1409,8 @@ fn cmd_list(
     if let Some(ref view) = resolved_view {
         if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
             if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
-                let claimable = claimable_item_ids(store, &items, workflow).map_err(|e| e.to_string())?;
+                let claimable =
+                    claimable_item_ids(store, &items, workflow).map_err(|e| e.to_string())?;
                 items.retain(|item| claimable.contains(&item.id));
             }
         }
@@ -1859,6 +2212,72 @@ fn cmd_category(
             }
             Ok(())
         }
+        CategoryCommand::Format {
+            name,
+            decimals,
+            currency,
+            clear_currency,
+            thousands,
+            no_thousands,
+        } => {
+            if decimals.is_none()
+                && currency.is_none()
+                && !clear_currency
+                && !thousands
+                && !no_thousands
+            {
+                return Err(
+                    "nothing to update: specify --decimals, --currency, --clear-currency, --thousands, or --no-thousands"
+                        .to_string(),
+                );
+            }
+            if currency.is_some() && clear_currency {
+                return Err("--currency and --clear-currency are mutually exclusive".to_string());
+            }
+
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            if category.value_kind != CategoryValueKind::Numeric {
+                return Err(format!(
+                    "category '{}' is not Numeric; numeric formatting only applies to Numeric categories",
+                    category.name
+                ));
+            }
+
+            let mut format = category.numeric_format.clone().unwrap_or_default();
+            if let Some(decimals) = decimals {
+                format.decimal_places = decimals;
+            }
+            if let Some(currency) = currency {
+                format.currency_symbol = if currency.is_empty() {
+                    None
+                } else {
+                    Some(currency)
+                };
+            } else if clear_currency {
+                format.currency_symbol = None;
+            }
+            if thousands {
+                format.use_thousands_separator = true;
+            } else if no_thousands {
+                format.use_thousands_separator = false;
+            }
+            category.numeric_format = Some(format.clone());
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            println!(
+                "updated numeric format for {} (decimals={}, currency={}, thousands={}, processed_items={}, affected_items={})",
+                category.name,
+                format.decimal_places,
+                format.currency_symbol.as_deref().unwrap_or("(none)"),
+                format.use_thousands_separator,
+                result.processed_items,
+                result.affected_items
+            );
+            Ok(())
+        }
         CategoryCommand::Unassign {
             item_id,
             category_name,
@@ -1930,10 +2349,16 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
         } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
                 if blocked {
-                    return Err("Ready Queue only shows claimable items; --blocked is not supported".to_string());
+                    return Err(
+                        "Ready Queue only shows claimable items; --blocked is not supported"
+                            .to_string(),
+                    );
                 }
                 if not_blocked {
-                    return Err("Ready Queue already excludes blocked items; --not-blocked is redundant".to_string());
+                    return Err(
+                        "Ready Queue already excludes blocked items; --not-blocked is redundant"
+                            .to_string(),
+                    );
                 }
                 let (view, items, categories, category_names, blocked_item_ids) =
                     ready_queue_data(store)?;
@@ -1973,6 +2398,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
         ViewCommand::Create {
             name,
             include,
+            or_include,
             exclude,
             hide_unmatched,
             hide_dependent_items,
@@ -1981,12 +2407,8 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             let mut view = View::new(name);
             view.show_unmatched = !hide_unmatched;
             view.hide_dependent_items = hide_dependent_items;
-            for id in names_to_category_ids(&categories, &include)? {
-                view.criteria.set_criterion(CriterionMode::And, id);
-            }
-            for id in names_to_category_ids(&categories, &exclude)? {
-                view.criteria.set_criterion(CriterionMode::Not, id);
-            }
+            view.criteria =
+                query_from_category_names(&categories, &include, &or_include, &exclude)?;
 
             store.create_view(&view).map_err(|e| e.to_string())?;
             println!("created view {}", view.name);
@@ -1998,7 +2420,9 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             hide_dependent_items,
         } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}"));
+                return Err(format!(
+                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
+                ));
             }
             let mut view = view_by_name(store, &name)?;
             let mut changed = false;
@@ -2026,7 +2450,9 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             new_name,
         } => {
             if source_name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}"));
+                return Err(format!(
+                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
+                ));
             }
             let source = view_by_name(store, &source_name)?;
             let cloned = store
@@ -2037,7 +2463,9 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
         }
         ViewCommand::Rename { name, new_name } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}"));
+                return Err(format!(
+                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
+                ));
             }
             let mut view = view_by_name(store, &name)?;
             view.name = new_name.clone();
@@ -2047,7 +2475,9 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
         }
         ViewCommand::Delete { name } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}"));
+                return Err(format!(
+                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
+                ));
             }
             let view = view_by_name(store, &name)?;
             store.delete_view(view.id).map_err(|e| e.to_string())?;
@@ -2061,6 +2491,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             func,
         } => {
             let mut view = view_by_name(store, &name)?;
+            ensure_mutable_view(&view)?;
             let num_sections = view.sections.len();
             if section >= num_sections {
                 return Err(format!(
@@ -2084,9 +2515,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                         .map(|n| n.to_lowercase() == col_lower)
                         .unwrap_or(false)
                 })
-                .ok_or_else(|| {
-                    format!("column '{}' not found in section {}", column, section)
-                })?;
+                .ok_or_else(|| format!("column '{}' not found in section {}", column, section))?;
             let heading_id = view.sections[section].columns[col_idx].heading;
             view.sections[section].columns[col_idx].summary_fn = Some(func.to_model());
             store.update_view(&view).map_err(|e| e.to_string())?;
@@ -2101,6 +2530,395 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                 col_name,
                 func.to_model().label()
             );
+            Ok(())
+        }
+        ViewCommand::Section { command } => match command {
+            ViewSectionCommand::Add {
+                name,
+                title,
+                include,
+                or_include,
+                exclude,
+                show_children,
+            } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                let section = Section {
+                    title,
+                    criteria: query_from_category_names(
+                        &categories,
+                        &include,
+                        &or_include,
+                        &exclude,
+                    )?,
+                    columns: Vec::new(),
+                    item_column_index: 0,
+                    on_insert_assign: HashSet::new(),
+                    on_remove_unassign: HashSet::new(),
+                    show_children,
+                    board_display_mode_override: None,
+                };
+                view.sections.push(section);
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!(
+                    "added section {} to view {}",
+                    view.sections
+                        .last()
+                        .map(|section| section.title.as_str())
+                        .unwrap_or("?"),
+                    view.name
+                );
+                Ok(())
+            }
+            ViewSectionCommand::Remove { name, section } => {
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                if section >= view.sections.len() {
+                    return Err(format!(
+                        "section index {} out of range (view has {} sections)",
+                        section,
+                        view.sections.len()
+                    ));
+                }
+                let removed = view.sections.remove(section);
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!("removed section {} from view {}", removed.title, view.name);
+                Ok(())
+            }
+            ViewSectionCommand::Update {
+                name,
+                section,
+                title,
+                include,
+                or_include,
+                exclude,
+                clear_criteria,
+                show_children,
+            } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                let has_criteria_flags = clear_criteria
+                    || !include.is_empty()
+                    || !or_include.is_empty()
+                    || !exclude.is_empty();
+                let section_ref = section_mut(&mut view, section)?;
+                if let Some(title) = title {
+                    section_ref.title = title;
+                }
+                if has_criteria_flags {
+                    section_ref.criteria =
+                        query_from_category_names(&categories, &include, &or_include, &exclude)?;
+                }
+                if let Some(show_children) = show_children {
+                    section_ref.show_children = show_children;
+                }
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!("updated section {} in view {}", section, view.name);
+                Ok(())
+            }
+        },
+        ViewCommand::Column { command } => match command {
+            ViewColumnCommand::Add {
+                name,
+                section,
+                column,
+                kind,
+                width,
+                summary,
+            } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let category_names = category_name_map(&categories);
+                let heading = category_id_by_name(&categories, &column)?;
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                let section_ref = section_mut(&mut view, section)?;
+                let default_kind = if column.eq_ignore_ascii_case("When") {
+                    CliColumnKind::When
+                } else {
+                    CliColumnKind::Standard
+                };
+                let _ = &category_names;
+                section_ref.columns.push(Column {
+                    kind: kind.unwrap_or(default_kind).to_model(),
+                    heading,
+                    width: width.unwrap_or(12),
+                    summary_fn: summary.map(CliSummaryFn::to_model),
+                });
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!(
+                    "added column {} to view {} section {}",
+                    column, view.name, section
+                );
+                Ok(())
+            }
+            ViewColumnCommand::Remove {
+                name,
+                section,
+                column,
+            } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let category_names = category_name_map(&categories);
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                let section_ref = section_mut(&mut view, section)?;
+                let column_index = find_column_index(section_ref, &category_names, &column)?;
+                section_ref.columns.remove(column_index);
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!(
+                    "removed column {} from view {} section {}",
+                    column, view.name, section
+                );
+                Ok(())
+            }
+            ViewColumnCommand::Update {
+                name,
+                section,
+                column,
+                kind,
+                width,
+                summary,
+            } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let category_names = category_name_map(&categories);
+                if kind.is_none() && width.is_none() && summary.is_none() {
+                    return Err(
+                        "nothing to update: specify --kind, --width, and/or --summary".to_string(),
+                    );
+                }
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                let section_ref = section_mut(&mut view, section)?;
+                let column_index = find_column_index(section_ref, &category_names, &column)?;
+                let column_ref = &mut section_ref.columns[column_index];
+                if let Some(kind) = kind {
+                    column_ref.kind = kind.to_model();
+                }
+                if let Some(width) = width {
+                    column_ref.width = width;
+                }
+                if let Some(summary) = summary {
+                    column_ref.summary_fn = Some(summary.to_model());
+                }
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!(
+                    "updated column {} in view {} section {}",
+                    column, view.name, section
+                );
+                Ok(())
+            }
+        },
+        ViewCommand::Alias { command } => match command {
+            ViewAliasCommand::Set {
+                name,
+                category,
+                alias,
+            } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let category_id = category_id_by_name(&categories, &category)?;
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                view.category_aliases.insert(category_id, alias.clone());
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!(
+                    "set alias for {} in view {} to {}",
+                    category, view.name, alias
+                );
+                Ok(())
+            }
+            ViewAliasCommand::Clear { name, category } => {
+                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let category_id = category_id_by_name(&categories, &category)?;
+                let mut view = view_by_name(store, &name)?;
+                ensure_mutable_view(&view)?;
+                view.category_aliases.remove(&category_id);
+                store.update_view(&view).map_err(|e| e.to_string())?;
+                println!("cleared alias for {} in view {}", category, view.name);
+                Ok(())
+            }
+        },
+        ViewCommand::SetItemLabel { name, label, clear } => {
+            if clear && label.is_some() {
+                return Err("--clear and <label> are mutually exclusive".to_string());
+            }
+            if !clear && label.is_none() {
+                return Err("provide a label or pass --clear".to_string());
+            }
+            let mut view = view_by_name(store, &name)?;
+            ensure_mutable_view(&view)?;
+            view.item_column_label = if clear { None } else { label };
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!("updated item column label for view {}", view.name);
+            Ok(())
+        }
+        ViewCommand::SetRemoveFromView {
+            name,
+            categories,
+            clear,
+        } => {
+            if clear && !categories.is_empty() {
+                return Err("--clear cannot be combined with category names".to_string());
+            }
+            if !clear && categories.is_empty() {
+                return Err("provide one or more categories or pass --clear".to_string());
+            }
+            let hierarchy = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let mut view = view_by_name(store, &name)?;
+            ensure_mutable_view(&view)?;
+            view.remove_from_view_unassign = if clear {
+                HashSet::new()
+            } else {
+                names_to_category_ids(&hierarchy, &categories)?
+            };
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!("updated remove-from-view categories for view {}", view.name);
+            Ok(())
+        }
+    }
+}
+
+fn cmd_import(agenda: &Agenda<'_>, store: &Store, command: ImportCommand) -> Result<(), String> {
+    match command {
+        ImportCommand::Csv {
+            path,
+            title_col,
+            date_col,
+            note_col,
+            category_cols,
+            category_parent,
+            category_separator,
+            vendor_cols,
+            value_cols,
+            assign,
+            dry_run,
+        } => {
+            let global_assignments = resolve_tag_category_assignments(
+                &store.get_hierarchy().map_err(|e| e.to_string())?,
+                &assign,
+            )?;
+            let vendor_mappings: Vec<(String, String)> = vendor_cols
+                .iter()
+                .map(|spec| parse_source_parent_mapping(spec, "--vendor-col"))
+                .collect::<Result<_, _>>()?;
+            let value_mappings: Vec<(String, String)> = value_cols
+                .iter()
+                .map(|spec| parse_source_parent_mapping(spec, "--value-col"))
+                .collect::<Result<_, _>>()?;
+
+            let mut reader = csv::ReaderBuilder::new()
+                .trim(csv::Trim::All)
+                .from_path(&path)
+                .map_err(|e| format!("failed to read CSV '{}': {e}", path.display()))?;
+            let headers = reader.headers().map_err(|e| e.to_string())?.clone();
+            let mut imported = 0usize;
+
+            for record in reader.records() {
+                let record = record.map_err(|e| e.to_string())?;
+                let title = csv_record_value(&record, &headers, &title_col)?;
+                if title.is_empty() {
+                    continue;
+                }
+                let note = note_col
+                    .as_deref()
+                    .map(|column| csv_record_value(&record, &headers, column))
+                    .transpose()?
+                    .filter(|value| !value.is_empty());
+                let parsed_when = date_col
+                    .as_deref()
+                    .map(|column| csv_record_value(&record, &headers, column))
+                    .transpose()?
+                    .filter(|value| !value.is_empty())
+                    .map(|value| parse_when_datetime_input(&value))
+                    .transpose()?;
+
+                let mut row_tag_assignments = global_assignments.clone();
+                for column in &category_cols {
+                    let raw = csv_record_value(&record, &headers, column)?;
+                    for token in raw
+                        .split(&category_separator)
+                        .map(str::trim)
+                        .filter(|token| !token.is_empty())
+                    {
+                        let category_id = ensure_category_exists(
+                            agenda,
+                            store,
+                            token,
+                            category_parent.as_deref(),
+                            CategoryValueKind::Tag,
+                        )?;
+                        row_tag_assignments.push((category_id, token.to_string()));
+                    }
+                }
+                for (source_column, parent_name) in &vendor_mappings {
+                    let vendor_name = csv_record_value(&record, &headers, source_column)?;
+                    if vendor_name.is_empty() {
+                        continue;
+                    }
+                    let category_id = ensure_category_exists(
+                        agenda,
+                        store,
+                        &vendor_name,
+                        Some(parent_name),
+                        CategoryValueKind::Tag,
+                    )?;
+                    row_tag_assignments.push((category_id, vendor_name));
+                }
+
+                let mut row_value_assignments = Vec::new();
+                for (source_column, category_name) in &value_mappings {
+                    let raw_value = csv_record_value(&record, &headers, source_column)?;
+                    if raw_value.is_empty() {
+                        continue;
+                    }
+                    let value = parse_decimal_value(&raw_value)?;
+                    let category_id = ensure_category_exists(
+                        agenda,
+                        store,
+                        category_name,
+                        None,
+                        CategoryValueKind::Numeric,
+                    )?;
+                    row_value_assignments.push(NumericValueAssignment {
+                        category_id,
+                        category_name: category_name.clone(),
+                        value,
+                    });
+                }
+
+                if dry_run {
+                    imported += 1;
+                    continue;
+                }
+
+                let mut item = Item::new(title);
+                item.note = note;
+                agenda
+                    .create_item_with_reference_date(&item, Local::now().date_naive())
+                    .map_err(|e| e.to_string())?;
+                if let Some(when_date) = parsed_when {
+                    agenda
+                        .set_item_when_date(
+                            item.id,
+                            Some(when_date),
+                            Some("manual:cli.when".to_string()),
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                for (category_id, category_name) in row_tag_assignments {
+                    apply_tag_category_assignment(agenda, item.id, category_id, &category_name)?;
+                }
+                for assignment in row_value_assignments {
+                    apply_numeric_value_assignment(agenda, item.id, assignment)?;
+                }
+                imported += 1;
+            }
+
+            if dry_run {
+                println!("dry-run imported_rows={imported}");
+            } else {
+                println!("imported_rows={imported}");
+            }
             Ok(())
         }
     }
@@ -2201,6 +3019,265 @@ fn parse_decimal_value(input: &str) -> Result<Decimal, String> {
     normalized
         .parse::<Decimal>()
         .map_err(|e| format!("invalid decimal value '{input}': {e}"))
+}
+
+fn parse_when_datetime_input(input: &str) -> Result<NaiveDateTime, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("date/time cannot be empty".to_string());
+    }
+
+    if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M") {
+        return Ok(value);
+    }
+    if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
+        return Ok(value);
+    }
+    if let Ok(date_only) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return Ok(date_only
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is a valid time"));
+    }
+
+    let parser = BasicDateParser::default();
+    if let Some(parsed) = parser.parse(trimmed, Local::now().date_naive()) {
+        return Ok(parsed.datetime);
+    }
+
+    Err(format!(
+        "could not parse date/time from '{trimmed}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional time like 'at 3pm')."
+    ))
+}
+
+fn resolve_tag_category_assignments(
+    categories: &[Category],
+    names: &[String],
+) -> Result<Vec<(CategoryId, String)>, String> {
+    let mut assignments = Vec::new();
+    let mut seen = HashSet::new();
+    for name in names {
+        let category_id = category_id_by_name(categories, name)?;
+        if !seen.insert(category_id) {
+            continue;
+        }
+        let category = categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .ok_or_else(|| format!("category not found: {name}"))?;
+        if category.value_kind == CategoryValueKind::Numeric {
+            return Err(format!(
+                "category '{}' is Numeric; use --value \"{}=<number>\" instead",
+                category.name, category.name
+            ));
+        }
+        assignments.push((category.id, category.name.clone()));
+    }
+    Ok(assignments)
+}
+
+fn resolve_value_assignments(
+    categories: &[Category],
+    specs: &[String],
+) -> Result<Vec<NumericValueAssignment>, String> {
+    let mut assignments = Vec::new();
+    let mut seen = HashSet::new();
+    for spec in specs {
+        let (category_name, raw_value) = spec
+            .split_once('=')
+            .ok_or_else(|| format!("invalid --value '{spec}': expected CATEGORY=NUMBER"))?;
+        let category_name = category_name.trim();
+        if category_name.is_empty() {
+            return Err(format!(
+                "invalid --value '{spec}': missing category name before '='"
+            ));
+        }
+        let value = parse_decimal_value(raw_value)?;
+        let category_id = category_id_by_name(categories, category_name)?;
+        let category = categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .ok_or_else(|| format!("category not found: {category_name}"))?;
+        if category.value_kind != CategoryValueKind::Numeric {
+            return Err(format!(
+                "category '{}' is not Numeric; use --category \"{}\" instead",
+                category.name, category.name
+            ));
+        }
+        if !seen.insert(category_id) {
+            assignments.retain(|assignment: &NumericValueAssignment| {
+                assignment.category_id != category_id
+            });
+        }
+        assignments.push(NumericValueAssignment {
+            category_id,
+            category_name: category.name.clone(),
+            value,
+        });
+    }
+    Ok(assignments)
+}
+
+fn apply_tag_category_assignment(
+    agenda: &Agenda<'_>,
+    item_id: ItemId,
+    category_id: CategoryId,
+    category_name: &str,
+) -> Result<(), String> {
+    if category_name.eq_ignore_ascii_case("Done") {
+        agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    agenda
+        .assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn apply_numeric_value_assignment(
+    agenda: &Agenda<'_>,
+    item_id: ItemId,
+    assignment: NumericValueAssignment,
+) -> Result<(), String> {
+    agenda
+        .assign_item_numeric_manual(
+            item_id,
+            assignment.category_id,
+            assignment.value,
+            Some("manual:cli.set-value".to_string()),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn query_from_category_names(
+    categories: &[Category],
+    include: &[String],
+    or_include: &[String],
+    exclude: &[String],
+) -> Result<Query, String> {
+    let mut query = Query::default();
+    for category_id in names_to_category_ids(categories, include)? {
+        query.set_criterion(CriterionMode::And, category_id);
+    }
+    for category_id in names_to_category_ids(categories, or_include)? {
+        query.set_criterion(CriterionMode::Or, category_id);
+    }
+    for category_id in names_to_category_ids(categories, exclude)? {
+        query.set_criterion(CriterionMode::Not, category_id);
+    }
+    Ok(query)
+}
+
+fn ensure_mutable_view(view: &View) -> Result<(), String> {
+    if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME)
+        || view.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME)
+    {
+        return Err(format!("cannot modify system view: {}", view.name));
+    }
+    Ok(())
+}
+
+fn section_mut(view: &mut View, section_index: usize) -> Result<&mut Section, String> {
+    let section_count = view.sections.len();
+    view.sections.get_mut(section_index).ok_or_else(|| {
+        format!(
+            "section index {} out of range (view has {} sections)",
+            section_index, section_count
+        )
+    })
+}
+
+fn find_column_index(
+    section: &Section,
+    category_names: &HashMap<CategoryId, String>,
+    column_name: &str,
+) -> Result<usize, String> {
+    let wanted = column_name.to_ascii_lowercase();
+    section
+        .columns
+        .iter()
+        .position(|column| {
+            category_names
+                .get(&column.heading)
+                .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
+        })
+        .ok_or_else(|| format!("column '{}' not found", column_name))
+}
+
+fn parse_source_parent_mapping(spec: &str, flag_name: &str) -> Result<(String, String), String> {
+    let (source, parent) = spec
+        .split_once('=')
+        .ok_or_else(|| format!("invalid {flag_name} '{spec}': expected SOURCE=PARENT"))?;
+    let source = source.trim();
+    let parent = parent.trim();
+    if source.is_empty() || parent.is_empty() {
+        return Err(format!(
+            "invalid {flag_name} '{spec}': SOURCE and PARENT must both be non-empty"
+        ));
+    }
+    Ok((source.to_string(), parent.to_string()))
+}
+
+fn ensure_category_exists(
+    agenda: &Agenda<'_>,
+    store: &Store,
+    name: &str,
+    parent_name: Option<&str>,
+    value_kind: CategoryValueKind,
+) -> Result<CategoryId, String> {
+    if parent_name.is_some_and(|parent| parent.eq_ignore_ascii_case(name)) {
+        return Err(format!("category '{}' cannot use itself as a parent", name));
+    }
+
+    let existing_categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    if let Some(existing) = existing_categories
+        .iter()
+        .find(|category| category.name.eq_ignore_ascii_case(name))
+    {
+        if existing.value_kind != value_kind {
+            return Err(format!(
+                "category '{}' already exists with type {}; expected {}",
+                existing.name,
+                category_value_kind_label(existing.value_kind),
+                category_value_kind_label(value_kind)
+            ));
+        }
+        return Ok(existing.id);
+    }
+
+    let parent_id = if let Some(parent_name) = parent_name {
+        Some(ensure_category_exists(
+            agenda,
+            store,
+            parent_name,
+            None,
+            CategoryValueKind::Tag,
+        )?)
+    } else {
+        None
+    };
+
+    let mut category = Category::new(name.to_string());
+    category.parent = parent_id;
+    category.value_kind = value_kind;
+    agenda
+        .create_category(&category)
+        .map_err(|e| e.to_string())?;
+    Ok(category.id)
+}
+
+fn csv_record_value(
+    record: &csv::StringRecord,
+    headers: &csv::StringRecord,
+    column_name: &str,
+) -> Result<String, String> {
+    let wanted = column_name.trim();
+    let index = headers
+        .iter()
+        .position(|header| header.eq_ignore_ascii_case(wanted))
+        .ok_or_else(|| format!("CSV column not found: {column_name}"))?;
+    Ok(record.get(index).unwrap_or_default().trim().to_string())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3147,31 +4224,35 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit,
-        cmd_release,
-        cmd_link, cmd_list, cmd_unlink, cmd_view, compare_items_by_sort_keys,
-        duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
-        parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
-        reject_items_with_any_categories, retain_items_by_dependency_state,
-        retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        retain_items_with_any_categories, section_summary_entries, section_summary_line,
-        unknown_hashtag_feedback_line, view_category_alias_rows, write_output_allow_broken_pipe,
-        write_stdout_allow_broken_pipe, Cli, CliSortDirection, CliSortField, CliSortKey, Command,
-        CliSummaryFn, DependencyStateFilter, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewCommand,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_add, cmd_category,
+        cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink, cmd_view,
+        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
+        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
+        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
+        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
+        retain_items_with_all_categories, retain_items_with_any_categories,
+        section_summary_entries, section_summary_line, unknown_hashtag_feedback_line, view_by_name,
+        view_category_alias_rows, write_output_allow_broken_pipe, write_stdout_allow_broken_pipe,
+        CategoryCommand, Cli, CliColumnKind, CliSortDirection, CliSortField, CliSortKey,
+        CliSummaryFn, Command, DependencyStateFilter, ImportCommand, LinkCommand, ListFilters,
+        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand,
+        ViewColumnCommand, ViewCommand, ViewSectionCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Category, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, Query, Section,
-        SummaryFn, View,
+        Category, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, NumericFormat, Query,
+        Section, SummaryFn, View,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
     use std::collections::{HashMap, HashSet};
+    use std::fs;
     use std::io::{self, Cursor, Write};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
 
     fn assert_help_docs_for_command_tree(cmd: &clap::Command) {
@@ -3235,6 +4316,149 @@ mod tests {
     #[test]
     fn parsed_when_feedback_line_omits_output_when_absent() {
         assert_eq!(parsed_when_feedback_line(None), None);
+    }
+
+    #[test]
+    fn parse_when_datetime_input_supports_date_only_at_midnight() {
+        let parsed = parse_when_datetime_input("2026-02-20").expect("parse date-only");
+        assert_eq!(
+            parsed,
+            NaiveDate::from_ymd_opt(2026, 2, 20)
+                .expect("valid date")
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight")
+        );
+    }
+
+    #[test]
+    fn clap_parses_add_with_when_categories_and_values() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "add",
+            "DRZ Payment",
+            "--when",
+            "2026-02-20",
+            "--category",
+            "Budget",
+            "--category",
+            "Vendor",
+            "--value",
+            "Cost=245.96",
+        ])
+        .expect("parse cli");
+
+        match cli.command {
+            Some(Command::Add {
+                text,
+                when,
+                categories,
+                values,
+                ..
+            }) => {
+                assert_eq!(text, "DRZ Payment");
+                assert_eq!(when.as_deref(), Some("2026-02-20"));
+                assert_eq!(categories, vec!["Budget".to_string(), "Vendor".to_string()]);
+                assert_eq!(values, vec!["Cost=245.96".to_string()]);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cmd_add_assigns_when_categories_and_numeric_values() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let budget = Category::new("Budget".to_string());
+        let vendor = Category::new("Vendor".to_string());
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&budget).expect("create budget");
+        store.create_category(&vendor).expect("create vendor");
+        store.create_category(&cost).expect("create cost");
+
+        cmd_add(
+            &agenda,
+            "DRZ Payment".to_string(),
+            Some("monthly payment".to_string()),
+            Some("2026-02-20".to_string()),
+            vec!["Budget".to_string(), "Vendor".to_string()],
+            vec!["Cost=245.96".to_string()],
+        )
+        .expect("add item");
+
+        let items = store.list_items().expect("list items");
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item.text, "DRZ Payment");
+        assert_eq!(
+            item.when_date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 2, 20)
+                    .expect("valid date")
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight")
+            )
+        );
+        assert!(item.assignments.contains_key(&budget.id));
+        assert!(item.assignments.contains_key(&vendor.id));
+        assert_eq!(
+            item.assignments
+                .get(&cost.id)
+                .and_then(|assignment| assignment.numeric_value),
+            Some(Decimal::new(24596, 2))
+        );
+    }
+
+    #[test]
+    fn cmd_edit_sets_and_clears_when() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            Some("2026-03-01".to_string()),
+            false,
+        )
+        .expect("set when");
+        let updated = store.get_item(item.id).expect("load item");
+        assert_eq!(
+            updated.when_date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 3, 1)
+                    .expect("valid date")
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight")
+            )
+        );
+
+        cmd_edit(
+            &agenda,
+            item.id.to_string(),
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            true,
+        )
+        .expect("clear when");
+        let cleared = store.get_item(item.id).expect("load cleared item");
+        assert_eq!(cleared.when_date, None);
     }
 
     #[test]
@@ -3331,8 +4555,9 @@ mod tests {
 
     #[test]
     fn clap_parses_release_alias() {
-        let cli = Cli::try_parse_from(["agenda", "unclaim", "123e4567-e89b-12d3-a456-426614174000"])
-            .expect("parse CLI");
+        let cli =
+            Cli::try_parse_from(["agenda", "unclaim", "123e4567-e89b-12d3-a456-426614174000"])
+                .expect("parse CLI");
 
         match cli.command {
             Some(Command::Release { item_id }) => {
@@ -3371,12 +4596,7 @@ mod tests {
             )
             .expect("seed in-progress");
 
-        let err = cmd_claim(
-            &agenda,
-            &store,
-            item.id.to_string(),
-        )
-        .expect_err("claim should fail");
+        let err = cmd_claim(&agenda, &store, item.id.to_string()).expect_err("claim should fail");
         assert!(err.contains("already claimed"));
     }
 
@@ -3405,12 +4625,7 @@ mod tests {
             .assign_item_manual(item.id, ready.id, Some("manual:test.assign".to_string()))
             .expect("seed ready");
 
-        cmd_claim(
-            &agenda,
-            &store,
-            item.id.to_string(),
-        )
-        .expect("claim should succeed");
+        cmd_claim(&agenda, &store, item.id.to_string()).expect("claim should succeed");
 
         let assignments = store
             .get_assignments_for_item(item.id)
@@ -4403,6 +5618,320 @@ mod tests {
     }
 
     #[test]
+    fn cmd_category_format_updates_numeric_category_format() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::Format {
+                name: "Cost".to_string(),
+                decimals: Some(2),
+                currency: Some("$".to_string()),
+                clear_currency: false,
+                thousands: true,
+                no_thousands: false,
+            },
+        )
+        .expect("format category");
+
+        let updated = store.get_category(cost.id).expect("load cost");
+        assert_eq!(
+            updated.numeric_format,
+            Some(NumericFormat {
+                decimal_places: 2,
+                currency_symbol: Some("$".to_string()),
+                use_thousands_separator: true,
+            })
+        );
+    }
+
+    #[test]
+    fn cmd_view_authoring_commands_update_view_incrementally() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let budget_2025 = Category::new("Moto Budget 2025".to_string());
+        let budget_2026 = Category::new("Moto Budget 2026".to_string());
+        let cost = {
+            let mut category = Category::new("Cost".to_string());
+            category.value_kind = CategoryValueKind::Numeric;
+            category
+        };
+        store.create_category(&budget_2025).expect("create 2025");
+        store.create_category(&budget_2026).expect("create 2026");
+        store.create_category(&cost).expect("create cost");
+
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Create {
+                name: "Combined".to_string(),
+                include: Vec::new(),
+                or_include: vec![
+                    "Moto Budget 2025".to_string(),
+                    "Moto Budget 2026".to_string(),
+                ],
+                exclude: Vec::new(),
+                hide_unmatched: true,
+                hide_dependent_items: false,
+            },
+        )
+        .expect("create view");
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Section {
+                command: ViewSectionCommand::Add {
+                    name: "Combined".to_string(),
+                    title: "All Expenses".to_string(),
+                    include: Vec::new(),
+                    or_include: vec![
+                        "Moto Budget 2025".to_string(),
+                        "Moto Budget 2026".to_string(),
+                    ],
+                    exclude: Vec::new(),
+                    show_children: false,
+                },
+            },
+        )
+        .expect("add section");
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Column {
+                command: ViewColumnCommand::Add {
+                    name: "Combined".to_string(),
+                    section: 0,
+                    column: "Cost".to_string(),
+                    kind: Some(CliColumnKind::Standard),
+                    width: Some(12),
+                    summary: Some(CliSummaryFn::Sum),
+                },
+            },
+        )
+        .expect("add column");
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::Alias {
+                command: ViewAliasCommand::Set {
+                    name: "Combined".to_string(),
+                    category: "Cost".to_string(),
+                    alias: "Amount".to_string(),
+                },
+            },
+        )
+        .expect("set alias");
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::SetItemLabel {
+                name: "Combined".to_string(),
+                label: Some("Expense".to_string()),
+                clear: false,
+            },
+        )
+        .expect("set item label");
+        cmd_view(
+            &agenda,
+            &store,
+            ViewCommand::SetRemoveFromView {
+                name: "Combined".to_string(),
+                categories: vec!["Moto Budget 2025".to_string()],
+                clear: false,
+            },
+        )
+        .expect("set remove from view");
+
+        let view = view_by_name(&store, "Combined").expect("load view");
+        let or_category_ids: HashSet<_> = view.criteria.or_category_ids().collect();
+        assert_eq!(
+            or_category_ids,
+            HashSet::from([budget_2025.id, budget_2026.id])
+        );
+        assert_eq!(view.sections.len(), 1);
+        assert_eq!(view.sections[0].title, "All Expenses");
+        assert_eq!(view.sections[0].columns.len(), 1);
+        assert_eq!(view.sections[0].columns[0].heading, cost.id);
+        assert_eq!(view.sections[0].columns[0].summary_fn, Some(SummaryFn::Sum));
+        assert_eq!(
+            view.category_aliases.get(&cost.id).map(String::as_str),
+            Some("Amount")
+        );
+        assert_eq!(view.item_column_label.as_deref(), Some("Expense"));
+        assert_eq!(
+            view.remove_from_view_unassign,
+            HashSet::from([budget_2025.id])
+        );
+    }
+
+    fn temp_test_path(prefix: &str, extension: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{unique}.{extension}"))
+    }
+
+    #[test]
+    fn cmd_import_csv_creates_items_categories_and_values() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let budget = Category::new("Moto Budget 2026".to_string());
+        store.create_category(&budget).expect("create budget");
+
+        let csv_path = temp_test_path("agenda-cli-import", "csv");
+        fs::write(
+            &csv_path,
+            "Date,Vendor,Category,Expense,Cost,Note\n2026-02-20,YCRS,Track,YCRS,4000,School day\n2026-02-23,2wtdw,DRZ4SM,ECU Flash,369,\n",
+        )
+        .expect("write csv");
+
+        let result = cmd_import(
+            &agenda,
+            &store,
+            ImportCommand::Csv {
+                path: csv_path.clone(),
+                title_col: "Expense".to_string(),
+                date_col: Some("Date".to_string()),
+                note_col: Some("Note".to_string()),
+                category_cols: vec!["Category".to_string()],
+                category_parent: Some("Budget Tags".to_string()),
+                category_separator: ",".to_string(),
+                vendor_cols: vec!["Vendor=Vendor".to_string()],
+                value_cols: vec!["Cost=Cost".to_string()],
+                assign: vec!["Moto Budget 2026".to_string()],
+                dry_run: false,
+            },
+        );
+        let _ = fs::remove_file(&csv_path);
+        result.expect("import csv");
+
+        let items = store.list_items().expect("list items");
+        assert_eq!(items.len(), 2);
+        let ycrs = items
+            .iter()
+            .find(|item| item.text == "YCRS")
+            .expect("YCRS item");
+        assert_eq!(
+            ycrs.when_date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 2, 20)
+                    .expect("valid date")
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight")
+            )
+        );
+        assert_eq!(ycrs.note.as_deref(), Some("School day"));
+
+        let categories = store.get_hierarchy().expect("hierarchy");
+        let budget_tags_id = categories
+            .iter()
+            .find(|category| category.name == "Budget Tags")
+            .map(|category| category.id)
+            .expect("budget tags exists");
+        let vendor_parent_id = categories
+            .iter()
+            .find(|category| category.name == "Vendor")
+            .map(|category| category.id)
+            .expect("vendor exists");
+        let track_id = categories
+            .iter()
+            .find(|category| category.name == "Track")
+            .map(|category| category.id)
+            .expect("track exists");
+        let ycrs_vendor_id = categories
+            .iter()
+            .find(|category| category.name == "YCRS")
+            .map(|category| category.id)
+            .expect("ycrs vendor exists");
+        let cost_id = categories
+            .iter()
+            .find(|category| category.name == "Cost")
+            .map(|category| category.id)
+            .expect("cost exists");
+        assert_eq!(
+            categories
+                .iter()
+                .find(|category| category.id == track_id)
+                .and_then(|category| category.parent),
+            Some(budget_tags_id)
+        );
+        assert_eq!(
+            categories
+                .iter()
+                .find(|category| category.id == ycrs_vendor_id)
+                .and_then(|category| category.parent),
+            Some(vendor_parent_id)
+        );
+        assert!(ycrs.assignments.contains_key(&budget.id));
+        assert!(ycrs.assignments.contains_key(&track_id));
+        assert!(ycrs.assignments.contains_key(&ycrs_vendor_id));
+        assert_eq!(
+            ycrs.assignments
+                .get(&cost_id)
+                .and_then(|assignment| assignment.numeric_value),
+            Some(Decimal::new(4000, 0))
+        );
+    }
+
+    #[test]
+    fn cmd_import_csv_reuses_existing_category_names_even_with_requested_parent() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let budget = Category::new("Moto Budget 2026".to_string());
+        let track = Category::new("Track".to_string());
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&budget).expect("create budget");
+        store.create_category(&track).expect("create track");
+        store.create_category(&cost).expect("create cost");
+
+        let csv_path = temp_test_path("agenda-cli-import-reuse", "csv");
+        fs::write(
+            &csv_path,
+            "Date,Vendor,Category,Expense,Cost\n2026-02-20,YCRS,Track,YCRS,4000\n",
+        )
+        .expect("write csv");
+
+        let result = cmd_import(
+            &agenda,
+            &store,
+            ImportCommand::Csv {
+                path: csv_path.clone(),
+                title_col: "Expense".to_string(),
+                date_col: Some("Date".to_string()),
+                note_col: None,
+                category_cols: vec!["Category".to_string()],
+                category_parent: Some("Budget Tags".to_string()),
+                category_separator: ",".to_string(),
+                vendor_cols: vec!["Vendor=Vendor".to_string()],
+                value_cols: vec!["Cost=Cost".to_string()],
+                assign: vec!["Moto Budget 2026".to_string()],
+                dry_run: false,
+            },
+        );
+        let _ = fs::remove_file(&csv_path);
+        result.expect("import csv");
+
+        let imported = store.list_items().expect("list items");
+        assert_eq!(imported.len(), 1);
+        assert!(imported[0].assignments.contains_key(&track.id));
+    }
+
+    #[test]
     fn blocked_item_ids_marks_open_dependency_as_blocked() {
         let store = Store::open_memory().expect("store");
         let classifier = SubstringClassifier;
@@ -5022,6 +6551,8 @@ mod tests {
             None,
             false,
             None,
+            None,
+            false,
         )
         .expect("append to empty");
 
@@ -5048,6 +6579,8 @@ mod tests {
             None,
             false,
             None,
+            None,
+            false,
         )
         .expect("append to existing");
 
@@ -5077,6 +6610,8 @@ mod tests {
             None,
             false,
             None,
+            None,
+            false,
         )
         .expect("append multiline");
 
@@ -5102,6 +6637,8 @@ mod tests {
             None,
             false,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
@@ -5122,6 +6659,8 @@ mod tests {
             None,
             true,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
@@ -5153,6 +6692,8 @@ mod tests {
             Some("stdin note\nnext line".to_string()),
             false,
             None,
+            None,
+            false,
         )
         .expect("replace from stdin");
 
@@ -5175,6 +6716,8 @@ mod tests {
             Some("stdin".to_string()),
             false,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
@@ -5200,6 +6743,8 @@ mod tests {
             Some(String::new()),
             false,
             None,
+            None,
+            false,
         )
         .expect("empty stdin no-op");
 
