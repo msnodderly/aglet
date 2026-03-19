@@ -2922,19 +2922,58 @@ impl App {
             .wrap(Wrap { trim: false })
     }
 
-    pub(crate) fn render_footer(&self, _width: u16) -> Paragraph<'_> {
+    pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
         let status = format!(
             "{} | Auto-refresh:{}",
             self.footer_status_text(),
             self.auto_refresh_mode_label()
         );
-        let hints = self.footer_hint_text();
+        let hint_pairs = self.footer_hint_pairs();
+        // Build width-aware hint line with styled key:desc spans
+        let available = width.saturating_sub(4) as usize; // borders + padding
+        let help_suffix = "?:help";
+        let help_suffix_len = help_suffix.len();
+        let mut spans: Vec<Span<'_>> = Vec::new();
+        let mut used = 0usize;
+        for (key, desc) in &hint_pairs {
+            let entry = format!("{}:{}", key, desc);
+            let entry_len = entry.len() + if spans.is_empty() { 0 } else { 2 }; // "  " separator
+            // Reserve space for help suffix if not already the help entry
+            let reserve = if *key != "?" { help_suffix_len + 2 } else { 0 };
+            if used + entry_len + reserve > available && !spans.is_empty() {
+                break;
+            }
+            if !spans.is_empty() {
+                spans.push(Span::raw("  "));
+                used += 2;
+            }
+            spans.push(Span::styled(
+                format!("{}:", key),
+                Style::default().fg(Color::LightCyan),
+            ));
+            spans.push(Span::styled(
+                desc.to_string(),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+            used += entry_len;
+        }
+        // Add ?:help if not already present
+        if !hint_pairs.iter().any(|(k, _)| *k == "?") {
+            if !spans.is_empty() {
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(
+                "?:",
+                Style::default().fg(Color::LightCyan),
+            ));
+            spans.push(Span::styled(
+                "help",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+        }
         let text = ratatui::text::Text::from(vec![
             ratatui::text::Line::from(status),
-            ratatui::text::Line::from(ratatui::text::Span::styled(
-                hints,
-                Style::default().fg(MUTED_TEXT_COLOR),
-            )),
+            ratatui::text::Line::from(spans),
         ]);
         Paragraph::new(text).block(Block::default().borders(Borders::ALL))
     }
@@ -3058,67 +3097,67 @@ impl App {
         }
     }
 
-    fn footer_hint_text(&self) -> &'static str {
+    fn footer_hint_pairs(&self) -> Vec<(&'static str, &'static str)> {
         match self.mode {
-            Mode::HelpPanel => "Esc:close  Enter:close  ?:close",
+            Mode::HelpPanel => vec![("Esc", "close"), ("Enter", "close"), ("?", "close")],
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
-                    "y:save & close  n:discard  Esc:keep editing"
+                    vec![("y", "save & close"), ("n", "discard"), ("Esc", "keep editing")]
                 } else if self.category_manager_details_note_editing() {
-                    "Tab:leave note  Esc:discard"
+                    vec![("Tab", "leave note"), ("Esc", "discard")]
                 } else if let Some(action) = self.category_manager_inline_action() {
                     match action {
-                        CategoryInlineAction::Rename { .. } => "Enter:apply  Esc:cancel",
-                        CategoryInlineAction::DeleteConfirm { .. } => "y:confirm  Esc:cancel",
+                        CategoryInlineAction::Rename { .. } => vec![("Enter", "apply"), ("Esc", "cancel")],
+                        CategoryInlineAction::DeleteConfirm { .. } => vec![("y", "confirm"), ("Esc", "cancel")],
                     }
                 } else {
-                    "S:save  n:new  r:rename  x:delete  Tab:pane  /:filter  w:configure workflow roles  Esc:close"
+                    vec![("S", "save"), ("n", "new"), ("r", "rename"), ("x", "delete"), ("Tab", "pane"), ("/", "filter"), ("w", "workflow"), ("Esc", "close")]
                 }
             }
             Mode::ViewPicker => {
-                "Enter:switch  N:new  c:clone  r:rename  e:edit  x:delete  Esc:cancel"
+                vec![("Enter", "switch"), ("N", "new"), ("c", "clone"), ("r", "rename"), ("e", "edit"), ("x", "delete"), ("Esc", "cancel")]
             }
-            Mode::ViewDeleteConfirm => "y:confirm  Esc:cancel",
+            Mode::ViewDeleteConfirm => vec![("y", "confirm"), ("Esc", "cancel")],
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.discard_confirm {
-                        "y:save & close  n:discard  Esc:keep editing"
+                        vec![("y", "save & close"), ("n", "discard"), ("Esc", "keep editing")]
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
-                        "S:save  n:new  x:del  Enter:details  Tab:pane  Esc:close"
+                        vec![("S", "save"), ("n", "new"), ("x", "del"), ("Enter", "details"), ("Tab", "pane"), ("Esc", "close")]
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
-                        "S:save  p:hide  Tab:pane  Esc:close"
+                        vec![("S", "save"), ("p", "hide"), ("Tab", "pane"), ("Esc", "close")]
                     } else {
-                        "S:save  n:new  x:del  Space:toggle  Tab:pane  Esc:close"
+                        vec![("S", "save"), ("n", "new"), ("x", "del"), ("Space", "toggle"), ("Tab", "pane"), ("Esc", "close")]
                     }
                 } else {
-                    "S:save  Tab:pane  Esc:close"
+                    vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
                 }
             }
-            Mode::ItemAssignPicker => "Space:apply  n:new  Enter:close  Esc:cancel",
-            Mode::ItemAssignInput => "Enter:assign  Esc:cancel",
-            Mode::LinkWizard => "Tab:focus  Enter:apply  /:target  Type:search  Esc:cancel",
-            Mode::CategoryDirectEdit => "S:save  Tab:focus  Enter:resolve  x:remove  Esc:cancel",
-            Mode::CategoryColumnPicker => "Space:toggle  Enter:save  Esc:cancel",
-            Mode::BoardAddColumnPicker => "Enter:insert  Tab:complete  Esc:cancel",
+            Mode::ItemAssignPicker => vec![("Space", "apply"), ("n", "new"), ("Enter", "close"), ("Esc", "cancel")],
+            Mode::ItemAssignInput => vec![("Enter", "assign"), ("Esc", "cancel")],
+            Mode::LinkWizard => vec![("Tab", "focus"), ("Enter", "apply"), ("/", "target"), ("Esc", "cancel")],
+            Mode::CategoryDirectEdit => vec![("S", "save"), ("Tab", "focus"), ("Enter", "resolve"), ("x", "remove"), ("Esc", "cancel")],
+            Mode::CategoryColumnPicker => vec![("Space", "toggle"), ("Enter", "save"), ("Esc", "cancel")],
+            Mode::BoardAddColumnPicker => vec![("Enter", "insert"), ("Tab", "complete"), ("Esc", "cancel")],
             Mode::ConfirmDelete => {
                 if self.done_blocks_confirm.is_some() {
-                    "y:remove links + done  n:done only  Esc:cancel"
+                    vec![("y", "remove links + done"), ("n", "done only"), ("Esc", "cancel")]
                 } else {
-                    "y:confirm  Esc:cancel"
+                    vec![("y", "confirm"), ("Esc", "cancel")]
                 }
             }
             Mode::BoardColumnDeleteConfirm | Mode::CategoryCreateConfirm { .. } => {
-                "y:confirm  Esc:cancel"
+                vec![("y", "confirm"), ("Esc", "cancel")]
             }
             Mode::SearchBarFocused => {
                 if self.global_search_active() {
-                    "Enter:jump/create  \u{2193}/Tab:browse  Esc:return"
+                    vec![("Enter", "jump/create"), ("\u{2193}/Tab", "browse"), ("Esc", "return")]
                 } else {
-                    "Enter:jump/create  \u{2193}/Tab:browse  Esc:clear"
+                    vec![("Enter", "jump/create"), ("\u{2193}/Tab", "browse"), ("Esc", "clear")]
                 }
             }
-            Mode::NoteEdit => "Enter:save  Esc:cancel",
-            Mode::InspectUnassign => "Enter:unassign  Esc:cancel",
+            Mode::NoteEdit => vec![("Enter", "save"), ("Esc", "cancel")],
+            Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
             Mode::InputPanel => {
                 if self
                     .input_panel
@@ -3129,29 +3168,57 @@ impl App {
                     })
                     .unwrap_or(false)
                 {
-                    "Enter:save  S:save  Tab:buttons  Esc:cancel"
+                    vec![("Enter", "save"), ("S", "save"), ("Tab", "buttons"), ("Esc", "cancel")]
                 } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
                 }) {
-                    "Type:filter  Enter:keep  Esc:done  Tab:next"
+                    vec![("Type", "filter"), ("Enter", "keep"), ("Esc", "done"), ("Tab", "next")]
                 } else if self
                     .input_panel
                     .as_ref()
                     .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
                 {
-                    "S:save  Tab:next  /:filter  Space:toggle  Esc:cancel"
+                    vec![("S", "save"), ("Tab", "next"), ("/", "filter"), ("Space", "toggle"), ("Esc", "cancel")]
                 } else {
-                    "S:save  Tab:next  Esc:cancel"
+                    vec![("S", "save"), ("Tab", "next"), ("Esc", "cancel")]
                 }
             }
             Mode::Normal => {
+                let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
                 if self.selected_count() > 0 {
-                    "Space:toggle  a:assign  b/B:link  x:delete  Esc:clear sel  /:search  g/:global  v:views  p:preview  ?:help  q:quit"
-                } else if self.section_filters.iter().any(|f| f.is_some()) {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:col fmt  F:col summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  Esc:clear search  q:quit"
+                    hints.extend_from_slice(&[
+                        ("Space", "toggle"), ("a", "assign"), ("b/B", "link"),
+                        ("x", "delete"), ("Esc", "clear sel"),
+                        ("/", "search"), ("g/", "global"), ("v", "views"),
+                        ("p", "preview"), ("q", "quit"),
+                    ]);
                 } else {
-                    "n:new  e:edit  m:lanes  z:cards  s:sort  f:col fmt  F:col summary  d:done  a:assign  u:deps  /:search  g/:global  v:views  p:preview  ?:help  Ctrl-L:reload  Ctrl-R:auto-refresh  q:quit"
+                    hints.extend_from_slice(&[
+                        ("n", "new"), ("e", "edit"), ("a", "assign"), ("d", "done"),
+                        ("/", "search"), ("v", "views"), ("m", "lanes"), ("s", "sort"),
+                        ("f", "col fmt"), ("F", "col summary"),
+                        ("p", "preview"), ("u", "deps"),
+                        ("g/", "global"), ("z", "cards"),
+                    ]);
+                    if self.section_filters.iter().any(|f| f.is_some()) {
+                        hints.push(("Esc", "clear search"));
+                    }
+                    hints.extend_from_slice(&[
+                        ("Ctrl-L", "reload"), ("Ctrl-R", "auto-refresh"), ("q", "quit"),
+                    ]);
                 }
+                if !self.undo_stack.is_empty() {
+                    // Insert undo hint near the front (after primary action keys)
+                    let insert_pos = hints.len().min(4);
+                    hints.insert(insert_pos, ("Ctrl-Z", "undo"));
+                }
+                if !self.redo_stack.is_empty() {
+                    // Insert redo hint right after undo
+                    let undo_pos = hints.iter().position(|h| h.0 == "Ctrl-Z");
+                    let insert_pos = undo_pos.map(|p| p + 1).unwrap_or_else(|| hints.len().min(5));
+                    hints.insert(insert_pos, ("Ctrl-Shift-Z", "redo"));
+                }
+                hints
             }
         }
     }
@@ -4025,9 +4092,17 @@ impl App {
                     ])
                     .split(details_inner);
 
+                let assigned_item_count = self
+                    .category_assignment_counts
+                    .get(&row.id)
+                    .copied()
+                    .unwrap_or(0);
                 let mut info_lines = vec![
                     Line::from(format!("Selected: {}", row.name)),
-                    Line::from(format!("Depth: {}    Children: {}", row.depth, child_count)),
+                    Line::from(format!(
+                        "Depth: {}    Children: {}    Items: {}",
+                        row.depth, child_count, assigned_item_count
+                    )),
                     Line::from(format!("Parent: {}", parent_name)),
                     Line::from(if row.is_reserved {
                         "Reserved: yes (read-only config)".to_string()
@@ -4717,16 +4792,25 @@ impl App {
                     )),
                 );
 
-                let alias_count = state
+                let configured_aliases: Vec<_> = state
                     .draft
                     .category_aliases
-                    .values()
-                    .filter(|alias| !alias.trim().is_empty())
-                    .count();
-                let alias_summary = if alias_count == 0 {
+                    .iter()
+                    .filter(|(_, alias)| !alias.trim().is_empty())
+                    .map(|(cat_id, alias)| {
+                        let cat_name = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == *cat_id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("?");
+                        (cat_name.to_string(), alias.clone())
+                    })
+                    .collect();
+                let alias_summary = if configured_aliases.is_empty() {
                     "(none)".to_string()
                 } else {
-                    format!("{alias_count} configured")
+                    format!("{} configured", configured_aliases.len())
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
@@ -4741,6 +4825,15 @@ impl App {
                         &mut selected_line,
                     )),
                 );
+                // Show configured aliases as indented sub-rows (display-only)
+                for (cat_name, alias) in &configured_aliases {
+                    items.push(
+                        ListItem::new(Line::from(Span::styled(
+                            format!("      {} \u{2192} {}", cat_name, alias),
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ))),
+                    );
+                }
 
                 // ── Separator ──
                 items.push(ListItem::new(Line::from(Span::styled(

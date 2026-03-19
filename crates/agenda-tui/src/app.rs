@@ -221,6 +221,12 @@ impl App {
         self.sync_category_manager_state_from_selection();
         let items = store.list_items().map_err(|e| e.to_string())?;
         self.all_items = items.clone();
+        self.category_assignment_counts.clear();
+        for item in &items {
+            for cat_id in item.assignments.keys() {
+                *self.category_assignment_counts.entry(*cat_id).or_insert(0) += 1;
+            }
+        }
         self.item_links_by_item_id.clear();
         for item in &items {
             let links = agenda_core::model::ItemLinksForItem {

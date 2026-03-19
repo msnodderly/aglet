@@ -298,6 +298,10 @@ impl App {
         match code {
             KeyCode::Char('y') => {
                 if let Some(item_id) = self.selected_item_id() {
+                    // Capture item state for undo before deletion
+                    if let Ok(item) = agenda.store().get_item(item_id) {
+                        self.push_undo(UndoEntry::ItemDeleted { item });
+                    }
                     agenda
                         .delete_item(item_id, "user:tui")
                         .map_err(|e| e.to_string())?;

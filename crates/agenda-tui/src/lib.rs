@@ -7,10 +7,11 @@ use std::time::{Duration, Instant};
 use agenda_core::agenda::Agenda;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode,
-    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow, SummaryFn, View,
-    WhenBucket,
+    Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
+    Column, ColumnKind, CriterionMode, Item, ItemId, ItemLinkKind, ItemLinksForItem, NumericFormat,
+    Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
 };
+use rust_decimal::Decimal;
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use agenda_core::workflow::WorkflowConfig;
@@ -845,6 +846,87 @@ struct GlobalSearchSession {
     return_search_text: String,
 }
 
+const UNDO_STACK_MAX: usize = 50;
+
+/// Captures enough state to reverse a single TUI mutation.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+enum UndoEntry {
+    ItemCreated {
+        item_id: ItemId,
+    },
+    ItemEdited {
+        item_id: ItemId,
+        old_text: String,
+        old_note: Option<String>,
+    },
+    ItemDeleted {
+        item: Item,
+    },
+    ItemDoneToggled {
+        item_id: ItemId,
+        was_done: bool,
+    },
+    CategoryAssigned {
+        item_id: ItemId,
+        category_id: CategoryId,
+    },
+    CategoryUnassigned {
+        item_id: ItemId,
+        category_id: CategoryId,
+        old_assignment: Assignment,
+    },
+    NumericValueSet {
+        item_id: ItemId,
+        category_id: CategoryId,
+        old_value: Option<Decimal>,
+    },
+    LinkCreated {
+        item_id: ItemId,
+        other_id: ItemId,
+        kind: ItemLinkKind,
+    },
+    LinkRemoved {
+        item_id: ItemId,
+        other_id: ItemId,
+        kind: ItemLinkKind,
+    },
+    BatchDone {
+        item_ids: Vec<ItemId>,
+    },
+}
+
+impl UndoEntry {
+    fn description(&self) -> String {
+        match self {
+            Self::ItemCreated { .. } => "item creation".to_string(),
+            Self::ItemEdited { .. } => "item edit".to_string(),
+            Self::ItemDeleted { item } => format!("deletion of \"{}\"", truncate_str(&item.text, 30)),
+            Self::ItemDoneToggled { was_done, .. } => {
+                if *was_done {
+                    "mark undone".to_string()
+                } else {
+                    "mark done".to_string()
+                }
+            }
+            Self::CategoryAssigned { .. } => "category assignment".to_string(),
+            Self::CategoryUnassigned { .. } => "category unassignment".to_string(),
+            Self::NumericValueSet { .. } => "numeric value change".to_string(),
+            Self::LinkCreated { .. } => "link creation".to_string(),
+            Self::LinkRemoved { .. } => "link removal".to_string(),
+            Self::BatchDone { item_ids } => format!("batch done ({} items)", item_ids.len()),
+        }
+    }
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
+}
+
 struct App {
     mode: Mode,
     status: String,
@@ -906,6 +988,9 @@ struct App {
     auto_refresh_last_tick: Instant,
     transient_status: Option<TransientStatus>,
     current_key_modifiers: KeyModifiers,
+    category_assignment_counts: HashMap<CategoryId, usize>,
+    undo_stack: Vec<UndoEntry>,
+    redo_stack: Vec<UndoEntry>,
 }
 
 impl Default for App {
@@ -971,7 +1056,280 @@ impl Default for App {
             auto_refresh_last_tick: Instant::now(),
             transient_status: None,
             current_key_modifiers: KeyModifiers::NONE,
+            category_assignment_counts: HashMap::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
+    }
+}
+
+impl App {
+    fn push_undo(&mut self, entry: UndoEntry) {
+        self.redo_stack.clear();
+        self.undo_stack.push(entry);
+        if self.undo_stack.len() > UNDO_STACK_MAX {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    /// Apply an undo/redo entry, returning the inverse entry that can reverse it.
+    fn apply_entry(&mut self, entry: UndoEntry, agenda: &Agenda<'_>) -> Result<UndoEntry, String> {
+        let inverse = match entry {
+            UndoEntry::ItemCreated { item_id } => {
+                // Capture item state before deleting so redo can restore it
+                let item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
+                agenda
+                    .delete_item(item_id, "undo")
+                    .map_err(|e| e.to_string())?;
+                UndoEntry::ItemDeleted { item }
+            }
+            UndoEntry::ItemEdited {
+                item_id,
+                old_text,
+                old_note,
+            } => {
+                let mut item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
+                let inverse = UndoEntry::ItemEdited {
+                    item_id,
+                    old_text: item.text.clone(),
+                    old_note: item.note.clone(),
+                };
+                item.text = old_text;
+                item.note = old_note;
+                item.modified_at = Utc::now();
+                let reference_date = Local::now().date_naive();
+                agenda
+                    .update_item_with_reference_date(&item, reference_date)
+                    .map_err(|e| e.to_string())?;
+                inverse
+            }
+            UndoEntry::ItemDeleted { item } => {
+                let item_id = item.id;
+                // Re-create the item
+                let reference_date = Local::now().date_naive();
+                agenda
+                    .create_item_with_reference_date(&item, reference_date)
+                    .map_err(|e| e.to_string())?;
+                // Restore note and done state
+                let mut restored = agenda
+                    .store()
+                    .get_item(item.id)
+                    .map_err(|e| e.to_string())?;
+                restored.note = item.note.clone();
+                restored.is_done = item.is_done;
+                restored.done_date = item.done_date;
+                restored.modified_at = Utc::now();
+                agenda
+                    .update_item_with_reference_date(&restored, reference_date)
+                    .map_err(|e| e.to_string())?;
+                // Restore category assignments
+                for (cat_id, assignment) in &item.assignments {
+                    if assignment.source == AssignmentSource::Manual {
+                        if let Some(numeric_value) = assignment.numeric_value {
+                            let _ = agenda.assign_item_numeric_manual(
+                                item.id,
+                                *cat_id,
+                                numeric_value,
+                                Some("undo:restore".to_string()),
+                            );
+                        } else {
+                            let _ = agenda.assign_item_manual(
+                                item.id,
+                                *cat_id,
+                                Some("undo:restore".to_string()),
+                            );
+                        }
+                    }
+                }
+                self.set_item_selection_by_id(item.id);
+                UndoEntry::ItemCreated { item_id }
+            }
+            UndoEntry::ItemDoneToggled { item_id, was_done } => {
+                agenda
+                    .toggle_item_done(item_id)
+                    .map_err(|e| e.to_string())?;
+                self.set_item_selection_by_id(item_id);
+                UndoEntry::ItemDoneToggled {
+                    item_id,
+                    was_done: !was_done,
+                }
+            }
+            UndoEntry::CategoryAssigned {
+                item_id,
+                category_id,
+            } => {
+                // Capture the assignment before removing it
+                let old_assignment = agenda
+                    .store()
+                    .get_item(item_id)
+                    .ok()
+                    .and_then(|item| item.assignments.get(&category_id).cloned())
+                    .unwrap_or(Assignment {
+                        source: AssignmentSource::Manual,
+                        assigned_at: Utc::now(),
+                        sticky: false,
+                        origin: None,
+                        numeric_value: None,
+                    });
+                let _ = agenda.unassign_item_manual(item_id, category_id);
+                self.set_item_selection_by_id(item_id);
+                UndoEntry::CategoryUnassigned {
+                    item_id,
+                    category_id,
+                    old_assignment,
+                }
+            }
+            UndoEntry::CategoryUnassigned {
+                item_id,
+                category_id,
+                old_assignment,
+            } => {
+                if let Some(numeric_value) = old_assignment.numeric_value {
+                    let _ = agenda.assign_item_numeric_manual(
+                        item_id,
+                        category_id,
+                        numeric_value,
+                        Some("undo:restore".to_string()),
+                    );
+                } else {
+                    let _ = agenda.assign_item_manual(
+                        item_id,
+                        category_id,
+                        Some("undo:restore".to_string()),
+                    );
+                }
+                self.set_item_selection_by_id(item_id);
+                UndoEntry::CategoryAssigned {
+                    item_id,
+                    category_id,
+                }
+            }
+            UndoEntry::NumericValueSet {
+                item_id,
+                category_id,
+                old_value,
+            } => {
+                // Capture current value before restoring old
+                let current_value = agenda
+                    .store()
+                    .get_item(item_id)
+                    .ok()
+                    .and_then(|item| {
+                        item.assignments
+                            .get(&category_id)
+                            .and_then(|a| a.numeric_value)
+                    });
+                if let Some(val) = old_value {
+                    let _ = agenda.assign_item_numeric_manual(
+                        item_id,
+                        category_id,
+                        val,
+                        Some("undo:restore".to_string()),
+                    );
+                } else {
+                    let _ = agenda.unassign_item_manual(item_id, category_id);
+                }
+                self.set_item_selection_by_id(item_id);
+                UndoEntry::NumericValueSet {
+                    item_id,
+                    category_id,
+                    old_value: current_value,
+                }
+            }
+            UndoEntry::LinkCreated {
+                item_id,
+                other_id,
+                kind,
+            } => {
+                match kind {
+                    ItemLinkKind::DependsOn => {
+                        let _ = agenda.unlink_items_depends_on(item_id, other_id);
+                    }
+                    ItemLinkKind::Related => {
+                        let _ = agenda.unlink_items_related(item_id, other_id);
+                    }
+                }
+                self.set_item_selection_by_id(item_id);
+                UndoEntry::LinkRemoved {
+                    item_id,
+                    other_id,
+                    kind,
+                }
+            }
+            UndoEntry::LinkRemoved {
+                item_id,
+                other_id,
+                kind,
+            } => {
+                match kind {
+                    ItemLinkKind::DependsOn => {
+                        let _ = agenda.link_items_depends_on(item_id, other_id);
+                    }
+                    ItemLinkKind::Related => {
+                        let _ = agenda.link_items_related(item_id, other_id);
+                    }
+                }
+                self.set_item_selection_by_id(item_id);
+                UndoEntry::LinkCreated {
+                    item_id,
+                    other_id,
+                    kind,
+                }
+            }
+            UndoEntry::BatchDone { item_ids } => {
+                for item_id in &item_ids {
+                    let _ = agenda.toggle_item_done(*item_id);
+                }
+                UndoEntry::BatchDone {
+                    item_ids: item_ids.clone(),
+                }
+            }
+        };
+        self.refresh(agenda.store())?;
+        Ok(inverse)
+    }
+
+    fn apply_undo(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(entry) = self.undo_stack.pop() else {
+            self.status = "Nothing to undo".to_string();
+            return Ok(());
+        };
+        let desc = entry.description();
+        let inverse = self.apply_entry(entry, agenda)?;
+        self.redo_stack.push(inverse);
+        if self.redo_stack.len() > UNDO_STACK_MAX {
+            self.redo_stack.remove(0);
+        }
+        self.transient_status = Some(TransientStatus {
+            message: format!("Undid {}", desc),
+            expires_at: Instant::now() + Duration::from_secs(3),
+        });
+        Ok(())
+    }
+
+    fn apply_redo(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+        let Some(entry) = self.redo_stack.pop() else {
+            self.status = "Nothing to redo".to_string();
+            return Ok(());
+        };
+        let desc = entry.description();
+        let inverse = self.apply_entry(entry, agenda)?;
+        // Push directly to undo_stack without clearing redo_stack
+        self.undo_stack.push(inverse);
+        if self.undo_stack.len() > UNDO_STACK_MAX {
+            self.undo_stack.remove(0);
+        }
+        self.transient_status = Some(TransientStatus {
+            message: format!("Redid {}", desc),
+            expires_at: Instant::now() + Duration::from_secs(3),
+        });
+        Ok(())
     }
 }
 

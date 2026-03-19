@@ -2407,6 +2407,7 @@ impl App {
         origin: DoneToggleOrigin,
         clear_blocked_item_ids: &[ItemId],
     ) -> Result<(), String> {
+        self.push_undo(UndoEntry::ItemDoneToggled { item_id, was_done });
         agenda
             .toggle_item_done(item_id)
             .map_err(|e| e.to_string())?;
@@ -3572,6 +3573,14 @@ impl App {
                     self.persist_auto_refresh_interval(agenda.store())?;
                     return Ok(false);
                 }
+                KeyCode::Char('z') => {
+                    self.apply_undo(agenda)?;
+                    return Ok(false);
+                }
+                KeyCode::Char('Z') => {
+                    self.apply_redo(agenda)?;
+                    return Ok(false);
+                }
                 _ => {}
             }
         }
@@ -4229,6 +4238,7 @@ impl App {
             .get_item(item.id)
             .map_err(|e| e.to_string())?;
 
+        self.push_undo(UndoEntry::ItemCreated { item_id: item.id });
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(item.id);
         self.input_panel = None;
@@ -4267,6 +4277,8 @@ impl App {
             .store()
             .get_item(item_id)
             .map_err(|e| e.to_string())?;
+        let undo_old_text = item.text.clone();
+        let undo_old_note = item.note.clone();
 
         // Compute category diff: which to add, which to remove.
         let existing_categories: HashSet<_> = item.assignments.keys().copied().collect();
@@ -4357,6 +4369,11 @@ impl App {
             );
         }
 
+        self.push_undo(UndoEntry::ItemEdited {
+            item_id,
+            old_text: undo_old_text,
+            old_note: undo_old_note,
+        });
         self.refresh(agenda.store())?;
         self.set_item_selection_by_id(item_id);
         self.input_panel = None;
@@ -4570,6 +4587,13 @@ impl App {
                 }
 
                 let normalized = name.replace(',', "");
+                // Capture old numeric value for undo
+                let old_numeric_value = self
+                    .all_items
+                    .iter()
+                    .find(|i| i.id == target.item_id)
+                    .and_then(|i| i.assignments.get(&target.category_id))
+                    .and_then(|a| a.numeric_value);
                 match normalized.parse::<rust_decimal::Decimal>() {
                     Ok(decimal_value) => {
                         match agenda.assign_item_numeric_manual(
@@ -4579,6 +4603,11 @@ impl App {
                             Some("manual:tui.numeric-edit".to_string()),
                         ) {
                             Ok(_result) => {
+                                self.push_undo(UndoEntry::NumericValueSet {
+                                    item_id: target.item_id,
+                                    category_id: target.category_id,
+                                    old_value: old_numeric_value,
+                                });
                                 self.refresh(agenda.store())?;
                                 self.input_panel = None;
                                 self.name_input_context = None;
@@ -4924,8 +4953,22 @@ impl App {
                         summary
                     };
                 } else if self.selected_item_has_assignment(row.id) {
+                    // Capture old assignment for undo
+                    let old_assignment = self
+                        .all_items
+                        .iter()
+                        .find(|i| i.id == item_id)
+                        .and_then(|i| i.assignments.get(&row.id))
+                        .cloned();
                     match agenda.unassign_item_manual(item_id, row.id) {
                         Ok(()) => {
+                            if let Some(assignment) = old_assignment {
+                                self.push_undo(UndoEntry::CategoryUnassigned {
+                                    item_id,
+                                    category_id: row.id,
+                                    old_assignment: assignment,
+                                });
+                            }
                             self.refresh(agenda.store())?;
                             self.set_item_selection_by_id(item_id);
                             self.status = format!("Removed category {}", row.name);
@@ -4938,6 +4981,10 @@ impl App {
                     let result = agenda
                         .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
                         .map_err(|e| e.to_string())?;
+                    self.push_undo(UndoEntry::CategoryAssigned {
+                        item_id,
+                        category_id: row.id,
+                    });
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
                     self.status = format!(
