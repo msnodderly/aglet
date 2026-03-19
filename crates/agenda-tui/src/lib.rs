@@ -34,12 +34,15 @@ use ratatui::Terminal;
 use uuid::Uuid;
 
 mod app;
+mod error;
 mod input;
 mod input_panel;
 mod modes;
 mod render;
 mod text_buffer;
 mod ui_support;
+
+pub use error::{TuiError, TuiResult};
 
 use ui_support::*;
 
@@ -58,13 +61,13 @@ impl TerminalSession {
         }
     }
 
-    fn enter() -> Result<Self, String> {
-        enable_raw_mode().map_err(|e| e.to_string())?;
+    fn enter() -> TuiResult<Self> {
+        enable_raw_mode()?;
 
         let mut stdout = io::stdout();
         if let Err(err) = execute!(stdout, EnterAlternateScreen) {
             let _ = disable_raw_mode();
-            return Err(err.to_string());
+            return Err(err.into());
         }
         Self::try_apply_preferred_cursor_style(&mut stdout);
 
@@ -74,7 +77,7 @@ impl TerminalSession {
             Err(err) => {
                 let _ = execute!(io::stdout(), LeaveAlternateScreen);
                 let _ = disable_raw_mode();
-                return Err(err.to_string());
+                return Err(err.into());
             }
         };
 
@@ -88,7 +91,7 @@ impl TerminalSession {
         &mut self.terminal
     }
 
-    fn exit(&mut self) -> Result<(), String> {
+    fn exit(&mut self) -> TuiResult<()> {
         if !self.active {
             return Ok(());
         }
@@ -96,9 +99,9 @@ impl TerminalSession {
             self.terminal.backend_mut(),
             SetCursorStyle::DefaultUserShape
         );
-        disable_raw_mode().map_err(|e| e.to_string())?;
-        execute!(self.terminal.backend_mut(), LeaveAlternateScreen).map_err(|e| e.to_string())?;
-        self.terminal.show_cursor().map_err(|e| e.to_string())?;
+        disable_raw_mode()?;
+        execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
+        self.terminal.show_cursor()?;
         self.active = false;
         Ok(())
     }
@@ -119,8 +122,8 @@ impl Drop for TerminalSession {
     }
 }
 
-pub fn run(db_path: &Path) -> Result<(), String> {
-    let store = Store::open(db_path).map_err(|e| e.to_string())?;
+pub fn run(db_path: &Path) -> TuiResult<()> {
+    let store = Store::open(db_path)?;
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
 
@@ -839,6 +842,52 @@ struct GlobalSearchSession {
 
 const UNDO_STACK_MAX: usize = 50;
 
+#[derive(Default)]
+struct UndoState {
+    undo_stack: Vec<UndoEntry>,
+    redo_stack: Vec<UndoEntry>,
+}
+
+impl UndoState {
+    fn push(&mut self, entry: UndoEntry) {
+        self.redo_stack.clear();
+        self.undo_stack.push(entry);
+        if self.undo_stack.len() > UNDO_STACK_MAX {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    fn pop_undo(&mut self) -> Option<UndoEntry> {
+        self.undo_stack.pop()
+    }
+
+    fn pop_redo(&mut self) -> Option<UndoEntry> {
+        self.redo_stack.pop()
+    }
+
+    fn push_redo(&mut self, entry: UndoEntry) {
+        self.redo_stack.push(entry);
+        if self.redo_stack.len() > UNDO_STACK_MAX {
+            self.redo_stack.remove(0);
+        }
+    }
+
+    fn push_undo_direct(&mut self, entry: UndoEntry) {
+        self.undo_stack.push(entry);
+        if self.undo_stack.len() > UNDO_STACK_MAX {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    fn has_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    fn has_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+}
+
 /// Captures enough state to reverse a single TUI mutation.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -852,7 +901,7 @@ enum UndoEntry {
         old_note: Option<String>,
     },
     ItemDeleted {
-        item: Item,
+        item: Box<Item>,
     },
     ItemDoneToggled {
         item_id: ItemId,
@@ -979,8 +1028,7 @@ struct App {
     transient_status: Option<TransientStatus>,
     current_key_modifiers: KeyModifiers,
     category_assignment_counts: HashMap<CategoryId, usize>,
-    undo_stack: Vec<UndoEntry>,
-    redo_stack: Vec<UndoEntry>,
+    undo: UndoState,
 }
 
 impl Default for App {
@@ -1046,34 +1094,29 @@ impl Default for App {
             transient_status: None,
             current_key_modifiers: KeyModifiers::NONE,
             category_assignment_counts: HashMap::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
+            undo: UndoState::default(),
         }
     }
 }
 
 impl App {
     fn push_undo(&mut self, entry: UndoEntry) {
-        self.redo_stack.clear();
-        self.undo_stack.push(entry);
-        if self.undo_stack.len() > UNDO_STACK_MAX {
-            self.undo_stack.remove(0);
-        }
+        self.undo.push(entry);
     }
 
     /// Apply an undo/redo entry, returning the inverse entry that can reverse it.
-    fn apply_entry(&mut self, entry: UndoEntry, agenda: &Agenda<'_>) -> Result<UndoEntry, String> {
+    fn apply_entry(&mut self, entry: UndoEntry, agenda: &Agenda<'_>) -> TuiResult<UndoEntry> {
         let inverse = match entry {
             UndoEntry::ItemCreated { item_id } => {
                 // Capture item state before deleting so redo can restore it
                 let item = agenda
                     .store()
                     .get_item(item_id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 agenda
                     .delete_item(item_id, "undo")
-                    .map_err(|e| e.to_string())?;
-                UndoEntry::ItemDeleted { item }
+                    ?;
+                UndoEntry::ItemDeleted { item: Box::new(item) }
             }
             UndoEntry::ItemEdited {
                 item_id,
@@ -1083,7 +1126,7 @@ impl App {
                 let mut item = agenda
                     .store()
                     .get_item(item_id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 let inverse = UndoEntry::ItemEdited {
                     item_id,
                     old_text: item.text.clone(),
@@ -1095,7 +1138,7 @@ impl App {
                 let reference_date = Local::now().date_naive();
                 agenda
                     .update_item_with_reference_date(&item, reference_date)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 inverse
             }
             UndoEntry::ItemDeleted { item } => {
@@ -1104,19 +1147,19 @@ impl App {
                 let reference_date = Local::now().date_naive();
                 agenda
                     .create_item_with_reference_date(&item, reference_date)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 // Restore note and done state
                 let mut restored = agenda
                     .store()
                     .get_item(item.id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 restored.note = item.note.clone();
                 restored.is_done = item.is_done;
                 restored.done_date = item.done_date;
                 restored.modified_at = Utc::now();
                 agenda
                     .update_item_with_reference_date(&restored, reference_date)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 // Restore category assignments
                 for (cat_id, assignment) in &item.assignments {
                     if assignment.source == AssignmentSource::Manual {
@@ -1142,7 +1185,7 @@ impl App {
             UndoEntry::ItemDoneToggled { item_id, was_done } => {
                 agenda
                     .toggle_item_done(item_id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 self.set_item_selection_by_id(item_id);
                 UndoEntry::ItemDoneToggled {
                     item_id,
@@ -1284,17 +1327,14 @@ impl App {
         Ok(inverse)
     }
 
-    fn apply_undo(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        let Some(entry) = self.undo_stack.pop() else {
+    fn apply_undo(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(entry) = self.undo.pop_undo() else {
             self.status = "Nothing to undo".to_string();
             return Ok(());
         };
         let desc = entry.description();
         let inverse = self.apply_entry(entry, agenda)?;
-        self.redo_stack.push(inverse);
-        if self.redo_stack.len() > UNDO_STACK_MAX {
-            self.redo_stack.remove(0);
-        }
+        self.undo.push_redo(inverse);
         self.transient_status = Some(TransientStatus {
             message: format!("Undid {}", desc),
             expires_at: Instant::now() + Duration::from_secs(3),
@@ -1302,18 +1342,14 @@ impl App {
         Ok(())
     }
 
-    fn apply_redo(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
-        let Some(entry) = self.redo_stack.pop() else {
+    fn apply_redo(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(entry) = self.undo.pop_redo() else {
             self.status = "Nothing to redo".to_string();
             return Ok(());
         };
         let desc = entry.description();
         let inverse = self.apply_entry(entry, agenda)?;
-        // Push directly to undo_stack without clearing redo_stack
-        self.undo_stack.push(inverse);
-        if self.undo_stack.len() > UNDO_STACK_MAX {
-            self.undo_stack.remove(0);
-        }
+        self.undo.push_undo_direct(inverse);
         self.transient_status = Some(TransientStatus {
             message: format!("Redid {}", desc),
             expires_at: Instant::now() + Duration::from_secs(3),

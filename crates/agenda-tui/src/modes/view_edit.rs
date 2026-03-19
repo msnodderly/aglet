@@ -9,7 +9,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -138,7 +138,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
                 let Some(view) = self.views.get(self.picker_index).cloned() else {
@@ -193,7 +193,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         if let Some(done_confirm) = self.done_blocks_confirm.clone() {
             match code {
                 KeyCode::Char('y') => {
@@ -280,7 +280,7 @@ impl App {
                     // Push undo entries for successfully deleted items (reverse
                     // order so undoing pops them back in original order)
                     for item in captured_items.into_iter().rev() {
-                        self.push_undo(UndoEntry::ItemDeleted { item });
+                        self.push_undo(UndoEntry::ItemDeleted { item: Box::new(item) });
                     }
                     self.batch_delete_item_ids = None;
                     self.clear_selected_items();
@@ -312,11 +312,11 @@ impl App {
                 if let Some(item_id) = self.selected_item_id() {
                     // Capture item state for undo before deletion
                     if let Ok(item) = agenda.store().get_item(item_id) {
-                        self.push_undo(UndoEntry::ItemDeleted { item });
+                        self.push_undo(UndoEntry::ItemDeleted { item: Box::new(item) });
                     }
                     agenda
                         .delete_item(item_id, "user:tui")
-                        .map_err(|e| e.to_string())?;
+                        ?;
                     self.refresh(agenda.store())?;
                     self.status = "Item deleted".to_string();
                 }

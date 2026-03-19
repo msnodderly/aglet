@@ -25,11 +25,11 @@ impl App {
         &mut self,
         category_id: CategoryId,
         agenda: &Agenda<'_>,
-    ) -> Result<WorkflowRolePrepResult, String> {
+    ) -> TuiResult<WorkflowRolePrepResult> {
         let mut category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         let warn_other_derived_sources =
             !category.conditions.is_empty() || !category.actions.is_empty();
         let auto_match_disabled = category.enable_implicit_string;
@@ -37,12 +37,12 @@ impl App {
             category.enable_implicit_string = false;
             agenda
                 .update_category(&category)
-                .map_err(|e| e.to_string())?;
+                ?;
             let implicit_origin = format!("cat:{}", category.name);
             let implicit_assigned_item_ids: Vec<_> = agenda
                 .store()
                 .list_items()
-                .map_err(|e| e.to_string())?
+                ?
                 .into_iter()
                 .filter_map(|item| {
                     item.assignments.get(&category_id).and_then(|assignment| {
@@ -57,15 +57,15 @@ impl App {
                     agenda
                         .store()
                         .unassign_item(item_id, category_id)
-                        .map_err(|e| e.to_string())?;
+                        ?;
                 }
                 let refreshed_category = agenda
                     .store()
                     .get_category(category_id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 agenda
                     .update_category(&refreshed_category)
-                    .map_err(|e| e.to_string())?;
+                    ?;
             }
         }
         Ok(WorkflowRolePrepResult {
@@ -100,7 +100,7 @@ impl App {
         &self,
         agenda: &Agenda<'_>,
         selected_category_id: CategoryId,
-    ) -> Result<Option<String>, String> {
+    ) -> TuiResult<Option<String>> {
         let (role_label, current_role_id, other_role_label, other_role_id) = if self.workflow_setup_focus == 0 {
             (
                 "Ready Queue",
@@ -124,7 +124,7 @@ impl App {
         let selected_name = agenda
             .store()
             .get_category(selected_category_id)
-            .map_err(|e| e.to_string())?
+            ?
             .name;
         let current_name = current_role_id
             .and_then(|category_id| agenda.store().get_category(category_id).ok())
@@ -154,7 +154,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
                 self.save_category_manager_details_note(agenda)?;
@@ -249,7 +249,7 @@ impl App {
         category_id: CategoryId,
         original_name: String,
         name: String,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if name == original_name {
             self.set_category_manager_inline_action(None);
             self.status = "Category rename canceled (unchanged)".to_string();
@@ -258,7 +258,7 @@ impl App {
         let mut category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         if is_reserved_category_name(&category.name) {
             self.set_category_manager_inline_action(None);
             self.status = format!(
@@ -268,7 +268,7 @@ impl App {
             return Ok(());
         }
         category.name = name.clone();
-        match agenda.update_category(&category).map_err(|e| e.to_string()) {
+        match agenda.update_category(&category) {
             Ok(result) => {
                 self.refresh(agenda.store())?;
                 self.set_category_selection_by_id(category_id);
@@ -290,7 +290,7 @@ impl App {
         agenda: &Agenda<'_>,
         category_id: CategoryId,
         category_name: String,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let old_visible_index = self.category_manager_visible_tree_index().unwrap_or(0);
         match agenda.store().delete_category(category_id) {
             Ok(()) => {
@@ -351,7 +351,7 @@ impl App {
         self.status = "Edit category note: type text, Esc:discard, Tab:leave".to_string();
     }
 
-    fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             self.set_category_manager_details_note_editing(false);
@@ -365,7 +365,7 @@ impl App {
         let mut category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         let next_note = self
             .category_manager_details_note_text()
             .map(|t| t.to_string())
@@ -386,7 +386,7 @@ impl App {
         let saved_name = category.name.clone();
         let result = agenda
             .update_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.reload_category_manager_details_note_from_selected();
@@ -403,7 +403,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         if self.category_manager_focus() != Some(CategoryManagerFocus::Details) {
             return Ok(false);
         }
@@ -576,13 +576,13 @@ impl App {
         agenda: &Agenda<'_>,
         next: NumericFormat,
         status: String,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let mut cat = self.selected_category_mut().ok_or("No category")?;
         cat.numeric_format = Some(next);
         agenda
             .store()
             .update_category(&cat)
-            .map_err(|e| e.to_string())?;
+            ?;
         let category_id = cat.id;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
@@ -592,7 +592,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let current = self.selected_category_numeric_format().ok_or("No category")?;
         let mut next = current.clone();
         next.decimal_places = if current.decimal_places == 0 { 2 } else { 0 };
@@ -613,7 +613,7 @@ impl App {
     fn toggle_selected_category_thousands_separator(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let current = self.selected_category_numeric_format().ok_or("No category")?;
         let mut next = current.clone();
         next.use_thousands_separator = !next.use_thousands_separator;
@@ -631,7 +631,7 @@ impl App {
     fn start_category_manager_numeric_inline_edit(
         &mut self,
         field: CategoryManagerDetailsInlineField,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let current = self.selected_category_numeric_format().ok_or("No category")?;
         if field == CategoryManagerDetailsInlineField::DecimalPlaces && current.decimal_places == 0 {
             self.status = "Decimal places is disabled while Integer is enabled".to_string();
@@ -673,7 +673,7 @@ impl App {
     fn save_category_manager_numeric_inline_edit(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(input) = self.category_manager_details_inline_input().cloned() else {
             return Ok(());
         };
@@ -711,7 +711,7 @@ impl App {
         Ok(())
     }
 
-    fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn outdent_selected_category(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         if self.block_direct_structure_move_while_filtered() {
             return Ok(());
         }
@@ -760,7 +760,7 @@ impl App {
         let new_parent_label = self.category_manager_parent_label(new_parent_id);
         let result = agenda
             .move_category_to_parent(category_id, new_parent_id, insert_index)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = format!(
@@ -773,7 +773,7 @@ impl App {
     fn indent_selected_category_under_previous_sibling(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.block_direct_structure_move_while_filtered() {
             return Ok(());
         }
@@ -815,7 +815,7 @@ impl App {
         let new_parent_label = self.category_manager_parent_label(new_parent_id);
         let result = agenda
             .move_category_to_parent(category_id, new_parent_id, None)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = format!(
@@ -829,7 +829,7 @@ impl App {
         &mut self,
         delta: i32,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.block_direct_structure_move_while_filtered() {
             return Ok(());
         }
@@ -876,7 +876,7 @@ impl App {
 
         agenda
             .move_category_within_parent(category_id, delta.signum())
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if delta < 0 {
@@ -891,7 +891,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         let Some(action) = self.category_manager_inline_action().cloned() else {
             return Ok(false);
         };
@@ -973,7 +973,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc | KeyCode::Char('w') => {
                 self.workflow_setup_open = false;
@@ -1023,7 +1023,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         self.ensure_category_manager_session();
         if self.handle_category_manager_inline_action_key(code, agenda)? {
             return Ok(false);
@@ -1233,7 +1233,7 @@ impl App {
     pub(crate) fn toggle_selected_category_exclusive(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             return Ok(());
@@ -1245,12 +1245,12 @@ impl App {
         let mut category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         category.is_exclusive = !category.is_exclusive;
         let updated = category.clone();
         let result = agenda
             .update_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
@@ -1263,7 +1263,7 @@ impl App {
     pub(crate) fn toggle_selected_category_implicit(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             return Ok(());
@@ -1275,12 +1275,12 @@ impl App {
         let mut category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         category.enable_implicit_string = !category.enable_implicit_string;
         let updated = category.clone();
         let result = agenda
             .update_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
@@ -1296,7 +1296,7 @@ impl App {
     pub(crate) fn toggle_selected_category_actionable(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             return Ok(());
@@ -1308,12 +1308,12 @@ impl App {
         let mut category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         category.is_actionable = !category.is_actionable;
         let updated = category.clone();
         let result = agenda
             .update_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
@@ -1326,7 +1326,7 @@ impl App {
     pub(crate) fn toggle_selected_category_ready_queue_role(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             return Ok(());
@@ -1342,7 +1342,7 @@ impl App {
         let category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         let mut workflow = self.workflow_config.clone();
         let previous_ready_category_name = workflow
             .ready_category_id
@@ -1368,7 +1368,7 @@ impl App {
         agenda
             .store()
             .set_workflow_config(&workflow)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if enabled {
@@ -1387,7 +1387,7 @@ impl App {
     pub(crate) fn toggle_selected_category_claim_target_role(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
             return Ok(());
@@ -1403,7 +1403,7 @@ impl App {
         let category = agenda
             .store()
             .get_category(category_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         let mut workflow = self.workflow_config.clone();
         let previous_claim_category_name = workflow
             .claim_category_id
@@ -1429,7 +1429,7 @@ impl App {
         agenda
             .store()
             .set_workflow_config(&workflow)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if enabled {

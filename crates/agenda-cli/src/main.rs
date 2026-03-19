@@ -557,7 +557,7 @@ fn run() -> Result<(), String> {
     });
 
     if matches!(&command, Command::Tui) {
-        return agenda_tui::run(&db_path);
+        return agenda_tui::run(&db_path).map_err(|e| e.to_string());
     }
 
     let store = Store::open(&db_path).map_err(|e| e.to_string())?;

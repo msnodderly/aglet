@@ -2,6 +2,9 @@ use crate::*;
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
 const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
+const FOOTER_HEIGHT: u16 = 4;
+const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
+const CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC: u16 = 6;
 
 fn clip_text_for_row(
     text: &str,
@@ -219,7 +222,7 @@ impl App {
                     Constraint::Length(1),
                     Constraint::Length(1),
                     Constraint::Min(1),
-                    Constraint::Length(4),
+                    Constraint::Length(FOOTER_HEIGHT),
                 ])
                 .split(frame.area())
         } else {
@@ -228,7 +231,7 @@ impl App {
                 .constraints([
                     Constraint::Length(1),
                     Constraint::Min(1),
-                    Constraint::Length(4),
+                    Constraint::Length(FOOTER_HEIGHT),
                 ])
                 .split(frame.area())
         };
@@ -1469,12 +1472,11 @@ impl App {
         if !is_numeric_category {
             return None;
         }
-        let info_height = 6;
         let flags_height = 7;
         let details_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(info_height),
+                Constraint::Length(CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC),
                 Constraint::Length(flags_height),
                 Constraint::Min(5),
                 Constraint::Length(2),
@@ -1512,7 +1514,21 @@ impl App {
         match self.mode {
             Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
             Mode::ItemAssignInput => Some("Category> ".to_string()),
-            _ => None,
+            Mode::Normal
+            | Mode::HelpPanel
+            | Mode::InputPanel
+            | Mode::LinkWizard
+            | Mode::ItemAssignPicker
+            | Mode::InspectUnassign
+            | Mode::ViewPicker
+            | Mode::ViewEdit
+            | Mode::ViewDeleteConfirm
+            | Mode::ConfirmDelete
+            | Mode::BoardColumnDeleteConfirm
+            | Mode::CategoryManager
+            | Mode::CategoryDirectEdit
+            | Mode::CategoryColumnPicker
+            | Mode::BoardAddColumnPicker => None,
         }
     }
 
@@ -3083,7 +3099,12 @@ impl App {
                 .active_transient_status_text()
                 .map(str::to_string)
                 .unwrap_or_else(|| self.status.clone()),
-            _ => self.status.clone(),
+            Mode::HelpPanel
+            | Mode::ViewPicker
+            | Mode::ViewEdit
+            | Mode::CategoryManager
+            | Mode::CategoryDirectEdit
+            | Mode::CategoryColumnPicker => self.status.clone(),
         }
     }
 
@@ -3196,12 +3217,12 @@ impl App {
                         ("Ctrl-L", "reload"), ("Ctrl-R", "auto-refresh"), ("q", "quit"),
                     ]);
                 }
-                if !self.undo_stack.is_empty() {
+                if self.undo.has_undo() {
                     // Insert undo hint near the front (after primary action keys)
                     let insert_pos = hints.len().min(4);
                     hints.insert(insert_pos, ("Ctrl-Z", "undo"));
                 }
-                if !self.redo_stack.is_empty() {
+                if self.undo.has_redo() {
                     // Insert redo hint right after undo
                     let undo_pos = hints.iter().position(|h| h.0 == "Ctrl-Z");
                     let insert_pos = undo_pos.map(|p| p + 1).unwrap_or_else(|| hints.len().min(5));
@@ -4061,7 +4082,11 @@ impl App {
                     NumericFormat::default()
                 };
                 let integer_mode = is_numeric_category && numeric_format.decimal_places == 0;
-                let info_height = if is_numeric_category { 6 } else { 5 };
+                let info_height = if is_numeric_category {
+                    CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC
+                } else {
+                    CATEGORY_DETAILS_INFO_HEIGHT
+                };
                 let is_ready_queue_role = self.selected_category_is_ready_queue_role();
                 let is_claim_target_role = self.selected_category_is_claim_target_role();
                 let workflow_role_height: u16 =

@@ -576,7 +576,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         // Layer 1: inline text input intercepts all keys.
         if self
             .view_edit_state
@@ -629,7 +629,7 @@ impl App {
     fn handle_view_edit_section_delete_confirm_key(
         &mut self,
         code: KeyCode,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
                 self.confirm_view_edit_section_delete();
@@ -649,7 +649,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
                 // Save and close
@@ -686,7 +686,7 @@ impl App {
     // Layer 1: inline text input
     // -------------------------------------------------------------------------
 
-    fn handle_view_edit_inline_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_inline_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
@@ -818,7 +818,7 @@ impl App {
     // Layer 2: picker overlay
     // -------------------------------------------------------------------------
 
-    fn handle_view_edit_overlay_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_overlay_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
@@ -962,7 +962,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         // Global keys first
         match code {
             KeyCode::Esc => {
@@ -1051,7 +1051,7 @@ impl App {
         }
     }
 
-    fn handle_view_edit_save(&mut self, agenda: &Agenda<'_>) -> Result<bool, String> {
+    fn handle_view_edit_save(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
         let Some((draft, is_new_view)) = self
             .view_edit_state
             .as_ref()
@@ -1090,7 +1090,7 @@ impl App {
     // Criteria region
     // -------------------------------------------------------------------------
 
-    fn handle_view_edit_criteria_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_criteria_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
@@ -1227,7 +1227,7 @@ impl App {
     // Sections region
     // -------------------------------------------------------------------------
 
-    fn handle_view_edit_section_details_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_section_details_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         let field_count = 7usize;
         let section_index = self
             .view_edit_state
@@ -1281,7 +1281,7 @@ impl App {
         Ok(true)
     }
 
-    fn handle_view_edit_sections_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_sections_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
@@ -1519,7 +1519,7 @@ impl App {
     // Unmatched region
     // -------------------------------------------------------------------------
 
-    fn handle_view_edit_preview_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_preview_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -1536,7 +1536,7 @@ impl App {
         Ok(true)
     }
 
-    fn handle_view_edit_unmatched_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    fn handle_view_edit_unmatched_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 let current = self

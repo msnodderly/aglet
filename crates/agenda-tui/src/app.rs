@@ -64,10 +64,10 @@ impl App {
         });
     }
 
-    pub(crate) fn load_auto_refresh_interval(&mut self, store: &Store) -> Result<(), String> {
+    pub(crate) fn load_auto_refresh_interval(&mut self, store: &Store) -> TuiResult<()> {
         let persisted = store
             .get_app_setting(Self::AUTO_REFRESH_SETTING_KEY)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.auto_refresh_interval = persisted
             .as_deref()
             .and_then(AutoRefreshInterval::from_persisted_value)
@@ -76,19 +76,18 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn persist_auto_refresh_interval(&self, store: &Store) -> Result<(), String> {
-        store
-            .set_app_setting(
-                Self::AUTO_REFRESH_SETTING_KEY,
-                self.auto_refresh_interval.persisted_value(),
-            )
-            .map_err(|e| e.to_string())
+    pub(crate) fn persist_auto_refresh_interval(&self, store: &Store) -> TuiResult<()> {
+        store.set_app_setting(
+            Self::AUTO_REFRESH_SETTING_KEY,
+            self.auto_refresh_interval.persisted_value(),
+        )?;
+        Ok(())
     }
 
-    pub(crate) fn load_last_view_name(&mut self, store: &Store) -> Result<(), String> {
+    pub(crate) fn load_last_view_name(&mut self, store: &Store) -> TuiResult<()> {
         let persisted = store
             .get_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY)
-            .map_err(|e| e.to_string())?;
+            ?;
         if let Some(view_name) = persisted {
             if let Some(index) = self
                 .views
@@ -101,16 +100,16 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn persist_last_view_name(&self, store: &Store) -> Result<(), String> {
+    pub(crate) fn persist_last_view_name(&self, store: &Store) -> TuiResult<()> {
         if let Some(view_name) = &self.active_view_name {
             store
                 .set_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY, view_name)
-                .map_err(|e| e.to_string())?;
+                ?;
         }
         Ok(())
     }
 
-    pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> Result<(), String> {
+    pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> TuiResult<()> {
         if self.should_auto_refresh_now() {
             self.refresh(store)?;
             self.auto_refresh_last_tick = Instant::now();
@@ -157,7 +156,7 @@ impl App {
         &mut self,
         terminal: &mut TuiTerminal,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         self.refresh(agenda.store())?;
         self.load_last_view_name(agenda.store())?;
         self.refresh(agenda.store())?; // re-resolve slots for the restored view
@@ -168,14 +167,14 @@ impl App {
             self.clear_expired_transient_status();
             terminal
                 .draw(|frame| self.draw(frame))
-                .map_err(|e| e.to_string())?;
+                ?;
 
-            if !event::poll(std::time::Duration::from_millis(200)).map_err(|e| e.to_string())? {
+            if !event::poll(std::time::Duration::from_millis(200))? {
                 self.maybe_run_auto_refresh(agenda.store())?;
                 continue;
             }
 
-            let Event::Key(key) = event::read().map_err(|e| e.to_string())? else {
+            let Event::Key(key) = event::read()? else {
                 continue;
             };
             if key.kind != KeyEventKind::Press {
@@ -202,11 +201,11 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn refresh(&mut self, store: &Store) -> Result<(), String> {
-        self.views = store.list_views().map_err(|e| e.to_string())?;
-        self.workflow_config = store.get_workflow_config().map_err(|e| e.to_string())?;
-        if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
-            let ready_queue_view = build_ready_queue_view(store, workflow).map_err(|e| e.to_string())?;
+    pub(crate) fn refresh(&mut self, store: &Store) -> TuiResult<()> {
+        self.views = store.list_views()?;
+        self.workflow_config = store.get_workflow_config()?;
+        if let Some(workflow) = resolve_workflow_config(store)? {
+            let ready_queue_view = build_ready_queue_view(store, workflow)?;
             let insert_at = self
                 .views
                 .iter()
@@ -225,7 +224,7 @@ impl App {
                 self.view_index = index;
             }
         }
-        self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+        self.categories = store.get_hierarchy()?;
         self.category_rows = build_category_rows(&self.categories);
         if let Some(category_id) = self
             .category_manager
@@ -248,7 +247,7 @@ impl App {
             self.rebuild_category_manager_visible_rows();
         }
         self.sync_category_manager_state_from_selection();
-        let items = store.list_items().map_err(|e| e.to_string())?;
+        let items = store.list_items()?;
         self.all_items = items.clone();
         self.category_assignment_counts.clear();
         for item in &items {
@@ -261,13 +260,13 @@ impl App {
             let links = agenda_core::model::ItemLinksForItem {
                 depends_on: store
                     .list_dependency_ids_for_item(item.id)
-                    .map_err(|e| e.to_string())?,
+                    ?,
                 blocks: store
                     .list_dependent_ids_for_item(item.id)
-                    .map_err(|e| e.to_string())?,
+                    ?,
                 related: store
                     .list_related_ids_for_item(item.id)
-                    .map_err(|e| e.to_string())?,
+                    ?,
             };
             self.item_links_by_item_id.insert(item.id, links);
         }
@@ -291,9 +290,9 @@ impl App {
                 .ok_or("No active view".to_string())?;
             let reference_date = Local::now().date_naive();
             let view_items = if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
+                if let Some(workflow) = resolve_workflow_config(store)? {
                     let claimable_ids =
-                        claimable_item_ids(store, &items, workflow).map_err(|e| e.to_string())?;
+                        claimable_item_ids(store, &items, workflow)?;
                     items
                         .iter()
                         .filter(|item| claimable_ids.contains(&item.id))
@@ -534,7 +533,7 @@ impl App {
         &mut self,
         delta: i32,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if self.slots.len() < 2 {
             return Ok(());
         }
@@ -579,17 +578,14 @@ impl App {
         item_id: ItemId,
         view: &View,
         context: &SlotContext,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         match context {
             SlotContext::Section { section_index } => {
                 let section = view
                     .sections
                     .get(*section_index)
                     .ok_or("Section not found".to_string())?;
-                agenda
-                    .remove_item_from_section(item_id, section)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
+                agenda.remove_item_from_section(item_id, section)?;
             }
             SlotContext::GeneratedSection {
                 section_index,
@@ -602,16 +598,13 @@ impl App {
                     .cloned()
                     .ok_or("Section not found".to_string())?;
                 temp.on_remove_unassign = on_remove_unassign.clone();
-                agenda
-                    .remove_item_from_section(item_id, &temp)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
+                agenda.remove_item_from_section(item_id, &temp)?;
             }
-            SlotContext::Unmatched => agenda
-                .remove_item_from_unmatched(item_id, view)
-                .map(|_| ())
-                .map_err(|e| e.to_string()),
+            SlotContext::Unmatched => {
+                agenda.remove_item_from_unmatched(item_id, view)?;
+            }
         }
+        Ok(())
     }
 
     pub(crate) fn insert_into_context(
@@ -620,17 +613,14 @@ impl App {
         item_id: ItemId,
         view: &View,
         context: &SlotContext,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         match context {
             SlotContext::Section { section_index } => {
                 let section = view
                     .sections
                     .get(*section_index)
                     .ok_or("Section not found".to_string())?;
-                agenda
-                    .insert_item_in_section(item_id, view, section)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
+                agenda.insert_item_in_section(item_id, view, section)?;
             }
             SlotContext::GeneratedSection {
                 section_index,
@@ -644,16 +634,13 @@ impl App {
                     .ok_or("Section not found".to_string())?;
                 temp.on_insert_assign = on_insert_assign.clone();
                 temp.on_remove_unassign = on_remove_unassign.clone();
-                agenda
-                    .insert_item_in_section(item_id, view, &temp)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
+                agenda.insert_item_in_section(item_id, view, &temp)?;
             }
-            SlotContext::Unmatched => agenda
-                .insert_item_in_unmatched(item_id, view)
-                .map(|_| ())
-                .map_err(|e| e.to_string()),
+            SlotContext::Unmatched => {
+                agenda.insert_item_in_unmatched(item_id, view)?;
+            }
         }
+        Ok(())
     }
 
     pub(crate) fn current_slot(&self) -> Option<&Slot> {
@@ -1453,7 +1440,7 @@ impl App {
         }
     }
 
-    pub(crate) fn cycle_view(&mut self, delta: i32, agenda: &Agenda<'_>) -> Result<(), String> {
+    pub(crate) fn cycle_view(&mut self, delta: i32, agenda: &Agenda<'_>) -> TuiResult<()> {
         if self.views.is_empty() {
             self.status = "No views available".to_string();
             return Ok(());
@@ -1473,7 +1460,7 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn jump_to_all_items_view(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    pub(crate) fn jump_to_all_items_view(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(index) = self
             .views
             .iter()
@@ -1499,7 +1486,7 @@ impl App {
     pub(crate) fn begin_global_search_session(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(index) = self
             .views
             .iter()
@@ -1537,7 +1524,7 @@ impl App {
     pub(crate) fn restore_global_search_session(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(session) = self.global_search_session.take() else {
             return Ok(());
         };

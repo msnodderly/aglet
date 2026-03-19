@@ -1,3 +1,4 @@
+use agenda_core::error::AgendaError;
 use crate::*;
 
 /// Cycle: integer → 1dp → 2dp → 2dp+thousands → currency (2dp+thousands+$) → integer
@@ -326,8 +327,8 @@ impl App {
         }
     }
 
-    fn refresh_category_cache(&mut self, store: &Store) -> Result<(), String> {
-        self.categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    fn refresh_category_cache(&mut self, store: &Store) -> TuiResult<()> {
+        self.categories = store.get_hierarchy()?;
         self.category_rows = build_category_rows(&self.categories);
         self.category_index = self
             .category_index
@@ -396,7 +397,7 @@ impl App {
     fn resolve_active_category_direct_edit_row(
         &mut self,
         category_id: CategoryId,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         let Some(cat_name) = self
             .categories
             .iter()
@@ -428,7 +429,7 @@ impl App {
         Ok(true)
     }
 
-    fn resolve_active_row_from_highlighted_suggestion(&mut self) -> Result<bool, String> {
+    fn resolve_active_row_from_highlighted_suggestion(&mut self) -> TuiResult<bool> {
         let matches = self.get_current_suggest_matches();
         let Some(state) = self.category_direct_edit_state() else {
             return Ok(false);
@@ -540,7 +541,7 @@ impl App {
     fn current_board_add_column_anchor(
         &self,
         direction: AddColumnDirection,
-    ) -> Result<BoardAddColumnAnchor, String> {
+    ) -> TuiResult<BoardAddColumnAnchor> {
         let slot = self
             .current_slot()
             .ok_or("No active board slot".to_string())?;
@@ -548,7 +549,7 @@ impl App {
             SlotContext::Section { section_index } => (section_index, false),
             SlotContext::GeneratedSection { section_index, .. } => (section_index, true),
             SlotContext::Unmatched => {
-                return Err("Cannot add columns from unmatched lane".to_string());
+                return Err("Cannot add columns from unmatched lane".into());
             }
         };
         let view = self
@@ -559,7 +560,7 @@ impl App {
             .get(section_index)
             .ok_or("Current section not found".to_string())?;
         if self.column_index > section.columns.len() {
-            return Err("Current column is out of range".to_string());
+            return Err("Current column is out of range".into());
         }
         let item_column_index = Self::section_item_column_index(section);
         let current_section_column_index = if self.column_index == item_column_index {
@@ -878,7 +879,7 @@ impl App {
     pub(crate) fn open_board_add_column_picker(
         &mut self,
         direction: AddColumnDirection,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let anchor = self.current_board_add_column_anchor(direction)?;
         self.mode = Mode::BoardAddColumnPicker;
         self.board_add_column = Some(BoardAddColumnState {
@@ -968,15 +969,15 @@ impl App {
         &mut self,
         agenda: &Agenda<'_>,
         category_id: CategoryId,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(add_state) = self.board_add_column_state().cloned() else {
             return Ok(());
         };
         let Some(mut view) = self.current_view().cloned() else {
-            return Err("No active view".to_string());
+            return Err("No active view".into());
         };
         let Some(section) = view.sections.get_mut(add_state.anchor.section_index) else {
-            return Err("Current section not found".to_string());
+            return Err("Current section not found".into());
         };
 
         if section.columns.iter().any(|col| col.heading == category_id) {
@@ -1036,7 +1037,7 @@ impl App {
         agenda
             .store()
             .update_view(&view)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.clear_board_add_column_session();
         self.mode = Mode::Normal;
         self.refresh(agenda.store())?;
@@ -1070,7 +1071,7 @@ impl App {
         &mut self,
         target_board_index: usize,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(slot) = self.current_slot() else {
             self.status = "No active board slot".to_string();
             return Ok(());
@@ -1084,10 +1085,10 @@ impl App {
             }
         };
         let Some(mut view) = self.current_view().cloned() else {
-            return Err("No active view".to_string());
+            return Err("No active view".into());
         };
         let Some(section) = view.sections.get_mut(section_index) else {
-            return Err("Current section not found".to_string());
+            return Err("Current section not found".into());
         };
         if self.column_index > section.columns.len() {
             self.status = "Current column is out of range".to_string();
@@ -1157,7 +1158,7 @@ impl App {
         agenda
             .store()
             .update_view(&view)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
@@ -1189,7 +1190,7 @@ impl App {
         &mut self,
         delta: i32,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(slot) = self.current_slot() else {
             self.status = "No active board slot".to_string();
             return Ok(());
@@ -1258,7 +1259,7 @@ impl App {
         self.status = format!("WARNING: Delete column '{label}' from this section? [Y/n]");
     }
 
-    fn remove_current_board_column(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn remove_current_board_column(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(slot) = self.current_slot() else {
             self.status = "No active board slot".to_string();
             return Ok(());
@@ -1272,10 +1273,10 @@ impl App {
             }
         };
         let Some(mut view) = self.current_view().cloned() else {
-            return Err("No active view".to_string());
+            return Err("No active view".into());
         };
         let Some(section) = view.sections.get_mut(section_index) else {
-            return Err("Current section not found".to_string());
+            return Err("Current section not found".into());
         };
         let item_board_index = Self::section_item_column_index(section);
         if self.column_index == item_board_index {
@@ -1308,7 +1309,7 @@ impl App {
         agenda
             .store()
             .update_view(&view)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         if let Some(item_id) = selected_item_id {
@@ -1323,7 +1324,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
                 self.board_pending_delete_column_label = None;
@@ -1346,7 +1347,7 @@ impl App {
     fn confirm_inline_create_board_add_column(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(name) = self
             .board_add_column_create_confirm_name()
             .map(str::to_string)
@@ -1358,7 +1359,7 @@ impl App {
         let cat_id = category.id;
         agenda
             .create_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh_category_cache(agenda.store())?;
         self.set_board_add_column_create_confirm_name(None);
         self.insert_board_column_for_category(agenda, cat_id)?;
@@ -1623,7 +1624,7 @@ impl App {
     fn confirm_inline_create_category_column_picker(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(name) = self
             .category_column_picker_create_confirm_name()
             .map(str::to_string)
@@ -1641,7 +1642,7 @@ impl App {
         let cat_id = category.id;
         agenda
             .create_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh_category_cache(agenda.store())?;
         if let Some(state) = self.category_column_picker_state_mut() {
             if state.is_exclusive {
@@ -1659,7 +1660,7 @@ impl App {
     fn apply_category_column_picker_selection(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(state) = self.category_column_picker_state().cloned() else {
             return Ok(());
         };
@@ -1689,7 +1690,7 @@ impl App {
         for id in to_remove {
             agenda
                 .unassign_item_manual(item_id, id)
-                .map_err(|e| e.to_string())?;
+                ?;
         }
         for id in to_add {
             agenda
@@ -1698,7 +1699,7 @@ impl App {
                     id,
                     Some("manual:tui.column_picker.multi".to_string()),
                 )
-                .map_err(|e| e.to_string())?;
+                ?;
         }
 
         self.mode = Mode::Normal;
@@ -1720,7 +1721,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         if self.category_column_picker_create_confirm_open() {
             match inline_create_confirm_key_action(code) {
                 InlineCreateConfirmKeyAction::Confirm => {
@@ -1930,7 +1931,7 @@ impl App {
         self.update_suggestions();
     }
 
-    fn assign_selected_suggestion(&mut self, _agenda: &Agenda<'_>) -> Result<(), String> {
+    fn assign_selected_suggestion(&mut self, _agenda: &Agenda<'_>) -> TuiResult<()> {
         self.resolve_active_row_from_highlighted_suggestion()?;
         Ok(())
     }
@@ -1947,7 +1948,7 @@ impl App {
     fn confirm_inline_create_category_direct_edit(
         &mut self,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(name) = self.direct_edit_create_confirm_name().map(str::to_string) else {
             return Ok(());
         };
@@ -1976,7 +1977,7 @@ impl App {
         let cat_id = category.id;
         agenda
             .create_category(&category)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh_category_cache(agenda.store())?;
         self.set_direct_edit_create_confirm_name(None);
         let _ = self.resolve_active_category_direct_edit_row(cat_id)?;
@@ -1984,7 +1985,7 @@ impl App {
         Ok(())
     }
 
-    fn apply_category_direct_edit_draft(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn apply_category_direct_edit_draft(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         if self.direct_edit_create_confirm_open() {
             self.status = "Confirm or cancel category creation before saving".to_string();
             return Ok(());
@@ -2036,7 +2037,7 @@ impl App {
         for id in to_remove {
             agenda
                 .unassign_item_manual(item_id, id)
-                .map_err(|e| e.to_string())?;
+                ?;
         }
         for id in to_add {
             agenda
@@ -2045,7 +2046,7 @@ impl App {
                     id,
                     Some("manual:tui.direct_edit.multi".to_string()),
                 )
-                .map_err(|e| e.to_string())?;
+                ?;
         }
 
         self.mode = Mode::Normal;
@@ -2068,7 +2069,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         if let Some(prefix) = self.normal_mode_prefix.take() {
             match (prefix, code) {
                 (NormalModePrefix::G, KeyCode::Char('a')) => {
@@ -2155,7 +2156,7 @@ impl App {
             }
             KeyCode::Char('+') => {
                 if let Err(err) = self.open_board_add_column_picker(AddColumnDirection::Right) {
-                    self.status = err;
+                    self.status = err.to_string();
                 }
             }
             KeyCode::Char('-') => {
@@ -2313,7 +2314,7 @@ impl App {
                     if let Some(view) = self.current_view().cloned() {
                         agenda
                             .remove_item_from_view(item_id, &view)
-                            .map_err(|e| e.to_string())?;
+                            ?;
                         self.refresh(agenda.store())?;
                         self.status = "Removed item from current view".to_string();
                     }
@@ -2406,18 +2407,18 @@ impl App {
         was_done: bool,
         origin: DoneToggleOrigin,
         clear_blocked_item_ids: &[ItemId],
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         self.push_undo(UndoEntry::ItemDoneToggled { item_id, was_done });
         agenda
             .toggle_item_done(item_id)
-            .map_err(|e| e.to_string())?;
+            ?;
 
         let mut removed_blocker_links = 0usize;
         if !was_done {
             for blocked_id in clear_blocked_item_ids {
                 agenda
                     .unlink_items_blocks(item_id, *blocked_id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 removed_blocker_links += 1;
             }
         }
@@ -2434,7 +2435,7 @@ impl App {
         agenda: &Agenda<'_>,
         item_id: ItemId,
         origin: DoneToggleOrigin,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let was_done = self
             .selected_item()
             .map(|item| item.is_done)
@@ -2476,7 +2477,7 @@ impl App {
         &mut self,
         agenda: &Agenda<'_>,
         origin: DoneToggleOrigin,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let action_item_ids = self.selected_item_ids_in_view_order();
         if action_item_ids.is_empty() {
             self.status = "No selected items to update".to_string();
@@ -2551,7 +2552,7 @@ impl App {
         item_ids: &[ItemId],
         remove_blocking_links: bool,
         origin: DoneToggleOrigin,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         if item_ids.is_empty() {
             self.status = "No selected items to update".to_string();
             self.mode = Self::done_toggle_return_mode(origin);
@@ -2624,7 +2625,7 @@ impl App {
                         for blocked_id in &blocked_ids {
                             agenda
                                 .unlink_items_blocks(*item_id, *blocked_id)
-                                .map_err(|e| e.to_string())?;
+                                ?;
                             removed_links += 1;
                         }
                     }
@@ -2677,7 +2678,7 @@ impl App {
         &mut self,
         preferred_direction: Option<SlotSortDirection>,
         agenda: &Agenda<'_>,
-    ) -> Result<(), String> {
+    ) -> TuiResult<()> {
         let Some(column) = self.current_slot_sort_column() else {
             self.status = "Cannot sort current lane by this column".to_string();
             return Ok(());
@@ -2741,7 +2742,7 @@ impl App {
         Ok(())
     }
 
-    fn cycle_column_summary_fn(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn cycle_column_summary_fn(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let slot = match self.current_slot() {
             Some(s) => s,
             None => return Ok(()),
@@ -2791,13 +2792,13 @@ impl App {
         agenda
             .store()
             .update_view(&view)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.status = format!("Column summary: {}", next.label());
         Ok(())
     }
 
-    fn cycle_column_numeric_format(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn cycle_column_numeric_format(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let slot = match self.current_slot() {
             Some(s) => s,
             None => return Ok(()),
@@ -2846,13 +2847,13 @@ impl App {
         agenda
             .store()
             .update_category(&updated_cat)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.status = format!("Column format: {}", describe_numeric_format(&next));
         Ok(())
     }
 
-    fn cycle_current_board_display_mode(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn cycle_current_board_display_mode(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(mut view) = self.current_view().cloned() else {
             return Ok(());
         };
@@ -2880,7 +2881,7 @@ impl App {
                     next
                 }
             }
-            _ => {
+            None | Some(SlotContext::Unmatched) => {
                 let next = toggle_board_display_mode(view.board_display_mode);
                 view.board_display_mode = next;
                 next
@@ -2891,7 +2892,7 @@ impl App {
         agenda
             .store()
             .update_view(&view)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
@@ -2908,7 +2909,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_current_view_section_flow(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn toggle_current_view_section_flow(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(mut view) = self.current_view().cloned() else {
             return Ok(());
         };
@@ -2925,7 +2926,7 @@ impl App {
         agenda
             .store()
             .update_view(&view)
-            .map_err(|e| e.to_string())?;
+            ?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
@@ -3133,7 +3134,7 @@ impl App {
         mut apply: F,
     ) -> (usize, usize, usize, Option<String>)
     where
-        F: FnMut(ItemId) -> Result<bool, String>,
+        F: FnMut(ItemId) -> Result<bool, AgendaError>,
     {
         let mut created = 0usize;
         let mut skipped = 0usize;
@@ -3147,7 +3148,7 @@ impl App {
                 Err(err) => {
                     failed += 1;
                     if first_error.is_none() {
-                        first_error = Some(err);
+                        first_error = Some(err.to_string());
                     }
                 }
             }
@@ -3156,7 +3157,7 @@ impl App {
         (created, skipped, failed, first_error)
     }
 
-    fn apply_link_wizard(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn apply_link_wizard(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(state) = self.link_wizard_state().cloned() else {
             self.mode = Mode::Normal;
             return Ok(());
@@ -3194,7 +3195,7 @@ impl App {
                         agenda
                             .link_items_depends_on(source_item_id, target_id)
                             .map(|result| result.created)
-                            .map_err(|e| e.to_string())
+                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3242,7 +3243,7 @@ impl App {
                         agenda
                             .link_items_depends_on(source_item_id, target_id)
                             .map(|result| result.created)
-                            .map_err(|e| e.to_string())
+                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3283,7 +3284,7 @@ impl App {
                         agenda
                             .link_items_blocks(source_item_id, target_id)
                             .map(|result| result.created)
-                            .map_err(|e| e.to_string())
+                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3331,7 +3332,7 @@ impl App {
                         agenda
                             .link_items_related(source_item_id, target_id)
                             .map(|result| result.created)
-                            .map_err(|e| e.to_string())
+                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3363,21 +3364,21 @@ impl App {
                 for source_item_id in &source_item_ids {
                     let prereqs = agenda
                         .immediate_prereq_ids(*source_item_id)
-                        .map_err(|e| e.to_string())?;
+                        ?;
                     let dependents = agenda
                         .immediate_dependent_ids(*source_item_id)
-                        .map_err(|e| e.to_string())?;
+                        ?;
                     total_prereqs += prereqs.len();
                     total_dependents += dependents.len();
                     for dependency_id in &prereqs {
                         agenda
                             .unlink_items_depends_on(*source_item_id, *dependency_id)
-                            .map_err(|e| e.to_string())?;
+                            ?;
                     }
                     for blocked_id in &dependents {
                         agenda
                             .unlink_items_blocks(*source_item_id, *blocked_id)
-                            .map_err(|e| e.to_string())?;
+                            ?;
                     }
                 }
                 if source_item_ids.len() > 1 {
@@ -3415,7 +3416,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         let Some(state) = self.link_wizard_state().cloned() else {
             self.mode = Mode::Normal;
             return Ok(false);
@@ -3550,7 +3551,7 @@ impl App {
         Ok(false)
     }
 
-    pub(crate) fn handle_help_panel_key(&mut self, code: KeyCode) -> Result<bool, String> {
+    pub(crate) fn handle_help_panel_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         match code {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
@@ -3564,7 +3565,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         let ctrl_only = key.modifiers.contains(KeyModifiers::CONTROL)
             && !key
                 .modifiers
@@ -3631,7 +3632,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         if self.board_add_column_create_confirm_open() {
             match inline_create_confirm_key_action(code) {
                 InlineCreateConfirmKeyAction::Confirm => {
@@ -3706,7 +3707,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         if self.direct_edit_create_confirm_open() {
             match inline_create_confirm_key_action(code) {
                 InlineCreateConfirmKeyAction::Confirm => {
@@ -3923,7 +3924,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         let Some(_) = &self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
@@ -4122,7 +4123,7 @@ impl App {
     }
 
     /// Save an InputPanel(AddItem) to the store.
-    fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
             return Ok(());
@@ -4145,19 +4146,19 @@ impl App {
         let reference_date = Local::now().date_naive();
         agenda
             .create_item_with_reference_date(&item, reference_date)
-            .map_err(|e| e.to_string())?;
+            ?;
 
         // Set note if provided.
         if note.is_some() {
             let mut loaded = agenda
                 .store()
                 .get_item(item.id)
-                .map_err(|e| e.to_string())?;
+                ?;
             loaded.note = note;
             loaded.modified_at = Utc::now();
             agenda
                 .update_item_with_reference_date(&loaded, reference_date)
-                .map_err(|e| e.to_string())?;
+                ?;
         }
 
         // Assign explicitly selected categories.
@@ -4195,7 +4196,7 @@ impl App {
         let category_names: Vec<String> = agenda
             .store()
             .get_hierarchy()
-            .map_err(|e| e.to_string())?
+            ?
             .into_iter()
             .map(|c| c.name)
             .collect();
@@ -4203,7 +4204,7 @@ impl App {
         let created = agenda
             .store()
             .get_item(item.id)
-            .map_err(|e| e.to_string())?;
+            ?;
 
         self.push_undo(UndoEntry::ItemCreated { item_id: item.id });
         self.refresh(agenda.store())?;
@@ -4215,7 +4216,7 @@ impl App {
     }
 
     /// Save an InputPanel(EditItem) to the store (text, note, and category diff).
-    fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
             return Ok(());
@@ -4243,7 +4244,7 @@ impl App {
         let mut item = agenda
             .store()
             .get_item(item_id)
-            .map_err(|e| e.to_string())?;
+            ?;
         let undo_old_text = item.text.clone();
         let undo_old_note = item.note.clone();
 
@@ -4303,7 +4304,7 @@ impl App {
         let reference_date = Local::now().date_naive();
         agenda
             .update_item_with_reference_date(&item, reference_date)
-            .map_err(|e| e.to_string())?;
+            ?;
 
         // Apply category changes.
         for cat_id in new_categories.difference(&existing_categories) {
@@ -4365,7 +4366,7 @@ impl App {
     fn parse_when_datetime_input_with_reference_date(
         input: &str,
         reference_date: chrono::NaiveDate,
-    ) -> Result<Option<NaiveDateTime>, String> {
+    ) -> TuiResult<Option<NaiveDateTime>> {
         use agenda_core::dates::DateParser;
 
         let trimmed = input.trim();
@@ -4392,20 +4393,18 @@ impl App {
             return Ok(Some(parsed.datetime));
         }
 
-        Err(
-            format!(
-                "Could not parse date/time from '{}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional 'at 3pm'/'at 15:00'/'at noon'). 'last week' and 'next week' are not supported yet.",
-                trimmed,
-            ),
-        )
+        Err(format!(
+            "Could not parse date/time from '{}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional 'at 3pm'/'at 15:00'/'at noon'). 'last week' and 'next week' are not supported yet.",
+            trimmed,
+        ).into())
     }
 
-    fn parse_when_datetime_input(input: &str) -> Result<Option<NaiveDateTime>, String> {
+    fn parse_when_datetime_input(input: &str) -> TuiResult<Option<NaiveDateTime>> {
         Self::parse_when_datetime_input_with_reference_date(input, Utc::now().date_naive())
     }
 
     /// Save an InputPanel(NameInput) — dispatches on name_input_context.
-    fn save_input_panel_name(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn save_input_panel_name(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let input_text = self
             .input_panel
             .as_ref()
@@ -4611,9 +4610,9 @@ impl App {
 
                 let parsed_when = match Self::parse_when_datetime_input(&input_text) {
                     Ok(value) => value,
-                    Err(message) => {
+                    Err(err) => {
                         self.when_edit_target = Some(target);
-                        self.status = message;
+                        self.status = err.to_string();
                         return Ok(());
                     }
                 };
@@ -4662,7 +4661,7 @@ impl App {
     }
 
     /// Save an InputPanel(CategoryCreate) — creates a new category.
-    fn save_input_panel_category_create(&mut self, agenda: &Agenda<'_>) -> Result<(), String> {
+    fn save_input_panel_category_create(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = self.name_input_return_mode();
             self.name_input_context = None;
@@ -4701,7 +4700,7 @@ impl App {
         category.parent = parent_id;
         category.value_kind = value_kind;
 
-        match agenda.create_category(&category).map_err(|e| e.to_string()) {
+        match agenda.create_category(&category) {
             Ok(result) => {
                 self.refresh(agenda.store())?;
                 self.set_category_selection_by_id(category.id);
@@ -4725,7 +4724,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc => {
                 let clear_selection = self.item_assign_dirty && self.has_selected_items();
@@ -4884,7 +4883,7 @@ impl App {
                 } else {
                     let result = agenda
                         .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
-                        .map_err(|e| e.to_string())?;
+                        ?;
                     self.push_undo(UndoEntry::CategoryAssigned {
                         item_id,
                         category_id: row.id,
@@ -4920,7 +4919,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::ItemAssignPicker;
@@ -4975,7 +4974,7 @@ impl App {
                         agenda
                             .store()
                             .create_category(&category)
-                            .map_err(|e| e.to_string())?;
+                            ?;
                         created_new_category = true;
                         (category_id, category.name)
                     };
@@ -4988,7 +4987,7 @@ impl App {
                     let item = agenda
                         .store()
                         .get_item(*action_item_id)
-                        .map_err(|e| e.to_string())?;
+                        ?;
                     if item.assignments.contains_key(&category_id) {
                         already_had += 1;
                         continue;
@@ -5075,7 +5074,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         let rows = self
             .selected_item()
             .map(|item| self.inspect_assignment_rows_for_item(item))
@@ -5112,7 +5111,7 @@ impl App {
 
                 agenda
                     .unassign_item_manual(item_id, row.category_id)
-                    .map_err(|e| e.to_string())?;
+                    ?;
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
                 self.mode = Mode::Normal;
@@ -5128,7 +5127,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc => {
                 if self.global_search_active() {
@@ -5801,13 +5800,14 @@ mod tests {
         let reference = NaiveDate::from_ymd_opt(2026, 2, 16).expect("valid date");
         let err = App::parse_when_datetime_input_with_reference_date("next weem", reference)
             .expect_err("invalid phrase should return error");
+        let err_msg = err.to_string();
         assert!(
-            err.contains("Could not parse date/time"),
-            "unexpected parse error: {err}"
+            err_msg.contains("Could not parse date/time"),
+            "unexpected parse error: {err_msg}"
         );
         assert!(
-            err.contains("next weem"),
-            "error should echo invalid input for debugging: {err}"
+            err_msg.contains("next weem"),
+            "error should echo invalid input for debugging: {err_msg}"
         );
     }
 }

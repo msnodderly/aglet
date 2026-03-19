@@ -5,13 +5,28 @@ impl App {
         &mut self,
         key: KeyEvent,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         self.clear_expired_transient_status();
         self.clear_transient_status_on_key(key);
         self.current_key_modifiers = key.modifiers;
         let handled = match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
-            _ => {
+            Mode::HelpPanel
+            | Mode::InputPanel
+            | Mode::LinkWizard
+            | Mode::ItemAssignPicker
+            | Mode::ItemAssignInput
+            | Mode::InspectUnassign
+            | Mode::SearchBarFocused
+            | Mode::ViewPicker
+            | Mode::ViewEdit
+            | Mode::ViewDeleteConfirm
+            | Mode::ConfirmDelete
+            | Mode::BoardColumnDeleteConfirm
+            | Mode::CategoryManager
+            | Mode::CategoryDirectEdit
+            | Mode::CategoryColumnPicker
+            | Mode::BoardAddColumnPicker => {
                 self.normal_mode_prefix = None;
                 self.handle_key(key.code, agenda)
             }
@@ -24,7 +39,7 @@ impl App {
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
-    ) -> Result<bool, String> {
+    ) -> TuiResult<bool> {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::HelpPanel => self.handle_help_panel_key(code),
