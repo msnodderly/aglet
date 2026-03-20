@@ -46,7 +46,8 @@ impl App {
                 .into_iter()
                 .filter_map(|item| {
                     item.assignments.get(&category_id).and_then(|assignment| {
-                        (assignment.source == AssignmentSource::AutoMatch
+                        ((assignment.source == AssignmentSource::AutoMatch
+                            || assignment.source == AssignmentSource::AutoClassified)
                             && assignment.origin.as_deref() == Some(implicit_origin.as_str()))
                         .then_some(item.id)
                     })

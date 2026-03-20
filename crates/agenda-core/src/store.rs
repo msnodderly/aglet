@@ -8,6 +8,10 @@ use rust_decimal::Decimal;
 use serde_json;
 use uuid::Uuid;
 
+use crate::classification::{
+    CandidateAssignment, ClassificationConfig, ClassificationSuggestion, SuggestionStatus,
+    CLASSIFICATION_CONFIG_KEY,
+};
 use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
@@ -17,7 +21,7 @@ use crate::model::{
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -132,6 +136,28 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS classification_suggestions (
+    id                 TEXT PRIMARY KEY,
+    item_id            TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    kind               TEXT NOT NULL,
+    category_id        TEXT,
+    when_value         TEXT,
+    provider_id        TEXT NOT NULL,
+    model              TEXT,
+    confidence         REAL,
+    rationale          TEXT,
+    status             TEXT NOT NULL,
+    context_hash       TEXT NOT NULL,
+    item_revision_hash TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    decided_at         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_classification_suggestions_item_id
+    ON classification_suggestions (item_id);
+CREATE INDEX IF NOT EXISTS idx_classification_suggestions_status
+    ON classification_suggestions (status);
 ";
 
 pub struct Store {
@@ -196,6 +222,162 @@ impl Store {
             return Ok(WorkflowConfig::default());
         };
         Ok(serde_json::from_str(&raw).unwrap_or_default())
+    }
+
+    pub fn set_classification_config(&self, config: &ClassificationConfig) -> Result<()> {
+        let body = serde_json::to_string(config).map_err(|err| AgendaError::StorageError {
+            source: Box::new(err),
+        })?;
+        self.set_app_setting(CLASSIFICATION_CONFIG_KEY, &body)
+    }
+
+    pub fn get_classification_config(&self) -> Result<ClassificationConfig> {
+        let Some(raw) = self.get_app_setting(CLASSIFICATION_CONFIG_KEY)? else {
+            return Ok(ClassificationConfig::default());
+        };
+        Ok(serde_json::from_str(&raw).unwrap_or_default())
+    }
+
+    pub fn get_classification_suggestion(
+        &self,
+        suggestion_id: Uuid,
+    ) -> Result<Option<ClassificationSuggestion>> {
+        self.conn
+            .query_row(
+                "SELECT id, item_id, kind, category_id, when_value, provider_id, model,
+                        confidence, rationale, status, context_hash, item_revision_hash,
+                        created_at, decided_at
+                 FROM classification_suggestions
+                 WHERE id = ?1",
+                params![suggestion_id.to_string()],
+                Self::row_to_classification_suggestion,
+            )
+            .optional()
+            .map_err(AgendaError::from)
+    }
+
+    pub fn list_pending_suggestions(&self) -> Result<Vec<ClassificationSuggestion>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, kind, category_id, when_value, provider_id, model,
+                    confidence, rationale, status, context_hash, item_revision_hash,
+                    created_at, decided_at
+             FROM classification_suggestions
+             WHERE status = 'pending'
+             ORDER BY created_at ASC, id ASC",
+        )?;
+        let suggestions = stmt
+            .query_map([], Self::row_to_classification_suggestion)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AgendaError::from)?;
+        Ok(suggestions)
+    }
+
+    pub fn list_pending_suggestions_for_item(
+        &self,
+        item_id: ItemId,
+    ) -> Result<Vec<ClassificationSuggestion>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, kind, category_id, when_value, provider_id, model,
+                    confidence, rationale, status, context_hash, item_revision_hash,
+                    created_at, decided_at
+             FROM classification_suggestions
+             WHERE item_id = ?1 AND status = 'pending'
+             ORDER BY created_at ASC, id ASC",
+        )?;
+        let suggestions = stmt
+            .query_map(
+                params![item_id.to_string()],
+                Self::row_to_classification_suggestion,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AgendaError::from)?;
+        Ok(suggestions)
+    }
+
+    pub fn upsert_suggestion(&self, suggestion: &ClassificationSuggestion) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO classification_suggestions (
+                id, item_id, kind, category_id, when_value, provider_id, model, confidence,
+                rationale, status, context_hash, item_revision_hash, created_at, decided_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET
+                item_id = excluded.item_id,
+                kind = excluded.kind,
+                category_id = excluded.category_id,
+                when_value = excluded.when_value,
+                provider_id = excluded.provider_id,
+                model = excluded.model,
+                confidence = excluded.confidence,
+                rationale = excluded.rationale,
+                status = excluded.status,
+                context_hash = excluded.context_hash,
+                item_revision_hash = excluded.item_revision_hash,
+                created_at = excluded.created_at,
+                decided_at = excluded.decided_at",
+            params![
+                suggestion.id.to_string(),
+                suggestion.item_id.to_string(),
+                suggestion.assignment.kind(),
+                suggestion.assignment.category_id().map(|id| id.to_string()),
+                suggestion
+                    .assignment
+                    .when_value()
+                    .map(|value| value.to_string()),
+                suggestion.provider_id,
+                suggestion.model,
+                suggestion.confidence,
+                suggestion.rationale,
+                suggestion_status_label(suggestion.status),
+                suggestion.context_hash,
+                suggestion.item_revision_hash,
+                suggestion.created_at.to_rfc3339(),
+                suggestion.decided_at.map(|value| value.to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_suggestion_status(
+        &self,
+        suggestion_id: Uuid,
+        status: SuggestionStatus,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE classification_suggestions
+             SET status = ?2,
+                 decided_at = CASE
+                     WHEN ?2 IN ('accepted', 'rejected', 'superseded') THEN ?3
+                     ELSE decided_at
+                 END
+             WHERE id = ?1",
+            params![
+                suggestion_id.to_string(),
+                suggestion_status_label(status),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn supersede_suggestions_for_item_revision(
+        &self,
+        item_id: ItemId,
+        new_revision_hash: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE classification_suggestions
+             SET status = 'superseded',
+                 decided_at = ?3
+             WHERE item_id = ?1
+               AND status = 'pending'
+               AND item_revision_hash <> ?2",
+            params![
+                item_id.to_string(),
+                new_revision_hash,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
     }
 
     // ── Item CRUD ──────────────────────────────────────────────
@@ -1026,13 +1208,7 @@ impl Store {
         for row in rows {
             let (cat_str, source_str, assigned_str, sticky_int, origin, numeric_value_str) = row?;
             let cat_id = Uuid::parse_str(&cat_str).unwrap_or_default();
-            let source = match source_str.as_str() {
-                "Manual" => AssignmentSource::Manual,
-                "AutoMatch" => AssignmentSource::AutoMatch,
-                "Action" => AssignmentSource::Action,
-                "Subsumption" => AssignmentSource::Subsumption,
-                _ => AssignmentSource::Manual,
-            };
+            let source = assignment_source_from_db(&source_str);
             let assigned_at = DateTime::parse_from_rfc3339(&assigned_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_default();
@@ -1049,6 +1225,56 @@ impl Store {
             );
         }
         Ok(item)
+    }
+
+    fn row_to_classification_suggestion(
+        row: &Row<'_>,
+    ) -> rusqlite::Result<ClassificationSuggestion> {
+        let id: String = row.get(0)?;
+        let item_id: String = row.get(1)?;
+        let kind: String = row.get(2)?;
+        let category_id: Option<String> = row.get(3)?;
+        let when_value: Option<String> = row.get(4)?;
+        let status: String = row.get(9)?;
+        let created_at: String = row.get(12)?;
+        let decided_at: Option<String> = row.get(13)?;
+
+        let assignment = match kind.as_str() {
+            "category" => CandidateAssignment::Category(
+                category_id
+                    .and_then(|value| Uuid::parse_str(&value).ok())
+                    .unwrap_or_default(),
+            ),
+            "when" => CandidateAssignment::When(
+                when_value
+                    .and_then(|value| {
+                        NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M:%S").ok()
+                    })
+                    .unwrap_or_default(),
+            ),
+            _ => CandidateAssignment::When(NaiveDateTime::default()),
+        };
+
+        Ok(ClassificationSuggestion {
+            id: Uuid::parse_str(&id).unwrap_or_default(),
+            item_id: Uuid::parse_str(&item_id).unwrap_or_default(),
+            assignment,
+            provider_id: row.get(5)?,
+            model: row.get(6)?,
+            confidence: row.get(7)?,
+            rationale: row.get(8)?,
+            status: suggestion_status_from_db(&status),
+            context_hash: row.get(10)?,
+            item_revision_hash: row.get(11)?,
+            created_at: DateTime::parse_from_rfc3339(&created_at)
+                .map(|value| value.with_timezone(&Utc))
+                .unwrap_or_default(),
+            decided_at: decided_at.and_then(|value| {
+                DateTime::parse_from_rfc3339(&value)
+                    .ok()
+                    .map(|parsed| parsed.with_timezone(&Utc))
+            }),
+        })
     }
 
     fn row_to_view(row: &Row<'_>) -> rusqlite::Result<View> {
@@ -1309,19 +1535,13 @@ impl Store {
         category_id: CategoryId,
         assignment: &Assignment,
     ) -> Result<()> {
-        let source_str = match assignment.source {
-            AssignmentSource::Manual => "Manual",
-            AssignmentSource::AutoMatch => "AutoMatch",
-            AssignmentSource::Action => "Action",
-            AssignmentSource::Subsumption => "Subsumption",
-        };
         self.conn.execute(
             "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, numeric_value)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 item_id.to_string(),
                 category_id.to_string(),
-                source_str,
+                assignment_source_label(assignment.source),
                 assignment.assigned_at.to_rfc3339(),
                 assignment.sticky as i32,
                 assignment.origin,
@@ -1898,6 +2118,32 @@ impl Store {
                 "#,
             )?;
         }
+        if from_version < 11 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS classification_suggestions (
+                    id                 TEXT PRIMARY KEY,
+                    item_id            TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    kind               TEXT NOT NULL,
+                    category_id        TEXT,
+                    when_value         TEXT,
+                    provider_id        TEXT NOT NULL,
+                    model              TEXT,
+                    confidence         REAL,
+                    rationale          TEXT,
+                    status             TEXT NOT NULL,
+                    context_hash       TEXT NOT NULL,
+                    item_revision_hash TEXT NOT NULL,
+                    created_at         TEXT NOT NULL,
+                    decided_at         TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_classification_suggestions_item_id
+                    ON classification_suggestions (item_id);
+                CREATE INDEX IF NOT EXISTS idx_classification_suggestions_status
+                    ON classification_suggestions (status);
+                "#,
+            )?;
+        }
 
         if from_version < 3 {
             // Inject kind field into existing columns_json.
@@ -1958,9 +2204,54 @@ impl Store {
     }
 }
 
+fn assignment_source_from_db(source: &str) -> AssignmentSource {
+    match source {
+        "Manual" => AssignmentSource::Manual,
+        "AutoMatch" => AssignmentSource::AutoMatch,
+        "AutoClassified" => AssignmentSource::AutoClassified,
+        "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
+        "Action" => AssignmentSource::Action,
+        "Subsumption" => AssignmentSource::Subsumption,
+        _ => AssignmentSource::Manual,
+    }
+}
+
+fn assignment_source_label(source: AssignmentSource) -> &'static str {
+    match source {
+        AssignmentSource::Manual => "Manual",
+        AssignmentSource::AutoMatch => "AutoMatch",
+        AssignmentSource::AutoClassified => "AutoClassified",
+        AssignmentSource::SuggestionAccepted => "SuggestionAccepted",
+        AssignmentSource::Action => "Action",
+        AssignmentSource::Subsumption => "Subsumption",
+    }
+}
+
+fn suggestion_status_from_db(status: &str) -> SuggestionStatus {
+    match status {
+        "pending" => SuggestionStatus::Pending,
+        "accepted" => SuggestionStatus::Accepted,
+        "rejected" => SuggestionStatus::Rejected,
+        "superseded" => SuggestionStatus::Superseded,
+        _ => SuggestionStatus::Pending,
+    }
+}
+
+fn suggestion_status_label(status: SuggestionStatus) -> &'static str {
+    match status {
+        SuggestionStatus::Pending => "pending",
+        SuggestionStatus::Accepted => "accepted",
+        SuggestionStatus::Rejected => "rejected",
+        SuggestionStatus::Superseded => "superseded",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::classification::{
+        CandidateAssignment, ClassificationConfig, ClassificationSuggestion, SuggestionStatus,
+    };
     use crate::model::{
         Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
         ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
@@ -2059,6 +2350,7 @@ mod tests {
         assert!(tables.contains(&"deletion_log".to_string()));
         assert!(tables.contains(&"item_links".to_string()));
         assert!(tables.contains(&"app_settings".to_string()));
+        assert!(tables.contains(&"classification_suggestions".to_string()));
     }
 
     #[test]
@@ -2328,6 +2620,79 @@ mod tests {
 
         drop(reopened);
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_classification_config_roundtrip() {
+        let store = Store::open_memory().expect("open store");
+        let config = ClassificationConfig {
+            enabled: false,
+            run_on_category_change: false,
+            ..ClassificationConfig::default()
+        };
+
+        store
+            .set_classification_config(&config)
+            .expect("persist classification config");
+
+        let loaded = store
+            .get_classification_config()
+            .expect("reload classification config");
+        assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn test_classification_suggestions_roundtrip_and_status_filtering() {
+        let store = Store::open_memory().expect("open store");
+        let item = Item::new("Review me".to_string());
+        store.create_item(&item).expect("create item");
+
+        let category = Category::new("Travel".to_string());
+        store.create_category(&category).expect("create category");
+
+        let pending = ClassificationSuggestion {
+            id: Uuid::new_v4(),
+            item_id: item.id,
+            assignment: CandidateAssignment::Category(category.id),
+            provider_id: "implicit_string".to_string(),
+            model: None,
+            confidence: Some(1.0),
+            rationale: Some("matched category name".to_string()),
+            status: SuggestionStatus::Pending,
+            context_hash: "request:v1".to_string(),
+            item_revision_hash: "rev-1".to_string(),
+            created_at: Utc::now(),
+            decided_at: None,
+        };
+        let mut rejected = pending.clone();
+        rejected.id = Uuid::new_v4();
+        rejected.status = SuggestionStatus::Rejected;
+
+        store.upsert_suggestion(&pending).expect("insert pending");
+        store.upsert_suggestion(&rejected).expect("insert rejected");
+
+        let pending_rows = store
+            .list_pending_suggestions_for_item(item.id)
+            .expect("list item pending suggestions");
+        assert_eq!(pending_rows.len(), 1);
+        assert_eq!(pending_rows[0].id, pending.id);
+
+        store
+            .set_suggestion_status(pending.id, SuggestionStatus::Accepted)
+            .expect("accept suggestion");
+
+        assert!(store
+            .list_pending_suggestions()
+            .expect("list global pending")
+            .is_empty());
+        assert_eq!(
+            store
+                .get_classification_suggestion(pending.id)
+                .expect("reload suggestion")
+                .expect("pending suggestion exists")
+                .status,
+            SuggestionStatus::Accepted
+        );
     }
 
     #[test]

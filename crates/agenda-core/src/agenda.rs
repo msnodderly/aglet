@@ -2,14 +2,23 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{NaiveDate, NaiveDateTime, Timelike, Utc};
 use rust_decimal::Decimal;
+use uuid::Uuid;
 
-use crate::dates::{BasicDateParser, DateParser};
-use crate::engine::{evaluate_all_items, process_item, EvaluateAllItemsResult, ProcessItemResult};
+use crate::classification::{
+    ClassificationCandidate, ClassificationConfig, ClassificationService, ClassificationSuggestion,
+    ContinuousMode, ImplicitStringProvider, SuggestionStatus, WhenParserProvider,
+    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_WHEN_PARSER,
+};
+use crate::dates::BasicDateParser;
+use crate::engine::{
+    evaluate_all_items_with_options, process_item_with_options, EvaluateAllItemsResult,
+    ProcessItemResult, ProcessOptions,
+};
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind,
-    Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section, View,
+    origin as origin_const, Action, Assignment, AssignmentSource, Category, CategoryId,
+    CategoryValueKind, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section, View,
     RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
@@ -52,18 +61,10 @@ impl<'a> Agenda<'a> {
         item: &Item,
         reference_date: NaiveDate,
     ) -> Result<ProcessItemResult> {
-        let mut item_to_create = item.clone();
-        let parsed_datetime = self.parse_datetime_from_text(&item_to_create.text, reference_date);
-        if let Some(datetime) = parsed_datetime {
-            item_to_create.when_date = Some(datetime);
-        }
-
+        let item_to_create = item.clone();
         self.store.create_item(&item_to_create)?;
-
-        let when_assignment = parsed_datetime.map(|_| Self::nlp_when_assignment());
-        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, when_assignment)?;
-
-        process_item(self.store, self.classifier, item_to_create.id)
+        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, None)?;
+        self.process_item_save(item_to_create.id, reference_date, true)
     }
 
     pub fn update_item(&self, item: &Item) -> Result<ProcessItemResult> {
@@ -75,24 +76,12 @@ impl<'a> Agenda<'a> {
         item: &Item,
         reference_date: NaiveDate,
     ) -> Result<ProcessItemResult> {
-        let mut item_to_update = item.clone();
+        let item_to_update = item.clone();
         let existing = self.store.get_item(item.id)?;
         let text_changed = item_to_update.text != existing.text;
-        let parsed_datetime = if text_changed {
-            self.parse_datetime_from_text(&item_to_update.text, reference_date)
-        } else {
-            None
-        };
-        if let Some(datetime) = parsed_datetime {
-            item_to_update.when_date = Some(datetime);
-        }
-
         self.store.update_item(&item_to_update)?;
-
-        let when_assignment = parsed_datetime.map(|_| Self::nlp_when_assignment());
-        self.sync_when_assignment(item_to_update.id, item_to_update.when_date, when_assignment)?;
-
-        process_item(self.store, self.classifier, item_to_update.id)
+        self.sync_when_assignment(item_to_update.id, item_to_update.when_date, None)?;
+        self.process_item_save(item_to_update.id, reference_date, text_changed)
     }
 
     pub fn set_item_when_date(
@@ -115,17 +104,17 @@ impl<'a> Agenda<'a> {
         });
         self.sync_when_assignment(item_id, when_date, when_assignment)?;
 
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
         self.store.create_category(category)?;
-        evaluate_all_items(self.store, self.classifier, category.id)
+        self.process_category_change(category.id)
     }
 
     pub fn update_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
         self.store.update_category(category)?;
-        evaluate_all_items(self.store, self.classifier, category.id)
+        self.process_category_change(category.id)
     }
 
     pub fn move_category_within_parent(&self, category_id: CategoryId, delta: i32) -> Result<()> {
@@ -140,7 +129,7 @@ impl<'a> Agenda<'a> {
     ) -> Result<EvaluateAllItemsResult> {
         self.store
             .move_category_to_parent(category_id, new_parent_id, insert_index)?;
-        evaluate_all_items(self.store, self.classifier, category_id)
+        self.process_category_change(category_id)
     }
 
     pub fn assign_item_manual(
@@ -161,7 +150,7 @@ impl<'a> Agenda<'a> {
 
         self.store.assign_item(item_id, category_id, &assignment)?;
         self.assign_subsumption_for_category(item_id, category_id)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn claim_item_manual(
@@ -230,8 +219,9 @@ impl<'a> Agenda<'a> {
             });
         }
 
-        self.store.unassign_item(item_id, workflow.claim_category_id)?;
-        process_item(self.store, self.classifier, item_id)
+        self.store
+            .unassign_item(item_id, workflow.claim_category_id)?;
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn assign_item_numeric_manual(
@@ -260,7 +250,7 @@ impl<'a> Agenda<'a> {
 
         self.store.assign_item(item_id, category_id, &assignment)?;
         self.assign_subsumption_for_category(item_id, category_id)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn unassign_item_manual(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
@@ -300,7 +290,7 @@ impl<'a> Agenda<'a> {
         targets.extend(view.criteria.and_category_ids());
 
         self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn insert_item_in_unmatched(
@@ -310,7 +300,7 @@ impl<'a> Agenda<'a> {
     ) -> Result<ProcessItemResult> {
         let view_include: HashSet<CategoryId> = view.criteria.and_category_ids().collect();
         self.assign_manual_categories(item_id, &view_include, "edit:view.insert")?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn remove_item_from_section(
@@ -319,12 +309,12 @@ impl<'a> Agenda<'a> {
         section: &Section,
     ) -> Result<ProcessItemResult> {
         self.unassign_categories(item_id, &section.on_remove_unassign)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn remove_item_from_view(&self, item_id: ItemId, view: &View) -> Result<ProcessItemResult> {
         self.unassign_categories(item_id, &view.remove_from_view_unassign)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn remove_item_from_unmatched(
@@ -333,7 +323,7 @@ impl<'a> Agenda<'a> {
         view: &View,
     ) -> Result<ProcessItemResult> {
         self.unassign_categories(item_id, &view.remove_from_view_unassign)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn mark_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
@@ -364,7 +354,7 @@ impl<'a> Agenda<'a> {
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
         self.clear_claim_assignment_if_configured(item_id)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn mark_item_not_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
@@ -375,7 +365,7 @@ impl<'a> Agenda<'a> {
         self.store.update_item(&item)?;
         let done_category_id = self.done_category_id()?;
         self.store.unassign_item(item_id, done_category_id)?;
-        process_item(self.store, self.classifier, item_id)
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn toggle_item_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
@@ -475,6 +465,380 @@ impl<'a> Agenda<'a> {
             blocks: self.immediate_dependent_ids(item_id)?,
             related: self.immediate_related_ids(item_id)?,
         })
+    }
+
+    pub fn list_pending_classification_suggestions(&self) -> Result<Vec<ClassificationSuggestion>> {
+        self.store.list_pending_suggestions()
+    }
+
+    pub fn list_pending_classification_suggestions_for_item(
+        &self,
+        item_id: ItemId,
+    ) -> Result<Vec<ClassificationSuggestion>> {
+        self.store.list_pending_suggestions_for_item(item_id)
+    }
+
+    pub fn accept_classification_suggestion(
+        &self,
+        suggestion_id: Uuid,
+    ) -> Result<ProcessItemResult> {
+        let suggestion = self
+            .store
+            .get_classification_suggestion(suggestion_id)?
+            .ok_or(AgendaError::NotFound {
+                entity: "ClassificationSuggestion",
+                id: suggestion_id,
+            })?;
+
+        let mut result = self.apply_suggestion_assignment(&suggestion)?;
+        self.store
+            .set_suggestion_status(suggestion_id, SuggestionStatus::Accepted)?;
+        merge_process_results(&mut result, self.process_cascades(suggestion.item_id)?);
+        Ok(result)
+    }
+
+    pub fn reject_classification_suggestion(&self, suggestion_id: Uuid) -> Result<()> {
+        self.store
+            .set_suggestion_status(suggestion_id, SuggestionStatus::Rejected)
+    }
+
+    fn process_item_save(
+        &self,
+        item_id: ItemId,
+        reference_date: NaiveDate,
+        text_changed: bool,
+    ) -> Result<ProcessItemResult> {
+        let mut result = ProcessItemResult::default();
+        let cfg = self.store.get_classification_config()?;
+        if !cfg.should_run_continuously() || !cfg.run_on_item_save {
+            return self.process_cascades(item_id);
+        }
+
+        let service = self.classification_service(reference_date, &cfg, text_changed);
+        if !service.has_providers() {
+            return self.process_cascades(item_id);
+        }
+
+        let (_item, item_revision_hash, candidates) = service.collect_candidates(item_id)?;
+        self.store
+            .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
+
+        match cfg.continuous_mode {
+            ContinuousMode::Off => {}
+            ContinuousMode::AutoApply => {
+                for candidate in candidates {
+                    let suggestion = ClassificationSuggestion::from_candidate(
+                        &candidate,
+                        item_revision_hash.clone(),
+                        SuggestionStatus::Accepted,
+                    );
+                    if self
+                        .store
+                        .get_classification_suggestion(suggestion.id)?
+                        .is_some_and(|existing| existing.status == SuggestionStatus::Rejected)
+                    {
+                        continue;
+                    }
+                    self.store.upsert_suggestion(&suggestion)?;
+                    merge_process_results(
+                        &mut result,
+                        self.apply_auto_classification_candidate(item_id, &candidate)?,
+                    );
+                }
+            }
+            ContinuousMode::SuggestReview => {
+                for candidate in candidates {
+                    let suggestion = ClassificationSuggestion::from_candidate(
+                        &candidate,
+                        item_revision_hash.clone(),
+                        SuggestionStatus::Pending,
+                    );
+                    if self
+                        .store
+                        .get_classification_suggestion(suggestion.id)?
+                        .is_some_and(|existing| {
+                            existing.status == SuggestionStatus::Rejected
+                                || existing.status == SuggestionStatus::Accepted
+                        })
+                    {
+                        continue;
+                    }
+                    self.store.upsert_suggestion(&suggestion)?;
+                }
+            }
+        }
+
+        merge_process_results(&mut result, self.process_cascades(item_id)?);
+        Ok(result)
+    }
+
+    fn process_category_change(&self, category_id: CategoryId) -> Result<EvaluateAllItemsResult> {
+        let cfg = self.store.get_classification_config()?;
+        let enable_implicit_string = cfg.enabled
+            && cfg.run_on_category_change
+            && cfg.continuous_mode == ContinuousMode::AutoApply
+            && cfg.provider_enabled_inline(PROVIDER_ID_IMPLICIT_STRING);
+        evaluate_all_items_with_options(
+            self.store,
+            self.classifier,
+            category_id,
+            ProcessOptions {
+                enable_implicit_string,
+            },
+        )
+    }
+
+    fn classification_service(
+        &self,
+        reference_date: NaiveDate,
+        cfg: &ClassificationConfig,
+        allow_when_parser: bool,
+    ) -> ClassificationService<'_> {
+        let mut providers = Vec::new();
+        if cfg.provider_enabled_inline(PROVIDER_ID_IMPLICIT_STRING) {
+            providers.push(Box::new(ImplicitStringProvider {
+                classifier: self.classifier,
+            }) as _);
+        }
+        if allow_when_parser && cfg.provider_enabled_inline(PROVIDER_ID_WHEN_PARSER) {
+            providers.push(Box::new(WhenParserProvider {
+                parser: self.date_parser,
+                reference_date,
+            }) as _);
+        }
+        ClassificationService::new(self.store, providers)
+    }
+
+    fn reprocess_existing_item(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        let cfg = self.store.get_classification_config()?;
+        self.reprocess_with_implicit(item_id, self.should_reprocess_with_implicit(&cfg))
+    }
+
+    fn process_cascades(&self, item_id: ItemId) -> Result<ProcessItemResult> {
+        self.reprocess_with_implicit(item_id, false)
+    }
+
+    fn reprocess_with_implicit(
+        &self,
+        item_id: ItemId,
+        enable_implicit_string: bool,
+    ) -> Result<ProcessItemResult> {
+        process_item_with_options(
+            self.store,
+            self.classifier,
+            item_id,
+            ProcessOptions {
+                enable_implicit_string,
+            },
+        )
+    }
+
+    fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {
+        cfg.enabled
+            && cfg.continuous_mode == ContinuousMode::AutoApply
+            && cfg.provider_enabled_inline(PROVIDER_ID_IMPLICIT_STRING)
+    }
+
+    fn apply_auto_classification_candidate(
+        &self,
+        item_id: ItemId,
+        candidate: &ClassificationCandidate,
+    ) -> Result<ProcessItemResult> {
+        match &candidate.assignment {
+            crate::classification::CandidateAssignment::Category(category_id) => {
+                let category = self.store.get_category(*category_id)?;
+                let mut result = ProcessItemResult::default();
+                if self.apply_category_assignment(
+                    item_id,
+                    *category_id,
+                    AssignmentSource::AutoClassified,
+                    Some(format!("cat:{}", category.name)),
+                    false,
+                )? {
+                    result.new_assignments.insert(*category_id);
+                    merge_process_results(
+                        &mut result,
+                        self.apply_actions_for_category(item_id, *category_id)?,
+                    );
+                }
+                Ok(result)
+            }
+            crate::classification::CandidateAssignment::When(when_date) => {
+                let origin = if candidate.provider == PROVIDER_ID_WHEN_PARSER {
+                    Some(origin_const::NLP_DATE.to_string())
+                } else {
+                    Some(format!("classification:auto:{}", candidate.provider))
+                };
+                let mut result = ProcessItemResult::default();
+                if self.apply_when_assignment(
+                    item_id,
+                    *when_date,
+                    AssignmentSource::AutoClassified,
+                    origin,
+                )? {
+                    result.new_assignments.insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    fn apply_suggestion_assignment(
+        &self,
+        suggestion: &ClassificationSuggestion,
+    ) -> Result<ProcessItemResult> {
+        let origin = Some(format!("suggestion:accepted:{}", suggestion.provider_id));
+        match suggestion.assignment {
+            crate::classification::CandidateAssignment::Category(category_id) => {
+                let mut result = ProcessItemResult::default();
+                if self.apply_category_assignment(
+                    suggestion.item_id,
+                    category_id,
+                    AssignmentSource::SuggestionAccepted,
+                    origin,
+                    true,
+                )? {
+                    result.new_assignments.insert(category_id);
+                    merge_process_results(
+                        &mut result,
+                        self.apply_actions_for_category(suggestion.item_id, category_id)?,
+                    );
+                }
+                Ok(result)
+            }
+            crate::classification::CandidateAssignment::When(when_date) => {
+                let mut result = ProcessItemResult::default();
+                if self.apply_when_assignment(
+                    suggestion.item_id,
+                    when_date,
+                    AssignmentSource::SuggestionAccepted,
+                    origin,
+                )? {
+                    result.new_assignments.insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    fn apply_category_assignment(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        source: AssignmentSource,
+        origin: Option<String>,
+        allow_manual_exclusive_override: bool,
+    ) -> Result<bool> {
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        if assignments.contains_key(&category_id) {
+            return Ok(false);
+        }
+        if !allow_manual_exclusive_override
+            && self.has_manual_exclusive_sibling(item_id, category_id)?
+        {
+            return Ok(false);
+        }
+
+        self.enforce_manual_exclusive_siblings(item_id, category_id)?;
+        let assignment = Assignment {
+            source,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin,
+            numeric_value: None,
+        };
+        self.store.assign_item(item_id, category_id, &assignment)?;
+        self.assign_subsumption_for_category(item_id, category_id)?;
+        Ok(true)
+    }
+
+    fn apply_when_assignment(
+        &self,
+        item_id: ItemId,
+        when_date: NaiveDateTime,
+        source: AssignmentSource,
+        origin: Option<String>,
+    ) -> Result<bool> {
+        let mut item = self.store.get_item(item_id)?;
+        if item.when_date == Some(when_date) {
+            return Ok(false);
+        }
+
+        item.when_date = Some(when_date);
+        item.modified_at = Utc::now();
+        self.store.update_item(&item)?;
+        let assignment = Assignment {
+            source,
+            assigned_at: Utc::now(),
+            sticky: true,
+            origin,
+            numeric_value: None,
+        };
+        self.sync_when_assignment(item_id, Some(when_date), Some(assignment))?;
+        Ok(true)
+    }
+
+    fn apply_actions_for_category(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<ProcessItemResult> {
+        let category = self.store.get_category(category_id)?;
+        let mut result = ProcessItemResult::default();
+
+        for action in &category.actions {
+            match action {
+                Action::Assign { targets } => {
+                    for target_id in targets {
+                        if self.apply_category_assignment(
+                            item_id,
+                            *target_id,
+                            AssignmentSource::Action,
+                            Some(format!("action:{}", category.name)),
+                            true,
+                        )? {
+                            result.new_assignments.insert(*target_id);
+                        }
+                    }
+                }
+                Action::Remove { targets } => {
+                    for target_id in targets {
+                        self.store.unassign_item(item_id, *target_id)?;
+                        result.deferred_removals.push(crate::engine::DeferredRemoval {
+                            target: *target_id,
+                            triggered_by: category_id,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn has_manual_exclusive_sibling(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let category = self.store.get_category(category_id)?;
+        let Some(parent_id) = category.parent else {
+            return Ok(false);
+        };
+        let parent = self.store.get_category(parent_id)?;
+        if !parent.is_exclusive {
+            return Ok(false);
+        }
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        Ok(parent.children.into_iter().any(|sibling_id| {
+            sibling_id != category_id
+                && assignments
+                    .get(&sibling_id)
+                    .is_some_and(|assignment| {
+                        assignment.source == AssignmentSource::Manual
+                            || assignment.source == AssignmentSource::SuggestionAccepted
+                    })
+        }))
     }
 
     fn assign_manual_categories(
@@ -677,16 +1041,6 @@ impl<'a> Agenda<'a> {
         Ok(())
     }
 
-    fn parse_datetime_from_text(
-        &self,
-        text: &str,
-        reference_date: NaiveDate,
-    ) -> Option<NaiveDateTime> {
-        self.date_parser
-            .parse(text, reference_date)
-            .map(|parsed| parsed.datetime)
-    }
-
     fn sync_when_assignment(
         &self,
         item_id: ItemId,
@@ -705,7 +1059,7 @@ impl<'a> Agenda<'a> {
                     self.store.assign_item(
                         item_id,
                         when_category_id,
-                        &Self::nlp_when_assignment(),
+                        &Self::default_when_assignment(),
                     )?;
                 }
             }
@@ -719,12 +1073,12 @@ impl<'a> Agenda<'a> {
         Ok(())
     }
 
-    fn nlp_when_assignment() -> Assignment {
+    fn default_when_assignment() -> Assignment {
         Assignment {
-            source: AssignmentSource::AutoMatch,
+            source: AssignmentSource::Manual,
             assigned_at: Utc::now(),
             sticky: true,
-            origin: Some(origin_const::NLP_DATE.to_string()),
+            origin: Some(origin_const::MANUAL_WHEN.to_string()),
             numeric_value: None,
         }
     }
@@ -773,6 +1127,11 @@ impl<'a> Agenda<'a> {
     }
 }
 
+fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemResult) {
+    target.new_assignments.extend(incoming.new_assignments);
+    target.deferred_removals.extend(incoming.deferred_removals);
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -784,6 +1143,7 @@ mod tests {
     use rust_decimal::Decimal;
 
     use super::Agenda;
+    use crate::classification::{ClassificationConfig, ContinuousMode};
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
@@ -889,6 +1249,62 @@ mod tests {
     }
 
     #[test]
+    fn create_item_in_suggest_review_mode_queues_pending_suggestions_without_assigning() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            continuous_mode: ContinuousMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        store
+            .set_classification_config(&cfg)
+            .expect("persist config");
+
+        let travel = category("Travel", true);
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Book travel next Tuesday".to_string());
+        let result = agenda
+            .create_item_with_reference_date(&item, date(2026, 3, 20))
+            .unwrap();
+        assert!(result.new_assignments.is_empty());
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&travel.id));
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .expect("list pending suggestions");
+        assert_eq!(pending.len(), 2);
+    }
+
+    #[test]
+    fn create_item_with_classification_disabled_skips_implicit_matching() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            enabled: false,
+            ..ClassificationConfig::default()
+        };
+        store
+            .set_classification_config(&cfg)
+            .expect("persist config");
+
+        let travel = category("Travel", true);
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Travel to Seattle".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&travel.id));
+    }
+
+    #[test]
     fn create_item_hashtag_matches_existing_categories_without_creating_hash_category() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
@@ -975,7 +1391,7 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         let when_assignment = assignments.get(&when_id).expect("when assignment exists");
-        assert_eq!(when_assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(when_assignment.source, AssignmentSource::AutoClassified);
         assert_eq!(when_assignment.origin.as_deref(), Some("nlp:date"));
     }
 
@@ -1680,7 +2096,7 @@ mod tests {
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
             assignments.get(&meetings.id).unwrap().source,
-            AssignmentSource::AutoMatch
+            AssignmentSource::AutoClassified
         );
         assert_eq!(
             assignments.get(&calendar.id).unwrap().source,

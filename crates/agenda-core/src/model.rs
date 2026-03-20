@@ -97,6 +97,8 @@ pub struct Assignment {
 pub enum AssignmentSource {
     Manual,
     AutoMatch,
+    AutoClassified,
+    SuggestionAccepted,
     Action,
     Subsumption,
 }

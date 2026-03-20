@@ -39,6 +39,28 @@ struct PassResult {
     deferred_removals: Vec<DeferredRemoval>,
 }
 
+struct HierarchyPassInput<'a> {
+    store: &'a Store,
+    classifier: &'a dyn Classifier,
+    item_id: ItemId,
+    item_text: &'a str,
+    categories: &'a [Category],
+    options: ProcessOptions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessOptions {
+    pub enable_implicit_string: bool,
+}
+
+impl Default for ProcessOptions {
+    fn default() -> Self {
+        Self {
+            enable_implicit_string: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum MatchReason {
     ImplicitString,
@@ -55,7 +77,18 @@ pub fn process_item(
     classifier: &dyn Classifier,
     item_id: ItemId,
 ) -> Result<ProcessItemResult> {
-    run_in_savepoint(store, || process_item_inner(store, classifier, item_id))
+    process_item_with_options(store, classifier, item_id, ProcessOptions::default())
+}
+
+pub fn process_item_with_options(
+    store: &Store,
+    classifier: &dyn Classifier,
+    item_id: ItemId,
+    options: ProcessOptions,
+) -> Result<ProcessItemResult> {
+    run_in_savepoint(store, || {
+        process_item_inner(store, classifier, item_id, options)
+    })
 }
 
 /// Evaluate all items in the store against the current hierarchy.
@@ -67,6 +100,15 @@ pub fn evaluate_all_items(
     classifier: &dyn Classifier,
     category_id: CategoryId,
 ) -> Result<EvaluateAllItemsResult> {
+    evaluate_all_items_with_options(store, classifier, category_id, ProcessOptions::default())
+}
+
+pub fn evaluate_all_items_with_options(
+    store: &Store,
+    classifier: &dyn Classifier,
+    category_id: CategoryId,
+    options: ProcessOptions,
+) -> Result<EvaluateAllItemsResult> {
     // Validate the target category exists before beginning retroactive work.
     store.get_category(category_id)?;
 
@@ -74,7 +116,7 @@ pub fn evaluate_all_items(
     let items = store.list_items()?;
 
     for item in items {
-        let process_result = process_item(store, classifier, item.id)?;
+        let process_result = process_item_with_options(store, classifier, item.id, options)?;
 
         result.processed_items += 1;
         result.total_new_assignments += process_result.new_assignments.len();
@@ -94,6 +136,7 @@ fn process_item_inner(
     store: &Store,
     classifier: &dyn Classifier,
     item_id: ItemId,
+    options: ProcessOptions,
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
     let categories = store.get_hierarchy()?;
@@ -107,17 +150,17 @@ fn process_item_inner(
         .collect();
 
     let mut result = ProcessItemResult::default();
+    let pass_input = HierarchyPassInput {
+        store,
+        classifier,
+        item_id,
+        item_text: &match_text,
+        categories: &categories,
+        options,
+    };
 
     for pass in 1..=MAX_PASSES {
-        let pass_result = run_hierarchy_pass(
-            store,
-            classifier,
-            item_id,
-            &match_text,
-            &categories,
-            &mut assignments,
-            &mut seen_pairs,
-        )?;
+        let pass_result = run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs)?;
 
         let made_new_assignments = !pass_result.new_assignments.is_empty();
 
@@ -148,38 +191,46 @@ fn item_match_text(item: &crate::model::Item) -> String {
 }
 
 fn run_hierarchy_pass(
-    store: &Store,
-    classifier: &dyn Classifier,
-    item_id: ItemId,
-    item_text: &str,
-    categories: &[Category],
+    input: &HierarchyPassInput<'_>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
 ) -> Result<PassResult> {
     let mut pass_result = PassResult::default();
-    let categories_by_id: HashMap<CategoryId, &Category> = categories
+    let categories_by_id: HashMap<CategoryId, &Category> = input
+        .categories
         .iter()
         .map(|category| (category.id, category))
         .collect();
 
-    for category in categories {
-        let Some(reason) = evaluate_category_match(category, item_text, assignments, classifier)
-        else {
+    for category in input.categories {
+        let Some(reason) = evaluate_category_match(
+            category,
+            input.item_text,
+            assignments,
+            input.classifier,
+            input.options.enable_implicit_string,
+        ) else {
             continue;
         };
 
-        if !can_assign(item_id, category.id, assignments, seen_pairs) {
+        if !can_assign(input.item_id, category.id, assignments, seen_pairs) {
             continue;
         }
         if has_manual_exclusive_sibling(category.id, &categories_by_id, assignments) {
             continue;
         }
 
-        enforce_mutual_exclusion(store, item_id, category.id, &categories_by_id, assignments)?;
+        enforce_mutual_exclusion(
+            input.store,
+            input.item_id,
+            category.id,
+            &categories_by_id,
+            assignments,
+        )?;
 
         let assigned = assign_if_unassigned(
-            store,
-            item_id,
+            input.store,
+            input.item_id,
             category.id,
             AssignmentSource::AutoMatch,
             Some(match_origin(reason, &category.name)),
@@ -192,8 +243,8 @@ fn run_hierarchy_pass(
             continue;
         }
         assign_subsumption_ancestors(
-            store,
-            item_id,
+            input.store,
+            input.item_id,
             category.id,
             &categories_by_id,
             assignments,
@@ -202,8 +253,8 @@ fn run_hierarchy_pass(
         pass_result.new_assignments.insert(category.id);
 
         fire_actions(
-            store,
-            item_id,
+            input.store,
+            input.item_id,
             category,
             &categories_by_id,
             assignments,
@@ -220,8 +271,12 @@ fn evaluate_category_match(
     item_text: &str,
     assignments: &HashMap<CategoryId, Assignment>,
     classifier: &dyn Classifier,
+    enable_implicit_string: bool,
 ) -> Option<MatchReason> {
-    if category.enable_implicit_string && classifier.classify(item_text, &category.name).is_some() {
+    if enable_implicit_string
+        && category.enable_implicit_string
+        && classifier.classify(item_text, &category.name).is_some()
+    {
         return Some(MatchReason::ImplicitString);
     }
 
@@ -527,7 +582,10 @@ mod tests {
 
     use chrono::Utc;
 
-    use super::{evaluate_all_items, process_item, run_hierarchy_pass};
+    use super::{
+        evaluate_all_items, process_item, process_item_with_options, run_hierarchy_pass,
+        HierarchyPassInput, ProcessOptions,
+    };
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
@@ -699,6 +757,37 @@ mod tests {
     }
 
     #[test]
+    fn process_item_with_options_can_disable_implicit_matching_but_keep_profile_cascades() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let calendar = category("Calendar", false);
+        create_category(&store, &calendar);
+        let reminders = category_with_profile("Reminders", &[calendar.id], &[]);
+        create_category(&store, &reminders);
+
+        let item = create_item(&store, "Calendar");
+        store
+            .assign_item(item.id, calendar.id, &manual_assignment())
+            .unwrap();
+
+        let result = process_item_with_options(
+            &store,
+            &classifier,
+            item.id,
+            ProcessOptions {
+                enable_implicit_string: false,
+            },
+        )
+        .unwrap();
+
+        assert!(result.new_assignments.contains(&reminders.id));
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&calendar.id));
+        assert!(assignments.contains_key(&reminders.id));
+    }
+
+    #[test]
     fn process_item_subsumption_assigns_ancestors() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
@@ -834,17 +923,17 @@ mod tests {
         let categories = store.get_hierarchy().unwrap();
         let mut assignments = HashMap::new();
         let mut seen_pairs = HashSet::new();
+        let pass_input = HierarchyPassInput {
+            store: &store,
+            classifier: &classifier,
+            item_id: item.id,
+            item_text: &item.text,
+            categories: &categories,
+            options: ProcessOptions::default(),
+        };
 
-        let pass_result = run_hierarchy_pass(
-            &store,
-            &classifier,
-            item.id,
-            &item.text,
-            &categories,
-            &mut assignments,
-            &mut seen_pairs,
-        )
-        .unwrap();
+        let pass_result = run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs)
+            .unwrap();
 
         assert!(pass_result.new_assignments.contains(&alpha.id));
         assert!(!pass_result.new_assignments.contains(&projects.id));
@@ -1056,7 +1145,9 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&complete.id).map(|assignment| assignment.source),
+            assignments
+                .get(&complete.id)
+                .map(|assignment| assignment.source),
             Some(AssignmentSource::Manual),
             "manual exclusive choice should survive implicit-string matches"
         );
