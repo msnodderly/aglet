@@ -1009,6 +1009,13 @@ impl UndoEntry {
     }
 }
 
+/// Which InputPanel buffer to open in the external editor.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ExternalEditorTarget {
+    Text,
+    Note,
+}
+
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1083,6 +1090,7 @@ struct App {
     category_assignment_counts: HashMap<CategoryId, usize>,
     classification_ui: ClassificationUiState,
     undo: UndoState,
+    pending_external_edit: Option<ExternalEditorTarget>,
 }
 
 impl Default for App {
@@ -1153,6 +1161,7 @@ impl Default for App {
             category_assignment_counts: HashMap::new(),
             classification_ui: ClassificationUiState::default(),
             undo: UndoState::default(),
+            pending_external_edit: None,
         }
     }
 }

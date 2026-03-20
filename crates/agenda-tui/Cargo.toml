@@ -10,4 +10,5 @@ agenda-core = { path = "../agenda-core" }
 chrono = "0.4"
 tui_textarea = { package = "tui-textarea-2", version = "0.10.0", default-features = false, features = ["crossterm_0_28"] }
 rust_decimal = "1"
+tempfile = "3"
 uuid = "1"

@@ -3870,6 +3870,26 @@ impl App {
             return Ok(false);
         };
 
+        // Ctrl+G: open the focused text buffer in $EDITOR.
+        if self.current_key_modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(code, KeyCode::Char('g') | KeyCode::Char('G'))
+        {
+            if let Some(panel) = &self.input_panel {
+                let target = match panel.focus {
+                    input_panel::InputPanelFocus::Note => ExternalEditorTarget::Note,
+                    _ => ExternalEditorTarget::Text,
+                };
+                let allowed = matches!(
+                    panel.kind,
+                    input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+                ) || matches!(panel.focus, input_panel::InputPanelFocus::Text);
+                if allowed {
+                    self.pending_external_edit = Some(target);
+                    return Ok(false);
+                }
+            }
+        }
+
         if self.handle_input_panel_category_filter_key(code) {
             return Ok(false);
         }
@@ -5632,6 +5652,83 @@ mod tests {
         app.handle_input_panel_key(KeyCode::Esc, &agenda)
             .expect("cancel panel");
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn ctrl_g_sets_pending_external_edit_for_text() {
+        let mut app = App {
+            input_panel: Some(input_panel::InputPanel::new_add_item(
+                "Main",
+                &HashSet::new(),
+            )),
+            mode: Mode::InputPanel,
+            current_key_modifiers: KeyModifiers::CONTROL,
+            ..App::default()
+        };
+
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
+            .expect("ctrl+g");
+        assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Text));
+    }
+
+    #[test]
+    fn ctrl_g_sets_pending_external_edit_for_note() {
+        let mut panel = input_panel::InputPanel::new_add_item("Main", &HashSet::new());
+        panel.focus = input_panel::InputPanelFocus::Note;
+        let mut app = App {
+            input_panel: Some(panel),
+            mode: Mode::InputPanel,
+            current_key_modifiers: KeyModifiers::CONTROL,
+            ..App::default()
+        };
+
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
+            .expect("ctrl+g");
+        assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Note));
+    }
+
+    #[test]
+    fn ctrl_g_not_allowed_from_non_text_focus_in_name_input() {
+        let mut panel = input_panel::InputPanel::new_name_input("test", "label");
+        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        let mut app = App {
+            input_panel: Some(panel),
+            mode: Mode::InputPanel,
+            current_key_modifiers: KeyModifiers::CONTROL,
+            ..App::default()
+        };
+
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        // NameInput kind with SaveButton focus — not allowed (only AddItem/EditItem
+        // allow Ctrl+G from any focus; other kinds require Text focus).
+        app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
+            .expect("ctrl+g");
+        assert_eq!(app.pending_external_edit, None);
+    }
+
+    #[test]
+    fn ctrl_g_allowed_from_text_focus_in_name_input() {
+        let mut app = App {
+            input_panel: Some(input_panel::InputPanel::new_name_input("test", "label")),
+            mode: Mode::InputPanel,
+            current_key_modifiers: KeyModifiers::CONTROL,
+            ..App::default()
+        };
+
+        let store = Store::open_memory().expect("open store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
+            .expect("ctrl+g");
+        assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Text));
     }
 
     #[test]

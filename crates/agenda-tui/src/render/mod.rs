@@ -3547,7 +3547,7 @@ impl App {
                         ("Esc", "cancel"),
                     ]
                 } else {
-                    vec![("S", "save"), ("Tab", "next"), ("Esc", "cancel")]
+                    vec![("S", "save"), ("Tab", "next"), ("Ctrl-G", "$EDITOR"), ("Esc", "cancel")]
                 }
             }
             Mode::Normal => {
@@ -3673,6 +3673,7 @@ impl App {
             help_entry("c / F9", "Open the category manager"),
             help_entry("s", "Cycle sort order for the focused section"),
             help_entry("u", "Show / edit item dependencies"),
+            help_entry("Ctrl-G", "Open $EDITOR for text/note (in item editor)"),
             help_entry("Ctrl-L", "Reload data from disk"),
             help_entry("Ctrl-R", "Toggle auto-refresh interval"),
             help_entry("?", "Toggle this help panel"),
