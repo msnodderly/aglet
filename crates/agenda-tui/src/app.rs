@@ -1921,8 +1921,11 @@ impl App {
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
-        // Spawn the editor.
-        let status = std::process::Command::new(&editor)
+        // Spawn the editor. Shell-split handles multi-word values like "code --wait".
+        let mut parts = editor.split_whitespace();
+        let cmd = parts.next().unwrap_or("vi");
+        let status = std::process::Command::new(cmd)
+            .args(parts)
             .arg(&tmp_path)
             .status();
 
