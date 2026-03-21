@@ -434,7 +434,6 @@ struct ViewEditState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryManagerFocus {
-    Global,
     Tree,
     Filter,
     Details,
@@ -536,7 +535,6 @@ enum CategoryInlineAction {
 #[derive(Clone)]
 struct CategoryManagerState {
     focus: CategoryManagerFocus,
-    global_settings_index: usize,
     filter: text_buffer::TextBuffer,
     filter_editing: bool,
     structure_move_prefix: Option<char>,
@@ -558,6 +556,12 @@ struct CategorySuggestState {
     // TODO(feature): not yet used in rendering; reserved for keyboard-driven suggestion navigation
     #[allow(dead_code)]
     suggest_index: usize,
+}
+
+#[derive(Clone, Debug)]
+struct WorkflowRolePickerState {
+    role_index: usize,
+    row_index: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1043,6 +1047,7 @@ struct App {
     workflow_config: WorkflowConfig,
     workflow_setup_open: bool,
     workflow_setup_focus: usize,
+    workflow_role_picker: Option<WorkflowRolePickerState>,
     classification_mode_picker_open: bool,
     classification_mode_picker_focus: usize,
     category_manager: Option<CategoryManagerState>,
@@ -1112,6 +1117,7 @@ impl Default for App {
             workflow_config: WorkflowConfig::default(),
             workflow_setup_open: false,
             workflow_setup_focus: 0,
+            workflow_role_picker: None,
             classification_mode_picker_open: false,
             classification_mode_picker_focus: 1,
             category_manager: None,
@@ -7510,21 +7516,21 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Global Settings"),
-            "category manager should show global settings block: {rendered}"
+            rendered.contains("Classification: Auto-apply"),
+            "category manager should show classification summary: {rendered}"
         );
         assert!(
-            rendered.contains("Classification mode: Auto-apply"),
-            "category manager should show classification mode in global settings: {rendered}"
+            rendered.contains("Ready Queue: (unset)"),
+            "category manager should show ready queue summary: {rendered}"
         );
         assert!(
-            rendered.contains("Workflow roles: Ready Queue=(unset)  Claim Target=(unset)"),
-            "category manager should show workflow values in global settings: {rendered}"
+            rendered.contains("Claim Result: (unset)"),
+            "category manager should show claim summary: {rendered}"
         );
     }
 
     #[test]
-    fn category_manager_tab_reaches_global_settings_pane() {
+    fn category_manager_tab_cycles_tree_details_and_filter() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7539,39 +7545,24 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
             .expect("tab to details");
-        app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to global settings");
-
         assert_eq!(
             app.category_manager_focus(),
-            Some(CategoryManagerFocus::Global)
+            Some(CategoryManagerFocus::Details)
         );
-    }
-
-    #[test]
-    fn category_manager_enter_on_global_workflow_row_opens_workflow_setup() {
-        let store = Store::open_memory().expect("memory store");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let category = Category::new("Work".to_string());
-        store.create_category(&category).expect("create category");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to details");
-        app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to global settings");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("select workflow row");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("open workflow setup");
+            .expect("tab to filter");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Filter)
+        );
 
-        assert!(app.workflow_setup_open);
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to tree");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
     }
 
     #[test]
@@ -10536,6 +10527,10 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick ready category from picker");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -10574,6 +10569,8 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Down, &agenda)
             .expect("focus claim target");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open claim result picker");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign claim target role");
 
         let updated = store.get_category(claim.id).expect("load claim target");
@@ -10610,28 +10607,32 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick ready category from picker");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
             .expect("remove ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
         assert!(!updated.enable_implicit_string);
         assert_eq!(app.workflow_config.ready_category_id, None);
-        assert_eq!(app.status, "Ready is no longer the Ready Queue category");
+        assert_eq!(app.status, "Cleared Ready Queue category (Ready)");
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn workflow_popup_does_not_unset_other_role_from_current_selection() {
+    fn workflow_picker_assignment_ignores_tree_selection() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-workflow-popup-no-cross-unset-{nanos}.ag"
+            "agenda-tui-workflow-picker-ignores-tree-selection-{nanos}.ag"
         ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
@@ -10641,32 +10642,34 @@ mod tests {
         let claim = Category::new("In Progress".to_string());
         store.create_category(&ready).expect("create ready");
         store.create_category(&claim).expect("create claim");
-        store
-            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
-                ready_category_id: Some(ready.id),
-                claim_category_id: Some(claim.id),
-            })
-            .expect("set workflow config");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        app.set_category_selection_by_id(claim.id);
 
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
         app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("focus claim target");
+            .expect("focus claim result");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("cross-role enter should be blocked");
-
-        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
-        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
+            .expect("open claim result picker");
         assert_eq!(
-            app.status,
-            "Ready is already the Ready Queue category. Select In Progress to unset Claim Target, or another category to replace it"
+            app.workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should be open")
+                .row_index,
+            0
         );
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick claim category from picker");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("assign from picker");
+
+        assert_eq!(app.workflow_config.ready_category_id, None);
+        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
+        assert_eq!(app.selected_category_id(), Some(claim.id));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -10704,6 +10707,10 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick replacement ready role");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("replace ready role");
 
@@ -10745,6 +10752,10 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick ready category from picker");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
@@ -10788,6 +10799,10 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick ready category from picker");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
@@ -10833,6 +10848,10 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("pick ready category from picker");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
@@ -10886,6 +10905,8 @@ mod tests {
 
         app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
             .expect("open workflow setup");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 

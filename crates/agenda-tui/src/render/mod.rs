@@ -1,6 +1,10 @@
 use crate::*;
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
+const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
+const CATEGORY_MANAGER_PANE_FOCUS: Color = Color::LightCyan;
+const CATEGORY_MANAGER_TEXT_ENTRY: Color = Color::LightMagenta;
+const CATEGORY_MANAGER_EDIT_FOCUS: Color = Color::Yellow;
 const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
 const FOOTER_HEIGHT: u16 = 4;
 const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
@@ -3385,25 +3389,16 @@ impl App {
                             vec![("y", "confirm"), ("Esc", "cancel")]
                         }
                     }
-                } else if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
-                    vec![
-                        ("j/k", "select"),
-                        ("Enter", "open"),
-                        ("Tab", "pane"),
-                        ("m", "classify"),
-                        ("w", "workflow"),
-                        ("Esc", "close"),
-                    ]
                 } else {
                     vec![
                         ("S", "save"),
                         ("n", "new"),
                         ("r", "rename"),
                         ("x", "delete"),
-                        ("m", "classify"),
+                        ("m", "classification"),
                         ("Tab", "pane"),
                         ("/", "filter"),
-                        ("w", "workflow"),
+                        ("w", "claiming workflow"),
                         ("Esc", "close"),
                     ]
                 }
@@ -4227,7 +4222,7 @@ impl App {
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(5), Constraint::Min(1)])
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
             .split(area);
         let manager_focus = self
             .category_manager
@@ -4262,38 +4257,29 @@ impl App {
             .and_then(|id| self.categories.iter().find(|c| c.id == id))
             .map(|c| c.name.as_str())
             .unwrap_or("(unset)");
-        let global_items = vec![
-            ListItem::new(format!("Classification mode: {classification_mode}")),
-            ListItem::new(format!(
-                "Workflow roles: Ready Queue={ready_name}  Claim Target={claim_name}"
-            )),
-        ];
-        let mut global_state = Self::list_state_for(
+        let summary_line = Line::from(vec![
+            Span::styled("Classification", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(
+                classification_mode,
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" (m)", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Ready Queue", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Claim Result", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" (w)", Style::default().fg(MUTED_TEXT_COLOR)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(summary_line)
+                .style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                .wrap(Wrap { trim: false }),
             layout[0],
-            Some(self.category_manager_global_settings_index()),
-        );
-        frame.render_stateful_widget(
-            List::new(global_items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title(if manager_focus == CategoryManagerFocus::Global {
-                            "> Global Settings"
-                        } else {
-                            "Global Settings"
-                        })
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(
-                            if manager_focus == CategoryManagerFocus::Global {
-                                Color::Cyan
-                            } else {
-                                Color::DarkGray
-                            },
-                        )),
-                ),
-            layout[0],
-            &mut global_state,
         );
 
         let body = Layout::default()
@@ -4305,19 +4291,21 @@ impl App {
             .constraints([Constraint::Length(3), Constraint::Min(1)])
             .split(body[0]);
 
-        let pane_idle = Color::DarkGray;
+        let pane_idle = CATEGORY_MANAGER_PANE_IDLE;
         let tree_border = if manager_focus == CategoryManagerFocus::Tree {
-            Color::Yellow
+            CATEGORY_MANAGER_PANE_FOCUS
         } else {
             pane_idle
         };
-        let filter_border = if manager_focus == CategoryManagerFocus::Filter {
-            Color::LightMagenta
+        let filter_border = if self.category_manager_filter_editing() {
+            CATEGORY_MANAGER_TEXT_ENTRY
+        } else if manager_focus == CategoryManagerFocus::Filter {
+            CATEGORY_MANAGER_PANE_FOCUS
         } else {
             pane_idle
         };
         let details_border = if manager_focus == CategoryManagerFocus::Details {
-            Color::White
+            CATEGORY_MANAGER_PANE_FOCUS
         } else {
             pane_idle
         };
@@ -4329,7 +4317,7 @@ impl App {
             {
                 format!("Filter: {}", filter_text)
             } else if filter_text.trim().is_empty() {
-                "Press / to filter categories by name.".to_string()
+                "Press / or Tab to edit the category filter.".to_string()
             } else {
                 format!("Filter: {}", filter_text)
             })
@@ -4337,6 +4325,8 @@ impl App {
                 Block::default()
                     .title(if self.category_manager_inline_action().is_some() {
                         "> Action"
+                    } else if self.category_manager_filter_editing() {
+                        "> Filter (editing)"
                     } else if manager_focus == CategoryManagerFocus::Filter {
                         "> Filter"
                     } else {
@@ -4688,7 +4678,7 @@ impl App {
                     if is_ready_queue_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Ready Queue",
-                            Style::default().fg(Color::LightCyan),
+                            Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
                         )));
                         lines.push(Line::from(Span::styled(
                             "  (items need this to be claimable)",
@@ -4697,11 +4687,11 @@ impl App {
                     }
                     if is_claim_target_role {
                         lines.push(Line::from(Span::styled(
-                            "  Workflow: Claim Target",
-                            Style::default().fg(Color::LightCyan),
+                            "  Workflow: Claim Result",
+                            Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
                         )));
                         lines.push(Line::from(Span::styled(
-                            "  (assigned by claim, cleared by done)",
+                            "  (assigned by the CLI claim workflow)",
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )));
                     }
@@ -4720,7 +4710,7 @@ impl App {
                             .title(flags_title)
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(if flags_border_focused {
-                                Color::LightCyan
+                                CATEGORY_MANAGER_EDIT_FOCUS
                             } else {
                                 pane_idle
                             })),
@@ -4759,9 +4749,9 @@ impl App {
                             })
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(if note_editing {
-                                Color::Yellow
+                                CATEGORY_MANAGER_EDIT_FOCUS
                             } else if note_block_focus {
-                                Color::LightCyan
+                                CATEGORY_MANAGER_PANE_FOCUS
                             } else {
                                 pane_idle
                             })),
@@ -4857,7 +4847,7 @@ impl App {
                     Block::default()
                         .title(" Confirm ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
@@ -4877,10 +4867,6 @@ impl App {
                 .and_then(|id| self.categories.iter().find(|c| c.id == id))
                 .map(|c| c.name.as_str())
                 .unwrap_or("(unset)");
-            let tree_selection = self
-                .selected_category_row()
-                .map(|row| row.name.as_str())
-                .unwrap_or("(none)");
             let focus = self.workflow_setup_focus;
             let ready_style = if focus == 0 {
                 focused_cell_style()
@@ -4893,8 +4879,8 @@ impl App {
                 Style::default()
             };
             let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
-            let w = area.width.min(50);
-            let h = 14u16;
+            let w = area.width.min(58);
+            let h = 16u16;
             let x = area.x + area.width.saturating_sub(w) / 2;
             let y = area.y + area.height.saturating_sub(h) / 2;
             let overlay_area = Rect::new(x, y, w, h);
@@ -4902,43 +4888,180 @@ impl App {
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::from(Span::styled(
-                        "Assign categories to workflow roles.",
+                        "This config enables the CLI claim workflow.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "Pick two categories used by agenda-cli claim:",
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(""),
+                    Line::from(Span::styled(
+                        "Ready Queue    items eligible to be claimed",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
                     Line::from(Span::styled(
                         format!("{}Ready Queue:   {}", indicator(0), ready_name),
                         ready_style,
                     )),
+                    Line::from(""),
                     Line::from(Span::styled(
-                        format!("{}Claim Target:  {}", indicator(1), claim_name),
+                        "Claim Result   category applied after claim",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Claim Result:  {}", indicator(1), claim_name),
                         claim_style,
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        format!("  Tree selection: {}", tree_selection),
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "Close (Esc), navigate to a category,",
+                        "Press Enter to choose a category for the",
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(Span::styled(
-                        "reopen (w), Enter to assign/unassign.",
+                        "highlighted role from a category picker.",
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(""),
-                    Line::from("j/k:slot  Enter:assign/unassign  Esc:close"),
+                    Line::from("j/k:role  Enter:choose  x:clear  Esc:close"),
                 ])
                 .block(
                     Block::default()
                         .title(" Workflow Setup ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::LightCyan)),
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
+            );
+        }
+
+        if let Some(picker) = &self.workflow_role_picker {
+            let row_indices = self.workflow_role_picker_row_indices();
+            let role_label = if picker.role_index == 0 {
+                "Ready Queue"
+            } else {
+                "Claim Result"
+            };
+            let current_name = if picker.role_index == 0 {
+                self.workflow_config
+                    .ready_category_id
+                    .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("(unset)")
+            } else {
+                self.workflow_config
+                    .claim_category_id
+                    .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("(unset)")
+            };
+            let w = area.width.min(64);
+            let h = area.height.min(22);
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(5),
+                    Constraint::Min(8),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        format!("Choose the category used as {role_label}."),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        format!("Current: {current_name}"),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Only normal tag categories can be used here.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                ])
+                .block(
+                    Block::default()
+                        .title(format!(" Pick {role_label} "))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let items: Vec<ListItem<'_>> = if row_indices.is_empty() {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "(no eligible categories)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                row_indices
+                    .iter()
+                    .filter_map(|row_index| self.category_rows.get(*row_index))
+                    .map(|row| {
+                        let mut suffixes = Vec::new();
+                        if row.is_exclusive {
+                            suffixes.push("exclusive");
+                        }
+                        if self.workflow_config.ready_category_id == Some(row.id) {
+                            suffixes.push("ready");
+                        }
+                        if self.workflow_config.claim_category_id == Some(row.id) {
+                            suffixes.push("claim");
+                        }
+                        let suffix = if suffixes.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", suffixes.join(","))
+                        };
+                        let text = format!(
+                            "{}{}{}",
+                            "  ".repeat(row.depth),
+                            with_note_marker(row.name.clone(), row.has_note),
+                            suffix
+                        );
+                        ListItem::new(Line::from(text))
+                    })
+                    .collect()
+            };
+
+            let mut state = Self::list_state_for(
+                chunks[1],
+                if row_indices.is_empty() {
+                    None
+                } else {
+                    Some(picker.row_index.min(row_indices.len().saturating_sub(1)))
+                },
+            );
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+            Self::render_vertical_scrollbar(frame, chunks[1], row_indices.len(), state.offset());
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "j/k:select  Enter:assign  Esc:back",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
             );
         }
 
@@ -4955,8 +5078,8 @@ impl App {
             let current_mode = modes::classification::continuous_mode_label(
                 self.classification_ui.config.continuous_mode,
             );
-            let w = area.width.min(46);
-            let h = 11u16;
+            let w = area.width.min(54);
+            let h = 15u16;
             let x = area.x + area.width.saturating_sub(w) / 2;
             let y = area.y + area.height.saturating_sub(h) / 2;
             let overlay_area = Rect::new(x, y, w, h);
@@ -4964,18 +5087,37 @@ impl App {
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::from(Span::styled(
-                        format!("Current: {current_mode}"),
+                        "How should categories be assigned to",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "new or edited items?",
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(""),
-                    Line::from(Span::styled(format!("{}Off", indicator(0)), style_for(0))),
                     Line::from(Span::styled(
-                        format!("{}Auto-apply", indicator(1)),
+                        format!("Current: {current_mode}"),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Off             no auto-classification", indicator(0)),
+                        style_for(0),
+                    )),
+                    Line::from(Span::styled(
+                        format!(
+                            "{}Auto-apply      assign matches instantly (default)",
+                            indicator(1)
+                        ),
                         style_for(1),
                     )),
                     Line::from(Span::styled(
-                        format!("{}Suggest/Review", indicator(2)),
+                        format!("{}Suggest/Review  queue for manual approval", indicator(2)),
                         style_for(2),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Classification runs when you save an item or change categories.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
@@ -4987,7 +5129,7 @@ impl App {
                     Block::default()
                         .title(" Classification Mode ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::LightCyan)),
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,

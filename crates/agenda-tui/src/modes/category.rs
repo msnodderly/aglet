@@ -93,12 +93,12 @@ impl App {
                 (
                     "Ready Queue",
                     self.workflow_config.ready_category_id,
-                    "Claim Target",
+                    "Claim Result",
                     self.workflow_config.claim_category_id,
                 )
             } else {
                 (
-                    "Claim Target",
+                    "Claim Result",
                     self.workflow_config.claim_category_id,
                     "Ready Queue",
                     self.workflow_config.ready_category_id,
@@ -132,6 +132,7 @@ impl App {
         self.mode = Mode::Normal;
         self.close_category_manager_session();
         self.workflow_setup_open = false;
+        self.workflow_role_picker = None;
         self.clear_input();
         self.status = status.to_string();
     }
@@ -948,6 +949,7 @@ impl App {
         match code {
             KeyCode::Esc | KeyCode::Char('w') => {
                 self.workflow_setup_open = false;
+                self.workflow_role_picker = None;
                 self.status = "Workflow setup closed".to_string();
                 return Ok(true);
             }
@@ -959,35 +961,153 @@ impl App {
                 self.workflow_setup_focus = 0;
                 return Ok(true);
             }
+            KeyCode::Char('x') => {
+                self.clear_workflow_role(agenda, self.workflow_setup_focus)?;
+                return Ok(true);
+            }
             KeyCode::Enter => {
-                let Some(selected_category_id) = self.selected_category_id() else {
-                    self.status = "No category selected in tree".to_string();
-                    return Ok(true);
-                };
-                if self.selected_category_is_reserved() {
-                    self.status = "Reserved categories cannot be workflow roles".to_string();
-                    return Ok(true);
-                }
-                if self.selected_category_is_numeric() {
-                    self.status = "Numeric categories cannot be workflow roles".to_string();
-                    return Ok(true);
-                }
-                if let Some(status) =
-                    self.workflow_setup_cross_role_conflict_status(agenda, selected_category_id)?
-                {
-                    self.status = status;
-                    return Ok(true);
-                }
-                if self.workflow_setup_focus == 0 {
-                    self.toggle_selected_category_ready_queue_role(agenda)?;
-                } else {
-                    self.toggle_selected_category_claim_target_role(agenda)?;
-                }
+                self.open_workflow_role_picker(self.workflow_setup_focus);
                 return Ok(true);
             }
             _ => {}
         }
         Ok(true)
+    }
+
+    pub(crate) fn workflow_role_picker_row_indices(&self) -> Vec<usize> {
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, row)| {
+                if row.is_reserved || row.value_kind == CategoryValueKind::Numeric {
+                    None
+                } else {
+                    Some(idx)
+                }
+            })
+            .collect()
+    }
+
+    fn open_workflow_role_picker(&mut self, role_index: usize) {
+        let row_indices = self.workflow_role_picker_row_indices();
+        if row_indices.is_empty() {
+            self.status = "No eligible categories available for workflow roles".to_string();
+            return;
+        }
+        let current_role_id = if role_index == 0 {
+            self.workflow_config.ready_category_id
+        } else {
+            self.workflow_config.claim_category_id
+        };
+        let row_index = current_role_id
+            .and_then(|category_id| {
+                row_indices.iter().position(|idx| {
+                    self.category_rows
+                        .get(*idx)
+                        .map(|row| row.id == category_id)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(0);
+        self.workflow_role_picker = Some(WorkflowRolePickerState {
+            role_index,
+            row_index,
+        });
+        let role_label = if role_index == 0 {
+            "Ready Queue"
+        } else {
+            "Claim Result"
+        };
+        self.status = format!("{role_label} picker: j/k select category, Enter assign, Esc back");
+    }
+
+    fn handle_workflow_role_picker_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        let visible_row_indices = self.workflow_role_picker_row_indices();
+        let Some(picker) = self.workflow_role_picker.clone() else {
+            return Ok(true);
+        };
+        match code {
+            KeyCode::Esc | KeyCode::Char('w') => {
+                self.workflow_role_picker = None;
+                self.status = "Workflow category picker closed".to_string();
+                return Ok(true);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(active_picker) = self.workflow_role_picker.as_mut() {
+                    active_picker.row_index =
+                        next_index_clamped(picker.row_index, visible_row_indices.len(), 1);
+                }
+                return Ok(true);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(active_picker) = self.workflow_role_picker.as_mut() {
+                    active_picker.row_index =
+                        next_index_clamped(picker.row_index, visible_row_indices.len(), -1);
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('x') => {
+                self.clear_workflow_role(agenda, picker.role_index)?;
+                self.workflow_role_picker = None;
+                return Ok(true);
+            }
+            KeyCode::Enter => {
+                let Some(row_idx) = visible_row_indices.get(picker.row_index).copied() else {
+                    self.status = "No category selected".to_string();
+                    return Ok(true);
+                };
+                let Some(row) = self.category_rows.get(row_idx).cloned() else {
+                    self.status = "No category selected".to_string();
+                    return Ok(true);
+                };
+                let preserved_selection = self.selected_category_id();
+                if let Some(status) =
+                    self.workflow_setup_cross_role_conflict_status(agenda, row.id)?
+                {
+                    self.status = status;
+                    return Ok(true);
+                }
+                if picker.role_index == 0 {
+                    self.assign_ready_queue_role(agenda, row.id, preserved_selection)?;
+                } else {
+                    self.assign_claim_result_role(agenda, row.id, preserved_selection)?;
+                }
+                self.workflow_role_picker = None;
+                return Ok(true);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn clear_workflow_role(&mut self, agenda: &Agenda<'_>, role_index: usize) -> TuiResult<()> {
+        let selected_category_id = self.selected_category_id();
+        let mut workflow = self.workflow_config.clone();
+        let (role_label, cleared_id) = if role_index == 0 {
+            ("Ready Queue", workflow.ready_category_id.take())
+        } else {
+            ("Claim Result", workflow.claim_category_id.take())
+        };
+        let Some(cleared_id) = cleared_id else {
+            self.status = format!("{role_label} is already unset");
+            return Ok(());
+        };
+        let cleared_name = agenda.store().get_category(cleared_id)?.name;
+        agenda.store().set_workflow_config(&workflow)?;
+        self.refresh(agenda.store())?;
+        if let Some(category_id) = selected_category_id {
+            self.set_category_selection_by_id(category_id);
+        }
+        self.mode = Mode::CategoryManager;
+        self.workflow_setup_open = true;
+        self.workflow_role_picker = None;
+        self.workflow_setup_focus = role_index.min(1);
+        self.status = format!("Cleared {role_label} category ({cleared_name})");
+        Ok(())
     }
 
     fn open_classification_mode_picker(&mut self) {
@@ -1032,23 +1152,6 @@ impl App {
         Ok(true)
     }
 
-    fn move_category_manager_global_setting(&mut self, delta: i32) {
-        let next = next_index_clamped(self.category_manager_global_settings_index(), 2, delta);
-        self.set_category_manager_global_settings_index(next);
-    }
-
-    fn open_selected_category_manager_global_setting(&mut self) {
-        match self.category_manager_global_settings_index() {
-            0 => self.open_classification_mode_picker(),
-            _ => {
-                self.workflow_setup_open = true;
-                self.workflow_setup_focus = 0;
-                self.status =
-                    "Workflow setup: j/k select role, Enter assign/unassign, Esc close".to_string();
-            }
-        }
-    }
-
     pub(crate) fn handle_category_manager_key(
         &mut self,
         code: KeyCode,
@@ -1064,6 +1167,10 @@ impl App {
         }
         if self.classification_mode_picker_open {
             self.handle_classification_mode_picker_key(code, agenda)?;
+            return Ok(false);
+        }
+        if self.workflow_role_picker.is_some() {
+            self.handle_workflow_role_picker_key(code, agenda)?;
             return Ok(false);
         }
         if self.workflow_setup_open {
@@ -1153,19 +1260,11 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.set_category_manager_filter_editing(false);
-                if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
-                    self.move_category_manager_global_setting(1);
-                } else {
-                    self.move_category_cursor(1)
-                }
+                self.move_category_cursor(1)
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.set_category_manager_filter_editing(false);
-                if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
-                    self.move_category_manager_global_setting(-1);
-                } else {
-                    self.move_category_cursor(-1)
-                }
+                self.move_category_cursor(-1)
             }
             KeyCode::Char('K') => {
                 if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
@@ -1254,21 +1353,19 @@ impl App {
             KeyCode::Char('w') => {
                 self.workflow_setup_open = true;
                 self.workflow_setup_focus = 0;
+                self.workflow_role_picker = None;
                 self.status =
-                    "Workflow setup: j/k select role, Enter assign/unassign, Esc close".to_string();
+                    "Workflow setup: j/k select role, Enter choose category, x clear, Esc close"
+                        .to_string();
             }
             KeyCode::Char('m') => {
                 self.open_classification_mode_picker();
             }
             KeyCode::Enter => {
-                if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
-                    self.open_selected_category_manager_global_setting();
-                } else {
-                    self.set_category_manager_focus(CategoryManagerFocus::Details);
-                    self.status =
-                        "Details pane focused: use j/k (or arrows) to select field, Enter/Space to edit/toggle"
-                            .to_string();
-                }
+                self.set_category_manager_focus(CategoryManagerFocus::Details);
+                self.status =
+                    "Details pane focused: use j/k (or arrows) to select field, Enter/Space to edit/toggle"
+                        .to_string();
             }
             KeyCode::Char('x') => {
                 self.start_category_inline_delete_confirm();
@@ -1385,115 +1482,105 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn toggle_selected_category_ready_queue_role(
+    fn assign_ready_queue_role(
         &mut self,
         agenda: &Agenda<'_>,
+        category_id: CategoryId,
+        selection_after: Option<CategoryId>,
     ) -> TuiResult<()> {
-        if self.selected_category_is_reserved() {
-            self.status = "Reserved category config is read-only".to_string();
-            return Ok(());
-        }
-        if self.selected_category_is_numeric() {
-            self.status = "Workflow roles are not applicable to numeric categories".to_string();
-            return Ok(());
-        }
-        let Some(category_id) = self.selected_category_id() else {
+        let Some(row) = self.category_rows.iter().find(|row| row.id == category_id) else {
             self.status = "No selected category".to_string();
             return Ok(());
         };
+        if row.is_reserved {
+            self.status = "Reserved categories cannot be workflow roles".to_string();
+            return Ok(());
+        }
+        if row.value_kind == CategoryValueKind::Numeric {
+            self.status = "Workflow roles are not applicable to numeric categories".to_string();
+            return Ok(());
+        }
+
         let category = agenda.store().get_category(category_id)?;
         let mut workflow = self.workflow_config.clone();
+        if workflow.ready_category_id == Some(category_id) {
+            self.status = format!("{} is already the Ready Queue category", category.name);
+            return Ok(());
+        }
         let previous_ready_category_name = workflow
             .ready_category_id
-            .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.claim_category_id == Some(category_id)
-            && workflow.ready_category_id != Some(category_id)
-        {
+        if workflow.claim_category_id == Some(category_id) {
             self.status = format!(
-                "{} is already the Claim Target category and cannot also be Ready Queue",
+                "{} is already the Claim Result category and cannot also be Ready Queue",
                 category.name
             );
             return Ok(());
         }
 
-        let enabled = workflow.ready_category_id != Some(category_id);
-        let prep = if enabled {
-            Some(self.prepare_category_for_workflow_role(category_id, agenda)?)
-        } else {
-            None
-        };
-        workflow.ready_category_id = if enabled { Some(category_id) } else { None };
+        let prep = Some(self.prepare_category_for_workflow_role(category_id, agenda)?);
+        workflow.ready_category_id = Some(category_id);
         agenda.store().set_workflow_config(&workflow)?;
         self.refresh(agenda.store())?;
-        self.set_category_selection_by_id(category_id);
-        self.status = if enabled {
-            Self::workflow_role_status_message(
-                "Ready Queue",
-                &category.name,
-                previous_ready_category_name.as_deref(),
-                prep.as_ref(),
-            )
-        } else {
-            format!("{} is no longer the Ready Queue category", category.name)
-        };
+        self.set_category_selection_by_id(selection_after.unwrap_or(category_id));
+        self.status = Self::workflow_role_status_message(
+            "Ready Queue",
+            &category.name,
+            previous_ready_category_name.as_deref(),
+            prep.as_ref(),
+        );
         Ok(())
     }
 
-    pub(crate) fn toggle_selected_category_claim_target_role(
+    fn assign_claim_result_role(
         &mut self,
         agenda: &Agenda<'_>,
+        category_id: CategoryId,
+        selection_after: Option<CategoryId>,
     ) -> TuiResult<()> {
-        if self.selected_category_is_reserved() {
-            self.status = "Reserved category config is read-only".to_string();
-            return Ok(());
-        }
-        if self.selected_category_is_numeric() {
-            self.status = "Workflow roles are not applicable to numeric categories".to_string();
-            return Ok(());
-        }
-        let Some(category_id) = self.selected_category_id() else {
+        let Some(row) = self.category_rows.iter().find(|row| row.id == category_id) else {
             self.status = "No selected category".to_string();
             return Ok(());
         };
+        if row.is_reserved {
+            self.status = "Reserved categories cannot be workflow roles".to_string();
+            return Ok(());
+        }
+        if row.value_kind == CategoryValueKind::Numeric {
+            self.status = "Workflow roles are not applicable to numeric categories".to_string();
+            return Ok(());
+        }
+
         let category = agenda.store().get_category(category_id)?;
         let mut workflow = self.workflow_config.clone();
+        if workflow.claim_category_id == Some(category_id) {
+            self.status = format!("{} is already the Claim Result category", category.name);
+            return Ok(());
+        }
         let previous_claim_category_name = workflow
             .claim_category_id
-            .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.ready_category_id == Some(category_id)
-            && workflow.claim_category_id != Some(category_id)
-        {
+        if workflow.ready_category_id == Some(category_id) {
             self.status = format!(
-                "{} is already the Ready Queue category and cannot also be Claim Target",
+                "{} is already the Ready Queue category and cannot also be Claim Result",
                 category.name
             );
             return Ok(());
         }
 
-        let enabled = workflow.claim_category_id != Some(category_id);
-        let prep = if enabled {
-            Some(self.prepare_category_for_workflow_role(category_id, agenda)?)
-        } else {
-            None
-        };
-        workflow.claim_category_id = if enabled { Some(category_id) } else { None };
+        let prep = Some(self.prepare_category_for_workflow_role(category_id, agenda)?);
+        workflow.claim_category_id = Some(category_id);
         agenda.store().set_workflow_config(&workflow)?;
         self.refresh(agenda.store())?;
-        self.set_category_selection_by_id(category_id);
-        self.status = if enabled {
-            Self::workflow_role_status_message(
-                "Claim Target",
-                &category.name,
-                previous_claim_category_name.as_deref(),
-                prep.as_ref(),
-            )
-        } else {
-            format!("{} is no longer the Claim Target category", category.name)
-        };
+        self.set_category_selection_by_id(selection_after.unwrap_or(category_id));
+        self.status = Self::workflow_role_status_message(
+            "Claim Result",
+            &category.name,
+            previous_claim_category_name.as_deref(),
+            prep.as_ref(),
+        );
         Ok(())
     }
 }

@@ -1139,7 +1139,6 @@ impl App {
         };
         self.category_manager = Some(CategoryManagerState {
             focus: CategoryManagerFocus::Tree,
-            global_settings_index: 0,
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
             structure_move_prefix: None,
@@ -1285,19 +1284,6 @@ impl App {
 
     pub(crate) fn category_manager_focus(&self) -> Option<CategoryManagerFocus> {
         self.category_manager.as_ref().map(|state| state.focus)
-    }
-
-    pub(crate) fn category_manager_global_settings_index(&self) -> usize {
-        self.category_manager
-            .as_ref()
-            .map(|state| state.global_settings_index)
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn set_category_manager_global_settings_index(&mut self, index: usize) {
-        if let Some(state) = &mut self.category_manager {
-            state.global_settings_index = index.min(1);
-        }
     }
 
     pub(crate) fn category_manager_discard_confirm(&self) -> bool {
@@ -1499,7 +1485,6 @@ impl App {
             return;
         };
         let order = [
-            CategoryManagerFocus::Global,
             CategoryManagerFocus::Filter,
             CategoryManagerFocus::Tree,
             CategoryManagerFocus::Details,
@@ -1507,7 +1492,7 @@ impl App {
         let current_index = order
             .iter()
             .position(|focus| *focus == current)
-            .unwrap_or(2);
+            .unwrap_or(1);
         let next = order[next_index(current_index, order.len(), delta)];
         self.set_category_manager_focus(next);
     }
