@@ -167,6 +167,13 @@ fn scan_relative_dates(
         ) {
             choose_best(best, candidate);
         }
+
+        // Bare weekday without prefix (e.g. "tuesday") → same as "this tuesday".
+        if let Some(candidate) =
+            parse_bare_weekday(bytes, start, reference_date, weekday_policy)
+        {
+            choose_best(best, candidate);
+        }
     }
 }
 
@@ -199,6 +206,43 @@ fn parse_relative_weekday(
 
         let day_delta =
             days_until_relative_weekday(reference_date.weekday(), weekday, prefix, policy);
+        let date = reference_date.checked_add(Span::new().days(day_delta)).ok()?;
+
+        return Some(ParsedDate {
+            datetime: at_midnight(date),
+            span: (start, end),
+        });
+    }
+
+    None
+}
+
+/// Bare weekday without prefix (e.g. "tuesday") → treat as "this tuesday".
+fn parse_bare_weekday(
+    bytes: &[u8],
+    start: usize,
+    reference_date: Date,
+    _policy: WeekdayDisambiguationPolicy,
+) -> Option<ParsedDate> {
+    for (weekday_name, weekday) in WEEKDAYS {
+        if !matches_ascii_insensitive(bytes, start, weekday_name.as_bytes()) {
+            continue;
+        }
+
+        let end = start + weekday_name.len();
+        if !has_right_boundary(bytes, end) {
+            continue;
+        }
+
+        // Make sure this isn't already captured by "this <weekday>" or "next <weekday>"
+        // by checking that the character before start isn't a space preceded by a prefix.
+        // The `choose_best` logic will prefer the longer match anyway, but we avoid
+        // creating a bare match at the same position where a prefixed match starts.
+        // Since the prefixed scanner checks start at the prefix, and we check start at
+        // the weekday word, positions won't collide — they only overlap when the bare
+        // weekday is standalone text.
+
+        let day_delta = days_until_weekday_this(reference_date.weekday(), weekday);
         let date = reference_date.checked_add(Span::new().days(day_delta)).ok()?;
 
         return Some(ParsedDate {
@@ -255,6 +299,7 @@ const PERIOD_PHRASES: &[&str] = &[
     "last month",
     "end of week",
     "end of month",
+    "next year",
 ];
 
 fn resolve_period_phrase(phrase_index: usize, d: Date) -> Option<Date> {
@@ -297,6 +342,8 @@ fn resolve_period_phrase(phrase_index: usize, d: Date) -> Option<Date> {
             .ok()?
             .checked_add(Span::new().days(-1))
             .ok(),
+        // next year → January 1st of next year
+        6 => Date::new(d.year() + 1, 1, 1).ok(),
         _ => None,
     }
 }
@@ -1086,7 +1133,11 @@ mod tests {
         let parser = BasicDateParser::default();
 
         assert_eq!(parser.parse("todayish", date(2026, 2, 16)), None);
-        assert_eq!(parser.parse("annext tuesday", date(2026, 2, 16)), None);
+        // "annext tuesday" — "annext" is not "next", but bare "tuesday" is valid.
+        let parsed = parser
+            .parse("annext tuesday", date(2026, 2, 16))
+            .expect("bare weekday should match");
+        assert_eq!(&"annext tuesday"[parsed.span.0..parsed.span.1], "tuesday");
     }
 
     #[test]
@@ -1488,5 +1539,74 @@ mod tests {
     fn in_n_boundary_prevents_false_positives() {
         let parser = BasicDateParser::default();
         assert_eq!(parser.parse("sin 3 days", date(2026, 2, 18)), None);
+    }
+
+    // ── Bare weekday (no prefix) ─────────────────────────────────────────────
+
+    #[test]
+    fn bare_weekday_resolves_like_this_weekday() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday
+        let parsed = parser
+            .parse("friday", date(2026, 2, 18))
+            .expect("expected parse");
+        // "this friday" from Wednesday = 2 days later
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn bare_weekday_same_day_returns_today() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday; bare "wednesday" = 0 days = today
+        let parsed = parser
+            .parse("wednesday", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 18, 0, 0));
+    }
+
+    #[test]
+    fn bare_weekday_supports_trailing_time() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday
+        let parsed = parser
+            .parse("tuesday at 9am", date(2026, 2, 18))
+            .expect("expected parse");
+        // "this tuesday" from Wednesday wraps to next week = 2026-02-24
+        assert_eq!(parsed.datetime, datetime(2026, 2, 24, 9, 0));
+    }
+
+    #[test]
+    fn bare_weekday_is_case_insensitive() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("FRIDAY", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn bare_weekday_boundary_prevents_false_positives() {
+        let parser = BasicDateParser::default();
+        assert_eq!(parser.parse("sundayish", date(2026, 2, 18)), None);
+    }
+
+    // ── Next year ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn next_year_resolves_to_jan_1() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("next year", date(2026, 7, 15))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2027, 1, 1, 0, 0));
+    }
+
+    #[test]
+    fn next_year_from_december_31() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("next year", date(2026, 12, 31))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2027, 1, 1, 0, 0));
     }
 }

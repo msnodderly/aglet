@@ -3651,7 +3651,7 @@ impl App {
                     // On error, repeat the error on line 2 (line 1 already has key hints)
                     String::new()
                 } else {
-                    "today | tomorrow | this/next <weekday> | next/last week/month | in N days/weeks/months | end of week/month | YYYY-MM-DD".to_string()
+                    "today | tomorrow | <weekday> | this/next <weekday> | next/last week/month | next year | in N days/weeks/months | end of week/month | YYYY-MM-DD".to_string()
                 };
                 frame.render_widget(Paragraph::new(hint_text).style(hint_style), help2_rect);
             }
