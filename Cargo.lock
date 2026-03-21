@@ -38,6 +38,7 @@ dependencies = [
  "crossterm 0.28.1",
  "ratatui",
  "rust_decimal",
+ "shlex",
  "tempfile",
  "tui-textarea-2",
  "uuid",

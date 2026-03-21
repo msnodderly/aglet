@@ -1,13 +1,23 @@
 use crate::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use std::io::Write;
+use std::time::{Duration, Instant};
 
 use agenda_core::store::DEFAULT_VIEW_NAME;
 use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
 };
+
+pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
+    let Some(parts) = shlex::split(editor) else {
+        return Err(format!("Could not parse $EDITOR value: {editor}"));
+    };
+    let Some((command, args)) = parts.split_first() else {
+        return Err("External editor command is empty".to_string());
+    };
+    Ok((command.clone(), args.to_vec()))
+}
 
 impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
@@ -1899,6 +1909,13 @@ impl App {
         let editor = std::env::var("VISUAL")
             .or_else(|_| std::env::var("EDITOR"))
             .unwrap_or_else(|_| "vi".to_string());
+        let (command, args) = match parse_external_editor_command(&editor) {
+            Ok(parts) => parts,
+            Err(err) => {
+                self.status = err;
+                return Ok(());
+            }
+        };
 
         // Write content to a temporary file.
         let suffix = match target {
@@ -1921,11 +1938,9 @@ impl App {
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
-        // Spawn the editor. Shell-split handles multi-word values like "code --wait".
-        let mut parts = editor.split_whitespace();
-        let cmd = parts.next().unwrap_or("vi");
-        let status = std::process::Command::new(cmd)
-            .args(parts)
+        // Spawn the editor using shell-style parsing so quoted paths/args work.
+        let status = std::process::Command::new(&command)
+            .args(&args)
             .arg(&tmp_path)
             .status();
 
