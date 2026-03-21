@@ -75,7 +75,7 @@ enum Command {
     Edit {
         /// Item id (full UUID or unique hex prefix).
         item_id: String,
-        /// New text (positional shorthand; also available as --text)
+        /// New text (positional argument)
         text: Option<String>,
         /// Replace the entire note. Mutually exclusive with other note flags.
         #[arg(long)]
@@ -654,6 +654,9 @@ fn run() -> Result<(), String> {
 }
 
 fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("text cannot be empty".to_string());
+    }
     let category_names: Vec<String> = agenda
         .store()
         .get_hierarchy()
@@ -3147,8 +3150,8 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_claim, cmd_edit,
-        cmd_release,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_add, cmd_claim,
+        cmd_edit, cmd_release,
         cmd_link, cmd_list, cmd_unlink, cmd_view, compare_items_by_sort_keys,
         duplicate_category_create_error, item_link_section_lines, parse_csv_decimals,
         parse_decimal_value, parse_sort_spec, parsed_when_feedback_line, read_note_from_stdin,
@@ -5514,5 +5517,94 @@ mod tests {
             OutputFormatArg::Table,
         );
         assert!(result.is_ok(), "explicit --view should work: {result:?}");
+    }
+
+    // ── cmd_add ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cmd_add_rejects_empty_text() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let err = cmd_add(&agenda, "".to_string(), None).expect_err("empty text should be rejected");
+        assert!(err.contains("text cannot be empty"), "error was: {err}");
+    }
+
+    #[test]
+    fn cmd_add_rejects_whitespace_only_text() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let err = cmd_add(&agenda, "   ".to_string(), None)
+            .expect_err("whitespace-only text should be rejected");
+        assert!(err.contains("text cannot be empty"), "error was: {err}");
+    }
+
+    // ── edit --text flag ───────────────────────────────────────────────────────
+
+    #[test]
+    fn clap_edit_rejects_unknown_text_flag() {
+        // The edit command only accepts text as a positional argument; --text is
+        // not a recognised flag and clap should reject it.
+        let result = Cli::try_parse_from([
+            "agenda",
+            "edit",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--text",
+            "some text",
+        ]);
+        assert!(
+            result.is_err(),
+            "--text should not be a recognised flag for edit"
+        );
+    }
+
+    // ── cmd_unlink idempotency ─────────────────────────────────────────────────
+
+    #[test]
+    fn cmd_unlink_is_idempotent_for_nonexistent_link() {
+        // Unlinking a dependency that was never created should succeed silently
+        // (idempotent behaviour confirmed by the CLI demo exercise).
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        // No link was ever created between a and b; unlink should still succeed.
+        cmd_unlink(
+            &agenda,
+            UnlinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("unlink of nonexistent link should succeed");
+    }
+
+    // ── cmd_claim missing workflow ─────────────────────────────────────────────
+
+    #[test]
+    fn cmd_claim_fails_when_no_workflow_configured() {
+        // cmd_claim requires a workflow to be configured in the store.
+        // Without one, it should fail with an informative error.
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Some task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let err = cmd_claim(&agenda, &store, item.id.to_string())
+            .expect_err("claim should fail when no workflow is configured");
+        assert!(
+            !err.is_empty(),
+            "expected a non-empty error message, got: {err}"
+        );
     }
 }
