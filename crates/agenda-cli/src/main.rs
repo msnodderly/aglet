@@ -18,7 +18,7 @@ use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config,
     workflow_setup_error_message, READY_QUEUE_VIEW_NAME,
 };
-use chrono::{Local, NaiveDateTime};
+use jiff::civil::DateTime;
 use clap::{Parser, Subcommand, ValueEnum};
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -666,7 +666,7 @@ fn cmd_add(agenda: &Agenda<'_>, text: String, note: Option<String>) -> Result<()
     let mut item = Item::new(text);
     item.note = note;
 
-    let reference_date = Local::now().date_naive();
+    let reference_date = jiff::Zoned::now().date();
     let result = agenda
         .create_item_with_reference_date(&item, reference_date)
         .map_err(|e| e.to_string())?;
@@ -784,8 +784,8 @@ fn cmd_edit(
             }
         }
 
-        item.modified_at = chrono::Utc::now();
-        let reference_date = Local::now().date_naive();
+        item.modified_at = jiff::Timestamp::now();
+        let reference_date = jiff::Zoned::now().date();
         agenda
             .update_item_with_reference_date(&item, reference_date)
             .map_err(|e| e.to_string())?;
@@ -819,8 +819,8 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     println!("text:       {}", item.text);
     println!("status:     {}", done);
     println!("when:       {}", when);
-    println!("created_at: {}", item.created_at.to_rfc3339());
-    println!("modified_at: {}", item.modified_at.to_rfc3339());
+    println!("created_at: {}", item.created_at);
+    println!("modified_at: {}", item.modified_at);
     if let Some(done_date) = item.done_date {
         println!("done_date:  {}", done_date);
     }
@@ -935,7 +935,7 @@ fn cmd_ready(store: &Store, sort_args: Vec<String>, output_format: OutputFormatA
     )
 }
 
-fn parsed_when_feedback_line(when_date: Option<NaiveDateTime>) -> Option<String> {
+fn parsed_when_feedback_line(when_date: Option<DateTime>) -> Option<String> {
     when_date.map(|when| format!("parsed_when={when}"))
 }
 
@@ -1282,7 +1282,7 @@ fn cmd_search(
         text_search: Some(query),
         ..Query::default()
     };
-    let reference_date = Local::now().date_naive();
+    let reference_date = jiff::Zoned::now().date();
     let matches = evaluate_query(&q, &items, reference_date);
 
     let mut matched_items: Vec<Item> = matches.into_iter().cloned().collect();
@@ -1340,7 +1340,7 @@ fn cmd_deleted(store: &Store) -> Result<(), String> {
             "{} | item={} | deleted_at={} | by={} | {}",
             entry.id,
             entry.item_id,
-            entry.deleted_at.to_rfc3339(),
+            entry.deleted_at,
             entry.deleted_by,
             entry.text
         );
@@ -1642,8 +1642,8 @@ fn cmd_category(
                     }
                 }
             }
-            println!("created_at:      {}", category.created_at.to_rfc3339());
-            println!("modified_at:     {}", category.modified_at.to_rfc3339());
+            println!("created_at:      {}", category.created_at);
+            println!("modified_at:     {}", category.modified_at);
             Ok(())
         }
         CategoryCommand::Create {
@@ -2460,7 +2460,7 @@ fn build_markdown_export(
         let view = view_by_name(store, name)?;
         out.push_str(&format!("# {}\n\n", view.name));
 
-        let reference_date = Local::now().date_naive();
+        let reference_date = jiff::Zoned::now().date();
         let result = resolve_view(&view, &items, &categories, reference_date);
         let mut rendered_any = false;
 
@@ -2596,7 +2596,7 @@ fn print_items_for_view(
     output_format: OutputFormatArg,
     blocked_item_ids: &HashSet<ItemId>,
 ) -> Result<(), String> {
-    let reference_date = Local::now().date_naive();
+    let reference_date = jiff::Zoned::now().date();
     let mut result = resolve_view(view, items, categories, reference_date);
     if view.hide_dependent_items {
         for section in &mut result.sections {
@@ -3167,7 +3167,7 @@ mod tests {
         SummaryFn, View,
     };
     use agenda_core::store::Store;
-    use chrono::NaiveDate;
+    use jiff::civil::date;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
     use std::collections::{HashMap, HashSet};
@@ -3223,13 +3223,10 @@ mod tests {
 
     #[test]
     fn parsed_when_feedback_line_includes_datetime_when_present() {
-        let when = NaiveDate::from_ymd_opt(2026, 2, 24)
-            .expect("valid date")
-            .and_hms_opt(15, 0, 0)
-            .expect("valid time");
+        let when = date(2026, 2, 24).at(15, 0, 0, 0);
 
         let line = parsed_when_feedback_line(Some(when)).expect("expected line");
-        assert_eq!(line, "parsed_when=2026-02-24 15:00:00");
+        assert_eq!(line, "parsed_when=2026-02-24T15:00:00");
     }
 
     #[test]
@@ -4197,7 +4194,7 @@ mod tests {
             cost.id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(100, 0)),
@@ -4208,7 +4205,7 @@ mod tests {
             cost.id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(250, 0)),

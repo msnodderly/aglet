@@ -1,4 +1,5 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Weekday};
+use jiff::civil::{Date, DateTime, Weekday};
+use jiff::Span;
 
 /// Parses date/time expressions from item text.
 pub trait DateParser: Send + Sync {
@@ -7,14 +8,14 @@ pub trait DateParser: Send + Sync {
     /// Returns `None` when no supported date expression is found.
     /// Returns `Some(ParsedDate)` when an expression is found and resolved
     /// against `reference_date`.
-    fn parse(&self, text: &str, reference_date: NaiveDate) -> Option<ParsedDate>;
+    fn parse(&self, text: &str, reference_date: Date) -> Option<ParsedDate>;
 }
 
 /// Parsed date/time data and source provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParsedDate {
     /// Absolute local datetime resolved during parsing.
-    pub datetime: NaiveDateTime,
+    pub datetime: DateTime,
     /// Matched source span as UTF-8 byte offsets in `text`, half-open: `[start, end)`.
     ///
     /// When valid, `&text[start..end]` yields the matched expression.
@@ -58,7 +59,7 @@ impl BasicDateParser {
 }
 
 impl DateParser for BasicDateParser {
-    fn parse(&self, text: &str, reference_date: NaiveDate) -> Option<ParsedDate> {
+    fn parse(&self, text: &str, reference_date: Date) -> Option<ParsedDate> {
         let bytes = text.as_bytes();
         let mut best = None;
 
@@ -88,13 +89,13 @@ const MONTHS: [(&str, u32); 12] = [
 ];
 
 const WEEKDAYS: [(&str, Weekday); 7] = [
-    ("monday", Weekday::Mon),
-    ("tuesday", Weekday::Tue),
-    ("wednesday", Weekday::Wed),
-    ("thursday", Weekday::Thu),
-    ("friday", Weekday::Fri),
-    ("saturday", Weekday::Sat),
-    ("sunday", Weekday::Sun),
+    ("monday", Weekday::Monday),
+    ("tuesday", Weekday::Tuesday),
+    ("wednesday", Weekday::Wednesday),
+    ("thursday", Weekday::Thursday),
+    ("friday", Weekday::Friday),
+    ("saturday", Weekday::Saturday),
+    ("sunday", Weekday::Sunday),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +115,7 @@ impl RelativeWeekdayPrefix {
 
 fn scan_relative_dates(
     bytes: &[u8],
-    reference_date: NaiveDate,
+    reference_date: Date,
     weekday_policy: WeekdayDisambiguationPolicy,
     best: &mut Option<ParsedDate>,
 ) {
@@ -134,7 +135,7 @@ fn scan_relative_dates(
                 continue;
             }
 
-            if let Some(date) = reference_date.checked_add_signed(Duration::days(day_offset)) {
+            if let Ok(date) = reference_date.checked_add(Span::new().days(day_offset)) {
                 choose_best(
                     best,
                     ParsedDate {
@@ -170,7 +171,7 @@ fn scan_relative_dates(
 fn parse_relative_weekday(
     bytes: &[u8],
     start: usize,
-    reference_date: NaiveDate,
+    reference_date: Date,
     prefix: RelativeWeekdayPrefix,
     policy: WeekdayDisambiguationPolicy,
 ) -> Option<ParsedDate> {
@@ -196,7 +197,7 @@ fn parse_relative_weekday(
 
         let day_delta =
             days_until_relative_weekday(reference_date.weekday(), weekday, prefix, policy);
-        let date = reference_date.checked_add_signed(Duration::days(day_delta))?;
+        let date = reference_date.checked_add(Span::new().days(day_delta)).ok()?;
 
         return Some(ParsedDate {
             datetime: at_midnight(date),
@@ -220,8 +221,8 @@ fn days_until_relative_weekday(
 }
 
 fn days_until_weekday_this(current: Weekday, target: Weekday) -> i64 {
-    let current_idx = current.num_days_from_monday() as i64;
-    let target_idx = target.num_days_from_monday() as i64;
+    let current_idx = current.to_monday_zero_offset() as i64;
+    let target_idx = target.to_monday_zero_offset() as i64;
     (target_idx - current_idx + 7) % 7
 }
 
@@ -230,8 +231,8 @@ fn days_until_weekday_next(
     target: Weekday,
     policy: WeekdayDisambiguationPolicy,
 ) -> i64 {
-    let current_idx = current.num_days_from_monday() as i64;
-    let target_idx = target.num_days_from_monday() as i64;
+    let current_idx = current.to_monday_zero_offset() as i64;
+    let target_idx = target.to_monday_zero_offset() as i64;
 
     match policy {
         WeekdayDisambiguationPolicy::InclusiveNext => {
@@ -245,7 +246,7 @@ fn days_until_weekday_next(
     }
 }
 
-fn scan_month_name_dates(bytes: &[u8], reference_date: NaiveDate, best: &mut Option<ParsedDate>) {
+fn scan_month_name_dates(bytes: &[u8], reference_date: Date, best: &mut Option<ParsedDate>) {
     for start in 0..bytes.len() {
         if !has_left_boundary(bytes, start) {
             continue;
@@ -284,7 +285,7 @@ fn scan_month_name_dates(bytes: &[u8], reference_date: NaiveDate, best: &mut Opt
             if had_comma || had_space {
                 if let Some((year, year_end)) = parse_digits(bytes, year_pos, 4, 4) {
                     if has_right_boundary(bytes, year_end) {
-                        if let Some(date) = NaiveDate::from_ymd_opt(year as i32, month, day) {
+                        if let Ok(date) = Date::new(year as i16, month as i8, day as i8) {
                             full_date_candidate = Some(ParsedDate {
                                 datetime: at_midnight(date),
                                 span: (start, year_end),
@@ -346,7 +347,7 @@ fn scan_iso_dashed_dates(bytes: &[u8], best: &mut Option<ParsedDate>) {
             continue;
         }
 
-        if let Some(date) = NaiveDate::from_ymd_opt(year as i32, month, day) {
+        if let Ok(date) = Date::new(year as i16, month as i8, day as i8) {
             choose_best(
                 best,
                 ParsedDate {
@@ -383,7 +384,7 @@ fn scan_iso_compact_dates(bytes: &[u8], best: &mut Option<ParsedDate>) {
             continue;
         }
 
-        if let Some(date) = NaiveDate::from_ymd_opt(year as i32, month, day) {
+        if let Ok(date) = Date::new(year as i16, month as i8, day as i8) {
             choose_best(
                 best,
                 ParsedDate {
@@ -422,8 +423,8 @@ fn scan_numeric_mdy_dates(bytes: &[u8], best: &mut Option<ParsedDate>) {
             continue;
         }
 
-        let full_year = 2000 + year as i32;
-        if let Some(date) = NaiveDate::from_ymd_opt(full_year, month, day) {
+        let full_year = 2000 + year as i16;
+        if let Ok(date) = Date::new(full_year, month as i8, day as i8) {
             choose_best(
                 best,
                 ParsedDate {
@@ -435,16 +436,12 @@ fn scan_numeric_mdy_dates(bytes: &[u8], best: &mut Option<ParsedDate>) {
     }
 }
 
-fn resolve_month_day_without_year(
-    reference_date: NaiveDate,
-    month: u32,
-    day: u32,
-) -> Option<NaiveDate> {
+fn resolve_month_day_without_year(reference_date: Date, month: u32, day: u32) -> Option<Date> {
     let this_year = reference_date.year();
-    let this_year_date = NaiveDate::from_ymd_opt(this_year, month, day)?;
+    let this_year_date = Date::new(this_year, month as i8, day as i8).ok()?;
 
     if this_year_date < reference_date {
-        NaiveDate::from_ymd_opt(this_year + 1, month, day)
+        Date::new(this_year + 1, month as i8, day as i8).ok()
     } else {
         Some(this_year_date)
     }
@@ -463,9 +460,7 @@ fn attach_trailing_time(bytes: &[u8], parsed: ParsedDate) -> ParsedDate {
     };
 
     let date = parsed.datetime.date();
-    let datetime = date
-        .and_hms_opt(time.hour, time.minute, 0)
-        .expect("validated time should be valid");
+    let datetime = date.at(time.hour as i8, time.minute as i8, 0, 0);
 
     ParsedDate {
         datetime,
@@ -660,21 +655,21 @@ fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn at_midnight(date: NaiveDate) -> NaiveDateTime {
-    date.and_hms_opt(0, 0, 0).expect("midnight time is valid")
+fn at_midnight(date: Date) -> DateTime {
+    date.at(0, 0, 0, 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{BasicDateParser, DateParser, WeekdayDisambiguationPolicy};
-    use chrono::{NaiveDate, NaiveDateTime};
+    use jiff::civil::{Date, DateTime};
 
-    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    fn date(y: i16, m: i8, d: i8) -> Date {
+        Date::new(y, m, d).expect("valid date")
     }
 
-    fn datetime(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
-        date(y, m, d).and_hms_opt(h, min, 0).expect("valid time")
+    fn datetime(y: i16, m: i8, d: i8, h: i8, min: i8) -> DateTime {
+        date(y, m, d).at(h, min, 0, 0)
     }
 
     fn parser_with_policy(policy: WeekdayDisambiguationPolicy) -> BasicDateParser {
@@ -838,9 +833,9 @@ mod tests {
 
         struct Case {
             weekday: &'static str,
-            this_expected: NaiveDateTime,
-            strict_next_expected: NaiveDateTime,
-            inclusive_next_expected: NaiveDateTime,
+            this_expected: DateTime,
+            strict_next_expected: DateTime,
+            inclusive_next_expected: DateTime,
         }
 
         let cases = [

@@ -1,12 +1,13 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
+use jiff::civil::{Date, DateTime};
+use jiff::Span;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
 
 /// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
 pub fn resolve_when_bucket(
-    when_date: Option<NaiveDateTime>,
-    reference_date: NaiveDate,
+    when_date: Option<DateTime>,
+    reference_date: Date,
 ) -> WhenBucket {
     let Some(when_datetime) = when_date else {
         return WhenBucket::NoDate;
@@ -22,7 +23,7 @@ pub fn resolve_when_bucket(
         return WhenBucket::Today;
     }
 
-    if let Some(tomorrow) = reference_date.succ_opt() {
+    if let Ok(tomorrow) = reference_date.checked_add(Span::new().days(1)) {
         if when_day == tomorrow {
             return WhenBucket::Tomorrow;
         }
@@ -30,7 +31,7 @@ pub fn resolve_when_bucket(
 
     let this_week_start = start_of_iso_week(reference_date);
     let this_week_end = this_week_start
-        .checked_add_signed(Duration::days(6))
+        .checked_add(Span::new().days(6))
         .expect("valid week range");
 
     if when_day > reference_date && when_day >= this_week_start && when_day <= this_week_end {
@@ -38,10 +39,10 @@ pub fn resolve_when_bucket(
     }
 
     let next_week_start = this_week_start
-        .checked_add_signed(Duration::days(7))
+        .checked_add(Span::new().days(7))
         .expect("valid next week start");
     let next_week_end = next_week_start
-        .checked_add_signed(Duration::days(6))
+        .checked_add(Span::new().days(6))
         .expect("valid next week range");
 
     if when_day >= next_week_start && when_day <= next_week_end {
@@ -59,7 +60,7 @@ pub fn resolve_when_bucket(
 pub fn evaluate_query<'a>(
     query: &Query,
     items: &'a [Item],
-    reference_date: NaiveDate,
+    reference_date: Date,
 ) -> Vec<&'a Item> {
     let normalized_search = query
         .text_search
@@ -103,7 +104,7 @@ pub fn resolve_view(
     view: &View,
     items: &[Item],
     categories: &[Category],
-    reference_date: NaiveDate,
+    reference_date: Date,
 ) -> ViewResult {
     let categories_by_id: HashMap<CategoryId, &Category> = categories
         .iter()
@@ -251,7 +252,7 @@ fn show_children_parent_category_id(section: &Section) -> Option<CategoryId> {
 fn item_matches_query(
     query: &Query,
     item: &Item,
-    reference_date: NaiveDate,
+    reference_date: Date,
     normalized_search: Option<&str>,
 ) -> bool {
     // And: ALL And-mode categories must be present
@@ -343,8 +344,9 @@ fn is_uuid_search_candidate(search_term: &str) -> bool {
             .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
 }
 
-fn start_of_iso_week(date: NaiveDate) -> NaiveDate {
-    date.checked_sub_signed(Duration::days(date.weekday().num_days_from_monday() as i64))
+fn start_of_iso_week(date: Date) -> Date {
+    let offset = date.weekday().to_monday_zero_offset() as i64;
+    date.checked_sub(Span::new().days(offset))
         .expect("valid ISO week start")
 }
 
@@ -352,7 +354,8 @@ fn start_of_iso_week(date: NaiveDate) -> NaiveDate {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use chrono::{NaiveDate, NaiveDateTime, Utc};
+    use jiff::civil::{Date, DateTime};
+    use jiff::Timestamp;
     use uuid::Uuid;
 
     use super::{evaluate_query, resolve_view, resolve_when_bucket};
@@ -361,18 +364,18 @@ mod tests {
         View, WhenBucket,
     };
 
-    fn day(year: i32, month: u32, date: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, date).unwrap()
+    fn day(year: i16, month: i8, date: i8) -> Date {
+        Date::new(year, month, date).unwrap()
     }
 
-    fn datetime(year: i32, month: u32, date: u32, hour: u32, minute: u32) -> NaiveDateTime {
-        day(year, month, date).and_hms_opt(hour, minute, 0).unwrap()
+    fn datetime(year: i16, month: i8, date: i8, hour: i8, minute: i8) -> DateTime {
+        day(year, month, date).at(hour, minute, 0, 0)
     }
 
     fn assignment() -> Assignment {
         Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
             numeric_value: None,
@@ -382,7 +385,7 @@ mod tests {
     fn item_with_assignments(
         text: &str,
         note: Option<&str>,
-        when_date: Option<NaiveDateTime>,
+        when_date: Option<DateTime>,
         assigned_categories: &[CategoryId],
     ) -> Item {
         let mut item = Item::new(text.to_string());

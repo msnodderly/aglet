@@ -14,7 +14,8 @@ use agenda_core::model::{
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use agenda_core::workflow::WorkflowConfig;
-use chrono::{Local, NaiveDateTime, Utc};
+use jiff::civil::{Date, DateTime};
+use jiff::Timestamp;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -1001,7 +1002,7 @@ mod tests {
         SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
@@ -1030,7 +1031,7 @@ mod tests {
         let mut item = Item::new("Draft row ordering".to_string());
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: chrono::Utc::now(),
+            assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
             numeric_value: None,
@@ -2912,10 +2913,9 @@ mod tests {
         assert_eq!(
             loaded.when_date,
             Some(
-                NaiveDate::from_ymd_opt(2026, 3, 7)
+                Date::new(2026, 3, 7)
                     .expect("date")
-                    .and_hms_opt(14, 25, 0)
-                    .expect("time")
+                    .at(14, 25, 0, 0)
             )
         );
         let assignments = store
@@ -2957,10 +2957,9 @@ mod tests {
         assert_eq!(
             loaded.when_date,
             Some(
-                NaiveDate::from_ymd_opt(2026, 3, 7)
+                Date::new(2026, 3, 7)
                     .expect("date")
-                    .and_hms_opt(14, 25, 59)
-                    .expect("time")
+                    .at(14, 25, 59, 0)
             )
         );
 
@@ -3075,10 +3074,9 @@ mod tests {
             .set_item_when_date(
                 item_id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("manual:test-setup".to_string()),
             )
@@ -4452,10 +4450,9 @@ mod tests {
 
     #[test]
     fn add_capture_status_message_includes_parsed_datetime_when_present() {
-        let when = NaiveDate::from_ymd_opt(2026, 2, 24)
+        let when = Date::new(2026, 2, 24)
             .expect("valid date")
-            .and_hms_opt(15, 0, 0)
-            .expect("valid time");
+            .at(15, 0, 0, 0);
 
         assert_eq!(
             add_capture_status_message(Some(when), &[]),
@@ -4922,7 +4919,7 @@ mod tests {
 
         let item = Item::new("derived assignment item".to_string());
         store.create_item(&item).expect("create item");
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         store
             .assign_item(
                 item.id,
@@ -7855,7 +7852,7 @@ mod tests {
         item.note = Some("Primary note".to_string());
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: chrono::Utc::now(),
+            assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
             numeric_value: None,
@@ -11666,7 +11663,7 @@ mod tests {
             category_a,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: None,
@@ -11676,7 +11673,7 @@ mod tests {
             category_b,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: None,
@@ -11847,10 +11844,9 @@ mod tests {
             .set_item_when_date(
                 item.id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("test:when".to_string()),
             )
@@ -12007,10 +12003,9 @@ mod tests {
             .set_item_when_date(
                 item.id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("test:when".to_string()),
             )
@@ -12070,10 +12065,9 @@ mod tests {
             .set_item_when_date(
                 item.id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("test:when".to_string()),
             )

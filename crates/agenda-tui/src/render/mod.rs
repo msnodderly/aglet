@@ -2828,7 +2828,7 @@ impl App {
             format!(
                 "  When: {}",
                 item.when_date
-                    .map(|value| value.to_string())
+                    .map(|value| value.strftime("%Y-%m-%d %H:%M:%S").to_string())
                     .unwrap_or_else(|| "-".to_string())
             ),
             format!("  Created: {}", item.created_at),
@@ -5162,7 +5162,7 @@ impl App {
                 inactive_border
             };
 
-            let reference_date = Local::now().date_naive();
+            let reference_date = jiff::Zoned::now().date();
             let resolved = resolve_view(
                 &state.draft,
                 &self.all_items,

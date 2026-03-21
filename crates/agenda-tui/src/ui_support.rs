@@ -1151,7 +1151,7 @@ pub(super) fn input_panel_popup_regions(
 }
 
 pub(super) fn add_capture_status_message(
-    parsed_when: Option<NaiveDateTime>,
+    parsed_when: Option<DateTime>,
     unknown_hashtags: &[String],
 ) -> String {
     let warning = if unknown_hashtags.is_empty() {
@@ -1160,7 +1160,7 @@ pub(super) fn add_capture_status_message(
         format!(" | warning unknown_hashtags={}", unknown_hashtags.join(","))
     };
     match parsed_when {
-        Some(when) => format!("Item added (parsed when: {when}{warning})"),
+        Some(when) => format!("Item added (parsed when: {}{warning})", when.strftime("%Y-%m-%d %H:%M:%S")),
         None => format!("Item added{warning}"),
     }
 }
@@ -1169,7 +1169,7 @@ pub(super) fn add_capture_status_message(
 mod tests {
     use super::*;
     use agenda_core::model::Category;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn make_category(name: &str) -> Category {
         Category {
@@ -1181,8 +1181,8 @@ mod tests {
             is_actionable: false,
             enable_implicit_string: false,
             note: None,
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
+            created_at: Timestamp::now(),
+            modified_at: Timestamp::now(),
             conditions: Vec::new(),
             actions: Vec::new(),
             value_kind: Default::default(),
@@ -1424,7 +1424,7 @@ mod tests {
             cat_id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(100, 0)),
@@ -1454,7 +1454,7 @@ mod tests {
             cat_id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(100, 0)),
@@ -1465,7 +1465,7 @@ mod tests {
             cat_id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(250, 0)),

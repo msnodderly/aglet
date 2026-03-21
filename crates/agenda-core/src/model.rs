@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDateTime, Utc};
+use jiff::Timestamp;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -57,7 +57,7 @@ pub struct ItemLink {
     pub item_id: ItemId,
     pub other_item_id: ItemId,
     pub kind: ItemLinkKind,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// How this link was created. See [`origin`] for canonical values.
     pub origin: Option<String>,
 }
@@ -74,10 +74,10 @@ pub struct Item {
     pub id: ItemId,
     pub text: String,
     pub note: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub modified_at: DateTime<Utc>,
-    pub when_date: Option<NaiveDateTime>,
-    pub done_date: Option<NaiveDateTime>,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
+    pub when_date: Option<jiff::civil::DateTime>,
+    pub done_date: Option<jiff::civil::DateTime>,
     pub is_done: bool,
     pub assignments: HashMap<CategoryId, Assignment>,
 }
@@ -85,7 +85,7 @@ pub struct Item {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Assignment {
     pub source: AssignmentSource,
-    pub assigned_at: DateTime<Utc>,
+    pub assigned_at: Timestamp,
     pub sticky: bool,
     /// How this assignment was created. See [`origin`] for canonical values.
     pub origin: Option<String>,
@@ -111,8 +111,8 @@ pub struct Category {
     pub is_actionable: bool,
     pub enable_implicit_string: bool,
     pub note: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub modified_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
     pub conditions: Vec<Condition>,
     pub actions: Vec<Action>,
     #[serde(default)]
@@ -438,17 +438,17 @@ pub struct DeletionLogEntry {
     pub item_id: Uuid,
     pub text: String,
     pub note: Option<String>,
-    pub when_date: Option<NaiveDateTime>,
-    pub done_date: Option<NaiveDateTime>,
+    pub when_date: Option<jiff::civil::DateTime>,
+    pub done_date: Option<jiff::civil::DateTime>,
     pub is_done: bool,
     pub assignments_json: String,
-    pub deleted_at: DateTime<Utc>,
+    pub deleted_at: Timestamp,
     pub deleted_by: String,
 }
 
 impl Item {
     pub fn new(text: String) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: Uuid::new_v4(),
             text,
@@ -465,7 +465,7 @@ impl Item {
 
 impl Category {
     pub fn new(name: String) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: Uuid::new_v4(),
             name,
