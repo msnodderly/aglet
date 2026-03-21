@@ -3931,4 +3931,83 @@ mod tests {
             .unwrap_or("");
         assert_eq!(kind, "Standard");
     }
+
+    // ── Phase 0 spike: jiff format compatibility ──────────────────────
+
+    #[test]
+    fn spike_jiff_civil_datetime_display_format() {
+        let dt = jiff::civil::DateTime::new(2026, 3, 20, 14, 30, 0, 0).unwrap();
+        assert_eq!(dt.to_string(), "2026-03-20T14:30:00");
+    }
+
+    #[test]
+    fn spike_jiff_civil_datetime_parse_iso8601() {
+        let dt: jiff::civil::DateTime = "2026-03-20T14:30:00".parse().unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.day(), 20);
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.minute(), 30);
+    }
+
+    #[test]
+    fn spike_jiff_timestamp_rfc3339_roundtrip() {
+        // Chrono produces RFC 3339 like "2026-03-20T14:30:00+00:00"
+        // Jiff Timestamp should parse and re-emit compatible format
+        let ts: jiff::Timestamp = "2026-03-20T14:30:00+00:00".parse().unwrap();
+        let s = ts.to_string();
+        // Jiff may emit "2026-03-20T14:30:00Z" — both are valid RFC 3339
+        assert!(s.contains("2026-03-20T14:30:00"));
+        // Verify round-trip
+        let ts2: jiff::Timestamp = s.parse().unwrap();
+        assert_eq!(ts, ts2);
+    }
+
+    #[test]
+    fn spike_jiff_span_day_arithmetic() {
+        let date = jiff::civil::Date::new(2026, 3, 20).unwrap();
+        let tomorrow = date.checked_add(jiff::Span::new().days(1)).unwrap();
+        assert_eq!(tomorrow.to_string(), "2026-03-21");
+
+        let next_week = date.checked_add(jiff::Span::new().days(7)).unwrap();
+        assert_eq!(next_week.to_string(), "2026-03-27");
+
+        let prev = date.checked_sub(jiff::Span::new().days(3)).unwrap();
+        assert_eq!(prev.to_string(), "2026-03-17");
+    }
+
+    #[test]
+    fn spike_jiff_serde_roundtrip() {
+        // civil::DateTime serde
+        let dt = jiff::civil::DateTime::new(2026, 3, 20, 14, 30, 0, 0).unwrap();
+        let json = serde_json::to_string(&dt).unwrap();
+        let dt2: jiff::civil::DateTime = serde_json::from_str(&json).unwrap();
+        assert_eq!(dt, dt2);
+
+        // Timestamp serde
+        let ts: jiff::Timestamp = "2026-03-20T14:30:00Z".parse().unwrap();
+        let json = serde_json::to_string(&ts).unwrap();
+        let ts2: jiff::Timestamp = serde_json::from_str(&json).unwrap();
+        assert_eq!(ts, ts2);
+    }
+
+    #[test]
+    fn spike_jiff_weekday_offset() {
+        use jiff::civil::Weekday;
+        // Monday = 0, Sunday = 6 (same semantics as chrono's num_days_from_monday)
+        assert_eq!(Weekday::Monday.to_monday_zero_offset(), 0);
+        assert_eq!(Weekday::Tuesday.to_monday_zero_offset(), 1);
+        assert_eq!(Weekday::Sunday.to_monday_zero_offset(), 6);
+    }
+
+    #[test]
+    fn spike_jiff_schema_migration_format() {
+        // Verify that REPLACE(' ', 'T') on chrono's format produces valid jiff input
+        let chrono_format = "2026-03-20 14:30:00";
+        let migrated = chrono_format.replace(' ', "T");
+        assert_eq!(migrated, "2026-03-20T14:30:00");
+        let dt: jiff::civil::DateTime = migrated.parse().unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.hour(), 14);
+    }
 }
