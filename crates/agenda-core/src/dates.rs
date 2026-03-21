@@ -217,7 +217,9 @@ fn parse_relative_weekday(
     None
 }
 
-/// Bare weekday without prefix (e.g. "tuesday") → treat as "this tuesday".
+/// Bare weekday without prefix (e.g. "tuesday") → next occurrence, 1–7 days forward.
+/// Unlike "this tuesday" which can return today (0-day delta), a bare weekday
+/// always advances: typing "monday" on a Monday means next Monday.
 fn parse_bare_weekday(
     bytes: &[u8],
     start: usize,
@@ -234,15 +236,10 @@ fn parse_bare_weekday(
             continue;
         }
 
-        // Make sure this isn't already captured by "this <weekday>" or "next <weekday>"
-        // by checking that the character before start isn't a space preceded by a prefix.
-        // The `choose_best` logic will prefer the longer match anyway, but we avoid
-        // creating a bare match at the same position where a prefixed match starts.
-        // Since the prefixed scanner checks start at the prefix, and we check start at
-        // the weekday word, positions won't collide — they only overlap when the bare
-        // weekday is standalone text.
-
-        let day_delta = days_until_weekday_this(reference_date.weekday(), weekday);
+        let mut day_delta = days_until_weekday_this(reference_date.weekday(), weekday);
+        if day_delta == 0 {
+            day_delta = 7; // same day → advance to next week
+        }
         let date = reference_date.checked_add(Span::new().days(day_delta)).ok()?;
 
         return Some(ParsedDate {
@@ -1555,13 +1552,13 @@ mod tests {
     }
 
     #[test]
-    fn bare_weekday_same_day_returns_today() {
+    fn bare_weekday_same_day_advances_one_week() {
         let parser = BasicDateParser::default();
-        // 2026-02-18 is a Wednesday; bare "wednesday" = 0 days = today
+        // 2026-02-18 is a Wednesday; bare "wednesday" on Wednesday = next Wednesday
         let parsed = parser
             .parse("wednesday", date(2026, 2, 18))
             .expect("expected parse");
-        assert_eq!(parsed.datetime, datetime(2026, 2, 18, 0, 0));
+        assert_eq!(parsed.datetime, datetime(2026, 2, 25, 0, 0));
     }
 
     #[test]
