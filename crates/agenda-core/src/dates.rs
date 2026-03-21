@@ -1609,4 +1609,86 @@ mod tests {
             .expect("expected parse");
         assert_eq!(parsed.datetime, datetime(2027, 1, 1, 0, 0));
     }
+
+    // ── Edge case coverage for identified gotchas ────────────────────────────
+
+    #[test]
+    fn bare_monday_works() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday; bare "monday" = this Monday = wraps to next week
+        let parsed = parser
+            .parse("monday", date(2026, 2, 18))
+            .expect("bare monday should parse");
+        // days_until_weekday_this(Wed=2, Mon=0) = (0-2+7)%7 = 5 → 2026-02-23
+        assert_eq!(parsed.datetime, datetime(2026, 2, 23, 0, 0));
+    }
+
+    #[test]
+    fn bare_monday_at_time_works() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("monday at 10am", date(2026, 2, 18))
+            .expect("bare monday with time should parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 23, 10, 0));
+    }
+
+    #[test]
+    fn last_tuesday_does_not_parse_as_relative_weekday() {
+        // "last <weekday>" is NOT supported — only "last week" and "last month".
+        // The bare weekday scanner should still pick up "tuesday" though.
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday
+        let parsed = parser
+            .parse("last tuesday", date(2026, 2, 18))
+            .expect("bare tuesday within 'last tuesday' should parse");
+        // Bare "tuesday" from Wednesday = (1-2+7)%7 = 6 → next Tuesday 2026-02-24
+        assert_eq!(parsed.datetime, datetime(2026, 2, 24, 0, 0));
+        // The span should cover only "tuesday", not "last"
+        assert_eq!(
+            &"last tuesday"[parsed.span.0..parsed.span.1],
+            "tuesday"
+        );
+    }
+
+    #[test]
+    fn in_0_days_resolves_to_today() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 0 days", date(2026, 2, 18))
+            .expect("in 0 days should parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 18, 0, 0));
+    }
+
+    #[test]
+    fn end_of_week_on_sunday_returns_previous_friday() {
+        let parser = BasicDateParser::default();
+        // 2026-02-22 is a Sunday (to_monday_zero_offset = 6)
+        // Friday offset = 4 - 6 = -2 → 2026-02-20 (previous Friday)
+        let parsed = parser
+            .parse("end of week", date(2026, 2, 22))
+            .expect("end of week on Sunday should parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn end_of_week_on_monday_returns_same_week_friday() {
+        let parser = BasicDateParser::default();
+        // 2026-02-16 is a Monday
+        let parsed = parser
+            .parse("end of week", date(2026, 2, 16))
+            .expect("end of week on Monday should parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn all_seven_bare_weekdays_parse() {
+        let parser = BasicDateParser::default();
+        let reference = date(2026, 2, 16); // Monday
+        for (name, _) in super::WEEKDAYS {
+            assert!(
+                parser.parse(name, reference).is_some(),
+                "bare '{name}' should parse"
+            );
+        }
+    }
 }
