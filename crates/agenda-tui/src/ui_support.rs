@@ -922,7 +922,7 @@ pub(super) fn input_panel_popup_area(area: Rect, kind: crate::input_panel::Input
             } else {
                 max_width.max(1)
             };
-            centered_fixed_rect(area, width, 7)
+            centered_fixed_rect(area, width, 8)
         }
         crate::input_panel::InputPanelKind::NumericValue => centered_rect(48, 22, area),
         _ => centered_rect(84, 70, area),
@@ -946,6 +946,8 @@ pub(super) struct InputPanelPopupRegions {
     pub(super) type_picker: Option<Rect>,
     pub(super) buttons: Rect,
     pub(super) help: Rect,
+    /// Optional second help line (WhenDate format hints).
+    pub(super) help2: Option<Rect>,
 }
 
 pub(super) fn input_panel_popup_regions(
@@ -993,6 +995,7 @@ pub(super) fn input_panel_popup_regions(
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
+                help2: None,
             })
         }
         InputPanelKind::NumericValue => {
@@ -1021,20 +1024,22 @@ pub(super) fn input_panel_popup_regions(
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
+                help2: None,
             })
         }
         InputPanelKind::WhenDate => {
-            // context + datetime text + buttons + help = 4 lines minimum
-            if inner.height < 4 {
+            // context + datetime text + buttons + key hints + format hints = 5 lines minimum
+            if inner.height < 5 {
                 return None;
             }
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1), // context
+                    Constraint::Length(1), // context (item label)
                     Constraint::Length(1), // datetime input
                     Constraint::Length(1), // buttons
-                    Constraint::Length(1), // help / feedback
+                    Constraint::Length(1), // key hints (Enter/Tab/Esc)
+                    Constraint::Length(1), // format hints (supported phrases)
                     Constraint::Min(0),    // spacer
                 ])
                 .split(inner);
@@ -1049,6 +1054,7 @@ pub(super) fn input_panel_popup_regions(
                 type_picker: None,
                 buttons: chunks[2],
                 help: chunks[3],
+                help2: Some(chunks[4]),
             })
         }
         InputPanelKind::CategoryCreate => {
@@ -1075,6 +1081,7 @@ pub(super) fn input_panel_popup_regions(
                 type_picker: Some(chunks[1]),
                 buttons: chunks[3],
                 help: chunks[4],
+                help2: None,
                 categories_filter: None,
                 categories_list: None,
             })
@@ -1145,13 +1152,14 @@ pub(super) fn input_panel_popup_regions(
                 type_picker: None,
                 buttons: chunks[3],
                 help: chunks[4],
+                help2: None,
             })
         }
     }
 }
 
 pub(super) fn add_capture_status_message(
-    parsed_when: Option<NaiveDateTime>,
+    parsed_when: Option<DateTime>,
     unknown_hashtags: &[String],
 ) -> String {
     let warning = if unknown_hashtags.is_empty() {
@@ -1160,7 +1168,7 @@ pub(super) fn add_capture_status_message(
         format!(" | warning unknown_hashtags={}", unknown_hashtags.join(","))
     };
     match parsed_when {
-        Some(when) => format!("Item added (parsed when: {when}{warning})"),
+        Some(when) => format!("Item added (parsed when: {}{warning})", when.strftime("%Y-%m-%d %H:%M:%S")),
         None => format!("Item added{warning}"),
     }
 }
@@ -1169,7 +1177,7 @@ pub(super) fn add_capture_status_message(
 mod tests {
     use super::*;
     use agenda_core::model::Category;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn make_category(name: &str) -> Category {
         Category {
@@ -1181,8 +1189,8 @@ mod tests {
             is_actionable: false,
             enable_implicit_string: false,
             note: None,
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
+            created_at: Timestamp::now(),
+            modified_at: Timestamp::now(),
             conditions: Vec::new(),
             actions: Vec::new(),
             value_kind: Default::default(),
@@ -1424,7 +1432,7 @@ mod tests {
             cat_id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(100, 0)),
@@ -1454,7 +1462,7 @@ mod tests {
             cat_id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(100, 0)),
@@ -1465,7 +1473,7 @@ mod tests {
             cat_id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(250, 0)),

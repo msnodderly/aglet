@@ -254,7 +254,7 @@ impl App {
                 .current_view()
                 .cloned()
                 .ok_or("No active view".to_string())?;
-            let reference_date = Local::now().date_naive();
+            let reference_date = jiff::Zoned::now().date();
             let view_items = if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
                 if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
                     let claimable_ids =

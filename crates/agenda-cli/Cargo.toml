@@ -7,7 +7,7 @@ edition = "2021"
 agenda-core = { path = "../agenda-core" }
 agenda-tui = { path = "../agenda-tui" }
 clap = { version = "4", features = ["derive", "env"] }
-chrono = "0.4"
+jiff = "0.2"
 uuid = "1.11"
 rust_decimal = "1.36"
 serde = { version = "1", features = ["derive"] }

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::{NaiveDate, NaiveDateTime, Timelike, Utc};
+use jiff::Timestamp;
 use rust_decimal::Decimal;
 
 use crate::dates::{BasicDateParser, DateParser};
@@ -44,13 +44,13 @@ impl<'a> Agenda<'a> {
     }
 
     pub fn create_item(&self, item: &Item) -> Result<ProcessItemResult> {
-        self.create_item_with_reference_date(item, Utc::now().date_naive())
+        self.create_item_with_reference_date(item, jiff::Zoned::now().date())
     }
 
     pub fn create_item_with_reference_date(
         &self,
         item: &Item,
-        reference_date: NaiveDate,
+        reference_date: jiff::civil::Date,
     ) -> Result<ProcessItemResult> {
         let mut item_to_create = item.clone();
         let parsed_datetime = self.parse_datetime_from_text(&item_to_create.text, reference_date);
@@ -67,13 +67,13 @@ impl<'a> Agenda<'a> {
     }
 
     pub fn update_item(&self, item: &Item) -> Result<ProcessItemResult> {
-        self.update_item_with_reference_date(item, Utc::now().date_naive())
+        self.update_item_with_reference_date(item, jiff::Zoned::now().date())
     }
 
     pub fn update_item_with_reference_date(
         &self,
         item: &Item,
-        reference_date: NaiveDate,
+        reference_date: jiff::civil::Date,
     ) -> Result<ProcessItemResult> {
         let mut item_to_update = item.clone();
         let existing = self.store.get_item(item.id)?;
@@ -98,17 +98,17 @@ impl<'a> Agenda<'a> {
     pub fn set_item_when_date(
         &self,
         item_id: ItemId,
-        when_date: Option<NaiveDateTime>,
+        when_date: Option<jiff::civil::DateTime>,
         origin: Option<String>,
     ) -> Result<ProcessItemResult> {
         let mut item = self.store.get_item(item_id)?;
         item.when_date = when_date;
-        item.modified_at = Utc::now();
+        item.modified_at = Timestamp::now();
         self.store.update_item(&item)?;
 
         let when_assignment = when_date.map(|_| Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: origin.or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
             numeric_value: None,
@@ -153,7 +153,7 @@ impl<'a> Agenda<'a> {
 
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: origin.or_else(|| Some(origin_const::MANUAL.to_string())),
             numeric_value: None,
@@ -252,7 +252,7 @@ impl<'a> Agenda<'a> {
 
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: origin.or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
             numeric_value: Some(numeric_value),
@@ -343,11 +343,12 @@ impl<'a> Agenda<'a> {
             });
         }
         let mut item = self.store.get_item(item_id)?;
-        let now = Utc::now();
+        let now = Timestamp::now();
         let done_at = now
-            .naive_utc()
-            .with_nanosecond(0)
-            .unwrap_or(now.naive_utc());
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .datetime()
+            .round(jiff::Unit::Second)
+            .unwrap_or_else(|_| now.to_zoned(jiff::tz::TimeZone::UTC).datetime());
         item.is_done = true;
         item.done_date = Some(done_at);
         item.modified_at = now;
@@ -371,7 +372,7 @@ impl<'a> Agenda<'a> {
         let mut item = self.store.get_item(item_id)?;
         item.is_done = false;
         item.done_date = None;
-        item.modified_at = Utc::now();
+        item.modified_at = Timestamp::now();
         self.store.update_item(&item)?;
         let done_category_id = self.done_category_id()?;
         self.store.unassign_item(item_id, done_category_id)?;
@@ -490,7 +491,7 @@ impl<'a> Agenda<'a> {
         let mut existing = self.store.get_assignments_for_item(item_id)?;
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin.to_string()),
             numeric_value: None,
@@ -560,7 +561,7 @@ impl<'a> Agenda<'a> {
                     .unwrap_or_else(|| parent_id.to_string());
                 let assignment = Assignment {
                     source: AssignmentSource::Subsumption,
-                    assigned_at: Utc::now(),
+                    assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: Some(format!("{}:{parent_name}", origin_const::SUBSUMPTION)),
                     numeric_value: None,
@@ -633,7 +634,7 @@ impl<'a> Agenda<'a> {
             item_id,
             other_item_id,
             kind,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             origin: Some(origin_const::MANUAL_LINK.to_string()),
         }
     }
@@ -680,8 +681,8 @@ impl<'a> Agenda<'a> {
     fn parse_datetime_from_text(
         &self,
         text: &str,
-        reference_date: NaiveDate,
-    ) -> Option<NaiveDateTime> {
+        reference_date: jiff::civil::Date,
+    ) -> Option<jiff::civil::DateTime> {
         self.date_parser
             .parse(text, reference_date)
             .map(|parsed| parsed.datetime)
@@ -690,7 +691,7 @@ impl<'a> Agenda<'a> {
     fn sync_when_assignment(
         &self,
         item_id: ItemId,
-        when_date: Option<NaiveDateTime>,
+        when_date: Option<jiff::civil::DateTime>,
         assignment_override: Option<Assignment>,
     ) -> Result<()> {
         let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
@@ -722,7 +723,7 @@ impl<'a> Agenda<'a> {
     fn nlp_when_assignment() -> Assignment {
         Assignment {
             source: AssignmentSource::AutoMatch,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin_const::NLP_DATE.to_string()),
             numeric_value: None,
@@ -780,7 +781,8 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use chrono::{NaiveDate, NaiveDateTime, Utc};
+    use jiff::civil::{Date, DateTime};
+    use jiff::Timestamp;
     use rust_decimal::Decimal;
 
     use super::Agenda;
@@ -826,19 +828,19 @@ mod tests {
     fn manual_assignment(origin: &str) -> Assignment {
         Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin.to_string()),
             numeric_value: None,
         }
     }
 
-    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    fn date(y: i16, m: i8, d: i8) -> Date {
+        Date::new(y, m, d).expect("valid date")
     }
 
-    fn datetime(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
-        date(y, m, d).and_hms_opt(h, min, 0).expect("valid time")
+    fn datetime(y: i16, m: i8, d: i8, h: i8, min: i8) -> DateTime {
+        date(y, m, d).at(h, min, 0, 0)
     }
 
     fn when_category_id(store: &Store) -> CategoryId {
@@ -948,7 +950,7 @@ mod tests {
 
         let mut updated = store.get_item(item.id).unwrap();
         updated.text = "Urgent task".to_string();
-        updated.modified_at = Utc::now();
+        updated.modified_at = Timestamp::now();
 
         let result = agenda.update_item(&updated).unwrap();
         assert!(result.new_assignments.contains(&urgent.id));
@@ -992,7 +994,7 @@ mod tests {
 
         let mut updated = store.get_item(item.id).unwrap();
         updated.text = "today at noon".to_string();
-        updated.modified_at = Utc::now();
+        updated.modified_at = Timestamp::now();
 
         agenda
             .update_item_with_reference_date(&updated, date(2026, 2, 16))
@@ -1015,7 +1017,7 @@ mod tests {
 
         let mut updated = store.get_item(item.id).unwrap();
         updated.text = "just notes now".to_string();
-        updated.modified_at = Utc::now();
+        updated.modified_at = Timestamp::now();
 
         agenda
             .update_item_with_reference_date(&updated, date(2026, 2, 16))
@@ -1038,7 +1040,7 @@ mod tests {
 
         let mut updated = store.get_item(item.id).unwrap();
         updated.note = Some("added note text".to_string());
-        updated.modified_at = Utc::now();
+        updated.modified_at = Timestamp::now();
 
         agenda
             .update_item_with_reference_date(&updated, date(2026, 2, 20))
