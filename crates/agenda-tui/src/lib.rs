@@ -14,7 +14,6 @@ use agenda_core::model::{
     Column, ColumnKind, CriterionMode, Item, ItemId, ItemLinkKind, ItemLinksForItem, NumericFormat,
     Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
 };
-use rust_decimal::Decimal;
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use agenda_core::workflow::WorkflowConfig;
@@ -34,6 +33,7 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 mod app;
@@ -221,7 +221,6 @@ enum Mode {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ClassificationFocus {
-    Settings,
     Items,
     Suggestions,
 }
@@ -242,7 +241,6 @@ struct ClassificationUiState {
     review_items: Vec<ClassificationReviewItem>,
     selected_item_index: usize,
     selected_suggestion_index: usize,
-    settings_index: usize,
     focus: ClassificationFocus,
 }
 
@@ -254,8 +252,7 @@ impl Default for ClassificationUiState {
             review_items: Vec::new(),
             selected_item_index: 0,
             selected_suggestion_index: 0,
-            settings_index: 0,
-            focus: ClassificationFocus::Settings,
+            focus: ClassificationFocus::Items,
         }
     }
 }
@@ -437,6 +434,7 @@ struct ViewEditState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryManagerFocus {
+    Global,
     Tree,
     Filter,
     Details,
@@ -538,6 +536,7 @@ enum CategoryInlineAction {
 #[derive(Clone)]
 struct CategoryManagerState {
     focus: CategoryManagerFocus,
+    global_settings_index: usize,
     filter: text_buffer::TextBuffer,
     filter_editing: bool,
     structure_move_prefix: Option<char>,
@@ -986,7 +985,9 @@ impl UndoEntry {
         match self {
             Self::ItemCreated { .. } => "item creation".to_string(),
             Self::ItemEdited { .. } => "item edit".to_string(),
-            Self::ItemDeleted { item } => format!("deletion of \"{}\"", truncate_str(&item.text, 30)),
+            Self::ItemDeleted { item } => {
+                format!("deletion of \"{}\"", truncate_str(&item.text, 30))
+            }
             Self::ItemDoneToggled { was_done, .. } => {
                 if *was_done {
                     "mark undone".to_string()
@@ -1042,6 +1043,8 @@ struct App {
     workflow_config: WorkflowConfig,
     workflow_setup_open: bool,
     workflow_setup_focus: usize,
+    classification_mode_picker_open: bool,
+    classification_mode_picker_focus: usize,
     category_manager: Option<CategoryManagerState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
@@ -1109,6 +1112,8 @@ impl Default for App {
             workflow_config: WorkflowConfig::default(),
             workflow_setup_open: false,
             workflow_setup_focus: 0,
+            classification_mode_picker_open: false,
+            classification_mode_picker_focus: 1,
             category_manager: None,
             category_suggest: None,
             category_direct_edit: None,
@@ -1156,24 +1161,18 @@ impl App {
         let inverse = match entry {
             UndoEntry::ItemCreated { item_id } => {
                 // Capture item state before deleting so redo can restore it
-                let item = agenda
-                    .store()
-                    .get_item(item_id)
-                    ?;
-                agenda
-                    .delete_item(item_id, "undo")
-                    ?;
-                UndoEntry::ItemDeleted { item: Box::new(item) }
+                let item = agenda.store().get_item(item_id)?;
+                agenda.delete_item(item_id, "undo")?;
+                UndoEntry::ItemDeleted {
+                    item: Box::new(item),
+                }
             }
             UndoEntry::ItemEdited {
                 item_id,
                 old_text,
                 old_note,
             } => {
-                let mut item = agenda
-                    .store()
-                    .get_item(item_id)
-                    ?;
+                let mut item = agenda.store().get_item(item_id)?;
                 let inverse = UndoEntry::ItemEdited {
                     item_id,
                     old_text: item.text.clone(),
@@ -1183,30 +1182,21 @@ impl App {
                 item.note = old_note;
                 item.modified_at = Utc::now();
                 let reference_date = Local::now().date_naive();
-                agenda
-                    .update_item_with_reference_date(&item, reference_date)
-                    ?;
+                agenda.update_item_with_reference_date(&item, reference_date)?;
                 inverse
             }
             UndoEntry::ItemDeleted { item } => {
                 let item_id = item.id;
                 // Re-create the item
                 let reference_date = Local::now().date_naive();
-                agenda
-                    .create_item_with_reference_date(&item, reference_date)
-                    ?;
+                agenda.create_item_with_reference_date(&item, reference_date)?;
                 // Restore note and done state
-                let mut restored = agenda
-                    .store()
-                    .get_item(item.id)
-                    ?;
+                let mut restored = agenda.store().get_item(item.id)?;
                 restored.note = item.note.clone();
                 restored.is_done = item.is_done;
                 restored.done_date = item.done_date;
                 restored.modified_at = Utc::now();
-                agenda
-                    .update_item_with_reference_date(&restored, reference_date)
-                    ?;
+                agenda.update_item_with_reference_date(&restored, reference_date)?;
                 // Restore category assignments
                 for (cat_id, assignment) in &item.assignments {
                     if assignment.source == AssignmentSource::Manual {
@@ -1230,9 +1220,7 @@ impl App {
                 UndoEntry::ItemCreated { item_id }
             }
             UndoEntry::ItemDoneToggled { item_id, was_done } => {
-                agenda
-                    .toggle_item_done(item_id)
-                    ?;
+                agenda.toggle_item_done(item_id)?;
                 self.set_item_selection_by_id(item_id);
                 UndoEntry::ItemDoneToggled {
                     item_id,
@@ -1295,15 +1283,11 @@ impl App {
                 old_value,
             } => {
                 // Capture current value before restoring old
-                let current_value = agenda
-                    .store()
-                    .get_item(item_id)
-                    .ok()
-                    .and_then(|item| {
-                        item.assignments
-                            .get(&category_id)
-                            .and_then(|a| a.numeric_value)
-                    });
+                let current_value = agenda.store().get_item(item_id).ok().and_then(|item| {
+                    item.assignments
+                        .get(&category_id)
+                        .and_then(|a| a.numeric_value)
+                });
                 if let Some(val) = old_value {
                     let _ = agenda.assign_item_numeric_manual(
                         item_id,
@@ -1418,9 +1402,9 @@ mod tests {
         next_index_clamped, should_render_unmatched_lane, text_buffer, truncate_board_cell,
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
-        CategoryDirectEditState, CategoryInlineAction, CategoryListRow, ClassificationFocus,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, Mode, NameInputContext,
-        SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
+        CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, ClassificationFocus, Mode,
+        NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{ClassificationConfig, ContinuousMode};
@@ -1428,8 +1412,7 @@ mod tests {
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
         CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
-        NumericFormat, Query, Section,
-        SectionFlow, SummaryFn, View, WhenBucket,
+        NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use chrono::NaiveDate;
@@ -7460,7 +7443,7 @@ mod tests {
     }
 
     #[test]
-    fn classification_review_space_toggles_enabled_setting() {
+    fn classification_review_with_no_pending_suggestions_starts_on_items_pane() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7469,47 +7452,126 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.handle_normal_key(KeyCode::Char('C'), &agenda)
             .expect("open classification review");
-        assert_eq!(app.classification_ui.focus, ClassificationFocus::Settings);
-
-        app.handle_key(KeyCode::Char(' '), &agenda)
-            .expect("cycle classification mode");
-
-        let cfg = store.get_classification_config().expect("reload config");
-        assert_eq!(cfg.continuous_mode, ContinuousMode::SuggestReview);
+        assert_eq!(app.classification_ui.focus, ClassificationFocus::Items);
         assert_eq!(app.mode, Mode::ClassificationReview);
     }
 
     #[test]
-    fn classification_review_enter_in_settings_closes_without_cycling_mode() {
+    fn category_manager_m_opens_picker_and_enter_applies_classification_mode() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
-        let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
-            ..ClassificationConfig::default()
-        };
-        store
-            .set_classification_config(&cfg)
-            .expect("set classification config");
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("open classification review");
-        assert_eq!(app.classification_ui.focus, ClassificationFocus::Settings);
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
 
-        app.handle_key(KeyCode::Enter, &agenda)
-            .expect("save and close settings");
+        app.handle_category_manager_key(KeyCode::Char('m'), &agenda)
+            .expect("open classification mode picker");
+        assert!(app.classification_mode_picker_open);
+
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("move picker to suggest/review");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("apply classification mode");
 
         let reloaded = store.get_classification_config().expect("reload config");
         assert_eq!(reloaded.continuous_mode, ContinuousMode::SuggestReview);
-        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(!app.classification_mode_picker_open);
         assert!(
-            app.status.contains("Classification mode saved"),
-            "expected save status, got: {}",
+            app.status.contains("Classification mode: Suggest/Review"),
+            "expected classification mode status, got: {}",
             app.status
         );
+    }
+
+    #[test]
+    fn category_manager_render_shows_global_settings_block() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        let backend = TestBackend::new(160, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Global Settings"),
+            "category manager should show global settings block: {rendered}"
+        );
+        assert!(
+            rendered.contains("Classification mode: Auto-apply"),
+            "category manager should show classification mode in global settings: {rendered}"
+        );
+        assert!(
+            rendered.contains("Workflow roles: Ready Queue=(unset)  Claim Target=(unset)"),
+            "category manager should show workflow values in global settings: {rendered}"
+        );
+    }
+
+    #[test]
+    fn category_manager_tab_reaches_global_settings_pane() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to global settings");
+
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Global)
+        );
+    }
+
+    #[test]
+    fn category_manager_enter_on_global_workflow_row_opens_workflow_setup() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to global settings");
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("select workflow row");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open workflow setup");
+
+        assert!(app.workflow_setup_open);
     }
 
     #[test]
@@ -15959,7 +16021,11 @@ mod tests {
         }
 
         assert_eq!(app.section_filters[0], Some(uuid_prefix));
-        assert_eq!(app.slots[0].items.len(), 1, "uuid prefix should match one item");
+        assert_eq!(
+            app.slots[0].items.len(),
+            1,
+            "uuid prefix should match one item"
+        );
         assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
 
         let _ = std::fs::remove_file(&db_path);

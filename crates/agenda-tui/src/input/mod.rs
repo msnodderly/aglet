@@ -36,11 +36,7 @@ impl App {
         handled
     }
 
-    pub(crate) fn handle_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<bool> {
+    pub(crate) fn handle_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> TuiResult<bool> {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::HelpPanel => self.handle_help_panel_key(code),

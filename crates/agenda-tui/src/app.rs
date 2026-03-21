@@ -65,9 +65,7 @@ impl App {
     }
 
     pub(crate) fn load_auto_refresh_interval(&mut self, store: &Store) -> TuiResult<()> {
-        let persisted = store
-            .get_app_setting(Self::AUTO_REFRESH_SETTING_KEY)
-            ?;
+        let persisted = store.get_app_setting(Self::AUTO_REFRESH_SETTING_KEY)?;
         self.auto_refresh_interval = persisted
             .as_deref()
             .and_then(AutoRefreshInterval::from_persisted_value)
@@ -85,9 +83,7 @@ impl App {
     }
 
     pub(crate) fn load_last_view_name(&mut self, store: &Store) -> TuiResult<()> {
-        let persisted = store
-            .get_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY)
-            ?;
+        let persisted = store.get_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY)?;
         if let Some(view_name) = persisted {
             if let Some(index) = self
                 .views
@@ -102,9 +98,7 @@ impl App {
 
     pub(crate) fn persist_last_view_name(&self, store: &Store) -> TuiResult<()> {
         if let Some(view_name) = &self.active_view_name {
-            store
-                .set_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY, view_name)
-                ?;
+            store.set_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY, view_name)?;
         }
         Ok(())
     }
@@ -152,11 +146,7 @@ impl App {
         }
     }
 
-    pub(crate) fn run(
-        &mut self,
-        terminal: &mut TuiTerminal,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    pub(crate) fn run(&mut self, terminal: &mut TuiTerminal, agenda: &Agenda<'_>) -> TuiResult<()> {
         self.refresh(agenda.store())?;
         self.load_last_view_name(agenda.store())?;
         self.refresh(agenda.store())?; // re-resolve slots for the restored view
@@ -165,9 +155,7 @@ impl App {
 
         loop {
             self.clear_expired_transient_status();
-            terminal
-                .draw(|frame| self.draw(frame))
-                ?;
+            terminal.draw(|frame| self.draw(frame))?;
 
             if !event::poll(std::time::Duration::from_millis(200))? {
                 self.maybe_run_auto_refresh(agenda.store())?;
@@ -258,15 +246,9 @@ impl App {
         self.item_links_by_item_id.clear();
         for item in &items {
             let links = agenda_core::model::ItemLinksForItem {
-                depends_on: store
-                    .list_dependency_ids_for_item(item.id)
-                    ?,
-                blocks: store
-                    .list_dependent_ids_for_item(item.id)
-                    ?,
-                related: store
-                    .list_related_ids_for_item(item.id)
-                    ?,
+                depends_on: store.list_dependency_ids_for_item(item.id)?,
+                blocks: store.list_dependent_ids_for_item(item.id)?,
+                related: store.list_related_ids_for_item(item.id)?,
             };
             self.item_links_by_item_id.insert(item.id, links);
         }
@@ -291,8 +273,7 @@ impl App {
             let reference_date = Local::now().date_naive();
             let view_items = if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
                 if let Some(workflow) = resolve_workflow_config(store)? {
-                    let claimable_ids =
-                        claimable_item_ids(store, &items, workflow)?;
+                    let claimable_ids = claimable_item_ids(store, &items, workflow)?;
                     items
                         .iter()
                         .filter(|item| claimable_ids.contains(&item.id))
@@ -515,8 +496,17 @@ impl App {
                 .suggestions
                 .first()
                 .map(|suggestion| suggestion.created_at)
-                .cmp(&left.suggestions.first().map(|suggestion| suggestion.created_at))
-                .then_with(|| left.item_text.to_ascii_lowercase().cmp(&right.item_text.to_ascii_lowercase()))
+                .cmp(
+                    &left
+                        .suggestions
+                        .first()
+                        .map(|suggestion| suggestion.created_at),
+                )
+                .then_with(|| {
+                    left.item_text
+                        .to_ascii_lowercase()
+                        .cmp(&right.item_text.to_ascii_lowercase())
+                })
         });
 
         self.classification_ui.pending_count =
@@ -555,10 +545,6 @@ impl App {
             .classification_ui
             .selected_suggestion_index
             .min(suggestion_len.saturating_sub(1));
-        self.classification_ui.settings_index = self
-            .classification_ui
-            .settings_index
-            .min(self.classification_settings_row_count().saturating_sub(1));
         if self.classification_ui.pending_count == 0
             && self.classification_ui.focus == ClassificationFocus::Suggestions
         {
@@ -884,10 +870,6 @@ impl App {
             .unwrap_or(0)
     }
 
-    pub(crate) fn classification_settings_row_count(&self) -> usize {
-        1
-    }
-
     pub(crate) fn classification_pending_suffix(&self) -> Option<String> {
         if self.classification_ui.pending_count == 0 {
             None
@@ -1011,7 +993,10 @@ impl App {
         }
     }
 
-    pub(crate) fn effective_action_assignment_counts(&self, category_id: CategoryId) -> (usize, usize) {
+    pub(crate) fn effective_action_assignment_counts(
+        &self,
+        category_id: CategoryId,
+    ) -> (usize, usize) {
         let action_item_ids = self.effective_action_item_ids();
         let assigned = action_item_ids
             .iter()
@@ -1075,11 +1060,16 @@ impl App {
 
     pub(crate) fn ready_queue_header_hint(&self) -> Option<String> {
         let current_view = self.current_view()?;
-        if !current_view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
+        if !current_view
+            .name
+            .eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME)
+        {
             return None;
         }
-        let ready_name = self.workflow_role_category_name(self.workflow_config.ready_category_id)?;
-        let claim_name = self.workflow_role_category_name(self.workflow_config.claim_category_id)?;
+        let ready_name =
+            self.workflow_role_category_name(self.workflow_config.ready_category_id)?;
+        let claim_name =
+            self.workflow_role_category_name(self.workflow_config.claim_category_id)?;
         Some(format!("  workflow:{ready_name}->{claim_name}"))
     }
 
@@ -1149,6 +1139,7 @@ impl App {
         };
         self.category_manager = Some(CategoryManagerState {
             focus: CategoryManagerFocus::Tree,
+            global_settings_index: 0,
             filter: text_buffer::TextBuffer::empty(),
             filter_editing: false,
             structure_move_prefix: None,
@@ -1294,6 +1285,19 @@ impl App {
 
     pub(crate) fn category_manager_focus(&self) -> Option<CategoryManagerFocus> {
         self.category_manager.as_ref().map(|state| state.focus)
+    }
+
+    pub(crate) fn category_manager_global_settings_index(&self) -> usize {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.global_settings_index)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn set_category_manager_global_settings_index(&mut self, index: usize) {
+        if let Some(state) = &mut self.category_manager {
+            state.global_settings_index = index.min(1);
+        }
     }
 
     pub(crate) fn category_manager_discard_confirm(&self) -> bool {
@@ -1442,7 +1446,8 @@ impl App {
             .map(|fmt| fmt.decimal_places == 0)
             .unwrap_or(false);
         if integer_mode
-            && self.category_manager_details_focus() == Some(CategoryManagerDetailsFocus::DecimalPlaces)
+            && self.category_manager_details_focus()
+                == Some(CategoryManagerDetailsFocus::DecimalPlaces)
         {
             self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
         }
@@ -1493,15 +1498,17 @@ impl App {
         let Some(current) = self.category_manager_focus() else {
             return;
         };
-        let next = match (current, delta.signum()) {
-            (CategoryManagerFocus::Tree, 1) => CategoryManagerFocus::Details,
-            (CategoryManagerFocus::Filter, 1) => CategoryManagerFocus::Details,
-            (CategoryManagerFocus::Details, 1) => CategoryManagerFocus::Tree,
-            (CategoryManagerFocus::Tree, -1) => CategoryManagerFocus::Details,
-            (CategoryManagerFocus::Filter, -1) => CategoryManagerFocus::Tree,
-            (CategoryManagerFocus::Details, -1) => CategoryManagerFocus::Tree,
-            _ => current,
-        };
+        let order = [
+            CategoryManagerFocus::Global,
+            CategoryManagerFocus::Filter,
+            CategoryManagerFocus::Tree,
+            CategoryManagerFocus::Details,
+        ];
+        let current_index = order
+            .iter()
+            .position(|focus| *focus == current)
+            .unwrap_or(2);
+        let next = order[next_index(current_index, order.len(), delta)];
         self.set_category_manager_focus(next);
     }
 
@@ -1643,10 +1650,7 @@ impl App {
         self.global_search_session.is_some()
     }
 
-    pub(crate) fn begin_global_search_session(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    pub(crate) fn begin_global_search_session(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(index) = self
             .views
             .iter()
@@ -1681,10 +1685,7 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn restore_global_search_session(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    pub(crate) fn restore_global_search_session(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(session) = self.global_search_session.take() else {
             return Ok(());
         };

@@ -626,10 +626,7 @@ impl App {
         Ok(false)
     }
 
-    fn handle_view_edit_section_delete_confirm_key(
-        &mut self,
-        code: KeyCode,
-    ) -> TuiResult<bool> {
+    fn handle_view_edit_section_delete_confirm_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
                 self.confirm_view_edit_section_delete();

@@ -26,23 +26,17 @@ impl App {
         category_id: CategoryId,
         agenda: &Agenda<'_>,
     ) -> TuiResult<WorkflowRolePrepResult> {
-        let mut category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let mut category = agenda.store().get_category(category_id)?;
         let warn_other_derived_sources =
             !category.conditions.is_empty() || !category.actions.is_empty();
         let auto_match_disabled = category.enable_implicit_string;
         if auto_match_disabled {
             category.enable_implicit_string = false;
-            agenda
-                .update_category(&category)
-                ?;
+            agenda.update_category(&category)?;
             let implicit_origin = format!("cat:{}", category.name);
             let implicit_assigned_item_ids: Vec<_> = agenda
                 .store()
-                .list_items()
-                ?
+                .list_items()?
                 .into_iter()
                 .filter_map(|item| {
                     item.assignments.get(&category_id).and_then(|assignment| {
@@ -55,18 +49,10 @@ impl App {
                 .collect();
             if !implicit_assigned_item_ids.is_empty() {
                 for item_id in implicit_assigned_item_ids {
-                    agenda
-                        .store()
-                        .unassign_item(item_id, category_id)
-                        ?;
+                    agenda.store().unassign_item(item_id, category_id)?;
                 }
-                let refreshed_category = agenda
-                    .store()
-                    .get_category(category_id)
-                    ?;
-                agenda
-                    .update_category(&refreshed_category)
-                    ?;
+                let refreshed_category = agenda.store().get_category(category_id)?;
+                agenda.update_category(&refreshed_category)?;
             }
         }
         Ok(WorkflowRolePrepResult {
@@ -102,31 +88,30 @@ impl App {
         agenda: &Agenda<'_>,
         selected_category_id: CategoryId,
     ) -> TuiResult<Option<String>> {
-        let (role_label, current_role_id, other_role_label, other_role_id) = if self.workflow_setup_focus == 0 {
-            (
-                "Ready Queue",
-                self.workflow_config.ready_category_id,
-                "Claim Target",
-                self.workflow_config.claim_category_id,
-            )
-        } else {
-            (
-                "Claim Target",
-                self.workflow_config.claim_category_id,
-                "Ready Queue",
-                self.workflow_config.ready_category_id,
-            )
-        };
+        let (role_label, current_role_id, other_role_label, other_role_id) =
+            if self.workflow_setup_focus == 0 {
+                (
+                    "Ready Queue",
+                    self.workflow_config.ready_category_id,
+                    "Claim Target",
+                    self.workflow_config.claim_category_id,
+                )
+            } else {
+                (
+                    "Claim Target",
+                    self.workflow_config.claim_category_id,
+                    "Ready Queue",
+                    self.workflow_config.ready_category_id,
+                )
+            };
 
-        if other_role_id != Some(selected_category_id) || current_role_id == Some(selected_category_id) {
+        if other_role_id != Some(selected_category_id)
+            || current_role_id == Some(selected_category_id)
+        {
             return Ok(None);
         }
 
-        let selected_name = agenda
-            .store()
-            .get_category(selected_category_id)
-            ?
-            .name;
+        let selected_name = agenda.store().get_category(selected_category_id)?.name;
         let current_name = current_role_id
             .and_then(|category_id| agenda.store().get_category(category_id).ok())
             .map(|category| category.name)
@@ -256,10 +241,7 @@ impl App {
             self.status = "Category rename canceled (unchanged)".to_string();
             return Ok(());
         }
-        let mut category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let mut category = agenda.store().get_category(category_id)?;
         if is_reserved_category_name(&category.name) {
             self.set_category_manager_inline_action(None);
             self.status = format!(
@@ -363,10 +345,7 @@ impl App {
             self.status = "No selected category".to_string();
             return Ok(());
         };
-        let mut category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let mut category = agenda.store().get_category(category_id)?;
         let next_note = self
             .category_manager_details_note_text()
             .map(|t| t.to_string())
@@ -385,9 +364,7 @@ impl App {
 
         category.note = next_note;
         let saved_name = category.name.clone();
-        let result = agenda
-            .update_category(&category)
-            ?;
+        let result = agenda.update_category(&category)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.reload_category_manager_details_note_from_selected();
@@ -580,10 +557,7 @@ impl App {
     ) -> TuiResult<()> {
         let mut cat = self.selected_category_mut().ok_or("No category")?;
         cat.numeric_format = Some(next);
-        agenda
-            .store()
-            .update_category(&cat)
-            ?;
+        agenda.store().update_category(&cat)?;
         let category_id = cat.id;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
@@ -594,7 +568,9 @@ impl App {
     }
 
     fn toggle_selected_category_integer_mode(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
-        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        let current = self
+            .selected_category_numeric_format()
+            .ok_or("No category")?;
         let mut next = current.clone();
         next.decimal_places = if current.decimal_places == 0 { 2 } else { 0 };
         self.persist_selected_category_numeric_format(
@@ -615,7 +591,9 @@ impl App {
         &mut self,
         agenda: &Agenda<'_>,
     ) -> TuiResult<()> {
-        let current = self.selected_category_numeric_format().ok_or("No category")?;
+        let current = self
+            .selected_category_numeric_format()
+            .ok_or("No category")?;
         let mut next = current.clone();
         next.use_thousands_separator = !next.use_thousands_separator;
         self.persist_selected_category_numeric_format(
@@ -633,8 +611,11 @@ impl App {
         &mut self,
         field: CategoryManagerDetailsInlineField,
     ) -> TuiResult<()> {
-        let current = self.selected_category_numeric_format().ok_or("No category")?;
-        if field == CategoryManagerDetailsInlineField::DecimalPlaces && current.decimal_places == 0 {
+        let current = self
+            .selected_category_numeric_format()
+            .ok_or("No category")?;
+        if field == CategoryManagerDetailsInlineField::DecimalPlaces && current.decimal_places == 0
+        {
             self.status = "Decimal places is disabled while Integer is enabled".to_string();
             self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
             return Ok(());
@@ -643,9 +624,9 @@ impl App {
             CategoryManagerDetailsInlineField::DecimalPlaces => {
                 text_buffer::TextBuffer::new(current.decimal_places.to_string())
             }
-            CategoryManagerDetailsInlineField::CurrencySymbol => text_buffer::TextBuffer::new(
-                current.currency_symbol.unwrap_or_default(),
-            ),
+            CategoryManagerDetailsInlineField::CurrencySymbol => {
+                text_buffer::TextBuffer::new(current.currency_symbol.unwrap_or_default())
+            }
         };
         self.set_category_manager_focus(CategoryManagerFocus::Details);
         self.set_category_manager_details_focus(match field {
@@ -671,14 +652,13 @@ impl App {
         Ok(())
     }
 
-    fn save_category_manager_numeric_inline_edit(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn save_category_manager_numeric_inline_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(input) = self.category_manager_details_inline_input().cloned() else {
             return Ok(());
         };
-        let mut next = self.selected_category_numeric_format().ok_or("No category")?;
+        let mut next = self
+            .selected_category_numeric_format()
+            .ok_or("No category")?;
         match input.field {
             CategoryManagerDetailsInlineField::DecimalPlaces => {
                 let raw = input.buffer.trimmed();
@@ -759,9 +739,7 @@ impl App {
                 .unwrap_or(target_siblings.len()),
         );
         let new_parent_label = self.category_manager_parent_label(new_parent_id);
-        let result = agenda
-            .move_category_to_parent(category_id, new_parent_id, insert_index)
-            ?;
+        let result = agenda.move_category_to_parent(category_id, new_parent_id, insert_index)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = format!(
@@ -814,9 +792,7 @@ impl App {
         }
         let new_parent_id = Some(sibling_ids[idx - 1]);
         let new_parent_label = self.category_manager_parent_label(new_parent_id);
-        let result = agenda
-            .move_category_to_parent(category_id, new_parent_id, None)
-            ?;
+        let result = agenda.move_category_to_parent(category_id, new_parent_id, None)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = format!(
@@ -875,9 +851,7 @@ impl App {
             return Ok(());
         }
 
-        agenda
-            .move_category_within_parent(category_id, delta.signum())
-            ?;
+        agenda.move_category_within_parent(category_id, delta.signum())?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if delta < 0 {
@@ -970,11 +944,7 @@ impl App {
         }
     }
 
-    fn handle_workflow_setup_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<bool> {
+    fn handle_workflow_setup_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> TuiResult<bool> {
         match code {
             KeyCode::Esc | KeyCode::Char('w') => {
                 self.workflow_setup_open = false;
@@ -1020,6 +990,65 @@ impl App {
         Ok(true)
     }
 
+    fn open_classification_mode_picker(&mut self) {
+        self.classification_mode_picker_open = true;
+        self.classification_mode_picker_focus = modes::classification::continuous_mode_index(
+            self.classification_ui.config.continuous_mode,
+        );
+        self.status = "Classification mode: j/k select, Enter apply, Esc close".to_string();
+    }
+
+    fn handle_classification_mode_picker_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        match code {
+            KeyCode::Esc | KeyCode::Char('m') => {
+                self.classification_mode_picker_open = false;
+                self.status = "Classification mode picker closed".to_string();
+                return Ok(true);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.classification_mode_picker_focus =
+                    next_index_clamped(self.classification_mode_picker_focus, 3, 1);
+                return Ok(true);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.classification_mode_picker_focus =
+                    next_index_clamped(self.classification_mode_picker_focus, 3, -1);
+                return Ok(true);
+            }
+            KeyCode::Enter => {
+                let mode = modes::classification::continuous_mode_from_index(
+                    self.classification_mode_picker_focus,
+                );
+                self.apply_category_manager_classification_mode(agenda, mode)?;
+                self.classification_mode_picker_open = false;
+                return Ok(true);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn move_category_manager_global_setting(&mut self, delta: i32) {
+        let next = next_index_clamped(self.category_manager_global_settings_index(), 2, delta);
+        self.set_category_manager_global_settings_index(next);
+    }
+
+    fn open_selected_category_manager_global_setting(&mut self) {
+        match self.category_manager_global_settings_index() {
+            0 => self.open_classification_mode_picker(),
+            _ => {
+                self.workflow_setup_open = true;
+                self.workflow_setup_focus = 0;
+                self.status =
+                    "Workflow setup: j/k select role, Enter assign/unassign, Esc close".to_string();
+            }
+        }
+    }
+
     pub(crate) fn handle_category_manager_key(
         &mut self,
         code: KeyCode,
@@ -1031,6 +1060,10 @@ impl App {
         }
         if self.category_manager_discard_confirm() {
             self.handle_category_manager_discard_confirm_key(code, agenda)?;
+            return Ok(false);
+        }
+        if self.classification_mode_picker_open {
+            self.handle_classification_mode_picker_key(code, agenda)?;
             return Ok(false);
         }
         if self.workflow_setup_open {
@@ -1120,11 +1153,19 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.set_category_manager_filter_editing(false);
-                self.move_category_cursor(1)
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
+                    self.move_category_manager_global_setting(1);
+                } else {
+                    self.move_category_cursor(1)
+                }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.set_category_manager_filter_editing(false);
-                self.move_category_cursor(-1)
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
+                    self.move_category_manager_global_setting(-1);
+                } else {
+                    self.move_category_cursor(-1)
+                }
             }
             KeyCode::Char('K') => {
                 if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
@@ -1214,14 +1255,20 @@ impl App {
                 self.workflow_setup_open = true;
                 self.workflow_setup_focus = 0;
                 self.status =
-                    "Workflow setup: j/k select role, Enter assign/unassign, Esc close"
-                        .to_string();
+                    "Workflow setup: j/k select role, Enter assign/unassign, Esc close".to_string();
+            }
+            KeyCode::Char('m') => {
+                self.open_classification_mode_picker();
             }
             KeyCode::Enter => {
-                self.set_category_manager_focus(CategoryManagerFocus::Details);
-                self.status =
-                    "Details pane focused: use j/k (or arrows) to select field, Enter/Space to edit/toggle"
-                        .to_string();
+                if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
+                    self.open_selected_category_manager_global_setting();
+                } else {
+                    self.set_category_manager_focus(CategoryManagerFocus::Details);
+                    self.status =
+                        "Details pane focused: use j/k (or arrows) to select field, Enter/Space to edit/toggle"
+                            .to_string();
+                }
             }
             KeyCode::Char('x') => {
                 self.start_category_inline_delete_confirm();
@@ -1229,6 +1276,35 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn apply_category_manager_classification_mode(
+        &mut self,
+        agenda: &Agenda<'_>,
+        mode: ContinuousMode,
+    ) -> TuiResult<()> {
+        let mut config = self.classification_ui.config.clone();
+        config.continuous_mode = mode;
+        config.enabled = config.continuous_mode != ContinuousMode::Off;
+        let selected_category_id = self.selected_category_id();
+        let manager_focus = self.category_manager_focus();
+        let details_focus = self.category_manager_details_focus();
+        let mode_label = modes::classification::continuous_mode_label(config.continuous_mode);
+
+        agenda.store().set_classification_config(&config)?;
+        self.refresh(agenda.store())?;
+        self.mode = Mode::CategoryManager;
+        if let Some(category_id) = selected_category_id {
+            self.set_category_selection_by_id(category_id);
+        }
+        if let Some(focus) = manager_focus {
+            self.set_category_manager_focus(focus);
+        }
+        if let Some(focus) = details_focus {
+            self.set_category_manager_details_focus(focus);
+        }
+        self.status = format!("Classification mode: {mode_label}");
+        Ok(())
     }
 
     pub(crate) fn toggle_selected_category_exclusive(
@@ -1243,15 +1319,10 @@ impl App {
             self.status = "No selected category".to_string();
             return Ok(());
         };
-        let mut category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let mut category = agenda.store().get_category(category_id)?;
         category.is_exclusive = !category.is_exclusive;
         let updated = category.clone();
-        let result = agenda
-            .update_category(&category)
-            ?;
+        let result = agenda.update_category(&category)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
@@ -1273,15 +1344,10 @@ impl App {
             self.status = "No selected category".to_string();
             return Ok(());
         };
-        let mut category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let mut category = agenda.store().get_category(category_id)?;
         category.enable_implicit_string = !category.enable_implicit_string;
         let updated = category.clone();
-        let result = agenda
-            .update_category(&category)
-            ?;
+        let result = agenda.update_category(&category)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
@@ -1306,15 +1372,10 @@ impl App {
             self.status = "No selected category".to_string();
             return Ok(());
         };
-        let mut category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let mut category = agenda.store().get_category(category_id)?;
         category.is_actionable = !category.is_actionable;
         let updated = category.clone();
-        let result = agenda
-            .update_category(&category)
-            ?;
+        let result = agenda.update_category(&category)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
@@ -1340,17 +1401,15 @@ impl App {
             self.status = "No selected category".to_string();
             return Ok(());
         };
-        let category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let category = agenda.store().get_category(category_id)?;
         let mut workflow = self.workflow_config.clone();
         let previous_ready_category_name = workflow
             .ready_category_id
             .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.claim_category_id == Some(category_id) && workflow.ready_category_id != Some(category_id)
+        if workflow.claim_category_id == Some(category_id)
+            && workflow.ready_category_id != Some(category_id)
         {
             self.status = format!(
                 "{} is already the Claim Target category and cannot also be Ready Queue",
@@ -1366,10 +1425,7 @@ impl App {
             None
         };
         workflow.ready_category_id = if enabled { Some(category_id) } else { None };
-        agenda
-            .store()
-            .set_workflow_config(&workflow)
-            ?;
+        agenda.store().set_workflow_config(&workflow)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if enabled {
@@ -1401,17 +1457,15 @@ impl App {
             self.status = "No selected category".to_string();
             return Ok(());
         };
-        let category = agenda
-            .store()
-            .get_category(category_id)
-            ?;
+        let category = agenda.store().get_category(category_id)?;
         let mut workflow = self.workflow_config.clone();
         let previous_claim_category_name = workflow
             .claim_category_id
             .filter(|existing_id| *existing_id != category_id)
             .and_then(|existing_id| agenda.store().get_category(existing_id).ok())
             .map(|existing| existing.name);
-        if workflow.ready_category_id == Some(category_id) && workflow.claim_category_id != Some(category_id)
+        if workflow.ready_category_id == Some(category_id)
+            && workflow.claim_category_id != Some(category_id)
         {
             self.status = format!(
                 "{} is already the Ready Queue category and cannot also be Claim Target",
@@ -1427,10 +1481,7 @@ impl App {
             None
         };
         workflow.claim_category_id = if enabled { Some(category_id) } else { None };
-        agenda
-            .store()
-            .set_workflow_config(&workflow)
-            ?;
+        agenda.store().set_workflow_config(&workflow)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
         self.status = if enabled {

@@ -3,14 +3,10 @@ use crate::*;
 impl App {
     pub(crate) fn open_classification_review(&mut self) {
         self.mode = Mode::ClassificationReview;
-        self.classification_ui.focus = if self.classification_ui.pending_count > 0 {
-            ClassificationFocus::Items
-        } else {
-            ClassificationFocus::Settings
-        };
+        self.classification_ui.focus = ClassificationFocus::Items;
         self.status = if self.classification_ui.pending_count > 0 {
             format!(
-                "Classification center: {} pending suggestion{}",
+                "Classification review: {} pending suggestion{}",
                 self.classification_ui.pending_count,
                 if self.classification_ui.pending_count == 1 {
                     ""
@@ -19,7 +15,7 @@ impl App {
                 }
             )
         } else {
-            "Classification center: no pending suggestions".to_string()
+            "Classification review: no pending suggestions".to_string()
         };
     }
 
@@ -39,26 +35,6 @@ impl App {
             KeyCode::BackTab => self.cycle_classification_focus(-1),
             KeyCode::Up | KeyCode::Char('k') => self.move_classification_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_classification_selection(1),
-            KeyCode::Left | KeyCode::Char('h') => {
-                if self.classification_ui.focus == ClassificationFocus::Settings {
-                    self.cycle_selected_classification_setting(agenda, -1)?;
-                }
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                if self.classification_ui.focus == ClassificationFocus::Settings {
-                    self.cycle_selected_classification_setting(agenda, 1)?;
-                }
-            }
-            KeyCode::Char(' ') => {
-                if self.classification_ui.focus == ClassificationFocus::Settings {
-                    self.toggle_selected_classification_setting(agenda)?;
-                }
-            }
-            KeyCode::Char('m') => {
-                if self.classification_ui.focus == ClassificationFocus::Settings {
-                    self.cycle_selected_classification_setting(agenda, 1)?;
-                }
-            }
             KeyCode::Char('r') => {
                 if self.classification_ui.focus == ClassificationFocus::Suggestions {
                     self.reject_selected_classification_suggestion(agenda)?;
@@ -67,13 +43,6 @@ impl App {
             KeyCode::Char('A') => self.accept_all_selected_classification_item(agenda)?,
             KeyCode::Char('R') => self.reject_all_selected_classification_item(agenda)?,
             KeyCode::Enter => match self.classification_ui.focus {
-                ClassificationFocus::Settings => {
-                    self.mode = Mode::Normal;
-                    self.status = format!(
-                        "Classification mode saved: {}",
-                        continuous_mode_label(self.classification_ui.config.continuous_mode)
-                    );
-                }
                 ClassificationFocus::Items => {
                     if self
                         .selected_classification_item()
@@ -92,11 +61,7 @@ impl App {
     }
 
     fn cycle_classification_focus(&mut self, delta: i32) {
-        let order = [
-            ClassificationFocus::Settings,
-            ClassificationFocus::Items,
-            ClassificationFocus::Suggestions,
-        ];
+        let order = [ClassificationFocus::Items, ClassificationFocus::Suggestions];
         let current = order
             .iter()
             .position(|focus| *focus == self.classification_ui.focus)
@@ -118,11 +83,6 @@ impl App {
 
     fn move_classification_selection(&mut self, delta: i32) {
         match self.classification_ui.focus {
-            ClassificationFocus::Settings => {
-                let len = self.classification_settings_row_count();
-                self.classification_ui.settings_index =
-                    next_index_clamped(self.classification_ui.settings_index, len, delta);
-            }
             ClassificationFocus::Items => {
                 let len = self.classification_ui.review_items.len();
                 self.classification_ui.selected_item_index =
@@ -150,60 +110,7 @@ impl App {
         }
     }
 
-    fn toggle_selected_classification_setting(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
-        let mut config = self.classification_ui.config.clone();
-        if self.classification_ui.settings_index == 0 {
-            config.continuous_mode = next_continuous_mode(config.continuous_mode, 1);
-            config.enabled = config.continuous_mode != ContinuousMode::Off;
-            let mode = config.continuous_mode;
-            self.persist_classification_config(
-                agenda,
-                config,
-                format!("Classification mode: {}", continuous_mode_label(mode)),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn cycle_selected_classification_setting(
-        &mut self,
-        agenda: &Agenda<'_>,
-        delta: i32,
-    ) -> TuiResult<()> {
-        let mut config = self.classification_ui.config.clone();
-        if self.classification_ui.settings_index == 0 {
-            config.continuous_mode = next_continuous_mode(config.continuous_mode, delta);
-            config.enabled = config.continuous_mode != ContinuousMode::Off;
-            let mode = config.continuous_mode;
-            self.persist_classification_config(
-                agenda,
-                config,
-                format!("Classification mode: {}", continuous_mode_label(mode)),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn persist_classification_config(
-        &mut self,
-        agenda: &Agenda<'_>,
-        config: ClassificationConfig,
-        status: String,
-    ) -> TuiResult<()> {
-        agenda
-            .store()
-            .set_classification_config(&config)
-            ?;
-        self.refresh(agenda.store())?;
-        self.mode = Mode::ClassificationReview;
-        self.status = status;
-        Ok(())
-    }
-
-    fn accept_selected_classification_suggestion(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn accept_selected_classification_suggestion(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(review_item) = self.selected_classification_item() else {
             self.status = "No pending suggestions".to_string();
             return Ok(());
@@ -222,10 +129,7 @@ impl App {
         Ok(())
     }
 
-    fn reject_selected_classification_suggestion(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn reject_selected_classification_suggestion(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(review_item) = self.selected_classification_item() else {
             self.status = "No pending suggestions".to_string();
             return Ok(());
@@ -295,14 +199,20 @@ impl App {
     }
 }
 
-fn next_continuous_mode(mode: ContinuousMode, delta: i32) -> ContinuousMode {
-    let modes = [
-        ContinuousMode::Off,
-        ContinuousMode::AutoApply,
-        ContinuousMode::SuggestReview,
-    ];
-    let current = modes.iter().position(|candidate| *candidate == mode).unwrap_or(0);
-    modes[next_index_clamped(current, modes.len(), delta)]
+pub(crate) fn continuous_mode_index(mode: ContinuousMode) -> usize {
+    match mode {
+        ContinuousMode::Off => 0,
+        ContinuousMode::AutoApply => 1,
+        ContinuousMode::SuggestReview => 2,
+    }
+}
+
+pub(crate) fn continuous_mode_from_index(index: usize) -> ContinuousMode {
+    match index {
+        0 => ContinuousMode::Off,
+        2 => ContinuousMode::SuggestReview,
+        _ => ContinuousMode::AutoApply,
+    }
 }
 
 pub(crate) fn continuous_mode_label(mode: ContinuousMode) -> &'static str {

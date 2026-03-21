@@ -1,5 +1,5 @@
-use agenda_core::error::AgendaError;
 use crate::*;
+use agenda_core::error::AgendaError;
 
 /// Cycle: integer → 1dp → 2dp → 2dp+thousands → currency (2dp+thousands+$) → integer
 pub(super) fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
@@ -1034,10 +1034,7 @@ impl App {
 
         let view_name = view.name.clone();
         let selected_item_id = self.selected_item_id();
-        agenda
-            .store()
-            .update_view(&view)
-            ?;
+        agenda.store().update_view(&view)?;
         self.clear_board_add_column_session();
         self.mode = Mode::Normal;
         self.refresh(agenda.store())?;
@@ -1155,10 +1152,7 @@ impl App {
         let view_name = view.name.clone();
         let selected_slot_index = self.slot_index;
         let selected_item_id = self.selected_item_id();
-        agenda
-            .store()
-            .update_view(&view)
-            ?;
+        agenda.store().update_view(&view)?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
@@ -1306,10 +1300,7 @@ impl App {
         let view_name = view.name.clone();
         let selected_item_id = self.selected_item_id();
         let old_column_index = self.column_index;
-        agenda
-            .store()
-            .update_view(&view)
-            ?;
+        agenda.store().update_view(&view)?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         if let Some(item_id) = selected_item_id {
@@ -1344,10 +1335,7 @@ impl App {
         Ok(false)
     }
 
-    fn confirm_inline_create_board_add_column(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn confirm_inline_create_board_add_column(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(name) = self
             .board_add_column_create_confirm_name()
             .map(str::to_string)
@@ -1357,9 +1345,7 @@ impl App {
         let mut category = Category::new(name.clone());
         category.enable_implicit_string = true;
         let cat_id = category.id;
-        agenda
-            .create_category(&category)
-            ?;
+        agenda.create_category(&category)?;
         self.refresh_category_cache(agenda.store())?;
         self.set_board_add_column_create_confirm_name(None);
         self.insert_board_column_for_category(agenda, cat_id)?;
@@ -1640,9 +1626,7 @@ impl App {
         category.parent = Some(parent_id);
         category.enable_implicit_string = true;
         let cat_id = category.id;
-        agenda
-            .create_category(&category)
-            ?;
+        agenda.create_category(&category)?;
         self.refresh_category_cache(agenda.store())?;
         if let Some(state) = self.category_column_picker_state_mut() {
             if state.is_exclusive {
@@ -1657,10 +1641,7 @@ impl App {
         Ok(())
     }
 
-    fn apply_category_column_picker_selection(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn apply_category_column_picker_selection(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(state) = self.category_column_picker_state().cloned() else {
             return Ok(());
         };
@@ -1688,18 +1669,14 @@ impl App {
         let column_index = self.column_index;
 
         for id in to_remove {
-            agenda
-                .unassign_item_manual(item_id, id)
-                ?;
+            agenda.unassign_item_manual(item_id, id)?;
         }
         for id in to_add {
-            agenda
-                .assign_item_manual(
-                    item_id,
-                    id,
-                    Some("manual:tui.column_picker.multi".to_string()),
-                )
-                ?;
+            agenda.assign_item_manual(
+                item_id,
+                id,
+                Some("manual:tui.column_picker.multi".to_string()),
+            )?;
         }
 
         self.mode = Mode::Normal;
@@ -1945,10 +1922,7 @@ impl App {
         )
     }
 
-    fn confirm_inline_create_category_direct_edit(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn confirm_inline_create_category_direct_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(name) = self.direct_edit_create_confirm_name().map(str::to_string) else {
             return Ok(());
         };
@@ -1975,9 +1949,7 @@ impl App {
         category.parent = Some(parent_id);
         category.enable_implicit_string = true;
         let cat_id = category.id;
-        agenda
-            .create_category(&category)
-            ?;
+        agenda.create_category(&category)?;
         self.refresh_category_cache(agenda.store())?;
         self.set_direct_edit_create_confirm_name(None);
         let _ = self.resolve_active_category_direct_edit_row(cat_id)?;
@@ -2035,18 +2007,14 @@ impl App {
         let column_index = self.column_index;
 
         for id in to_remove {
-            agenda
-                .unassign_item_manual(item_id, id)
-                ?;
+            agenda.unassign_item_manual(item_id, id)?;
         }
         for id in to_add {
-            agenda
-                .assign_item_manual(
-                    item_id,
-                    id,
-                    Some("manual:tui.direct_edit.multi".to_string()),
-                )
-                ?;
+            agenda.assign_item_manual(
+                item_id,
+                id,
+                Some("manual:tui.direct_edit.multi".to_string()),
+            )?;
         }
 
         self.mode = Mode::Normal;
@@ -2315,9 +2283,7 @@ impl App {
             KeyCode::Char('r') => {
                 if let Some(item_id) = self.selected_item_id() {
                     if let Some(view) = self.current_view().cloned() {
-                        agenda
-                            .remove_item_from_view(item_id, &view)
-                            ?;
+                        agenda.remove_item_from_view(item_id, &view)?;
                         self.refresh(agenda.store())?;
                         self.status = "Removed item from current view".to_string();
                     }
@@ -2412,16 +2378,12 @@ impl App {
         clear_blocked_item_ids: &[ItemId],
     ) -> TuiResult<()> {
         self.push_undo(UndoEntry::ItemDoneToggled { item_id, was_done });
-        agenda
-            .toggle_item_done(item_id)
-            ?;
+        agenda.toggle_item_done(item_id)?;
 
         let mut removed_blocker_links = 0usize;
         if !was_done {
             for blocked_id in clear_blocked_item_ids {
-                agenda
-                    .unlink_items_blocks(item_id, *blocked_id)
-                    ?;
+                agenda.unlink_items_blocks(item_id, *blocked_id)?;
                 removed_blocker_links += 1;
             }
         }
@@ -2626,9 +2588,7 @@ impl App {
                             .map(|links| links.blocks.clone())
                             .unwrap_or_default();
                         for blocked_id in &blocked_ids {
-                            agenda
-                                .unlink_items_blocks(*item_id, *blocked_id)
-                                ?;
+                            agenda.unlink_items_blocks(*item_id, *blocked_id)?;
                             removed_links += 1;
                         }
                     }
@@ -2792,10 +2752,7 @@ impl App {
         let next = current.next();
         let section_mut = &mut view.sections[section_index];
         section_mut.columns[section_column_index].summary_fn = Some(next);
-        agenda
-            .store()
-            .update_view(&view)
-            ?;
+        agenda.store().update_view(&view)?;
         self.refresh(agenda.store())?;
         self.status = format!("Column summary: {}", next.label());
         Ok(())
@@ -2847,10 +2804,7 @@ impl App {
         let next = cycle_numeric_format_preset(&current);
         updated_cat.numeric_format = Some(next.clone());
         // Use store directly — format-only change needs no reclassification.
-        agenda
-            .store()
-            .update_category(&updated_cat)
-            ?;
+        agenda.store().update_category(&updated_cat)?;
         self.refresh(agenda.store())?;
         self.status = format!("Column format: {}", describe_numeric_format(&next));
         Ok(())
@@ -2892,10 +2846,7 @@ impl App {
         };
 
         let view_name = view.name.clone();
-        agenda
-            .store()
-            .update_view(&view)
-            ?;
+        agenda.store().update_view(&view)?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
@@ -2926,10 +2877,7 @@ impl App {
         let next_flow = view.section_flow;
         let view_name = view.name.clone();
 
-        agenda
-            .store()
-            .update_view(&view)
-            ?;
+        agenda.store().update_view(&view)?;
         self.refresh(agenda.store())?;
         self.set_view_selection_by_name(&view_name);
         self.slot_index = selected_slot_index.min(self.slots.len().saturating_sub(1));
@@ -3198,7 +3146,6 @@ impl App {
                         agenda
                             .link_items_depends_on(source_item_id, target_id)
                             .map(|result| result.created)
-                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3246,7 +3193,6 @@ impl App {
                         agenda
                             .link_items_depends_on(source_item_id, target_id)
                             .map(|result| result.created)
-                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3287,7 +3233,6 @@ impl App {
                         agenda
                             .link_items_blocks(source_item_id, target_id)
                             .map(|result| result.created)
-                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3335,7 +3280,6 @@ impl App {
                         agenda
                             .link_items_related(source_item_id, target_id)
                             .map(|result| result.created)
-                            
                     });
                 if batch_mode {
                     let mut summary = format!(
@@ -3365,23 +3309,15 @@ impl App {
                 let mut total_prereqs = 0usize;
                 let mut total_dependents = 0usize;
                 for source_item_id in &source_item_ids {
-                    let prereqs = agenda
-                        .immediate_prereq_ids(*source_item_id)
-                        ?;
-                    let dependents = agenda
-                        .immediate_dependent_ids(*source_item_id)
-                        ?;
+                    let prereqs = agenda.immediate_prereq_ids(*source_item_id)?;
+                    let dependents = agenda.immediate_dependent_ids(*source_item_id)?;
                     total_prereqs += prereqs.len();
                     total_dependents += dependents.len();
                     for dependency_id in &prereqs {
-                        agenda
-                            .unlink_items_depends_on(*source_item_id, *dependency_id)
-                            ?;
+                        agenda.unlink_items_depends_on(*source_item_id, *dependency_id)?;
                     }
                     for blocked_id in &dependents {
-                        agenda
-                            .unlink_items_blocks(*source_item_id, *blocked_id)
-                            ?;
+                        agenda.unlink_items_blocks(*source_item_id, *blocked_id)?;
                     }
                 }
                 if source_item_ids.len() > 1 {
@@ -4147,21 +4083,14 @@ impl App {
         // Create item (parses When, applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
         let reference_date = Local::now().date_naive();
-        agenda
-            .create_item_with_reference_date(&item, reference_date)
-            ?;
+        agenda.create_item_with_reference_date(&item, reference_date)?;
 
         // Set note if provided.
         if note.is_some() {
-            let mut loaded = agenda
-                .store()
-                .get_item(item.id)
-                ?;
+            let mut loaded = agenda.store().get_item(item.id)?;
             loaded.note = note;
             loaded.modified_at = Utc::now();
-            agenda
-                .update_item_with_reference_date(&loaded, reference_date)
-                ?;
+            agenda.update_item_with_reference_date(&loaded, reference_date)?;
         }
 
         // Assign explicitly selected categories.
@@ -4198,16 +4127,12 @@ impl App {
 
         let category_names: Vec<String> = agenda
             .store()
-            .get_hierarchy()
-            ?
+            .get_hierarchy()?
             .into_iter()
             .map(|c| c.name)
             .collect();
         let unknown_hashtags = unknown_hashtag_tokens(&text, &category_names);
-        let created = agenda
-            .store()
-            .get_item(item.id)
-            ?;
+        let created = agenda.store().get_item(item.id)?;
 
         self.push_undo(UndoEntry::ItemCreated { item_id: item.id });
         self.refresh(agenda.store())?;
@@ -4247,10 +4172,7 @@ impl App {
         let numeric_buffers = panel.numeric_buffers.clone();
         let numeric_originals = panel.numeric_originals.clone();
 
-        let mut item = agenda
-            .store()
-            .get_item(item_id)
-            ?;
+        let mut item = agenda.store().get_item(item_id)?;
         let undo_old_text = item.text.clone();
         let undo_old_note = item.note.clone();
 
@@ -4308,9 +4230,7 @@ impl App {
         item.note = updated_note;
         item.modified_at = Utc::now();
         let reference_date = Local::now().date_naive();
-        agenda
-            .update_item_with_reference_date(&item, reference_date)
-            ?;
+        agenda.update_item_with_reference_date(&item, reference_date)?;
 
         // Apply category changes.
         for cat_id in new_categories.difference(&existing_categories) {
@@ -4890,9 +4810,11 @@ impl App {
                         }
                     }
                 } else {
-                    let result = agenda
-                        .assign_item_manual(item_id, row.id, Some("manual:tui.assign".to_string()))
-                        ?;
+                    let result = agenda.assign_item_manual(
+                        item_id,
+                        row.id,
+                        Some("manual:tui.assign".to_string()),
+                    )?;
                     self.push_undo(UndoEntry::CategoryAssigned {
                         item_id,
                         category_id: row.id,
@@ -4980,10 +4902,7 @@ impl App {
                         let mut category = Category::new(name.clone());
                         category.enable_implicit_string = true;
                         let category_id = category.id;
-                        agenda
-                            .store()
-                            .create_category(&category)
-                            ?;
+                        agenda.store().create_category(&category)?;
                         created_new_category = true;
                         (category_id, category.name)
                     };
@@ -4993,10 +4912,7 @@ impl App {
                 let mut first_error = None;
 
                 for action_item_id in &action_item_ids {
-                    let item = agenda
-                        .store()
-                        .get_item(*action_item_id)
-                        ?;
+                    let item = agenda.store().get_item(*action_item_id)?;
                     if item.assignments.contains_key(&category_id) {
                         already_had += 1;
                         continue;
@@ -5118,9 +5034,7 @@ impl App {
                     return Ok(false);
                 };
 
-                agenda
-                    .unassign_item_manual(item_id, row.category_id)
-                    ?;
+                agenda.unassign_item_manual(item_id, row.category_id)?;
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
                 self.mode = Mode::Normal;

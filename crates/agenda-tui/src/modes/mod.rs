@@ -1,5 +1,5 @@
 pub(super) mod board;
-pub(crate) mod classification;
 mod category;
+pub(crate) mod classification;
 mod view_edit;
 mod view_edit2;

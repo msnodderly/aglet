@@ -2957,7 +2957,7 @@ impl App {
         frame.render_widget(Clear, area);
         frame.render_widget(
             Block::default()
-                .title("Classification Center")
+                .title("Classification Review")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
@@ -2977,41 +2977,18 @@ impl App {
             .constraints([Constraint::Length(4), Constraint::Min(8)])
             .split(inner);
         let config = &self.classification_ui.config;
-        let widest_mode_label = [
-            ContinuousMode::Off,
-            ContinuousMode::AutoApply,
-            ContinuousMode::SuggestReview,
-        ]
-        .into_iter()
-        .map(modes::classification::continuous_mode_label)
-        .max_by_key(|label| label.chars().count())
-        .unwrap_or("Suggest/Review");
-        let setting_rows: Vec<String> = vec![format!(
-            "Classification mode: {}",
-            modes::classification::continuous_mode_label(config.continuous_mode)
-        )];
-        let max_setting_rows = [format!("Classification mode: {widest_mode_label}")];
-        let settings_width = setting_rows
-            .iter()
-            .chain(max_setting_rows.iter())
-            .map(|row| row.chars().count())
-            .max()
-            .unwrap_or(24)
-            .saturating_add(6)
-            .clamp(28, 40) as u16;
-        let pending_width = 30u16.min(rows[1].width.saturating_sub(settings_width + 24));
+        let pending_width = 30u16.min(rows[1].width.saturating_sub(40));
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(settings_width),
                 Constraint::Length(pending_width.max(24)),
-                Constraint::Min(32),
+                Constraint::Min(40),
             ])
             .split(rows[1]);
         let detail_rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(8), Constraint::Min(6)])
-            .split(columns[2]);
+            .split(columns[1]);
 
         let summary_lines = vec![
             Line::from(format!(
@@ -3019,8 +2996,8 @@ impl App {
                 modes::classification::continuous_mode_label(config.continuous_mode)
             )),
             Line::from(format!("Pending: {}", self.classification_pending_count())),
-            Line::from("Implicit category match is configured per category."),
-            Line::from("Natural-language dates are always on and run inline when available."),
+            Line::from("Global mode is configured in Category Manager (`c`)."),
+            Line::from("Per-category Auto-match still controls implicit category matching."),
         ];
         frame.render_widget(
             Paragraph::new(summary_lines)
@@ -3028,36 +3005,6 @@ impl App {
                 .wrap(Wrap { trim: true }),
             rows[0],
         );
-
-        let setting_items: Vec<ListItem<'_>> = setting_rows
-            .iter()
-            .map(|row| ListItem::new(row.clone()))
-            .collect();
-        let mut settings_state =
-            Self::list_state_for(columns[0], Some(self.classification_ui.settings_index));
-        let setting_count = setting_items.len();
-        frame.render_stateful_widget(
-            List::new(setting_items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title(if self.classification_ui.focus == ClassificationFocus::Settings {
-                            "Settings *"
-                        } else {
-                            "Settings"
-                        })
-                        .borders(Borders::ALL)
-                        .border_style(if self.classification_ui.focus == ClassificationFocus::Settings {
-                            Style::default().fg(Color::Cyan)
-                        } else {
-                            Style::default()
-                        }),
-                ),
-            columns[0],
-            &mut settings_state,
-        );
-        Self::render_vertical_scrollbar(frame, columns[0], setting_count, settings_state.offset());
 
         let item_rows: Vec<ListItem<'_>> = self
             .classification_ui
@@ -3069,7 +3016,7 @@ impl App {
             })
             .collect();
         let mut item_state = Self::list_state_for(
-            columns[1],
+            columns[0],
             if self.classification_ui.review_items.is_empty() {
                 None
             } else {
@@ -3087,22 +3034,26 @@ impl App {
             .highlight_style(selected_row_style())
             .block(
                 Block::default()
-                    .title(if self.classification_ui.focus == ClassificationFocus::Items {
-                        "Pending Items *"
-                    } else {
-                        "Pending Items"
-                    })
+                    .title(
+                        if self.classification_ui.focus == ClassificationFocus::Items {
+                            "Pending Items *"
+                        } else {
+                            "Pending Items"
+                        },
+                    )
                     .borders(Borders::ALL)
-                    .border_style(if self.classification_ui.focus == ClassificationFocus::Items {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    }),
+                    .border_style(
+                        if self.classification_ui.focus == ClassificationFocus::Items {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        },
+                    ),
             ),
-            columns[1],
+            columns[0],
             &mut item_state,
         );
-        Self::render_vertical_scrollbar(frame, columns[1], item_count, item_state.offset());
+        Self::render_vertical_scrollbar(frame, columns[0], item_count, item_state.offset());
 
         let item_detail_lines = if let Some(item) = self.selected_classification_item() {
             let mut lines = vec![
@@ -3130,7 +3081,7 @@ impl App {
             vec![
                 Line::from("No pending review item selected"),
                 Line::from(""),
-                Line::from("Use the settings pane to configure classification."),
+                Line::from("Global classification mode lives in Category Manager (`c`)."),
             ]
         };
         frame.render_widget(
@@ -3199,17 +3150,21 @@ impl App {
             .highlight_style(selected_row_style())
             .block(
                 Block::default()
-                    .title(if self.classification_ui.focus == ClassificationFocus::Suggestions {
-                        "Suggestions *"
-                    } else {
-                        "Suggestions"
-                    })
+                    .title(
+                        if self.classification_ui.focus == ClassificationFocus::Suggestions {
+                            "Suggestions *"
+                        } else {
+                            "Suggestions"
+                        },
+                    )
                     .borders(Borders::ALL)
-                    .border_style(if self.classification_ui.focus == ClassificationFocus::Suggestions {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    }),
+                    .border_style(
+                        if self.classification_ui.focus == ClassificationFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        },
+                    ),
             ),
             detail_rows[1],
             &mut suggestion_state,
@@ -3238,7 +3193,7 @@ impl App {
         for (key, desc) in &hint_pairs {
             let entry = format!("{}:{}", key, desc);
             let entry_len = entry.len() + if spans.is_empty() { 0 } else { 2 }; // "  " separator
-            // Reserve space for help suffix if not already the help entry
+                                                                                // Reserve space for help suffix if not already the help entry
             let reserve = if *key != "?" { help_suffix_len + 2 } else { 0 };
             if used + entry_len + reserve > available && !spans.is_empty() {
                 break;
@@ -3262,14 +3217,8 @@ impl App {
             if !spans.is_empty() {
                 spans.push(Span::raw("  "));
             }
-            spans.push(Span::styled(
-                "?:",
-                Style::default().fg(Color::LightCyan),
-            ));
-            spans.push(Span::styled(
-                "help",
-                Style::default().fg(MUTED_TEXT_COLOR),
-            ));
+            spans.push(Span::styled("?:", Style::default().fg(Color::LightCyan)));
+            spans.push(Span::styled("help", Style::default().fg(MUTED_TEXT_COLOR)));
         }
         let text = ratatui::text::Text::from(vec![
             ratatui::text::Line::from(status),
@@ -3413,54 +3362,135 @@ impl App {
             Mode::HelpPanel => vec![("Esc", "close"), ("Enter", "close"), ("?", "close")],
             Mode::ClassificationReview => vec![
                 ("Tab", "pane"),
-                ("Enter", "save/close"),
+                ("Enter", "open/accept"),
                 ("r", "reject"),
                 ("A/R", "item"),
-                ("Space", "toggle"),
                 ("Esc", "close"),
             ],
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
-                    vec![("y", "save & close"), ("n", "discard"), ("Esc", "keep editing")]
+                    vec![
+                        ("y", "save & close"),
+                        ("n", "discard"),
+                        ("Esc", "keep editing"),
+                    ]
                 } else if self.category_manager_details_note_editing() {
                     vec![("Tab", "leave note"), ("Esc", "discard")]
                 } else if let Some(action) = self.category_manager_inline_action() {
                     match action {
-                        CategoryInlineAction::Rename { .. } => vec![("Enter", "apply"), ("Esc", "cancel")],
-                        CategoryInlineAction::DeleteConfirm { .. } => vec![("y", "confirm"), ("Esc", "cancel")],
+                        CategoryInlineAction::Rename { .. } => {
+                            vec![("Enter", "apply"), ("Esc", "cancel")]
+                        }
+                        CategoryInlineAction::DeleteConfirm { .. } => {
+                            vec![("y", "confirm"), ("Esc", "cancel")]
+                        }
                     }
+                } else if self.category_manager_focus() == Some(CategoryManagerFocus::Global) {
+                    vec![
+                        ("j/k", "select"),
+                        ("Enter", "open"),
+                        ("Tab", "pane"),
+                        ("m", "classify"),
+                        ("w", "workflow"),
+                        ("Esc", "close"),
+                    ]
                 } else {
-                    vec![("S", "save"), ("n", "new"), ("r", "rename"), ("x", "delete"), ("Tab", "pane"), ("/", "filter"), ("w", "workflow"), ("Esc", "close")]
+                    vec![
+                        ("S", "save"),
+                        ("n", "new"),
+                        ("r", "rename"),
+                        ("x", "delete"),
+                        ("m", "classify"),
+                        ("Tab", "pane"),
+                        ("/", "filter"),
+                        ("w", "workflow"),
+                        ("Esc", "close"),
+                    ]
                 }
             }
             Mode::ViewPicker => {
-                vec![("Enter", "switch"), ("N", "new"), ("c", "clone"), ("r", "rename"), ("e", "edit"), ("x", "delete"), ("Esc", "cancel")]
+                vec![
+                    ("Enter", "switch"),
+                    ("N", "new"),
+                    ("c", "clone"),
+                    ("r", "rename"),
+                    ("e", "edit"),
+                    ("x", "delete"),
+                    ("Esc", "cancel"),
+                ]
             }
             Mode::ViewDeleteConfirm => vec![("y", "confirm"), ("Esc", "cancel")],
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.discard_confirm {
-                        vec![("y", "save & close"), ("n", "discard"), ("Esc", "keep editing")]
+                        vec![
+                            ("y", "save & close"),
+                            ("n", "discard"),
+                            ("Esc", "keep editing"),
+                        ]
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
-                        vec![("S", "save"), ("n", "new"), ("x", "del"), ("Enter", "details"), ("Tab", "pane"), ("Esc", "close")]
+                        vec![
+                            ("S", "save"),
+                            ("n", "new"),
+                            ("x", "del"),
+                            ("Enter", "details"),
+                            ("Tab", "pane"),
+                            ("Esc", "close"),
+                        ]
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
-                        vec![("S", "save"), ("p", "hide"), ("Tab", "pane"), ("Esc", "close")]
+                        vec![
+                            ("S", "save"),
+                            ("p", "hide"),
+                            ("Tab", "pane"),
+                            ("Esc", "close"),
+                        ]
                     } else {
-                        vec![("S", "save"), ("n", "new"), ("x", "del"), ("Space", "toggle"), ("Tab", "pane"), ("Esc", "close")]
+                        vec![
+                            ("S", "save"),
+                            ("n", "new"),
+                            ("x", "del"),
+                            ("Space", "toggle"),
+                            ("Tab", "pane"),
+                            ("Esc", "close"),
+                        ]
                     }
                 } else {
                     vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
                 }
             }
-            Mode::ItemAssignPicker => vec![("Space", "apply"), ("n", "new"), ("Enter", "close"), ("Esc", "cancel")],
+            Mode::ItemAssignPicker => vec![
+                ("Space", "apply"),
+                ("n", "new"),
+                ("Enter", "close"),
+                ("Esc", "cancel"),
+            ],
             Mode::ItemAssignInput => vec![("Enter", "assign"), ("Esc", "cancel")],
-            Mode::LinkWizard => vec![("Tab", "focus"), ("Enter", "apply"), ("/", "target"), ("Esc", "cancel")],
-            Mode::CategoryDirectEdit => vec![("S", "save"), ("Tab", "focus"), ("Enter", "resolve"), ("x", "remove"), ("Esc", "cancel")],
-            Mode::CategoryColumnPicker => vec![("Space", "toggle"), ("Enter", "save"), ("Esc", "cancel")],
-            Mode::BoardAddColumnPicker => vec![("Enter", "insert"), ("Tab", "complete"), ("Esc", "cancel")],
+            Mode::LinkWizard => vec![
+                ("Tab", "focus"),
+                ("Enter", "apply"),
+                ("/", "target"),
+                ("Esc", "cancel"),
+            ],
+            Mode::CategoryDirectEdit => vec![
+                ("S", "save"),
+                ("Tab", "focus"),
+                ("Enter", "resolve"),
+                ("x", "remove"),
+                ("Esc", "cancel"),
+            ],
+            Mode::CategoryColumnPicker => {
+                vec![("Space", "toggle"), ("Enter", "save"), ("Esc", "cancel")]
+            }
+            Mode::BoardAddColumnPicker => {
+                vec![("Enter", "insert"), ("Tab", "complete"), ("Esc", "cancel")]
+            }
             Mode::ConfirmDelete => {
                 if self.done_blocks_confirm.is_some() {
-                    vec![("y", "remove links + done"), ("n", "done only"), ("Esc", "cancel")]
+                    vec![
+                        ("y", "remove links + done"),
+                        ("n", "done only"),
+                        ("Esc", "cancel"),
+                    ]
                 } else {
                     vec![("y", "confirm"), ("Esc", "cancel")]
                 }
@@ -3470,9 +3500,17 @@ impl App {
             }
             Mode::SearchBarFocused => {
                 if self.global_search_active() {
-                    vec![("Enter", "jump/create"), ("\u{2193}/Tab", "browse"), ("Esc", "return")]
+                    vec![
+                        ("Enter", "jump/create"),
+                        ("\u{2193}/Tab", "browse"),
+                        ("Esc", "return"),
+                    ]
                 } else {
-                    vec![("Enter", "jump/create"), ("\u{2193}/Tab", "browse"), ("Esc", "clear")]
+                    vec![
+                        ("Enter", "jump/create"),
+                        ("\u{2193}/Tab", "browse"),
+                        ("Esc", "clear"),
+                    ]
                 }
             }
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
@@ -3486,17 +3524,33 @@ impl App {
                     })
                     .unwrap_or(false)
                 {
-                    vec![("Enter", "save"), ("S", "save"), ("Tab", "buttons"), ("Esc", "cancel")]
+                    vec![
+                        ("Enter", "save"),
+                        ("S", "save"),
+                        ("Tab", "buttons"),
+                        ("Esc", "cancel"),
+                    ]
                 } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
                 }) {
-                    vec![("Type", "filter"), ("Enter", "keep"), ("Esc", "done"), ("Tab", "next")]
+                    vec![
+                        ("Type", "filter"),
+                        ("Enter", "keep"),
+                        ("Esc", "done"),
+                        ("Tab", "next"),
+                    ]
                 } else if self
                     .input_panel
                     .as_ref()
                     .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
                 {
-                    vec![("S", "save"), ("Tab", "next"), ("/", "filter"), ("Space", "toggle"), ("Esc", "cancel")]
+                    vec![
+                        ("S", "save"),
+                        ("Tab", "next"),
+                        ("/", "filter"),
+                        ("Space", "toggle"),
+                        ("Esc", "cancel"),
+                    ]
                 } else {
                     vec![("S", "save"), ("Tab", "next"), ("Esc", "cancel")]
                 }
@@ -3505,24 +3559,42 @@ impl App {
                 let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
                 if self.selected_count() > 0 {
                     hints.extend_from_slice(&[
-                        ("Space", "toggle"), ("a", "assign"), ("b/B", "link"),
-                        ("x", "delete"), ("Esc", "clear sel"),
-                        ("/", "search"), ("g/", "global"), ("v", "views"),
-                        ("p", "preview"), ("q", "quit"),
+                        ("Space", "toggle"),
+                        ("a", "assign"),
+                        ("b/B", "link"),
+                        ("x", "delete"),
+                        ("Esc", "clear sel"),
+                        ("/", "search"),
+                        ("g/", "global"),
+                        ("v", "views"),
+                        ("p", "preview"),
+                        ("q", "quit"),
                     ]);
                 } else {
                     hints.extend_from_slice(&[
-                        ("n", "new"), ("e", "edit"), ("a", "assign"), ("d", "done"),
-                        ("/", "search"), ("v", "views"), ("m", "lanes"), ("s", "sort"),
-                        ("f", "col fmt"), ("F", "col summary"),
-                        ("p", "preview"), ("u", "deps"), ("C", "classify"),
-                        ("g/", "global"), ("z", "cards"),
+                        ("n", "new"),
+                        ("e", "edit"),
+                        ("a", "assign"),
+                        ("d", "done"),
+                        ("/", "search"),
+                        ("v", "views"),
+                        ("m", "lanes"),
+                        ("s", "sort"),
+                        ("f", "col fmt"),
+                        ("F", "col summary"),
+                        ("p", "preview"),
+                        ("u", "deps"),
+                        ("C", "classify"),
+                        ("g/", "global"),
+                        ("z", "cards"),
                     ]);
                     if self.section_filters.iter().any(|f| f.is_some()) {
                         hints.push(("Esc", "clear search"));
                     }
                     hints.extend_from_slice(&[
-                        ("Ctrl-L", "reload"), ("Ctrl-R", "auto-refresh"), ("q", "quit"),
+                        ("Ctrl-L", "reload"),
+                        ("Ctrl-R", "auto-refresh"),
+                        ("q", "quit"),
                     ]);
                 }
                 if self.undo.has_undo() {
@@ -3533,7 +3605,9 @@ impl App {
                 if self.undo.has_redo() {
                     // Insert redo hint right after undo
                     let undo_pos = hints.iter().position(|h| h.0 == "Ctrl-Z");
-                    let insert_pos = undo_pos.map(|p| p + 1).unwrap_or_else(|| hints.len().min(5));
+                    let insert_pos = undo_pos
+                        .map(|p| p + 1)
+                        .unwrap_or_else(|| hints.len().min(5));
                     hints.insert(insert_pos, ("Ctrl-Shift-Z", "redo"));
                 }
                 hints
@@ -4153,7 +4227,7 @@ impl App {
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .constraints([Constraint::Length(5), Constraint::Min(1)])
             .split(area);
         let manager_focus = self
             .category_manager
@@ -4173,11 +4247,53 @@ impl App {
                     format!("Delete '{}'? y:confirm Esc:cancel", category_name)
                 }
             });
-        frame.render_widget(
-            Paragraph::new(
-                "Categories are shared across all views. Press n to add, H/J/K/L to reorder (or << / >> to outdent/indent), and use Details to edit flags and notes.",
-            ),
+        let classification_mode = modes::classification::continuous_mode_label(
+            self.classification_ui.config.continuous_mode,
+        );
+        let ready_name = self
+            .workflow_config
+            .ready_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+        let claim_name = self
+            .workflow_config
+            .claim_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+        let global_items = vec![
+            ListItem::new(format!("Classification mode: {classification_mode}")),
+            ListItem::new(format!(
+                "Workflow roles: Ready Queue={ready_name}  Claim Target={claim_name}"
+            )),
+        ];
+        let mut global_state = Self::list_state_for(
             layout[0],
+            Some(self.category_manager_global_settings_index()),
+        );
+        frame.render_stateful_widget(
+            List::new(global_items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(if manager_focus == CategoryManagerFocus::Global {
+                            "> Global Settings"
+                        } else {
+                            "Global Settings"
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(
+                            if manager_focus == CategoryManagerFocus::Global {
+                                Color::Cyan
+                            } else {
+                                Color::DarkGray
+                            },
+                        )),
+                ),
+            layout[0],
+            &mut global_state,
         );
 
         let body = Layout::default()
@@ -4303,31 +4419,29 @@ impl App {
             },
         );
         frame.render_stateful_widget(
-            Table::new(
-                rows,
-                vec![Constraint::Min(20)],
-            )
-            .header(
-                Row::new(vec![Cell::from("Category")]).style(Style::default().add_modifier(Modifier::BOLD)),
-            )
-            .highlight_symbol("> ")
-            .row_highlight_style(selected_row_style())
-            .block(
-                Block::default()
-                    .title(if manager_focus == CategoryManagerFocus::Tree {
-                        format!("> Category Manager{title_suffix}")
-                    } else {
-                        format!("Category Manager{title_suffix}")
-                    })
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(tree_border).add_modifier(
-                        if manager_focus == CategoryManagerFocus::Tree {
-                            Modifier::BOLD
+            Table::new(rows, vec![Constraint::Min(20)])
+                .header(
+                    Row::new(vec![Cell::from("Category")])
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                )
+                .highlight_symbol("> ")
+                .row_highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(if manager_focus == CategoryManagerFocus::Tree {
+                            format!("> Category Manager{title_suffix}")
                         } else {
-                            Modifier::empty()
-                        },
-                    )),
-            ),
+                            format!("Category Manager{title_suffix}")
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(tree_border).add_modifier(
+                            if manager_focus == CategoryManagerFocus::Tree {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            },
+                        )),
+                ),
             table_area,
             &mut state,
         );
@@ -4397,8 +4511,8 @@ impl App {
                 };
                 let is_ready_queue_role = self.selected_category_is_ready_queue_role();
                 let is_claim_target_role = self.selected_category_is_claim_target_role();
-                let workflow_role_height: u16 =
-                    if is_ready_queue_role { 2 } else { 0 } + if is_claim_target_role { 2 } else { 0 };
+                let workflow_role_height: u16 = if is_ready_queue_role { 2 } else { 0 }
+                    + if is_claim_target_role { 2 } else { 0 };
                 let flags_height = if is_numeric_category {
                     7
                 } else {
@@ -4473,7 +4587,8 @@ impl App {
                 let flag_lines = if is_numeric {
                     let inline_input = self.category_manager_details_inline_input();
                     let integer_focused = details_focus == CategoryManagerDetailsFocus::Integer;
-                    let decimal_focused = details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let decimal_focused =
+                        details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
                     let currency_focused =
                         details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
                     let thousands_focused =
@@ -4489,9 +4604,13 @@ impl App {
                             input.field == CategoryManagerDetailsInlineField::CurrencySymbol
                         })
                         .map(|input| input.buffer.text().to_string())
-                        .unwrap_or_else(|| numeric_format.currency_symbol.clone().unwrap_or_default());
+                        .unwrap_or_else(|| {
+                            numeric_format.currency_symbol.clone().unwrap_or_default()
+                        });
                     let decimal_style = if integer_mode {
-                        Style::default().fg(MUTED_TEXT_COLOR).add_modifier(Modifier::DIM)
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
                     } else if decimal_focused {
                         focused_cell_style()
                     } else {
@@ -4815,6 +4934,58 @@ impl App {
                 .block(
                     Block::default()
                         .title(" Workflow Setup ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::LightCyan)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if self.classification_mode_picker_open {
+            let focus = self.classification_mode_picker_focus;
+            let style_for = |idx: usize| {
+                if focus == idx {
+                    focused_cell_style()
+                } else {
+                    Style::default()
+                }
+            };
+            let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
+            let current_mode = modes::classification::continuous_mode_label(
+                self.classification_ui.config.continuous_mode,
+            );
+            let w = area.width.min(46);
+            let h = 11u16;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        format!("Current: {current_mode}"),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(format!("{}Off", indicator(0)), style_for(0))),
+                    Line::from(Span::styled(
+                        format!("{}Auto-apply", indicator(1)),
+                        style_for(1),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Suggest/Review", indicator(2)),
+                        style_for(2),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "j/k:select  Enter:apply  Esc:close",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Classification Mode ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::LightCyan)),
                 )
@@ -5149,12 +5320,10 @@ impl App {
                 );
                 // Show configured aliases as indented sub-rows (display-only)
                 for (cat_name, alias) in &configured_aliases {
-                    items.push(
-                        ListItem::new(Line::from(Span::styled(
-                            format!("      {} \u{2192} {}", cat_name, alias),
-                            Style::default().fg(MUTED_TEXT_COLOR),
-                        ))),
-                    );
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        format!("      {} \u{2192} {}", cat_name, alias),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    ))));
                 }
 
                 // ── Separator ──
