@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::Utc;
+use jiff::Timestamp;
 
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
@@ -402,7 +402,7 @@ fn assign_if_unassigned(
     let pair = (item_id, category_id);
     let assignment = Assignment {
         source,
-        assigned_at: Utc::now(),
+        assigned_at: Timestamp::now(),
         sticky: true,
         origin,
         numeric_value: None,
@@ -501,7 +501,7 @@ fn assign_subsumption_ancestors(
             if !seen_pairs.contains(&pair) {
                 let assignment = Assignment {
                     source: AssignmentSource::Subsumption,
-                    assigned_at: Utc::now(),
+                    assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: subsumption_origin.clone(),
                     numeric_value: None,
@@ -580,7 +580,7 @@ where
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     use super::{
         evaluate_all_items, process_item, process_item_with_options, run_hierarchy_pass,
@@ -607,21 +607,21 @@ mod tests {
     fn set_item_text(store: &Store, item_id: ItemId, text: &str) {
         let mut item = store.get_item(item_id).unwrap();
         item.text = text.to_string();
-        item.modified_at = Utc::now();
+        item.modified_at = Timestamp::now();
         store.update_item(&item).unwrap();
     }
 
     fn set_item_note(store: &Store, item_id: ItemId, note: Option<&str>) {
         let mut item = store.get_item(item_id).unwrap();
         item.note = note.map(str::to_string);
-        item.modified_at = Utc::now();
+        item.modified_at = Timestamp::now();
         store.update_item(&item).unwrap();
     }
 
     fn manual_assignment() -> Assignment {
         Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
             numeric_value: None,

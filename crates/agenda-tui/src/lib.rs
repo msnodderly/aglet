@@ -17,7 +17,8 @@ use agenda_core::model::{
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use agenda_core::workflow::WorkflowConfig;
-use chrono::{Local, NaiveDateTime, Utc};
+use jiff::civil::{Date, DateTime};
+use jiff::Timestamp;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -1186,22 +1187,22 @@ impl App {
                 };
                 item.text = old_text;
                 item.note = old_note;
-                item.modified_at = Utc::now();
-                let reference_date = Local::now().date_naive();
+                item.modified_at = Timestamp::now();
+                let reference_date = jiff::Zoned::now().date();
                 agenda.update_item_with_reference_date(&item, reference_date)?;
                 inverse
             }
             UndoEntry::ItemDeleted { item } => {
                 let item_id = item.id;
                 // Re-create the item
-                let reference_date = Local::now().date_naive();
+                let reference_date = jiff::Zoned::now().date();
                 agenda.create_item_with_reference_date(&item, reference_date)?;
                 // Restore note and done state
                 let mut restored = agenda.store().get_item(item.id)?;
                 restored.note = item.note.clone();
                 restored.is_done = item.is_done;
                 restored.done_date = item.done_date;
-                restored.modified_at = Utc::now();
+                restored.modified_at = Timestamp::now();
                 agenda.update_item_with_reference_date(&restored, reference_date)?;
                 // Restore category assignments
                 for (cat_id, assignment) in &item.assignments {
@@ -1245,7 +1246,7 @@ impl App {
                     .and_then(|item| item.assignments.get(&category_id).cloned())
                     .unwrap_or(Assignment {
                         source: AssignmentSource::Manual,
-                        assigned_at: Utc::now(),
+                        assigned_at: Timestamp::now(),
                         sticky: false,
                         origin: None,
                         numeric_value: None,
@@ -1421,7 +1422,7 @@ mod tests {
         NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
@@ -1450,7 +1451,7 @@ mod tests {
         let mut item = Item::new("Draft row ordering".to_string());
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: chrono::Utc::now(),
+            assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
             numeric_value: None,
@@ -3332,10 +3333,9 @@ mod tests {
         assert_eq!(
             loaded.when_date,
             Some(
-                NaiveDate::from_ymd_opt(2026, 3, 7)
+                Date::new(2026, 3, 7)
                     .expect("date")
-                    .and_hms_opt(14, 25, 0)
-                    .expect("time")
+                    .at(14, 25, 0, 0)
             )
         );
         let assignments = store
@@ -3377,10 +3377,9 @@ mod tests {
         assert_eq!(
             loaded.when_date,
             Some(
-                NaiveDate::from_ymd_opt(2026, 3, 7)
+                Date::new(2026, 3, 7)
                     .expect("date")
-                    .and_hms_opt(14, 25, 59)
-                    .expect("time")
+                    .at(14, 25, 59, 0)
             )
         );
 
@@ -3478,7 +3477,7 @@ mod tests {
         assert_eq!(app.mode, Mode::InputPanel);
         assert_eq!(app.name_input_context, Some(NameInputContext::WhenDateEdit));
         assert!(
-            app.status.contains("Could not parse date/time"),
+            app.status.contains("Could not parse"),
             "expected validation error, got: {}",
             app.status
         );
@@ -3495,10 +3494,9 @@ mod tests {
             .set_item_when_date(
                 item_id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("manual:test-setup".to_string()),
             )
@@ -4872,10 +4870,9 @@ mod tests {
 
     #[test]
     fn add_capture_status_message_includes_parsed_datetime_when_present() {
-        let when = NaiveDate::from_ymd_opt(2026, 2, 24)
+        let when = Date::new(2026, 2, 24)
             .expect("valid date")
-            .and_hms_opt(15, 0, 0)
-            .expect("valid time");
+            .at(15, 0, 0, 0);
 
         assert_eq!(
             add_capture_status_message(Some(when), &[]),
@@ -5331,7 +5328,7 @@ mod tests {
 
         let item = Item::new("derived assignment item".to_string());
         store.create_item(&item).expect("create item");
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         store
             .assign_item(
                 item.id,
@@ -7246,7 +7243,7 @@ mod tests {
     fn when_input_panel_surfaces_parse_feedback_inside_popup() {
         let app = App {
             mode: Mode::InputPanel,
-            status: "Could not parse date/time from 'next weem'".to_string(),
+            status: "Could not parse 'next weem'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY".to_string(),
             input_panel: Some(input_panel::InputPanel::new_when_date_input(
                 "next weem",
                 "When date for: Demo",
@@ -7260,7 +7257,7 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Could not parse date/time"),
+            rendered.contains("Could not parse"),
             "when popup should show validation feedback inline: {rendered}"
         );
     }
@@ -7395,7 +7392,7 @@ mod tests {
 
         let item = Item::new("Book travel next Tuesday".to_string());
         agenda
-            .create_item_with_reference_date(&item, NaiveDate::from_ymd_opt(2026, 3, 20).unwrap())
+            .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
             .expect("create item");
 
         let mut app = App::default();
@@ -7429,7 +7426,7 @@ mod tests {
 
         let item = Item::new("Book travel next Tuesday".to_string());
         agenda
-            .create_item_with_reference_date(&item, NaiveDate::from_ymd_opt(2026, 3, 20).unwrap())
+            .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
             .expect("create item");
 
         let mut app = App::default();
@@ -8454,7 +8451,7 @@ mod tests {
         item.note = Some("Primary note".to_string());
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: chrono::Utc::now(),
+            assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
             numeric_value: None,
@@ -12252,7 +12249,7 @@ mod tests {
             category_a,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: None,
@@ -12262,7 +12259,7 @@ mod tests {
             category_b,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: None,
@@ -12433,10 +12430,9 @@ mod tests {
             .set_item_when_date(
                 item.id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("test:when".to_string()),
             )
@@ -12593,10 +12589,9 @@ mod tests {
             .set_item_when_date(
                 item.id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("test:when".to_string()),
             )
@@ -12656,10 +12651,9 @@ mod tests {
             .set_item_when_date(
                 item.id,
                 Some(
-                    NaiveDate::from_ymd_opt(2026, 3, 7)
+                    Date::new(2026, 3, 7)
                         .expect("date")
-                        .and_hms_opt(14, 25, 0)
-                        .expect("time"),
+                        .at(14, 25, 0, 0),
                 ),
                 Some("test:when".to_string()),
             )
