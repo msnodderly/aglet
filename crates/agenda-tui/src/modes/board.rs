@@ -2168,6 +2168,9 @@ impl App {
             KeyCode::Char('?') => {
                 self.mode = Mode::HelpPanel;
             }
+            KeyCode::Char('C') => {
+                self.open_classification_review();
+            }
             KeyCode::Char('m') => {
                 self.toggle_current_view_section_flow(agenda)?;
             }
@@ -4212,6 +4215,9 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         self.status = add_capture_status_message(created.when_date, &unknown_hashtags);
+        if let Some(suffix) = self.classification_pending_suffix() {
+            self.status = format!("{} | {suffix}. Press C to review.", self.status);
+        }
         Ok(())
     }
 
@@ -4347,6 +4353,9 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         self.status = "Item updated".to_string();
+        if let Some(suffix) = self.classification_pending_suffix() {
+            self.status = format!("{} | {suffix}. Press C to review.", self.status);
+        }
         Ok(())
     }
 

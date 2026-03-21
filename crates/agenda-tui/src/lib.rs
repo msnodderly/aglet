@@ -5,6 +5,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use agenda_core::agenda::Agenda;
+use agenda_core::classification::{
+    CandidateAssignment, ClassificationConfig, ClassificationSuggestion, ContinuousMode,
+};
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
@@ -198,6 +201,7 @@ enum BucketEditTarget {
 enum Mode {
     Normal,
     HelpPanel,
+    ClassificationReview,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
     ItemAssignPicker,
@@ -213,6 +217,47 @@ enum Mode {
     CategoryDirectEdit,
     CategoryColumnPicker,
     BoardAddColumnPicker,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ClassificationFocus {
+    Settings,
+    Items,
+    Suggestions,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ClassificationReviewItem {
+    item_id: ItemId,
+    item_text: String,
+    note_excerpt: Option<String>,
+    current_assignments: Vec<String>,
+    suggestions: Vec<ClassificationSuggestion>,
+}
+
+#[derive(Clone, Debug)]
+struct ClassificationUiState {
+    pending_count: usize,
+    config: ClassificationConfig,
+    review_items: Vec<ClassificationReviewItem>,
+    selected_item_index: usize,
+    selected_suggestion_index: usize,
+    settings_index: usize,
+    focus: ClassificationFocus,
+}
+
+impl Default for ClassificationUiState {
+    fn default() -> Self {
+        Self {
+            pending_count: 0,
+            config: ClassificationConfig::default(),
+            review_items: Vec::new(),
+            selected_item_index: 0,
+            selected_suggestion_index: 0,
+            settings_index: 0,
+            focus: ClassificationFocus::Settings,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1028,6 +1073,7 @@ struct App {
     transient_status: Option<TransientStatus>,
     current_key_modifiers: KeyModifiers,
     category_assignment_counts: HashMap<CategoryId, usize>,
+    classification_ui: ClassificationUiState,
     undo: UndoState,
 }
 
@@ -1094,6 +1140,7 @@ impl Default for App {
             transient_status: None,
             current_key_modifiers: KeyModifiers::NONE,
             category_assignment_counts: HashMap::new(),
+            classification_ui: ClassificationUiState::default(),
             undo: UndoState::default(),
         }
     }
@@ -1371,11 +1418,12 @@ mod tests {
         next_index_clamped, should_render_unmatched_lane, text_buffer, truncate_board_cell,
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
-        CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
+        CategoryDirectEditState, CategoryInlineAction, CategoryListRow, ClassificationFocus,
         CategoryManagerDetailsFocus, CategoryManagerFocus, Mode, NameInputContext,
         SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
+    use agenda_core::classification::{ClassificationConfig, ContinuousMode};
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
@@ -7336,6 +7384,132 @@ mod tests {
         assert_eq!(app.mode, Mode::Normal);
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn uppercase_c_opens_classification_review_from_normal_mode() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            continuous_mode: ContinuousMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        store
+            .set_classification_config(&cfg)
+            .expect("set classification config");
+
+        let mut travel = Category::new("Travel".to_string());
+        travel.enable_implicit_string = true;
+        store.create_category(&travel).expect("create category");
+
+        let item = Item::new("Book travel next Tuesday".to_string());
+        agenda
+            .create_item_with_reference_date(&item, NaiveDate::from_ymd_opt(2026, 3, 20).unwrap())
+            .expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("open classification review");
+
+        assert_eq!(app.mode, Mode::ClassificationReview);
+        assert_eq!(app.classification_pending_count(), 1);
+        assert_eq!(app.classification_ui.focus, ClassificationFocus::Items);
+    }
+
+    #[test]
+    fn classification_review_enter_accepts_selected_suggestion() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            continuous_mode: ContinuousMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        store
+            .set_classification_config(&cfg)
+            .expect("set classification config");
+
+        let mut travel = Category::new("Travel".to_string());
+        travel.enable_implicit_string = true;
+        store.create_category(&travel).expect("create category");
+
+        let item = Item::new("Book travel next Tuesday".to_string());
+        agenda
+            .create_item_with_reference_date(&item, NaiveDate::from_ymd_opt(2026, 3, 20).unwrap())
+            .expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("open classification review");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("focus suggestions");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("accept suggestion");
+
+        assert_eq!(app.mode, Mode::ClassificationReview);
+        assert_eq!(app.classification_pending_count(), 0);
+        let reloaded = store.get_item(item.id).expect("reload item");
+        assert!(reloaded.when_date.is_some());
+        assert!(reloaded.assignments.contains_key(&travel.id));
+    }
+
+    #[test]
+    fn classification_review_space_toggles_enabled_setting() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("open classification review");
+        assert_eq!(app.classification_ui.focus, ClassificationFocus::Settings);
+
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("cycle classification mode");
+
+        let cfg = store.get_classification_config().expect("reload config");
+        assert_eq!(cfg.continuous_mode, ContinuousMode::SuggestReview);
+        assert_eq!(app.mode, Mode::ClassificationReview);
+    }
+
+    #[test]
+    fn classification_review_enter_in_settings_closes_without_cycling_mode() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            continuous_mode: ContinuousMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        store
+            .set_classification_config(&cfg)
+            .expect("set classification config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("open classification review");
+        assert_eq!(app.classification_ui.focus, ClassificationFocus::Settings);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save and close settings");
+
+        let reloaded = store.get_classification_config().expect("reload config");
+        assert_eq!(reloaded.continuous_mode, ContinuousMode::SuggestReview);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("Classification mode saved"),
+            "expected save status, got: {}",
+            app.status
+        );
     }
 
     #[test]

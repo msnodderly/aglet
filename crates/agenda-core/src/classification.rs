@@ -51,13 +51,6 @@ impl ClassificationConfig {
     pub fn should_run_continuously(&self) -> bool {
         self.enabled && self.continuous_mode != ContinuousMode::Off
     }
-
-    pub fn provider_enabled_inline(&self, provider_id: &str) -> bool {
-        self.enabled_providers
-            .iter()
-            .find(|config| config.provider_id == provider_id)
-            .is_some_and(|config| config.enabled && config.mode == ProviderMode::InlineIfCheap)
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

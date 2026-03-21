@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::classification::{
     ClassificationCandidate, ClassificationConfig, ClassificationService, ClassificationSuggestion,
     ContinuousMode, ImplicitStringProvider, SuggestionStatus, WhenParserProvider,
-    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_WHEN_PARSER,
+    PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
 use crate::engine::{
@@ -548,6 +548,29 @@ impl<'a> Agenda<'a> {
             }
             ContinuousMode::SuggestReview => {
                 for candidate in candidates {
+                    if matches!(
+                        candidate.assignment,
+                        crate::classification::CandidateAssignment::When(_)
+                    ) {
+                        let suggestion = ClassificationSuggestion::from_candidate(
+                            &candidate,
+                            item_revision_hash.clone(),
+                            SuggestionStatus::Accepted,
+                        );
+                        if self
+                            .store
+                            .get_classification_suggestion(suggestion.id)?
+                            .is_some_and(|existing| existing.status == SuggestionStatus::Rejected)
+                        {
+                            continue;
+                        }
+                        self.store.upsert_suggestion(&suggestion)?;
+                        merge_process_results(
+                            &mut result,
+                            self.apply_auto_classification_candidate(item_id, &candidate)?,
+                        );
+                        continue;
+                    }
                     let suggestion = ClassificationSuggestion::from_candidate(
                         &candidate,
                         item_revision_hash.clone(),
@@ -574,10 +597,9 @@ impl<'a> Agenda<'a> {
 
     fn process_category_change(&self, category_id: CategoryId) -> Result<EvaluateAllItemsResult> {
         let cfg = self.store.get_classification_config()?;
-        let enable_implicit_string = cfg.enabled
+        let enable_implicit_string = cfg.should_run_continuously()
             && cfg.run_on_category_change
-            && cfg.continuous_mode == ContinuousMode::AutoApply
-            && cfg.provider_enabled_inline(PROVIDER_ID_IMPLICIT_STRING);
+            && cfg.continuous_mode == ContinuousMode::AutoApply;
         evaluate_all_items_with_options(
             self.store,
             self.classifier,
@@ -591,16 +613,14 @@ impl<'a> Agenda<'a> {
     fn classification_service(
         &self,
         reference_date: NaiveDate,
-        cfg: &ClassificationConfig,
+        _cfg: &ClassificationConfig,
         allow_when_parser: bool,
     ) -> ClassificationService<'_> {
         let mut providers = Vec::new();
-        if cfg.provider_enabled_inline(PROVIDER_ID_IMPLICIT_STRING) {
-            providers.push(Box::new(ImplicitStringProvider {
-                classifier: self.classifier,
-            }) as _);
-        }
-        if allow_when_parser && cfg.provider_enabled_inline(PROVIDER_ID_WHEN_PARSER) {
+        providers.push(Box::new(ImplicitStringProvider {
+            classifier: self.classifier,
+        }) as _);
+        if allow_when_parser {
             providers.push(Box::new(WhenParserProvider {
                 parser: self.date_parser,
                 reference_date,
@@ -634,9 +654,7 @@ impl<'a> Agenda<'a> {
     }
 
     fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {
-        cfg.enabled
-            && cfg.continuous_mode == ContinuousMode::AutoApply
-            && cfg.provider_enabled_inline(PROVIDER_ID_IMPLICIT_STRING)
+        cfg.should_run_continuously() && cfg.continuous_mode == ContinuousMode::AutoApply
     }
 
     fn apply_auto_classification_candidate(
@@ -1269,15 +1287,29 @@ mod tests {
         let result = agenda
             .create_item_with_reference_date(&item, date(2026, 3, 20))
             .unwrap();
-        assert!(result.new_assignments.is_empty());
+        assert_eq!(result.new_assignments.len(), 1);
+        let when_id = store
+            .get_hierarchy()
+            .expect("load hierarchy")
+            .into_iter()
+            .find(|category| category.name == RESERVED_CATEGORY_NAME_WHEN)
+            .expect("reserved When category present")
+            .id;
+        assert!(result.new_assignments.contains(&when_id));
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(!assignments.contains_key(&travel.id));
+        assert!(assignments.contains_key(&when_id));
 
         let pending = agenda
             .list_pending_classification_suggestions_for_item(item.id)
             .expect("list pending suggestions");
-        assert_eq!(pending.len(), 2);
+        assert_eq!(pending.len(), 1);
+        assert!(matches!(
+            pending[0].assignment,
+            crate::classification::CandidateAssignment::Category(category_id)
+                if category_id == travel.id
+        ));
     }
 
     #[test]

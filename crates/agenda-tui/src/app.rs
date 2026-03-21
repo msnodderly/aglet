@@ -450,6 +450,120 @@ impl App {
         self.preview_summary_scroll = self
             .preview_summary_scroll
             .min(summary_len.saturating_sub(1));
+        self.rebuild_classification_ui(store)?;
+
+        Ok(())
+    }
+
+    fn rebuild_classification_ui(&mut self, store: &Store) -> TuiResult<()> {
+        let previous_item_id = self
+            .classification_ui
+            .review_items
+            .get(self.classification_ui.selected_item_index)
+            .map(|item| item.item_id);
+        let previous_suggestion_id = self
+            .selected_classification_suggestion()
+            .map(|suggestion| suggestion.id);
+
+        let config = store.get_classification_config()?;
+        let mut pending = store.list_pending_suggestions()?;
+        pending.sort_by(|left, right| {
+            left.item_id
+                .cmp(&right.item_id)
+                .then_with(|| left.created_at.cmp(&right.created_at))
+        });
+
+        let category_names = category_name_map(&self.categories);
+        let mut grouped: HashMap<ItemId, Vec<ClassificationSuggestion>> = HashMap::new();
+        for suggestion in pending {
+            grouped
+                .entry(suggestion.item_id)
+                .or_default()
+                .push(suggestion);
+        }
+
+        let mut review_items: Vec<ClassificationReviewItem> = grouped
+            .into_iter()
+            .map(|(item_id, mut suggestions)| {
+                suggestions.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+                if let Some(item) = self.all_items.iter().find(|item| item.id == item_id) {
+                    ClassificationReviewItem {
+                        item_id,
+                        item_text: item.text.clone(),
+                        note_excerpt: item
+                            .note
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|note| !note.is_empty())
+                            .map(|note| note.lines().next().unwrap_or(note).to_string()),
+                        current_assignments: item_assignment_labels(item, &category_names),
+                        suggestions,
+                    }
+                } else {
+                    ClassificationReviewItem {
+                        item_id,
+                        item_text: format!("Missing item {item_id}"),
+                        note_excerpt: None,
+                        current_assignments: Vec::new(),
+                        suggestions,
+                    }
+                }
+            })
+            .collect();
+        review_items.sort_by(|left, right| {
+            right
+                .suggestions
+                .first()
+                .map(|suggestion| suggestion.created_at)
+                .cmp(&left.suggestions.first().map(|suggestion| suggestion.created_at))
+                .then_with(|| left.item_text.to_ascii_lowercase().cmp(&right.item_text.to_ascii_lowercase()))
+        });
+
+        self.classification_ui.pending_count =
+            review_items.iter().map(|item| item.suggestions.len()).sum();
+        self.classification_ui.config = config;
+        self.classification_ui.review_items = review_items;
+
+        if let Some(item_id) = previous_item_id {
+            if let Some(index) = self
+                .classification_ui
+                .review_items
+                .iter()
+                .position(|item| item.item_id == item_id)
+            {
+                self.classification_ui.selected_item_index = index;
+            }
+        }
+        self.classification_ui.selected_item_index = self
+            .classification_ui
+            .selected_item_index
+            .min(self.classification_ui.review_items.len().saturating_sub(1));
+
+        let suggestion_len = self
+            .selected_classification_item()
+            .map(|item| item.suggestions.len())
+            .unwrap_or(0);
+        if let Some(suggestion_id) = previous_suggestion_id {
+            if let Some(index) = self
+                .selected_classification_item()
+                .and_then(|item| item.suggestions.iter().position(|s| s.id == suggestion_id))
+            {
+                self.classification_ui.selected_suggestion_index = index;
+            }
+        }
+        self.classification_ui.selected_suggestion_index = self
+            .classification_ui
+            .selected_suggestion_index
+            .min(suggestion_len.saturating_sub(1));
+        self.classification_ui.settings_index = self
+            .classification_ui
+            .settings_index
+            .min(self.classification_settings_row_count().saturating_sub(1));
+        if self.classification_ui.pending_count == 0
+            && self.classification_ui.focus == ClassificationFocus::Suggestions
+        {
+            self.classification_ui.focus = ClassificationFocus::Items;
+        }
 
         Ok(())
     }
@@ -755,6 +869,52 @@ impl App {
     pub(crate) fn selected_item(&self) -> Option<&Item> {
         self.current_slot()
             .and_then(|slot| slot.items.get(self.item_index))
+    }
+
+    pub(crate) fn classification_pending_count(&self) -> usize {
+        self.classification_ui.pending_count
+    }
+
+    pub(crate) fn pending_suggestion_count_for_item(&self, item_id: ItemId) -> usize {
+        self.classification_ui
+            .review_items
+            .iter()
+            .find(|item| item.item_id == item_id)
+            .map(|item| item.suggestions.len())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn classification_settings_row_count(&self) -> usize {
+        1
+    }
+
+    pub(crate) fn classification_pending_suffix(&self) -> Option<String> {
+        if self.classification_ui.pending_count == 0 {
+            None
+        } else {
+            Some(format!(
+                "{} classification suggestion{} pending",
+                self.classification_ui.pending_count,
+                if self.classification_ui.pending_count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ))
+        }
+    }
+
+    pub(crate) fn selected_classification_item(&self) -> Option<&ClassificationReviewItem> {
+        self.classification_ui
+            .review_items
+            .get(self.classification_ui.selected_item_index)
+    }
+
+    pub(crate) fn selected_classification_suggestion(&self) -> Option<&ClassificationSuggestion> {
+        self.selected_classification_item().and_then(|item| {
+            item.suggestions
+                .get(self.classification_ui.selected_suggestion_index)
+        })
     }
 
     pub(crate) fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {

@@ -44,8 +44,9 @@ This plan intentionally does **not** add:
 
 ### Review behavior
 
-- In `suggest_review` mode, pending category and `When` suggestions appear in a
-  shared review queue.
+- In `suggest_review` mode, pending category suggestions appear in the review
+  queue.
+- `When` parser results apply inline and do not create review-queue entries.
 - Accepting a suggestion applies it and then runs structural cascades.
 - Rejecting a suggestion persists the rejection so it does not immediately return.
 
@@ -499,19 +500,29 @@ providers and defer async category-wide jobs until Phase 8.
 
 Add a database-level classification settings pane or popup.
 
+For the initial implementation, this can live inside the same classification
+screen as the review queue instead of a separate popup, as long as settings and
+review actions are visually distinct.
+
 Minimum controls:
 
-- enabled on/off
-- continuous mode
-- enabled providers
+- classification mode (`Off`, `Auto-apply`, `Suggest/Review`)
+
+Do not expose built-in provider toggles for the first TUI:
+
+- implicit category matching remains category-level via `Auto-match`
+- `when_parser` remains always-on and inline
+- inline vs background execution is an implementation detail, not a user setting
 
 Possible app state:
 
 ```rust
 pub struct ClassificationUiState {
     pub pending_count: usize,
+    pub selected_item_index: usize,
+    pub selected_suggestion_index: usize,
+    pub focus: ClassificationFocus,
     pub settings_open: bool,
-    pub review_index: usize,
 }
 ```
 
@@ -530,8 +541,18 @@ Review actions:
 
 - `Enter`: accept
 - `r`: reject
-- `s`: skip
+- `A`: accept all suggestions for selected item
+- `R`: reject all suggestions for selected item
+- `Tab`: move between item list and suggestion list
 - `Esc`: close
+
+Queue shape:
+
+- left pane: items with one or more pending suggestions
+- right pane: selected item context plus that item's suggestions
+
+Do not implement the first queue as a flat stream of suggestion rows; group by
+item to reduce context switching.
 
 ### 7.3 Show pending indicator
 
@@ -541,6 +562,12 @@ Possible footer/status copy:
 
 ```text
 Status: Classification on (Suggest/Review). 3 pending suggestions.
+```
+
+Also surface suggestion state in the preview pane where practical:
+
+```text
+Suggestions: 2 pending
 ```
 
 ### 7.4 Keep category checkbox
@@ -641,8 +668,9 @@ Start with one fast model per vendor. Keep prompt contract narrow:
 ### TUI tests
 
 - pending count appears in status/footer
-- `?` opens review queue
+- `C` opens classification review/settings
 - accept/reject update store and return to normal state cleanly
+- accept-all/reject-all operate on the selected item only
 - category manager still shows the rule checkbox
 - no new provider toggles appear in category details
 
@@ -672,18 +700,20 @@ Recommended implementation order:
 3. implicit string provider
 4. `when_parser` provider
 5. apply/queue routing
-6. review queue TUI
-7. provenance/source updates
+6. provenance/source updates
+7. combined classification-center/review TUI
 8. background jobs
-9. Ollama / LM Studio
-10. hosted providers
+9. split center/review surfaces if needed
+10. Ollama / LM Studio
+11. hosted providers
 
 ## Definition Of Done
 
 This work is complete when:
 
 - eager default classification still feels immediate for ordinary item edits
-- `When` inference is handled in the same review/apply pipeline as category inference
+- `When` inference still flows through the unified classification service, but
+  does not appear as a category-style review suggestion
 - users can switch between `auto_apply` and `suggest_review`
 - pending suggestions are reviewable in the TUI
 - accepted suggestions preserve current cascade semantics

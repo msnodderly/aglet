@@ -299,6 +299,9 @@ impl App {
         if self.mode == Mode::HelpPanel {
             self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
         }
+        if self.mode == Mode::ClassificationReview {
+            self.render_classification_review(frame, centered_rect(88, 88, frame.area()));
+        }
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
@@ -1516,6 +1519,7 @@ impl App {
             Mode::ItemAssignInput => Some("Category> ".to_string()),
             Mode::Normal
             | Mode::HelpPanel
+            | Mode::ClassificationReview
             | Mode::InputPanel
             | Mode::LinkWizard
             | Mode::ItemAssignPicker
@@ -2800,11 +2804,20 @@ impl App {
     pub(crate) fn item_details_lines_for_item(&self, item: &Item) -> Vec<Line<'_>> {
         let category_names = category_name_map(&self.categories);
         let categories = item_assignment_labels(item, &category_names);
+        let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
         let mut lines = vec![
             Line::from("Summary"),
             Line::from("f focus | j/k or J/K scroll | i info"),
             Line::from(""),
             Line::from(format!("ID: {}", item.id)),
+            Line::from(format!(
+                "Suggestions: {}",
+                if pending_suggestions == 0 {
+                    "-".to_string()
+                } else {
+                    format!("{pending_suggestions} pending")
+                }
+            )),
             Line::from(""),
             Line::from("Note"),
         ];
@@ -2833,6 +2846,13 @@ impl App {
             "f focus | j/k or J/K scroll | i summary".to_string(),
             String::new(),
             format!("ID: {}", item.id),
+            format!(
+                "Suggestions: {}",
+                match self.pending_suggestion_count_for_item(item.id) {
+                    0 => "-".to_string(),
+                    count => format!("{count} pending"),
+                }
+            ),
             String::new(),
             "Metadata".to_string(),
             format!("  Done: {}", if item.is_done { "yes" } else { "no" }),
@@ -2931,6 +2951,275 @@ impl App {
             )
             .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
+    }
+
+    fn render_classification_review(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Classification Center")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 12 || area.height < 12 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(4), Constraint::Min(8)])
+            .split(inner);
+        let config = &self.classification_ui.config;
+        let widest_mode_label = [
+            ContinuousMode::Off,
+            ContinuousMode::AutoApply,
+            ContinuousMode::SuggestReview,
+        ]
+        .into_iter()
+        .map(modes::classification::continuous_mode_label)
+        .max_by_key(|label| label.chars().count())
+        .unwrap_or("Suggest/Review");
+        let setting_rows: Vec<String> = vec![format!(
+            "Classification mode: {}",
+            modes::classification::continuous_mode_label(config.continuous_mode)
+        )];
+        let max_setting_rows = [format!("Classification mode: {widest_mode_label}")];
+        let settings_width = setting_rows
+            .iter()
+            .chain(max_setting_rows.iter())
+            .map(|row| row.chars().count())
+            .max()
+            .unwrap_or(24)
+            .saturating_add(6)
+            .clamp(28, 40) as u16;
+        let pending_width = 30u16.min(rows[1].width.saturating_sub(settings_width + 24));
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(settings_width),
+                Constraint::Length(pending_width.max(24)),
+                Constraint::Min(32),
+            ])
+            .split(rows[1]);
+        let detail_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(8), Constraint::Min(6)])
+            .split(columns[2]);
+
+        let summary_lines = vec![
+            Line::from(format!(
+                "Mode: {}",
+                modes::classification::continuous_mode_label(config.continuous_mode)
+            )),
+            Line::from(format!("Pending: {}", self.classification_pending_count())),
+            Line::from("Implicit category match is configured per category."),
+            Line::from("Natural-language dates are always on and run inline when available."),
+        ];
+        frame.render_widget(
+            Paragraph::new(summary_lines)
+                .block(Block::default().borders(Borders::ALL).title("Summary"))
+                .wrap(Wrap { trim: true }),
+            rows[0],
+        );
+
+        let setting_items: Vec<ListItem<'_>> = setting_rows
+            .iter()
+            .map(|row| ListItem::new(row.clone()))
+            .collect();
+        let mut settings_state =
+            Self::list_state_for(columns[0], Some(self.classification_ui.settings_index));
+        let setting_count = setting_items.len();
+        frame.render_stateful_widget(
+            List::new(setting_items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(if self.classification_ui.focus == ClassificationFocus::Settings {
+                            "Settings *"
+                        } else {
+                            "Settings"
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(if self.classification_ui.focus == ClassificationFocus::Settings {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
+                ),
+            columns[0],
+            &mut settings_state,
+        );
+        Self::render_vertical_scrollbar(frame, columns[0], setting_count, settings_state.offset());
+
+        let item_rows: Vec<ListItem<'_>> = self
+            .classification_ui
+            .review_items
+            .iter()
+            .map(|item| {
+                let summary = truncate_board_cell(&item.item_text, 24);
+                ListItem::new(format!("{summary} ({})", item.suggestions.len()))
+            })
+            .collect();
+        let mut item_state = Self::list_state_for(
+            columns[1],
+            if self.classification_ui.review_items.is_empty() {
+                None
+            } else {
+                Some(self.classification_ui.selected_item_index)
+            },
+        );
+        let item_count = item_rows.len();
+        frame.render_stateful_widget(
+            List::new(if item_rows.is_empty() {
+                vec![ListItem::new("(no pending suggestions)")]
+            } else {
+                item_rows
+            })
+            .highlight_symbol("> ")
+            .highlight_style(selected_row_style())
+            .block(
+                Block::default()
+                    .title(if self.classification_ui.focus == ClassificationFocus::Items {
+                        "Pending Items *"
+                    } else {
+                        "Pending Items"
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(if self.classification_ui.focus == ClassificationFocus::Items {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    }),
+            ),
+            columns[1],
+            &mut item_state,
+        );
+        Self::render_vertical_scrollbar(frame, columns[1], item_count, item_state.offset());
+
+        let item_detail_lines = if let Some(item) = self.selected_classification_item() {
+            let mut lines = vec![
+                Line::from(item.item_text.clone()),
+                Line::from(format!("ID: {}", item.item_id)),
+                Line::from(format!(
+                    "Current: {}",
+                    if item.current_assignments.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        item.current_assignments.join(", ")
+                    }
+                )),
+            ];
+            if let Some(note) = &item.note_excerpt {
+                lines.push(Line::from(format!(
+                    "Note: {}",
+                    truncate_board_cell(note, detail_rows[0].width.saturating_sub(8) as usize)
+                )));
+            } else {
+                lines.push(Line::from("Note: (none)"));
+            }
+            lines
+        } else {
+            vec![
+                Line::from("No pending review item selected"),
+                Line::from(""),
+                Line::from("Use the settings pane to configure classification."),
+            ]
+        };
+        frame.render_widget(
+            Paragraph::new(item_detail_lines)
+                .block(Block::default().title("Item Context").borders(Borders::ALL))
+                .wrap(Wrap { trim: true }),
+            detail_rows[0],
+        );
+
+        let category_names = category_name_map(&self.categories);
+        let suggestion_items: Vec<ListItem<'_>> = self
+            .selected_classification_item()
+            .map(|item| {
+                item.suggestions
+                    .iter()
+                    .map(|suggestion| {
+                        let assignment = match &suggestion.assignment {
+                            CandidateAssignment::Category(category_id) => format!(
+                                "Category: {}",
+                                category_names
+                                    .get(category_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| category_id.to_string())
+                            ),
+                            CandidateAssignment::When(value) => format!("When: {value}"),
+                        };
+                        let provider = suggestion
+                            .model
+                            .as_ref()
+                            .map(|model| format!("{} / {model}", suggestion.provider_id))
+                            .unwrap_or_else(|| suggestion.provider_id.clone());
+                        let mut lines = vec![
+                            Line::from(assignment),
+                            Line::from(format!("Provider: {provider}")),
+                        ];
+                        if let Some(rationale) = &suggestion.rationale {
+                            lines.push(Line::from(format!(
+                                "Why: {}",
+                                truncate_board_cell(
+                                    rationale,
+                                    detail_rows[1].width.saturating_sub(8) as usize,
+                                )
+                            )));
+                        }
+                        ListItem::new(lines)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut suggestion_state = Self::list_state_for(
+            detail_rows[1],
+            if suggestion_items.is_empty() {
+                None
+            } else {
+                Some(self.classification_ui.selected_suggestion_index)
+            },
+        );
+        let suggestion_count = suggestion_items.len();
+        frame.render_stateful_widget(
+            List::new(if suggestion_items.is_empty() {
+                vec![ListItem::new("(no suggestions for selected item)")]
+            } else {
+                suggestion_items
+            })
+            .highlight_symbol("> ")
+            .highlight_style(selected_row_style())
+            .block(
+                Block::default()
+                    .title(if self.classification_ui.focus == ClassificationFocus::Suggestions {
+                        "Suggestions *"
+                    } else {
+                        "Suggestions"
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(if self.classification_ui.focus == ClassificationFocus::Suggestions {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    }),
+            ),
+            detail_rows[1],
+            &mut suggestion_state,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            detail_rows[1],
+            suggestion_count,
+            suggestion_state.offset(),
+        );
     }
 
     pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
@@ -3095,10 +3384,21 @@ impl App {
                     self.status.clone()
                 }
             }
+            Mode::ClassificationReview => self.status.clone(),
             Mode::Normal => self
                 .active_transient_status_text()
                 .map(str::to_string)
-                .unwrap_or_else(|| self.status.clone()),
+                .unwrap_or_else(|| {
+                    if let Some(suffix) = self.classification_pending_suffix() {
+                        if self.status.contains("classification suggestion") {
+                            self.status.clone()
+                        } else {
+                            format!("{} | {suffix}", self.status)
+                        }
+                    } else {
+                        self.status.clone()
+                    }
+                }),
             Mode::HelpPanel
             | Mode::ViewPicker
             | Mode::ViewEdit
@@ -3111,6 +3411,14 @@ impl App {
     fn footer_hint_pairs(&self) -> Vec<(&'static str, &'static str)> {
         match self.mode {
             Mode::HelpPanel => vec![("Esc", "close"), ("Enter", "close"), ("?", "close")],
+            Mode::ClassificationReview => vec![
+                ("Tab", "pane"),
+                ("Enter", "save/close"),
+                ("r", "reject"),
+                ("A/R", "item"),
+                ("Space", "toggle"),
+                ("Esc", "close"),
+            ],
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
                     vec![("y", "save & close"), ("n", "discard"), ("Esc", "keep editing")]
@@ -3207,7 +3515,7 @@ impl App {
                         ("n", "new"), ("e", "edit"), ("a", "assign"), ("d", "done"),
                         ("/", "search"), ("v", "views"), ("m", "lanes"), ("s", "sort"),
                         ("f", "col fmt"), ("F", "col summary"),
-                        ("p", "preview"), ("u", "deps"),
+                        ("p", "preview"), ("u", "deps"), ("C", "classify"),
                         ("g/", "global"), ("z", "cards"),
                     ]);
                     if self.section_filters.iter().any(|f| f.is_some()) {

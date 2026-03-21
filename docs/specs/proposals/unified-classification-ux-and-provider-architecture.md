@@ -365,26 +365,56 @@ This preserves a useful local control without overloading the category UI.
 
 Introduce a dedicated TUI surface for classification status and review.
 
+For the first implementation, the "Classification Center" and the "Review
+Queue" may share one screen, as long as that screen clearly separates
+database-level settings/status from suggestion triage. We do not need two
+totally separate modal systems on day one.
+
 Potential entry points:
 
-- `C` opens database-level classification settings
+- `C` opens classification status/settings and pending review
 - `=` runs recalc for current item
-- a dedicated review command opens the review queue when suggestions exist
+- `?` remains help in the existing TUI and should not be repurposed for review
+- if we later split the surfaces, `C` can remain the center entry and another
+  key can open review directly
 
 The exact keys can be refined later, but the workflow needs dedicated affordances.
 
 ### Classification Center responsibilities
 
-- show enabled providers
 - show continuous mode
 - show pending suggestion count
 - show recent completed jobs
 - provide recalc actions
-- provide access to provider/config settings
+- provide access to global classification mode settings
+- provide a direct path into pending review
+
+### Recommended initial screen shape
+
+For the first slice, prefer one screen with three bands:
+
+- summary band: mode, provider status, pending count
+- settings band: global classification mode
+- review band: pending suggestions grouped by item
+
+This makes classification discoverable without forcing users through nested
+dialogs.
+
+For built-in providers:
+
+- implicit category matching remains a category-level concern via `Auto-match`
+- natural-language `When` parsing stays always-on while continuous
+  classification is enabled
+- inline vs background execution should be decided by implementation cost, not
+  by a user-facing toggle
 
 ## 4. Review queue UX
 
 In `suggest/review` mode, users need a fast accept/reject loop.
+
+The queue should be **item-grouped**, not flat suggestion-grouped. Users should
+normally select an item first, then review that item's pending suggestions in a
+detail pane. This avoids repeating the same item context for each suggestion.
 
 ### Review item fields
 
@@ -395,14 +425,32 @@ In `suggest/review` mode, users need a fast accept/reject loop.
 - confidence or confidence band
 - short rationale
 - current assignments
-- accept / reject / skip actions
+- accept / reject actions
+
+### Recommended phase-1 layout
+
+- left pane: items with pending suggestions plus a count badge
+- right pane top: selected item context (`text`, note excerpt, current assignments)
+- right pane bottom: the selected item's pending suggestions
+
+Suggested actions:
+
+- `Enter`: accept selected suggestion
+- `r`: reject selected suggestion
+- `A`: accept all suggestions for selected item
+- `R`: reject all suggestions for selected item
+- `Tab`: move between item list and suggestion list
+- `Esc`: close
+
+Navigation is a sufficient "skip" mechanism in phase 1; no persisted skip state
+is required yet.
 
 ### Mockup: review queue
 
 ```text
 ┌ Classification Review ──────────────────────────────────────────────────────┐
 │ Mode: Suggest/Review     Pending: 12     Providers: Rules, Ollama:mistral │
-│ Scope: This Database                                                 [?]  │
+│ Scope: This Database                                                  [C] │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ > "Reimburse Sam for conference hotel"                                    │
 │   Note: paid on card ending 1142, include parking                         │
@@ -424,7 +472,7 @@ In `suggest/review` mode, users need a fast accept/reject loop.
 │   Why: parsed "next Tuesday at noon"                                      │
 │   Current: Work                                                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Enter accept   r reject   s skip   A accept-all-same   / filter   Esc close│
+│ Enter accept   r reject   A accept-all-item   R reject-all-item   Esc close │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -448,7 +496,7 @@ Ready                         In Progress
   Grocery run
 
 Status: Classification on (Suggest/Review). 2 pending suggestions.
-Footer: a assign  e edit  p preview  = recalc  C classify  [review key TBD]
+Footer: a assign  e edit  p preview  = recalc  C classify
 ```
 
 This keeps the feature visible but does not force modal interruption.
@@ -576,7 +624,8 @@ The user creates a new category `Reimbursement` after months of entering expense
 - It preserves eager defaults for ordinary item work, while expensive retroactive
   work can move to the background automatically when needed.
 - In `auto_apply` mode, accepted high-confidence rule matches can apply automatically.
-- In `suggest/review` mode, results land in the review queue.
+- In `suggest/review` mode, category results land in the review queue, while
+  `When` parser results still apply inline.
 
 This is a much better fit for both large databases and future LLM-backed scans.
 
@@ -788,8 +837,8 @@ Recommend the following product direction:
 - Should rule-based current-item classification remain inline by default when
   continuous mode is on, or should all classification unify behind async job
   completion for consistency?
-- Should `When` suggestions share the same review queue as category suggestions,
-  or should they be visually separated in the review UI?
+- `When` parser results should not appear as category-style review suggestions;
+  keep them inline even when category suggestions use the review queue.
 - Should accepted suggestions be undoable as one batch action from the review queue?
 - Should LLM providers ever be allowed to auto-apply, or should they remain
   suggestion-first even when the global mode is `auto_apply`?
