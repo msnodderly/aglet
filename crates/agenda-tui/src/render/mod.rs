@@ -651,7 +651,7 @@ impl App {
             .constraints([
                 Constraint::Length(2), // anchor
                 Constraint::Length(7), // actions
-                Constraint::Length(2), // target query
+                Constraint::Length(3), // target query
                 Constraint::Min(5),    // target matches
                 Constraint::Length(4), // preview
                 Constraint::Length(2), // help
@@ -947,7 +947,7 @@ impl App {
             .constraints([
                 Constraint::Length(2), // anchor
                 Constraint::Length(7), // actions
-                Constraint::Length(2), // target query
+                Constraint::Length(3), // target query
                 Constraint::Min(5),    // target matches
                 Constraint::Length(4), // preview
                 Constraint::Length(2), // help
