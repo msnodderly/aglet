@@ -280,6 +280,20 @@ cargo run ... show <id2> 2>/dev/null | head -5
 cargo run ... show <id1> 2>&1 | head -5 && cargo run ... show <id2> 2>&1 | head -5
 ```
 
+**Negative numeric values need `--` with `category set-value`.** If you pass a
+negative number directly, Clap parses it as a flag:
+
+```bash
+# WRONG
+cargo run --bin agenda-cli -- --db demo.ag category set-value <id> Amount -1200
+
+# RIGHT
+cargo run --bin agenda-cli -- --db demo.ag category set-value <id> Amount -- -1200
+```
+
+This came up while adapting the Lotus budgeting tutorial, which expects expense
+rows to carry negative amounts.
+
 ## `cargo fmt` / `rustfmt` File-Scoped Runs Can Touch Sibling Modules (Surprising)
 
 Running `cargo fmt --all -- <file>` in this workspace can still reformat other
