@@ -3057,7 +3057,7 @@ mod tests {
         assert_eq!(app.mode, Mode::InputPanel);
         assert_eq!(app.name_input_context, Some(NameInputContext::WhenDateEdit));
         assert!(
-            app.status.contains("Could not parse date/time"),
+            app.status.contains("Could not parse"),
             "expected validation error, got: {}",
             app.status
         );
@@ -6834,7 +6834,7 @@ mod tests {
     fn when_input_panel_surfaces_parse_feedback_inside_popup() {
         let app = App {
             mode: Mode::InputPanel,
-            status: "Could not parse date/time from 'next weem'".to_string(),
+            status: "Could not parse 'next weem'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY".to_string(),
             input_panel: Some(input_panel::InputPanel::new_when_date_input(
                 "next weem",
                 "When date for: Demo",
@@ -6848,7 +6848,7 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Could not parse date/time"),
+            rendered.contains("Could not parse"),
             "when popup should show validation feedback inline: {rendered}"
         );
     }

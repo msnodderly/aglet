@@ -3622,14 +3622,13 @@ impl App {
         };
         let mut help_style = Style::default();
         let help_text = if panel.kind == InputPanelKind::WhenDate {
-            let is_when_error = self.status.starts_with("Could not parse date/time")
+            let is_when_error = self.status.starts_with("Could not parse")
                 || self.status.starts_with("When edit failed:");
             if is_when_error {
                 help_style = Style::default().fg(Color::LightRed);
                 self.status.clone()
             } else {
-                help_style = Style::default().fg(MUTED_TEXT_COLOR);
-                "Supported: today/tomorrow/yesterday | this/next weekday | YYYY-MM-DD | YYYYMMDD | M/D/YY (+ optional at-time)".to_string()
+                base_help.to_string()
             }
         } else if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
             format!("{} | {}", panel.preview_context, base_help)
@@ -3637,6 +3636,26 @@ impl App {
             base_help.to_string()
         };
         frame.render_widget(Paragraph::new(help_text).style(help_style), regions.help);
+
+        // Second help line for WhenDate: supported format hints.
+        if panel.kind == InputPanelKind::WhenDate {
+            if let Some(help2_rect) = regions.help2 {
+                let is_error = self.status.starts_with("Could not parse")
+                    || self.status.starts_with("When edit failed:");
+                let hint_style = if is_error {
+                    Style::default().fg(Color::LightRed)
+                } else {
+                    Style::default().fg(MUTED_TEXT_COLOR)
+                };
+                let hint_text = if is_error {
+                    // On error, repeat the error on line 2 (line 1 already has key hints)
+                    String::new()
+                } else {
+                    "today | tomorrow | this/next <weekday> | next/last week/month | in N days/weeks/months | end of week/month | YYYY-MM-DD".to_string()
+                };
+                frame.render_widget(Paragraph::new(hint_text).style(hint_style), help2_rect);
+            }
+        }
     }
 
     pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {

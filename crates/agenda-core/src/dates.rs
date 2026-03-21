@@ -64,6 +64,8 @@ impl DateParser for BasicDateParser {
         let mut best = None;
 
         scan_relative_dates(bytes, reference_date, self.weekday_policy, &mut best);
+        scan_relative_period_phrases(bytes, reference_date, &mut best);
+        scan_in_n_phrases(bytes, reference_date, &mut best);
         scan_month_name_dates(bytes, reference_date, &mut best);
         scan_iso_dashed_dates(bytes, &mut best);
         scan_iso_compact_dates(bytes, &mut best);
@@ -243,6 +245,155 @@ fn days_until_weekday_next(
             delta
         }
         WeekdayDisambiguationPolicy::StrictNextWeek => 7 + target_idx - current_idx,
+    }
+}
+
+const PERIOD_PHRASES: &[&str] = &[
+    "next week",
+    "last week",
+    "next month",
+    "last month",
+    "end of week",
+    "end of month",
+];
+
+fn resolve_period_phrase(phrase_index: usize, d: Date) -> Option<Date> {
+    match phrase_index {
+        // next week → Monday of next ISO week
+        0 => {
+            let days = 7 - d.weekday().to_monday_zero_offset() as i64;
+            d.checked_add(Span::new().days(days)).ok()
+        }
+        // last week → Monday of previous ISO week
+        1 => {
+            let days = d.weekday().to_monday_zero_offset() as i64 + 7;
+            d.checked_add(Span::new().days(-days)).ok()
+        }
+        // next month → 1st of next month
+        2 => {
+            if d.month() == 12 {
+                Date::new(d.year() + 1, 1, 1).ok()
+            } else {
+                Date::new(d.year(), d.month() + 1, 1).ok()
+            }
+        }
+        // last month → 1st of previous month
+        3 => {
+            if d.month() == 1 {
+                Date::new(d.year() - 1, 12, 1).ok()
+            } else {
+                Date::new(d.year(), d.month() - 1, 1).ok()
+            }
+        }
+        // end of week → Friday of current ISO week
+        4 => {
+            let offset = 4_i64 - d.weekday().to_monday_zero_offset() as i64;
+            d.checked_add(Span::new().days(offset)).ok()
+        }
+        // end of month → last day of current month
+        5 => Date::new(d.year(), d.month(), 1)
+            .ok()?
+            .checked_add(Span::new().months(1))
+            .ok()?
+            .checked_add(Span::new().days(-1))
+            .ok(),
+        _ => None,
+    }
+}
+
+/// Scan for "next week", "last week", "next month", "last month",
+/// "end of week", "end of month".
+fn scan_relative_period_phrases(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<ParsedDate>,
+) {
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+
+        for (i, phrase) in PERIOD_PHRASES.iter().enumerate() {
+            if !matches_ascii_insensitive(bytes, start, phrase.as_bytes()) {
+                continue;
+            }
+
+            let end = start + phrase.len();
+            if !has_right_boundary(bytes, end) {
+                continue;
+            }
+
+            if let Some(date) = resolve_period_phrase(i, reference_date) {
+                choose_best(
+                    best,
+                    ParsedDate {
+                        datetime: at_midnight(date),
+                        span: (start, end),
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn resolve_in_n_unit(n: u32, unit: &[u8]) -> Option<Span> {
+    let lower: Vec<u8> = unit.iter().map(|b| b.to_ascii_lowercase()).collect();
+    match lower.as_slice() {
+        b"day" | b"days" => Some(Span::new().days(n as i64)),
+        b"week" | b"weeks" => Some(Span::new().days(n as i64 * 7)),
+        b"month" | b"months" => Some(Span::new().months(n as i64)),
+        _ => None,
+    }
+}
+
+/// Scan for "in N days", "in N weeks", "in N months".
+fn scan_in_n_phrases(bytes: &[u8], reference_date: Date, best: &mut Option<ParsedDate>) {
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+
+        if !matches_ascii_insensitive(bytes, start, b"in") {
+            continue;
+        }
+
+        let after_in = start + 2;
+        if after_in >= bytes.len() || !bytes[after_in].is_ascii_whitespace() {
+            continue;
+        }
+
+        let num_start = skip_whitespace(bytes, after_in);
+        let Some((n, num_end)) = parse_digits(bytes, num_start, 1, 4) else {
+            continue;
+        };
+
+        if num_end >= bytes.len() || !bytes[num_end].is_ascii_whitespace() {
+            continue;
+        }
+
+        let unit_start = skip_whitespace(bytes, num_end);
+
+        // Find the end of the unit word.
+        let mut unit_end = unit_start;
+        while unit_end < bytes.len() && bytes[unit_end].is_ascii_alphabetic() {
+            unit_end += 1;
+        }
+        if unit_end == unit_start || !has_right_boundary(bytes, unit_end) {
+            continue;
+        }
+
+        let unit_word = &bytes[unit_start..unit_end];
+        if let Some(span) = resolve_in_n_unit(n, unit_word) {
+            if let Ok(date) = reference_date.checked_add(span) {
+                choose_best(
+                    best,
+                    ParsedDate {
+                        datetime: at_midnight(date),
+                        span: (start, unit_end),
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -1096,5 +1247,246 @@ mod tests {
             None,
             "when next year is not a leap year, Feb 29 roll-forward should return None"
         );
+    }
+
+    // ── Relative period phrases ──────────────────────────────────────────────
+
+    #[test]
+    fn next_week_resolves_to_monday_of_following_week() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday
+        let parsed = parser
+            .parse("next week", date(2026, 2, 18))
+            .expect("expected parse");
+        // Monday of next week = 2026-02-23
+        assert_eq!(parsed.datetime, datetime(2026, 2, 23, 0, 0));
+    }
+
+    #[test]
+    fn next_week_from_sunday_resolves_to_next_monday() {
+        let parser = BasicDateParser::default();
+        // 2026-02-22 is a Sunday
+        let parsed = parser
+            .parse("next week", date(2026, 2, 22))
+            .expect("expected parse");
+        // Monday of next week = 2026-02-23
+        assert_eq!(parsed.datetime, datetime(2026, 2, 23, 0, 0));
+    }
+
+    #[test]
+    fn last_week_resolves_to_monday_of_previous_week() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday
+        let parsed = parser
+            .parse("last week", date(2026, 2, 18))
+            .expect("expected parse");
+        // Monday of previous week = 2026-02-09
+        assert_eq!(parsed.datetime, datetime(2026, 2, 9, 0, 0));
+    }
+
+    #[test]
+    fn next_month_resolves_to_first_of_following_month() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("next month", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 3, 1, 0, 0));
+    }
+
+    #[test]
+    fn next_month_from_december_wraps_to_january() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("next month", date(2026, 12, 15))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2027, 1, 1, 0, 0));
+    }
+
+    #[test]
+    fn last_month_resolves_to_first_of_previous_month() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("last month", date(2026, 3, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 1, 0, 0));
+    }
+
+    #[test]
+    fn last_month_from_january_wraps_to_december() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("last month", date(2026, 1, 15))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2025, 12, 1, 0, 0));
+    }
+
+    #[test]
+    fn end_of_week_resolves_to_friday() {
+        let parser = BasicDateParser::default();
+        // 2026-02-18 is a Wednesday
+        let parsed = parser
+            .parse("end of week", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn end_of_week_on_friday_returns_same_day() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("end of week", date(2026, 2, 20))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn end_of_week_on_saturday_returns_previous_friday() {
+        let parser = BasicDateParser::default();
+        // 2026-02-21 is Saturday; end of (work) week = Friday = 2026-02-20
+        let parsed = parser
+            .parse("end of week", date(2026, 2, 21))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 20, 0, 0));
+    }
+
+    #[test]
+    fn end_of_month_resolves_to_last_day() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("end of month", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 28, 0, 0));
+    }
+
+    #[test]
+    fn end_of_month_in_leap_year_february() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("end of month", date(2024, 2, 10))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2024, 2, 29, 0, 0));
+    }
+
+    #[test]
+    fn end_of_month_in_december() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("end of month", date(2026, 12, 5))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 12, 31, 0, 0));
+    }
+
+    // ── "in N <unit>" phrases ────────────────────────────────────────────────
+
+    #[test]
+    fn in_3_days_resolves() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 3 days", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 21, 0, 0));
+    }
+
+    #[test]
+    fn in_1_day_singular() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 1 day", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 19, 0, 0));
+    }
+
+    #[test]
+    fn in_2_weeks_resolves() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 2 weeks", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 3, 4, 0, 0));
+    }
+
+    #[test]
+    fn in_1_week_singular() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 1 week", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 25, 0, 0));
+    }
+
+    #[test]
+    fn in_3_months_resolves() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 3 months", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 5, 18, 0, 0));
+    }
+
+    #[test]
+    fn in_1_month_singular() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 1 month", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 3, 18, 0, 0));
+    }
+
+    #[test]
+    fn in_n_days_crossing_year_boundary() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 5 days", date(2026, 12, 29))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2027, 1, 3, 0, 0));
+    }
+
+    #[test]
+    fn in_n_phrases_are_case_insensitive() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("IN 3 DAYS", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 21, 0, 0));
+    }
+
+    #[test]
+    fn relative_period_phrases_are_case_insensitive() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("NEXT WEEK", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 23, 0, 0));
+    }
+
+    #[test]
+    fn relative_period_phrases_support_trailing_time() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("next week at 9am", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 23, 9, 0));
+    }
+
+    #[test]
+    fn in_n_phrases_support_trailing_time() {
+        let parser = BasicDateParser::default();
+        let parsed = parser
+            .parse("in 3 days at 2pm", date(2026, 2, 18))
+            .expect("expected parse");
+        assert_eq!(parsed.datetime, datetime(2026, 2, 21, 14, 0));
+    }
+
+    #[test]
+    fn relative_period_boundary_prevents_false_positives() {
+        let parser = BasicDateParser::default();
+        assert_eq!(parser.parse("nextweek", date(2026, 2, 18)), None);
+        assert_eq!(parser.parse("lastmonthly", date(2026, 2, 18)), None);
+    }
+
+    #[test]
+    fn in_n_boundary_prevents_false_positives() {
+        let parser = BasicDateParser::default();
+        assert_eq!(parser.parse("sin 3 days", date(2026, 2, 18)), None);
     }
 }

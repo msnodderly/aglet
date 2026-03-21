@@ -1482,6 +1482,29 @@ impl App {
         self.status = String::new();
     }
 
+    /// Open the WhenDate editor for the currently selected item (direct `w` keybinding).
+    pub(crate) fn open_when_date_editor(&mut self) {
+        let Some(item) = self.selected_item() else {
+            self.status = "No selected item".to_string();
+            return;
+        };
+        let item_id = item.id;
+        let item_label = item.text.clone();
+        let current_value = item
+            .when_date
+            .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+
+        self.when_edit_target = Some(WhenEditTarget { item_id });
+        self.input_panel = Some(input_panel::InputPanel::new_when_date_input(
+            &current_value,
+            &item_label,
+        ));
+        self.name_input_context = Some(NameInputContext::WhenDateEdit);
+        self.mode = Mode::InputPanel;
+        self.status = String::new();
+    }
+
     fn open_numeric_column_editor(&mut self, meta: &CategoryDirectEditColumnMeta) {
         // Pre-fill with the current numeric value if one exists.
         let current_value = self
@@ -2190,6 +2213,9 @@ impl App {
             }
             KeyCode::Char('e') => {
                 self.open_input_panel_edit_item();
+            }
+            KeyCode::Char('w') => {
+                self.open_when_date_editor();
             }
             KeyCode::Enter => {
                 if self.column_index != self.current_slot_item_column_index() {
@@ -4115,7 +4141,7 @@ impl App {
                 } else if matches!(
                     self.name_input_context,
                     Some(NameInputContext::WhenDateEdit)
-                ) && self.status.starts_with("Could not parse date/time")
+                ) && self.status.starts_with("Could not parse")
                 {
                     self.status.clear();
                 }
@@ -4403,7 +4429,7 @@ impl App {
 
         Err(
             format!(
-                "Could not parse date/time from '{}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional 'at 3pm'/'at 15:00'/'at noon'). 'last week' and 'next week' are not supported yet.",
+                "Could not parse '{}'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY",
                 trimmed,
             ),
         )
@@ -5844,7 +5870,7 @@ mod tests {
         let err = App::parse_when_datetime_input_with_reference_date("next weem", reference)
             .expect_err("invalid phrase should return error");
         assert!(
-            err.contains("Could not parse date/time"),
+            err.contains("Could not parse"),
             "unexpected parse error: {err}"
         );
         assert!(
