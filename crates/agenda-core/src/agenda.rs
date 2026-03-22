@@ -714,7 +714,9 @@ impl<'a> Agenda<'a> {
                     AssignmentSource::AutoClassified,
                     origin,
                 )? {
-                    result.new_assignments.insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
+                    result
+                        .new_assignments
+                        .insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
                 }
                 Ok(result)
             }
@@ -752,7 +754,9 @@ impl<'a> Agenda<'a> {
                     AssignmentSource::SuggestionAccepted,
                     origin,
                 )? {
-                    result.new_assignments.insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
+                    result
+                        .new_assignments
+                        .insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
                 }
                 Ok(result)
             }
@@ -842,10 +846,12 @@ impl<'a> Agenda<'a> {
                 Action::Remove { targets } => {
                     for target_id in targets {
                         self.store.unassign_item(item_id, *target_id)?;
-                        result.deferred_removals.push(crate::engine::DeferredRemoval {
-                            target: *target_id,
-                            triggered_by: category_id,
-                        });
+                        result
+                            .deferred_removals
+                            .push(crate::engine::DeferredRemoval {
+                                target: *target_id,
+                                triggered_by: category_id,
+                            });
                     }
                 }
             }
@@ -870,12 +876,10 @@ impl<'a> Agenda<'a> {
         let assignments = self.store.get_assignments_for_item(item_id)?;
         Ok(parent.children.into_iter().any(|sibling_id| {
             sibling_id != category_id
-                && assignments
-                    .get(&sibling_id)
-                    .is_some_and(|assignment| {
-                        assignment.source == AssignmentSource::Manual
-                            || assignment.source == AssignmentSource::SuggestionAccepted
-                    })
+                && assignments.get(&sibling_id).is_some_and(|assignment| {
+                    assignment.source == AssignmentSource::Manual
+                        || assignment.source == AssignmentSource::SuggestionAccepted
+                })
         }))
     }
 
@@ -1310,6 +1314,41 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&sarah.id));
+    }
+
+    #[test]
+    fn create_item_triggers_classification_from_also_match_term() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut phone_calls = category("Phone Calls", true);
+        phone_calls.also_match = vec!["dial".to_string(), "ring".to_string()];
+        store.create_category(&phone_calls).unwrap();
+
+        let item = Item::new("Dial Sarah tomorrow".to_string());
+        let result = agenda.create_item(&item).unwrap();
+        assert!(result.new_assignments.contains(&phone_calls.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&phone_calls.id));
+    }
+
+    #[test]
+    fn create_item_triggers_classification_from_suffix_normalized_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let calls = category("Call", true);
+        store.create_category(&calls).unwrap();
+
+        let item = Item::new("Calling vendors".to_string());
+        let result = agenda.create_item(&item).unwrap();
+        assert!(result.new_assignments.contains(&calls.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&calls.id));
     }
 
     #[test]

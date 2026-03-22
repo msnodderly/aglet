@@ -112,6 +112,8 @@ pub struct Category {
     pub is_exclusive: bool,
     pub is_actionable: bool,
     pub enable_implicit_string: bool,
+    #[serde(default)]
+    pub also_match: Vec<String>,
     pub note: Option<String>,
     pub created_at: Timestamp,
     pub modified_at: Timestamp,
@@ -476,6 +478,7 @@ impl Category {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            also_match: Vec::new(),
             note: None,
             created_at: now,
             modified_at: now,

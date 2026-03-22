@@ -1067,12 +1067,15 @@ impl App {
 
     pub(crate) fn open_category_manager_session(&mut self) {
         let selected_category_id = self.selected_category_id();
-        let initial_note = selected_category_id
-            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+        let selected_category =
+            selected_category_id.and_then(|id| self.categories.iter().find(|c| c.id == id));
+        let initial_note = selected_category
             .and_then(|c| c.note.clone())
             .unwrap_or_default();
-        let is_numeric = selected_category_id
-            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+        let initial_also_match = selected_category
+            .map(|c| c.also_match.join("\n"))
+            .unwrap_or_default();
+        let is_numeric = selected_category
             .map(|c| c.value_kind == CategoryValueKind::Numeric)
             .unwrap_or(false);
         let initial_details_focus = if is_numeric {
@@ -1091,6 +1094,10 @@ impl App {
             details_note: text_buffer::TextBuffer::new(initial_note),
             details_note_dirty: false,
             details_note_editing: false,
+            details_also_match_category_id: selected_category_id,
+            details_also_match: text_buffer::TextBuffer::new(initial_also_match),
+            details_also_match_dirty: false,
+            details_also_match_editing: false,
             details_inline_input: None,
             tree_index: self.category_index,
             visible_row_indices: Vec::new(),
@@ -1116,6 +1123,7 @@ impl App {
         let selected_category_id = self.selected_category_id();
         let mut reload_details_for: Option<Option<CategoryId>> = None;
         let mut dropped_dirty_note = false;
+        let mut dropped_dirty_also_match = false;
         if let Some(state) = &mut self.category_manager {
             state.selected_category_id = selected_category_id;
             if let Some(pos) = state.visible_row_indices.iter().position(|row_index| {
@@ -1131,8 +1139,11 @@ impl App {
                 state.tree_index = 0;
             }
 
-            if state.details_note_category_id != state.selected_category_id {
+            if state.details_note_category_id != state.selected_category_id
+                || state.details_also_match_category_id != state.selected_category_id
+            {
                 dropped_dirty_note = state.details_note_dirty;
+                dropped_dirty_also_match = state.details_also_match_dirty;
                 reload_details_for = Some(state.selected_category_id);
             }
         }
@@ -1141,6 +1152,9 @@ impl App {
             let next_cat =
                 next_category_id.and_then(|id| self.categories.iter().find(|c| c.id == id));
             let next_note = next_cat.and_then(|c| c.note.clone()).unwrap_or_default();
+            let next_also_match = next_cat
+                .map(|c| c.also_match.join("\n"))
+                .unwrap_or_default();
             let is_numeric = next_cat
                 .map(|c| c.value_kind == CategoryValueKind::Numeric)
                 .unwrap_or(false);
@@ -1149,6 +1163,10 @@ impl App {
                 state.details_note = text_buffer::TextBuffer::new(next_note);
                 state.details_note_dirty = false;
                 state.details_note_editing = false;
+                state.details_also_match_category_id = next_category_id;
+                state.details_also_match = text_buffer::TextBuffer::new(next_also_match);
+                state.details_also_match_dirty = false;
+                state.details_also_match_editing = false;
                 state.details_inline_input = None;
                 state.details_focus = if is_numeric {
                     CategoryManagerDetailsFocus::Integer
@@ -1156,9 +1174,9 @@ impl App {
                     CategoryManagerDetailsFocus::Exclusive
                 };
             }
-            if dropped_dirty_note {
+            if dropped_dirty_note || dropped_dirty_also_match {
                 self.status =
-                    "Discarded unsaved category note draft after selection changed".to_string();
+                    "Discarded unsaved category detail draft after selection changed".to_string();
             }
         }
     }
@@ -1250,6 +1268,7 @@ impl App {
             }
             if focus != CategoryManagerFocus::Details {
                 state.details_note_editing = false;
+                state.details_also_match_editing = false;
             }
         }
     }
@@ -1277,6 +1296,7 @@ impl App {
                 _ => state.details_focus,
             };
             state.details_note_editing = false;
+            state.details_also_match_editing = false;
             state.details_inline_input = None;
         }
         self.normalize_category_manager_details_focus();
@@ -1290,6 +1310,9 @@ impl App {
             state.details_focus = focus;
             if focus != CategoryManagerDetailsFocus::Note {
                 state.details_note_editing = false;
+            }
+            if focus != CategoryManagerDetailsFocus::AlsoMatch {
+                state.details_also_match_editing = false;
             }
             let keep_inline = matches!(
                 (&state.details_inline_input, focus),
@@ -1326,6 +1349,25 @@ impl App {
             state.details_note_editing = editing;
             if editing {
                 state.details_focus = CategoryManagerDetailsFocus::Note;
+                state.details_also_match_editing = false;
+                state.details_inline_input = None;
+            }
+        }
+    }
+
+    pub(crate) fn category_manager_details_also_match_editing(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_also_match_editing)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_category_manager_details_also_match_editing(&mut self, editing: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_also_match_editing = editing;
+            if editing {
+                state.details_focus = CategoryManagerDetailsFocus::AlsoMatch;
+                state.details_note_editing = false;
                 state.details_inline_input = None;
             }
         }
@@ -1409,6 +1451,33 @@ impl App {
         }
     }
 
+    pub(crate) fn category_manager_details_also_match_text(&self) -> Option<&str> {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_also_match.text())
+    }
+
+    pub(crate) fn category_manager_details_also_match_dirty(&self) -> bool {
+        self.category_manager
+            .as_ref()
+            .map(|state| state.details_also_match_dirty)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn category_manager_details_also_match_edit_mut(
+        &mut self,
+    ) -> Option<&mut text_buffer::TextBuffer> {
+        self.category_manager
+            .as_mut()
+            .map(|state| &mut state.details_also_match)
+    }
+
+    pub(crate) fn mark_category_manager_details_also_match_dirty(&mut self, dirty: bool) {
+        if let Some(state) = &mut self.category_manager {
+            state.details_also_match_dirty = dirty;
+        }
+    }
+
     pub(crate) fn reload_category_manager_details_note_from_selected(&mut self) {
         let selected_id = self.selected_category_id();
         let note = selected_id
@@ -1420,6 +1489,20 @@ impl App {
             state.details_note = text_buffer::TextBuffer::new(note);
             state.details_note_dirty = false;
             state.details_note_editing = false;
+        }
+    }
+
+    pub(crate) fn reload_category_manager_details_also_match_from_selected(&mut self) {
+        let selected_id = self.selected_category_id();
+        let also_match = selected_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.also_match.join("\n"))
+            .unwrap_or_default();
+        if let Some(state) = &mut self.category_manager {
+            state.details_also_match_category_id = selected_id;
+            state.details_also_match = text_buffer::TextBuffer::new(also_match);
+            state.details_also_match_dirty = false;
+            state.details_also_match_editing = false;
         }
     }
 

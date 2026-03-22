@@ -1198,7 +1198,10 @@ pub(super) fn add_capture_status_message(
         format!(" | warning unknown_hashtags={}", unknown_hashtags.join(","))
     };
     match parsed_when {
-        Some(when) => format!("Item added (parsed when: {}{warning})", when.strftime("%Y-%m-%d %H:%M:%S")),
+        Some(when) => format!(
+            "Item added (parsed when: {}{warning})",
+            when.strftime("%Y-%m-%d %H:%M:%S")
+        ),
         None => format!("Item added{warning}"),
     }
 }
@@ -1218,6 +1221,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            also_match: Vec::new(),
             note: None,
             created_at: Timestamp::now(),
             modified_at: Timestamp::now(),

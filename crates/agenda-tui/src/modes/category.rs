@@ -20,6 +20,14 @@ fn category_inline_confirm_key_action(code: KeyCode) -> CategoryInlineConfirmKey
     }
 }
 
+fn parse_also_match_entries(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 impl App {
     fn prepare_category_for_workflow_role(
         &mut self,
@@ -144,17 +152,18 @@ impl App {
     ) -> TuiResult<bool> {
         match code {
             KeyCode::Char('y') => {
-                self.save_category_manager_details_note(agenda)?;
+                self.save_category_manager_dirty_details(agenda)?;
                 self.close_category_manager_with_status("Category manager closed (saved)");
             }
             KeyCode::Char('n') => {
                 self.close_category_manager_with_status(
-                    "Category manager closed; unsaved note changes discarded",
+                    "Category manager closed; unsaved detail changes discarded",
                 );
             }
             KeyCode::Esc => {
                 self.set_category_manager_discard_confirm(false);
-                self.status = "Kept category manager open; unsaved note retained".to_string();
+                self.status =
+                    "Kept category manager open; unsaved detail drafts retained".to_string();
             }
             _ => {}
         }
@@ -325,6 +334,19 @@ impl App {
         self.mark_category_manager_details_note_dirty(current_note != saved_note);
     }
 
+    fn recompute_category_manager_details_also_match_dirty(&mut self) {
+        let selected_id = self.selected_category_id();
+        let saved_also_match = selected_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.also_match.clone())
+            .unwrap_or_default();
+        let current_also_match = parse_also_match_entries(
+            self.category_manager_details_also_match_text()
+                .unwrap_or_default(),
+        );
+        self.mark_category_manager_details_also_match_dirty(current_also_match != saved_also_match);
+    }
+
     fn start_category_manager_details_note_edit(&mut self) {
         if self.selected_category_is_reserved() {
             self.status = "Reserved category config is read-only".to_string();
@@ -334,6 +356,18 @@ impl App {
         self.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
         self.set_category_manager_details_note_editing(true);
         self.status = "Edit category note: type text, Esc:discard, Tab:leave".to_string();
+    }
+
+    fn start_category_manager_details_also_match_edit(&mut self) {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return;
+        }
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+        self.set_category_manager_details_also_match_editing(true);
+        self.status =
+            "Edit also-match terms: one entry per line, Esc:discard, Tab:leave".to_string();
     }
 
     fn save_category_manager_details_note(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
@@ -379,6 +413,58 @@ impl App {
         Ok(())
     }
 
+    fn save_category_manager_details_also_match(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            self.set_category_manager_details_also_match_editing(false);
+            self.reload_category_manager_details_also_match_from_selected();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda.store().get_category(category_id)?;
+        let next_also_match = parse_also_match_entries(
+            self.category_manager_details_also_match_text()
+                .unwrap_or_default(),
+        );
+        if category.also_match == next_also_match {
+            self.mark_category_manager_details_also_match_dirty(false);
+            self.set_category_manager_details_also_match_editing(false);
+            self.status = "Also-match terms unchanged".to_string();
+            return Ok(());
+        }
+
+        category.also_match = next_also_match;
+        let saved_name = category.name.clone();
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.reload_category_manager_details_also_match_from_selected();
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+        self.status = format!(
+            "Saved also-match terms for {} (processed_items={}, affected_items={})",
+            saved_name, result.processed_items, result.affected_items
+        );
+        Ok(())
+    }
+
+    fn save_category_manager_dirty_details(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        if self.category_manager_details_note_dirty()
+            && !self.category_manager_details_note_editing()
+        {
+            self.save_category_manager_details_note(agenda)?;
+        }
+        if self.category_manager_details_also_match_dirty()
+            && !self.category_manager_details_also_match_editing()
+        {
+            self.save_category_manager_details_also_match(agenda)?;
+        }
+        Ok(())
+    }
+
     fn handle_category_manager_details_key(
         &mut self,
         code: KeyCode,
@@ -402,6 +488,7 @@ impl App {
                 CategoryManagerDetailsFocus::Exclusive
                     | CategoryManagerDetailsFocus::MatchName
                     | CategoryManagerDetailsFocus::Actionable
+                    | CategoryManagerDetailsFocus::AlsoMatch
             )
         {
             details_focus = CategoryManagerDetailsFocus::Note;
@@ -473,6 +560,48 @@ impl App {
             return Ok(false);
         }
 
+        if details_focus == CategoryManagerDetailsFocus::AlsoMatch
+            && self.category_manager_details_also_match_editing()
+        {
+            match code {
+                KeyCode::Esc => {
+                    if self.category_manager_details_also_match_dirty() {
+                        self.reload_category_manager_details_also_match_from_selected();
+                        self.mark_category_manager_details_also_match_dirty(false);
+                        self.status = "Also-match changes discarded".to_string();
+                    }
+                    self.set_category_manager_details_also_match_editing(false);
+                    return Ok(true);
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    if self.category_manager_details_also_match_dirty() {
+                        self.status =
+                            "Also-match terms have unsaved changes (S to save)".to_string();
+                    }
+                    self.set_category_manager_details_also_match_editing(false);
+                    return Ok(false);
+                }
+                _ => {
+                    let text_key = self.text_key_event(code);
+                    if let Some(buf) = self.category_manager_details_also_match_edit_mut() {
+                        if buf.handle_key_event(text_key, true) {
+                            self.recompute_category_manager_details_also_match_dirty();
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            return Ok(false);
+        }
+
+        if details_focus == CategoryManagerDetailsFocus::AlsoMatch
+            && !self.category_manager_details_also_match_editing()
+            && self.category_manager_details_also_match_dirty()
+            && self.category_manager_save_key_pressed(code)
+        {
+            return Ok(false);
+        }
+
         if details_focus == CategoryManagerDetailsFocus::Note
             && (matches!(code, KeyCode::Char(c) if c != ' ')
                 || matches!(code, KeyCode::Backspace | KeyCode::Delete))
@@ -483,6 +612,22 @@ impl App {
                 if let Some(buf) = self.category_manager_details_note_edit_mut() {
                     if buf.handle_key_event(text_key, true) {
                         self.recompute_category_manager_details_note_dirty();
+                    }
+                }
+                return Ok(true);
+            }
+        }
+
+        if details_focus == CategoryManagerDetailsFocus::AlsoMatch
+            && (matches!(code, KeyCode::Char(_))
+                || matches!(code, KeyCode::Backspace | KeyCode::Delete))
+        {
+            self.start_category_manager_details_also_match_edit();
+            if self.category_manager_details_also_match_editing() {
+                let text_key = self.text_key_event(code);
+                if let Some(buf) = self.category_manager_details_also_match_edit_mut() {
+                    if buf.handle_key_event(text_key, true) {
+                        self.recompute_category_manager_details_also_match_dirty();
                     }
                 }
                 return Ok(true);
@@ -509,6 +654,10 @@ impl App {
                 }
                 CategoryManagerDetailsFocus::Actionable => {
                     self.toggle_selected_category_actionable(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::AlsoMatch => {
+                    self.start_category_manager_details_also_match_edit();
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Integer => {
@@ -1219,10 +1368,12 @@ impl App {
             self.set_category_manager_structure_move_prefix(None);
         }
         if self.category_manager_save_key_pressed(code)
-            && self.category_manager_details_note_dirty()
+            && (self.category_manager_details_note_dirty()
+                || self.category_manager_details_also_match_dirty())
             && !self.category_manager_details_note_editing()
+            && !self.category_manager_details_also_match_editing()
         {
-            self.save_category_manager_details_note(agenda)?;
+            self.save_category_manager_dirty_details(agenda)?;
             return Ok(false);
         }
         match code {
@@ -1251,7 +1402,9 @@ impl App {
                     self.rebuild_category_manager_visible_rows();
                     self.set_category_manager_focus(CategoryManagerFocus::Tree);
                     self.status = "Category filter cleared".to_string();
-                } else if self.category_manager_details_note_dirty() {
+                } else if self.category_manager_details_note_dirty()
+                    || self.category_manager_details_also_match_dirty()
+                {
                     self.set_category_manager_discard_confirm(true);
                     self.status =
                         "Save changes? y:save and close  n:discard  Esc:keep editing".to_string();
