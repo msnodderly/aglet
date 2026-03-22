@@ -5056,7 +5056,7 @@ impl App {
                             "Only one child can be assigned to an item at a time"
                         }
                         CategoryManagerDetailsFocus::AutoMatch => {
-                            "Auto-assign when category name appears in item text"
+                            "Enable fallback text matching for this category"
                         }
                         CategoryManagerDetailsFocus::MatchCategoryName => {
                             "Include the literal category name alongside also-match terms"
