@@ -1543,29 +1543,6 @@ impl App {
         self.status = String::new();
     }
 
-    /// Open the WhenDate editor for the currently selected item (direct `w` keybinding).
-    pub(crate) fn open_when_date_editor(&mut self) {
-        let Some(item) = self.selected_item() else {
-            self.status = "No selected item".to_string();
-            return;
-        };
-        let item_id = item.id;
-        let item_label = item.text.clone();
-        let current_value = item
-            .when_date
-            .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_default();
-
-        self.when_edit_target = Some(WhenEditTarget { item_id });
-        self.input_panel = Some(input_panel::InputPanel::new_when_date_input(
-            &current_value,
-            &item_label,
-        ));
-        self.name_input_context = Some(NameInputContext::WhenDateEdit);
-        self.mode = Mode::InputPanel;
-        self.status = String::new();
-    }
-
     fn open_numeric_column_editor(&mut self, meta: &CategoryDirectEditColumnMeta) {
         // Pre-fill with the current numeric value if one exists.
         let current_value = self
@@ -2143,10 +2120,6 @@ impl App {
                     self.status = "Jumped to All Items view".to_string();
                     return Ok(false);
                 }
-                (NormalModePrefix::G, KeyCode::Char('/')) => {
-                    self.begin_global_search_session(agenda)?;
-                    return Ok(false);
-                }
                 (NormalModePrefix::G, KeyCode::Char('?')) => {
                     self.open_suggestion_review(agenda)?;
                     return Ok(false);
@@ -2156,7 +2129,7 @@ impl App {
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga, g/, or g?)".to_string();
+                    self.status = "Unknown g command (use ga or g?)".to_string();
                     return Ok(false);
                 }
             }
@@ -2262,8 +2235,8 @@ impl App {
             KeyCode::Char('e') => {
                 self.open_input_panel_edit_item();
             }
-            KeyCode::Char('w') => {
-                self.open_when_date_editor();
+            KeyCode::Char('C') => {
+                self.begin_global_search_session(agenda)?;
             }
             KeyCode::Enter => {
                 if self.column_index != self.current_slot_item_column_index() {
@@ -2331,7 +2304,7 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status = "g-prefix: ga=All Items, g/=Global search, g?=Review suggestions".to_string();
+                self.status = "g-prefix: ga=All Items, g?=Review suggestions".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -3946,10 +3919,15 @@ impl App {
                 }
             }
             let item_id = item.id;
+            let when_value = item
+                .when_date
+                .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default();
             let mut panel = input_panel::InputPanel::new_edit_item(
                 item_id,
                 text,
                 note,
+                when_value,
                 categories,
                 numeric_buffers,
                 numeric_originals,
@@ -4391,6 +4369,9 @@ impl App {
         let no_note_change = item.note == updated_note;
         let no_cat_change = existing_categories == new_categories;
 
+        let when_text = panel.when_buffer.trimmed().to_string();
+        let no_when_change = when_text == panel.original_when;
+
         let has_suggestion_decisions = panel
             .pending_suggestions
             .iter()
@@ -4400,6 +4381,7 @@ impl App {
         if no_text_change
             && no_note_change
             && no_cat_change
+            && no_when_change
             && !has_numeric_changes
             && !has_suggestion_decisions
         {
@@ -4408,6 +4390,23 @@ impl App {
             self.status = "Edit canceled: no changes".to_string();
             return Ok(());
         }
+
+        // Validate when-date input before making any changes.
+        let parsed_when = if !no_when_change {
+            if when_text.is_empty() {
+                Some(None) // clear the when date
+            } else {
+                match Self::parse_when_datetime_input(&when_text) {
+                    Ok(dt) => Some(dt),
+                    Err(e) => {
+                        self.status = format!("Could not parse when date: {e}");
+                        return Ok(());
+                    }
+                }
+            }
+        } else {
+            None // no change
+        };
 
         // Validate numeric values before making any changes.
         for (cat_id, buf) in &numeric_buffers {
@@ -4437,6 +4436,11 @@ impl App {
         item.modified_at = Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
         agenda.update_item_with_reference_date(&item, reference_date)?;
+
+        // Apply when-date change.
+        if let Some(new_when) = parsed_when {
+            agenda.set_item_when_date(item_id, new_when, Some("manual:input_panel.edit".to_string()))?;
+        }
 
         // Apply category changes.
         for cat_id in new_categories.difference(&existing_categories) {
@@ -5943,6 +5947,7 @@ mod tests {
             ItemId::new_v4(),
             "Original".to_string(),
             "Existing note".to_string(),
+            String::new(),
             HashSet::new(),
             HashMap::new(),
             HashMap::new(),
@@ -5977,6 +5982,7 @@ mod tests {
             ItemId::new_v4(),
             "Original".to_string(),
             "Existing note".to_string(),
+            String::new(),
             HashSet::new(),
             HashMap::new(),
             HashMap::new(),
@@ -6009,6 +6015,7 @@ mod tests {
             ItemId::new_v4(),
             "Original".to_string(),
             "Existing note".to_string(),
+            String::new(),
             HashSet::new(),
             HashMap::new(),
             HashMap::new(),

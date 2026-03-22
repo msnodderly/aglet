@@ -4790,7 +4790,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
             .expect("gH should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga, g/, or g?)");
+        assert_eq!(app.status, "Unknown g command (use ga or g?)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -4802,7 +4802,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
             .expect("gL should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga, g/, or g?)");
+        assert_eq!(app.status, "Unknown g command (use ga or g?)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -5126,6 +5126,7 @@ mod tests {
             agenda_core::model::ItemId::new_v4(),
             "abcd".to_string(),
             String::new(),
+            String::new(),
             Default::default(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
@@ -5169,6 +5170,7 @@ mod tests {
             agenda_core::model::ItemId::new_v4(),
             "Title".to_string(),
             "line one\nline two".to_string(),
+            String::new(),
             Default::default(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
@@ -5322,7 +5324,13 @@ mod tests {
             input_panel::InputPanelFocus::Text
         );
 
-        // Tab moves focus to Note
+        // Tab moves focus to When, then Note
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("switch to when");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::When
+        );
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("switch to note");
         assert_eq!(
@@ -5455,7 +5463,9 @@ mod tests {
             .expect("enter opens edit");
         assert_eq!(app.mode, Mode::InputPanel);
 
-        // Tab to Note field
+        // Tab to When, then to Note field
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("focus when");
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus note");
         assert_eq!(
@@ -7407,6 +7417,7 @@ mod tests {
             agenda_core::model::ItemId::new_v4(),
             "Title".to_string(),
             "Body".to_string(),
+            String::new(),
             Default::default(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
@@ -8731,6 +8742,7 @@ mod tests {
         let mut panel = input_panel::InputPanel::new_edit_item(
             agenda_core::model::ItemId::new_v4(),
             "hello".to_string(),
+            String::new(),
             String::new(),
             Default::default(),
             std::collections::HashMap::new(),
@@ -11502,7 +11514,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_g_slash_opens_global_search_session() {
+    fn normal_mode_shift_c_opens_global_search_session() {
         let (store, db_path) = make_two_section_store("g-slash-open");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -11513,10 +11525,8 @@ mod tests {
         app.refresh(&store).expect("refresh test view");
         app.mode = Mode::Normal;
 
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix should start");
-        app.handle_normal_key(KeyCode::Char('/'), &agenda)
-            .expect("g/ should open global search");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open global search");
 
         assert_eq!(app.mode, Mode::SearchBarFocused);
         assert_eq!(
@@ -11551,10 +11561,8 @@ mod tests {
         app.search_buffer.set("timeout".to_string());
         app.refresh(&store).expect("refresh with local filter");
 
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix should start");
-        app.handle_normal_key(KeyCode::Char('/'), &agenda)
-            .expect("g/ should open global search");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open global search");
 
         for ch in "buy".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
@@ -11626,10 +11634,8 @@ mod tests {
         app.refresh(&store).expect("refresh test view");
         app.mode = Mode::Normal;
 
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix should start");
-        app.handle_normal_key(KeyCode::Char('/'), &agenda)
-            .expect("g/ should open global search");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open global search");
         for ch in "kanban task".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
                 .expect("type global query");
@@ -17063,7 +17069,8 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> Note -> Categories
+        // Tab to Categories: Text -> When -> Note -> Categories
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
@@ -17128,7 +17135,8 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> Note -> Categories
+        // Tab to Categories: Text -> When -> Note -> Categories
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
 
@@ -17203,7 +17211,12 @@ mod tests {
         let panel = app.input_panel.as_ref().unwrap();
         assert!(panel.numeric_buffers.is_empty());
 
-        // Tab cycle: Text -> Note -> Categories -> Save
+        // Tab cycle: Text -> When -> Note -> Categories -> Save
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::When
+        );
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,

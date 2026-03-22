@@ -955,6 +955,8 @@ pub(super) struct InputPanelPopupRegions {
     /// Optional context line near text input (NumericValue/AddItem).
     pub(super) context: Option<Rect>,
     pub(super) text: Rect,
+    /// When-date input line (AddItem/EditItem only).
+    pub(super) when: Option<Rect>,
     /// Present for AddItem / EditItem; absent for NameInput.
     pub(super) note: Option<Rect>,
     /// Bordered multi-line region for the inline category list.
@@ -1009,6 +1011,7 @@ pub(super) fn input_panel_popup_regions(
             Some(InputPanelPopupRegions {
                 context: None,
                 text: chunks[0],
+                when: None,
                 note: None,
                 categories: None,
                 categories_inner: None,
@@ -1038,6 +1041,7 @@ pub(super) fn input_panel_popup_regions(
             Some(InputPanelPopupRegions {
                 context: Some(chunks[0]),
                 text: chunks[1],
+                when: None,
                 note: None,
                 categories: None,
                 categories_inner: None,
@@ -1068,6 +1072,7 @@ pub(super) fn input_panel_popup_regions(
             Some(InputPanelPopupRegions {
                 context: Some(chunks[0]),
                 text: chunks[1],
+                when: None,
                 note: None,
                 categories: None,
                 categories_inner: None,
@@ -1097,6 +1102,7 @@ pub(super) fn input_panel_popup_regions(
             Some(InputPanelPopupRegions {
                 context: None,
                 text: chunks[0],
+                when: None,
                 note: None,
                 categories: None,
                 categories_inner: None,
@@ -1109,15 +1115,16 @@ pub(super) fn input_panel_popup_regions(
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
-            // text + context + [note | categories] (horizontal split) + buttons + help
-            // Minimum: text(1) + context(1) + middle(3) + buttons(1) + help(1) = 7
-            if inner.height < 7 {
+            // text + when + context + [note | categories] (horizontal split) + buttons + help
+            // Minimum: text(1) + when(1) + context(1) + middle(3) + buttons(1) + help(1) = 8
+            if inner.height < 8 {
                 return None;
             }
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(1), // text (+ inline preview context)
+                    Constraint::Length(1), // when-date input
                     Constraint::Length(1), // static context
                     Constraint::Min(3),    // middle: note | categories side-by-side
                     Constraint::Length(1), // buttons
@@ -1126,7 +1133,7 @@ pub(super) fn input_panel_popup_regions(
                 .split(inner);
 
             // Split the middle row horizontally: note (left) | categories (right)
-            let middle = chunks[2];
+            let middle = chunks[3];
             let halves = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -1164,16 +1171,17 @@ pub(super) fn input_panel_popup_regions(
                 None
             };
             Some(InputPanelPopupRegions {
-                context: Some(chunks[1]),
+                context: Some(chunks[2]),
                 text: chunks[0],
+                when: Some(chunks[1]),
                 note: Some(note),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
                 categories_filter: cat_filter,
                 categories_list: cat_list,
                 type_picker: None,
-                buttons: chunks[3],
-                help: chunks[4],
+                buttons: chunks[4],
+                help: chunks[5],
                 help2: None,
             })
         }

@@ -29,6 +29,7 @@ pub(crate) enum InputPanelKind {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InputPanelFocus {
     Text,
+    When,
     Note,
     Categories,
     /// Tag/Numeric toggle (CategoryCreate only).
@@ -93,10 +94,13 @@ pub(crate) struct InputPanel {
     /// Pending classification suggestions for the item (edit panel only).
     /// Each entry pairs a suggestion with a three-state decision.
     pub(crate) pending_suggestions: Vec<(ClassificationSuggestion, SuggestionDecision)>,
+    /// When-date editor buffer (AddItem/EditItem only).
+    pub(crate) when_buffer: TextBuffer,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
     original_categories: HashSet<CategoryId>,
+    pub(crate) original_when: String,
 }
 
 impl InputPanel {
@@ -121,9 +125,11 @@ impl InputPanel {
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
+            when_buffer: TextBuffer::empty(),
             original_text: String::new(),
             original_note: String::new(),
             original_categories: on_insert_assign.clone(),
+            original_when: String::new(),
         }
     }
 
@@ -131,6 +137,7 @@ impl InputPanel {
         item_id: ItemId,
         text: String,
         note: String,
+        when_value: String,
         categories: HashSet<CategoryId>,
         numeric_buffers: HashMap<CategoryId, TextBuffer>,
         numeric_originals: HashMap<CategoryId, Option<Decimal>>,
@@ -138,6 +145,7 @@ impl InputPanel {
         let original_text = text.clone();
         let original_note = note.clone();
         let original_categories = categories.clone();
+        let original_when = when_value.clone();
         Self {
             kind: InputPanelKind::EditItem,
             text: TextBuffer::new(text),
@@ -155,9 +163,11 @@ impl InputPanel {
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
+            when_buffer: TextBuffer::new(when_value),
             original_text,
             original_note,
             original_categories,
+            original_when,
         }
     }
 
@@ -179,9 +189,11 @@ impl InputPanel {
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
+            when_buffer: TextBuffer::empty(),
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
+            original_when: String::new(),
         }
     }
 
@@ -203,9 +215,11 @@ impl InputPanel {
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
+            when_buffer: TextBuffer::empty(),
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
+            original_when: String::new(),
         }
     }
 
@@ -227,9 +241,11 @@ impl InputPanel {
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
+            when_buffer: TextBuffer::empty(),
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
+            original_when: String::new(),
         }
     }
 
@@ -251,9 +267,11 @@ impl InputPanel {
             parent_label: parent_label.to_string(),
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
+            when_buffer: TextBuffer::empty(),
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
+            original_when: String::new(),
         }
     }
 
@@ -302,7 +320,7 @@ impl InputPanel {
         }
 
         match self.focus {
-            InputPanelFocus::Text | InputPanelFocus::Note => {
+            InputPanelFocus::Text | InputPanelFocus::Note | InputPanelFocus::When => {
                 let multiline = self.focus == InputPanelFocus::Note;
                 let buffer = self.active_buffer_mut();
                 if buffer.handle_key_event(key, multiline) {
@@ -337,7 +355,7 @@ impl InputPanel {
             KeyCode::Esc => Some(InputPanelAction::Cancel),
             // Capital S saves only when not editing text fields or numeric value buffers
             KeyCode::Char('S')
-                if !(matches!(self.focus, InputPanelFocus::Text | InputPanelFocus::Note)
+                if !(matches!(self.focus, InputPanelFocus::Text | InputPanelFocus::Note | InputPanelFocus::When)
                     || self.focus == InputPanelFocus::Categories
                         && current_row_is_assigned_numeric) =>
             {
@@ -423,6 +441,7 @@ impl InputPanel {
     fn active_buffer_mut(&mut self) -> &mut TextBuffer {
         match self.focus {
             InputPanelFocus::Note => &mut self.note,
+            InputPanelFocus::When => &mut self.when_buffer,
             _ => &mut self.text,
         }
     }
@@ -446,8 +465,9 @@ impl InputPanel {
                 | InputPanelKind::WhenDate
                 | InputPanelKind::NumericValue => InputPanelFocus::SaveButton,
                 InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
-                _ => InputPanelFocus::Note,
+                InputPanelKind::AddItem | InputPanelKind::EditItem => InputPanelFocus::When,
             },
+            InputPanelFocus::When => InputPanelFocus::Note,
             InputPanelFocus::Note => InputPanelFocus::Categories,
             InputPanelFocus::Categories => InputPanelFocus::SaveButton,
             InputPanelFocus::TypePicker => InputPanelFocus::SaveButton,
@@ -459,7 +479,8 @@ impl InputPanel {
     fn cycle_focus_backward(&mut self) {
         self.focus = match self.focus {
             InputPanelFocus::Text => InputPanelFocus::CancelButton,
-            InputPanelFocus::Note => InputPanelFocus::Text,
+            InputPanelFocus::When => InputPanelFocus::Text,
+            InputPanelFocus::Note => InputPanelFocus::When,
             InputPanelFocus::Categories => InputPanelFocus::Note,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
             InputPanelFocus::SaveButton => match self.kind {
@@ -505,6 +526,8 @@ mod tests {
         let mut p = add_panel();
         assert_eq!(p.focus, InputPanelFocus::Text);
         p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::When);
+        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Categories);
@@ -527,6 +550,8 @@ mod tests {
         assert_eq!(p.focus, InputPanelFocus::Categories);
         p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::When);
         p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
@@ -840,6 +865,7 @@ mod tests {
             id,
             "My item".into(),
             "My note".into(),
+            String::new(),
             cats.clone(),
             HashMap::new(),
             HashMap::new(),
@@ -891,6 +917,7 @@ mod tests {
         let p = InputPanel::new_edit_item(
             ItemId::new_v4(),
             "text".to_string(),
+            String::new(),
             String::new(),
             cats,
             std::collections::HashMap::new(),
