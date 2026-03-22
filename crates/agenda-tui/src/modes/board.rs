@@ -4902,7 +4902,7 @@ impl App {
         }
 
         match code {
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::BackTab => {
                 self.item_assign_pane = ItemAssignPane::ViewSection;
                 // Advance past any leading ViewHeader rows.
                 self.item_assign_view_row_index = self
@@ -4950,161 +4950,168 @@ impl App {
                     .to_string();
             }
             KeyCode::Char(' ') => {
-                let batch_mode = self.has_selected_items();
-                let action_item_ids = self.effective_action_item_ids();
-                let Some(item_id) = self.selected_item_id() else {
-                    self.mode = Mode::Normal;
-                    self.status = "Assign failed: no selected item".to_string();
-                    return Ok(false);
-                };
-                let Some(row) = self
-                    .category_rows
-                    .get(self.item_assign_category_index)
-                    .cloned()
-                else {
-                    self.status = "Assign failed: no category selected".to_string();
-                    return Ok(false);
-                };
-
-                if row.name.eq_ignore_ascii_case("Done") {
-                    if batch_mode && action_item_ids.len() > 1 {
-                        if let Err(err) = self.batch_toggle_selected_items_done(
-                            agenda,
-                            DoneToggleOrigin::ItemAssignPicker,
-                        ) {
-                            self.status = format!("Done toggle failed: {}", err);
-                        }
-                        return Ok(false);
-                    }
-                    if let Err(err) = self.begin_done_toggle_or_confirm(
-                        agenda,
-                        item_id,
-                        DoneToggleOrigin::ItemAssignPicker,
-                    ) {
-                        self.status = format!("Done toggle failed: {}", err);
-                    }
-                    return Ok(false);
-                }
-
-                if batch_mode && action_item_ids.len() > 1 {
-                    let (assigned_count, total_count) =
-                        self.effective_action_assignment_counts(row.id);
-                    let should_unassign = assigned_count == total_count;
-                    let mut changed = 0usize;
-                    let mut failed = 0usize;
-                    let mut first_error = None;
-
-                    for action_item_id in &action_item_ids {
-                        let result = if should_unassign {
-                            agenda.unassign_item_manual(*action_item_id, row.id)
-                        } else {
-                            agenda
-                                .assign_item_manual(
-                                    *action_item_id,
-                                    row.id,
-                                    Some("manual:tui.assign".to_string()),
-                                )
-                                .map(|_| ())
-                        };
-                        match result {
-                            Ok(()) => changed += 1,
-                            Err(err) => {
-                                failed += 1;
-                                if first_error.is_none() {
-                                    first_error = Some(err.to_string());
-                                }
-                            }
-                        }
-                    }
-
-                    self.refresh(agenda.store())?;
-                    self.set_item_selection_by_id(item_id);
-                    if changed > 0 && failed == 0 {
-                        self.item_assign_dirty = true;
-                    }
-                    self.status = if failed == 0 {
-                        if should_unassign {
-                            format!("Removed category {} from {} items", row.name, changed)
-                        } else {
-                            format!("Applied category {} to {} items", row.name, changed)
-                        }
-                    } else {
-                        let mut summary = if should_unassign {
-                            format!(
-                                "Removed category {} from {} items (failed={failed})",
-                                row.name, changed
-                            )
-                        } else {
-                            format!(
-                                "Applied category {} to {} items (failed={failed})",
-                                row.name, changed
-                            )
-                        };
-                        if let Some(err) = first_error {
-                            summary.push_str(&format!(" first_error={err}"));
-                        }
-                        summary
-                    };
-                } else if self.selected_item_has_assignment(row.id) {
-                    // Capture old assignment for undo
-                    let old_assignment = self
-                        .all_items
-                        .iter()
-                        .find(|i| i.id == item_id)
-                        .and_then(|i| i.assignments.get(&row.id))
-                        .cloned();
-                    match agenda.unassign_item_manual(item_id, row.id) {
-                        Ok(()) => {
-                            if let Some(assignment) = old_assignment {
-                                self.push_undo(UndoEntry::CategoryUnassigned {
-                                    item_id,
-                                    category_id: row.id,
-                                    old_assignment: assignment,
-                                });
-                            }
-                            self.refresh(agenda.store())?;
-                            self.set_item_selection_by_id(item_id);
-                            self.status = format!("Removed category {}", row.name);
-                        }
-                        Err(err) => {
-                            self.status = format!("Cannot remove {}: {}", row.name, err);
-                        }
-                    }
-                } else {
-                    let result = agenda.assign_item_manual(
-                        item_id,
-                        row.id,
-                        Some("manual:tui.assign".to_string()),
-                    )?;
-                    self.push_undo(UndoEntry::CategoryAssigned {
-                        item_id,
-                        category_id: row.id,
-                    });
-                    self.refresh(agenda.store())?;
-                    self.set_item_selection_by_id(item_id);
-                    self.status = format!(
-                        "Added category {} (new_assignments={})",
-                        row.name,
-                        result.new_assignments.len()
-                    );
-                }
+                self.apply_item_assign_category_selection(agenda)?;
             }
             KeyCode::Enter => {
-                let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                self.mode = Mode::Normal;
-                if clear_selection {
-                    self.clear_selected_items();
-                }
-                self.item_assign_dirty = false;
-                self.clear_input();
-                if !clear_selection {
-                    self.status = "Category edit saved".to_string();
+                self.apply_item_assign_category_selection(agenda)?;
+                if self.mode == Mode::ItemAssignPicker {
+                    self.close_item_assign_picker_after_apply();
                 }
             }
             _ => {}
         }
 
         Ok(false)
+    }
+
+    fn close_item_assign_picker_after_apply(&mut self) {
+        let clear_selection = self.item_assign_dirty && self.has_selected_items();
+        self.mode = Mode::Normal;
+        if clear_selection {
+            self.clear_selected_items();
+        }
+        self.item_assign_dirty = false;
+        self.item_assign_preview = AssignmentPreview::default();
+        self.clear_input();
+    }
+
+    fn apply_item_assign_category_selection(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let batch_mode = self.has_selected_items();
+        let action_item_ids = self.effective_action_item_ids();
+        let Some(item_id) = self.selected_item_id() else {
+            self.mode = Mode::Normal;
+            self.status = "Assign failed: no selected item".to_string();
+            return Ok(());
+        };
+        let Some(row) = self
+            .category_rows
+            .get(self.item_assign_category_index)
+            .cloned()
+        else {
+            self.status = "Assign failed: no category selected".to_string();
+            return Ok(());
+        };
+
+        if row.name.eq_ignore_ascii_case("Done") {
+            if batch_mode && action_item_ids.len() > 1 {
+                if let Err(err) = self
+                    .batch_toggle_selected_items_done(agenda, DoneToggleOrigin::ItemAssignPicker)
+                {
+                    self.status = format!("Done toggle failed: {}", err);
+                }
+                return Ok(());
+            }
+            if let Err(err) = self.begin_done_toggle_or_confirm(
+                agenda,
+                item_id,
+                DoneToggleOrigin::ItemAssignPicker,
+            ) {
+                self.status = format!("Done toggle failed: {}", err);
+            }
+            return Ok(());
+        }
+
+        if batch_mode && action_item_ids.len() > 1 {
+            let (assigned_count, total_count) = self.effective_action_assignment_counts(row.id);
+            let should_unassign = assigned_count == total_count;
+            let mut changed = 0usize;
+            let mut failed = 0usize;
+            let mut first_error = None;
+
+            for action_item_id in &action_item_ids {
+                let result = if should_unassign {
+                    agenda.unassign_item_manual(*action_item_id, row.id)
+                } else {
+                    agenda
+                        .assign_item_manual(
+                            *action_item_id,
+                            row.id,
+                            Some("manual:tui.assign".to_string()),
+                        )
+                        .map(|_| ())
+                };
+                match result {
+                    Ok(()) => changed += 1,
+                    Err(err) => {
+                        failed += 1;
+                        if first_error.is_none() {
+                            first_error = Some(err.to_string());
+                        }
+                    }
+                }
+            }
+
+            self.refresh(agenda.store())?;
+            self.set_item_selection_by_id(item_id);
+            if changed > 0 && failed == 0 {
+                self.item_assign_dirty = true;
+            }
+            self.status = if failed == 0 {
+                if should_unassign {
+                    format!("Removed category {} from {} items", row.name, changed)
+                } else {
+                    format!("Applied category {} to {} items", row.name, changed)
+                }
+            } else {
+                let mut summary = if should_unassign {
+                    format!(
+                        "Removed category {} from {} items (failed={failed})",
+                        row.name, changed
+                    )
+                } else {
+                    format!(
+                        "Applied category {} to {} items (failed={failed})",
+                        row.name, changed
+                    )
+                };
+                if let Some(err) = first_error {
+                    summary.push_str(&format!(" first_error={err}"));
+                }
+                summary
+            };
+        } else if self.selected_item_has_assignment(row.id) {
+            let old_assignment = self
+                .all_items
+                .iter()
+                .find(|i| i.id == item_id)
+                .and_then(|i| i.assignments.get(&row.id))
+                .cloned();
+            match agenda.unassign_item_manual(item_id, row.id) {
+                Ok(()) => {
+                    if let Some(assignment) = old_assignment {
+                        self.push_undo(UndoEntry::CategoryUnassigned {
+                            item_id,
+                            category_id: row.id,
+                            old_assignment: assignment,
+                        });
+                    }
+                    self.refresh(agenda.store())?;
+                    self.set_item_selection_by_id(item_id);
+                    self.status = format!("Removed category {}", row.name);
+                }
+                Err(err) => {
+                    self.status = format!("Cannot remove {}: {}", row.name, err);
+                }
+            }
+        } else {
+            let result = agenda.assign_item_manual(
+                item_id,
+                row.id,
+                Some("manual:tui.assign".to_string()),
+            )?;
+            self.push_undo(UndoEntry::CategoryAssigned {
+                item_id,
+                category_id: row.id,
+            });
+            self.refresh(agenda.store())?;
+            self.set_item_selection_by_id(item_id);
+            self.status = format!(
+                "Added category {} (new_assignments={})",
+                row.name,
+                result.new_assignments.len()
+            );
+        }
+        Ok(())
     }
 
     /// Handle key input when the View/Section pane is active inside the assign panel.
@@ -5130,103 +5137,30 @@ impl App {
         }
 
         match code {
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::BackTab => {
                 // Switch back to Categories pane.
                 self.item_assign_pane = ItemAssignPane::Categories;
                 self.item_assign_preview = AssignmentPreview::default();
                 self.compute_assignment_preview();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.item_assign_view_row_index = next_section_row(
-                    &self.view_assign_rows,
-                    self.item_assign_view_row_index,
-                    1,
-                );
+                self.item_assign_view_row_index =
+                    next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, 1);
                 self.compute_assignment_preview();
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.item_assign_view_row_index = next_section_row(
-                    &self.view_assign_rows,
-                    self.item_assign_view_row_index,
-                    -1,
-                );
+                self.item_assign_view_row_index =
+                    next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, -1);
                 self.compute_assignment_preview();
             }
             KeyCode::Char(' ') => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
-                else {
-                    return Ok(false);
-                };
-                let ViewAssignRow::SectionRow { view_idx, section_idx, .. } = row else {
-                    return Ok(false);
-                };
-                let Some(view) = self.views.get(view_idx).cloned() else {
-                    return Ok(false);
-                };
-                let to_section = section_idx.and_then(|si| view.sections.get(si)).cloned();
-                let action_ids = self.effective_action_item_ids();
-                if action_ids.is_empty() {
-                    return Ok(false);
-                }
-                let focused_item_id = match self.selected_item_id() {
-                    Some(id) => id,
-                    None => return Ok(false),
-                };
-                let reference_date = jiff::Zoned::now().date();
-                let result = resolve_view(&view, &self.all_items, &self.categories, reference_date);
-
-                let mut changed = 0usize;
-                let mut first_error: Option<String> = None;
-
-                for item_id in &action_ids {
-                    let from_section_idx: Option<usize> = result.sections.iter().find_map(|s| {
-                        let found = s.items.iter().any(|i| i.id == *item_id)
-                            || s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
-                        if found { Some(s.section_index) } else { None }
-                    });
-
-                    let res = match (from_section_idx, section_idx) {
-                        (Some(fi), Some(ti)) if fi == ti => Ok(()), // already there
-                        (Some(fi), Some(_ti)) => {
-                            let from_sec = view.sections.get(fi).cloned().unwrap();
-                            let to_sec = to_section.as_ref().unwrap();
-                            agenda.move_item_between_sections(*item_id, &view, &from_sec, to_sec)
-                                .map(|_| ())
-                        }
-                        (None, Some(_)) => {
-                            let to_sec = to_section.as_ref().unwrap();
-                            agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ())
-                        }
-                        (Some(fi), None) => {
-                            let from_sec = view.sections.get(fi).cloned().unwrap();
-                            agenda.remove_item_from_section(*item_id, &view, &from_sec).map(|_| ())
-                        }
-                        (None, None) => Ok(()), // already unmatched
-                    };
-
-                    match res {
-                        Ok(()) => changed += 1,
-                        Err(err) => {
-                            if first_error.is_none() {
-                                first_error = Some(err.to_string());
-                            }
-                        }
-                    }
-                }
-
-                self.refresh(agenda.store())?;
-                self.set_item_selection_by_id(focused_item_id);
-                self.view_assign_rows = build_view_assign_rows(&self.views);
-                self.item_assign_dirty = true;
-                self.compute_assignment_preview();
-
-                self.status = match first_error {
-                    None => format!("Moved {changed} item(s) to section"),
-                    Some(err) => format!("Partial move ({changed} ok): {err}"),
-                };
+                self.apply_item_assign_view_selection(agenda)?;
             }
             KeyCode::Char('r') => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                let Some(row) = self
+                    .view_assign_rows
+                    .get(self.item_assign_view_row_index)
+                    .cloned()
                 else {
                     return Ok(false);
                 };
@@ -5264,16 +5198,9 @@ impl App {
                 };
             }
             KeyCode::Enter => {
-                let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                self.mode = Mode::Normal;
-                if clear_selection {
-                    self.clear_selected_items();
-                }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
-                if !clear_selection {
-                    self.status = "Section assignment saved".to_string();
+                self.apply_item_assign_view_selection(agenda)?;
+                if self.mode == Mode::ItemAssignPicker {
+                    self.close_item_assign_picker_after_apply();
                 }
             }
             KeyCode::Esc => {
@@ -5293,6 +5220,100 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    fn apply_item_assign_view_selection(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(row) = self
+            .view_assign_rows
+            .get(self.item_assign_view_row_index)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let ViewAssignRow::SectionRow {
+            view_idx,
+            section_idx,
+            ..
+        } = row
+        else {
+            return Ok(());
+        };
+        let Some(view) = self.views.get(view_idx).cloned() else {
+            return Ok(());
+        };
+        let to_section = section_idx.and_then(|si| view.sections.get(si)).cloned();
+        let action_ids = self.effective_action_item_ids();
+        if action_ids.is_empty() {
+            return Ok(());
+        }
+        let focused_item_id = match self.selected_item_id() {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+        let reference_date = jiff::Zoned::now().date();
+        let result = resolve_view(&view, &self.all_items, &self.categories, reference_date);
+
+        let mut changed = 0usize;
+        let mut first_error: Option<String> = None;
+
+        for item_id in &action_ids {
+            let from_section_idx: Option<usize> = result.sections.iter().find_map(|s| {
+                let found = s.items.iter().any(|i| i.id == *item_id)
+                    || s.subsections
+                        .iter()
+                        .any(|sub| sub.items.iter().any(|i| i.id == *item_id));
+                if found {
+                    Some(s.section_index)
+                } else {
+                    None
+                }
+            });
+
+            let res = match (from_section_idx, section_idx) {
+                (Some(fi), Some(ti)) if fi == ti => Ok(()),
+                (Some(fi), Some(_)) => {
+                    let from_sec = view.sections.get(fi).cloned().unwrap();
+                    let to_sec = to_section.as_ref().unwrap();
+                    agenda
+                        .move_item_between_sections(*item_id, &view, &from_sec, to_sec)
+                        .map(|_| ())
+                }
+                (None, Some(_)) => {
+                    let to_sec = to_section.as_ref().unwrap();
+                    agenda
+                        .insert_item_in_section(*item_id, &view, to_sec)
+                        .map(|_| ())
+                }
+                (Some(fi), None) => {
+                    let from_sec = view.sections.get(fi).cloned().unwrap();
+                    agenda
+                        .remove_item_from_section(*item_id, &view, &from_sec)
+                        .map(|_| ())
+                }
+                (None, None) => Ok(()),
+            };
+
+            match res {
+                Ok(()) => changed += 1,
+                Err(err) => {
+                    if first_error.is_none() {
+                        first_error = Some(err.to_string());
+                    }
+                }
+            }
+        }
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(focused_item_id);
+        self.view_assign_rows = build_view_assign_rows(&self.views);
+        self.item_assign_dirty = true;
+        self.compute_assignment_preview();
+
+        self.status = match first_error {
+            None => format!("Moved {changed} item(s) to section"),
+            Some(err) => format!("Partial move ({changed} ok): {err}"),
+        };
+        Ok(())
     }
 
     pub(crate) fn handle_item_assign_category_input_key(
