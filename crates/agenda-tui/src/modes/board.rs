@@ -240,8 +240,7 @@ impl App {
             .map(|p| {
                 matches!(
                     p.kind,
-                    input_panel::InputPanelKind::AddItem
-                        | input_panel::InputPanelKind::EditItem
+                    input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
                 )
             })
             .unwrap_or(false);
@@ -4087,7 +4086,11 @@ impl App {
                     .as_ref()
                     .map(|p| p.pending_suggestions.len())
                     .unwrap_or(0);
-                let cursor = self.input_panel.as_ref().map(|p| p.category_cursor).unwrap_or(0);
+                let cursor = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.category_cursor)
+                    .unwrap_or(0);
                 let suggestion_index = if cursor < suggestion_len {
                     Some(cursor)
                 } else {
@@ -4100,10 +4103,8 @@ impl App {
                         if let Some(entry) = panel.pending_suggestions.get_mut(si) {
                             entry.1 = entry.1.next();
                             let cat_names = category_name_map(&self.categories);
-                            let cat_name = candidate_assignment_label(
-                                &entry.0.assignment,
-                                &cat_names,
-                            );
+                            let cat_name =
+                                candidate_assignment_label(&entry.0.assignment, &cat_names);
                             Some(format!(
                                 "Suggestion '{}': {}",
                                 cat_name,
@@ -4439,7 +4440,11 @@ impl App {
 
         // Apply when-date change.
         if let Some(new_when) = parsed_when {
-            agenda.set_item_when_date(item_id, new_when, Some("manual:input_panel.edit".to_string()))?;
+            agenda.set_item_when_date(
+                item_id,
+                new_when,
+                Some("manual:input_panel.edit".to_string()),
+            )?;
         }
 
         // Apply category changes.
@@ -5410,6 +5415,7 @@ mod tests {
             is_exclusive,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         }
     }
