@@ -1,10 +1,5 @@
+use crate::theme::*;
 use crate::*;
-
-const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
-const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
-const CATEGORY_MANAGER_PANE_FOCUS: Color = Color::LightCyan;
-const CATEGORY_MANAGER_TEXT_ENTRY: Color = Color::LightMagenta;
-const CATEGORY_MANAGER_EDIT_FOCUS: Color = Color::Yellow;
 const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
 const ALSO_MATCH_PLACEHOLDER_TEXT: &str = "One term or phrase per line...";
 const FOOTER_HEIGHT: u16 = 4;
@@ -411,7 +406,7 @@ impl App {
             })
             .unwrap_or_else(|| "Set category".to_string());
         frame.render_widget(
-            Paragraph::new(context_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+            Paragraph::new(context_text).style(Style::default().fg(COLOR_TEXT_MUTED)),
             chunks[0],
         );
 
@@ -431,7 +426,7 @@ impl App {
             })
             .unwrap_or_else(|| "Scope: This column only".to_string());
         frame.render_widget(
-            Paragraph::new(scope_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+            Paragraph::new(scope_text).style(Style::default().fg(COLOR_TEXT_MUTED)),
             chunks[1],
         );
 
@@ -467,9 +462,9 @@ impl App {
             })
             .unwrap_or_default();
         let entries_border = if focus == CategoryDirectEditFocus::Entries {
-            Style::default().fg(Color::Cyan)
+            style_focus_border()
         } else {
-            Style::default()
+            style_idle_border()
         };
         let mut entries_state = Self::list_state_for(chunks[2], Some(active_row_index));
         frame.render_stateful_widget(
@@ -487,13 +482,13 @@ impl App {
         );
 
         let input_border = if focus == CategoryDirectEditFocus::Input {
-            Style::default().fg(Color::Cyan)
+            style_focus_border()
         } else {
-            Style::default()
+            style_idle_border()
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::styled("Category> ", style_pending()),
                 Span::raw(active_input),
             ]))
             .block(
@@ -517,7 +512,7 @@ impl App {
             );
             frame.render_widget(
                 Paragraph::new("S save draft  Esc cancel draft")
-                    .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                    .style(Style::default().fg(COLOR_TEXT_MUTED)),
                 chunks[5],
             );
             return;
@@ -555,16 +550,16 @@ impl App {
                         .borders(Borders::ALL)
                         .title("Suggested Categories")
                         .border_style(if focus == CategoryDirectEditFocus::Suggestions {
-                            Style::default().fg(Color::Cyan)
+                            style_focus_border()
                         } else {
-                            Style::default()
+                            style_idle_border()
                         }),
                 ),
                 chunks[4],
             );
             frame.render_widget(
                 Paragraph::new(help_text)
-                    .style(Style::default().fg(MUTED_TEXT_COLOR))
+                    .style(Style::default().fg(COLOR_TEXT_MUTED))
                     .wrap(Wrap { trim: true }),
                 chunks[5],
             );
@@ -599,9 +594,9 @@ impl App {
                         .borders(Borders::ALL)
                         .title("Suggested Categories")
                         .border_style(if focus == CategoryDirectEditFocus::Suggestions {
-                            Style::default().fg(Color::Cyan)
+                            style_focus_border()
                         } else {
-                            Style::default()
+                            style_idle_border()
                         }),
                 ),
             chunks[4],
@@ -610,7 +605,7 @@ impl App {
         Self::render_vertical_scrollbar(frame, chunks[4], item_count, state.offset());
         frame.render_widget(
             Paragraph::new(help_text)
-                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .style(Style::default().fg(COLOR_TEXT_MUTED))
                 .wrap(Wrap { trim: true }),
             chunks[5],
         );
@@ -675,7 +670,7 @@ impl App {
             Paragraph::new(anchor_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(style_idle_border()),
             ),
             rows[0],
         );
@@ -698,9 +693,9 @@ impl App {
             })
             .borders(Borders::ALL)
             .border_style(if state.focus == LinkWizardFocus::ScopeAction {
-                Style::default().fg(Color::Yellow)
+                style_focus_border()
             } else {
-                Style::default()
+                style_idle_border()
             });
         frame.render_widget(List::new(action_items).block(action_block), rows[1]);
 
@@ -713,11 +708,11 @@ impl App {
             .title(target_title)
             .borders(Borders::ALL)
             .border_style(if state.focus == LinkWizardFocus::Target {
-                Style::default().fg(Color::Yellow)
+                style_focus_border()
             } else if !action.requires_target() {
-                Style::default().fg(Color::DarkGray)
+                style_idle_border()
             } else {
-                Style::default()
+                style_idle_border()
             });
         let target_text = if action.requires_target() {
             format!("Search> {}", state.target_filter.text())
@@ -752,9 +747,9 @@ impl App {
             .title("Matches")
             .borders(Borders::ALL)
             .border_style(if state.focus == LinkWizardFocus::Target {
-                Style::default().fg(Color::Yellow)
+                style_focus_border()
             } else {
-                Style::default()
+                style_idle_border()
             });
         if action.requires_target() {
             let selected = if matches.is_empty() {
@@ -911,9 +906,9 @@ impl App {
                     })
                     .borders(Borders::ALL)
                     .border_style(if state.focus == LinkWizardFocus::Confirm {
-                        Style::default().fg(Color::Yellow)
+                        style_focus_border()
                     } else {
-                        Style::default()
+                        style_idle_border()
                     }),
             ),
             rows[4],
@@ -922,7 +917,7 @@ impl App {
         frame.render_widget(
             Paragraph::new("j/k or arrows:move  Tab:focus  Enter:next/apply  type:search target  /:target focus  b/B:different block direction  d/r/c:action  Esc:cancel")
                 .wrap(Wrap { trim: false })
-                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                .style(Style::default().fg(COLOR_TEXT_MUTED)),
             rows[5],
         );
     }
@@ -1021,7 +1016,7 @@ impl App {
                 "Create \"{}\" {}\ny:confirm  Esc:cancel",
                 name, description_suffix
             ))
-            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .style(Style::default().fg(COLOR_TEXT_MUTED))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -1086,14 +1081,14 @@ impl App {
                 },
                 truncate_board_cell(&selected_display, 56),
             ))
-            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .style(Style::default().fg(COLOR_TEXT_MUTED))
             .wrap(Wrap { trim: true }),
             chunks[0],
         );
 
         frame.render_widget(
             Paragraph::new(state.item_label.clone())
-                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .style(Style::default().fg(COLOR_TEXT_MUTED))
                 .block(Block::default().borders(Borders::ALL).title("Item Context"))
                 .wrap(Wrap { trim: false })
                 .scroll((state.item_preview_scroll, 0)),
@@ -1101,13 +1096,13 @@ impl App {
         );
 
         let input_border = if state.focus == CategoryColumnPickerFocus::FilterInput {
-            Style::default().fg(Color::Cyan)
+            style_focus_border()
         } else {
-            Style::default()
+            style_idle_border()
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("Filter> ", Style::default().fg(Color::Yellow)),
+                Span::styled("Filter> ", style_pending()),
                 Span::raw(state.filter.text()),
             ]))
             .block(
@@ -1173,9 +1168,9 @@ impl App {
                             .borders(Borders::ALL)
                             .title("Categories")
                             .border_style(if state.focus == CategoryColumnPickerFocus::List {
-                                Style::default().fg(Color::Cyan)
+                                style_focus_border()
                             } else {
-                                Style::default()
+                                style_idle_border()
                             }),
                     )
                     .highlight_symbol("> ")
@@ -1195,7 +1190,7 @@ impl App {
             Paragraph::new(
                 "Type filter | j/k or Up/Down move | PgUp/PgDn item | Space toggle | Enter save | Esc cancel",
             )
-            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .style(Style::default().fg(COLOR_TEXT_MUTED))
             .wrap(Wrap { trim: true }),
             chunks[4],
         );
@@ -1292,7 +1287,7 @@ impl App {
             .unwrap_or_else(|| "Insert a category column".to_string());
         frame.render_widget(
             Paragraph::new(header)
-                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .style(Style::default().fg(COLOR_TEXT_MUTED))
                 .wrap(Wrap { trim: true }),
             chunks[0],
         );
@@ -1300,7 +1295,7 @@ impl App {
         let input_text = self.board_add_column_input_text().unwrap_or("");
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::styled("Category> ", style_pending()),
                 Span::raw(input_text),
             ]))
             .block(Block::default().borders(Borders::ALL).title("Typeahead")),
@@ -1355,7 +1350,7 @@ impl App {
             Paragraph::new(
                 "Type filter | Up/Down select | Tab autocomplete | Enter insert | Esc cancel",
             )
-            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .style(Style::default().fg(COLOR_TEXT_MUTED))
             .wrap(Wrap { trim: true }),
             chunks[3],
         );
@@ -1739,16 +1734,16 @@ impl App {
         let label = format!("[{section_name}] ");
         let is_focused = self.mode == Mode::SearchBarFocused;
 
-        let label_style = Style::default().fg(Color::Cyan);
+        let label_style = style_focus_border();
         let (text_content, text_style) = if is_focused {
             let text = self.search_buffer.text();
             if text.is_empty() {
                 (
                     "Search or create...".to_string(),
-                    Style::default().fg(Color::DarkGray),
+                    style_text_muted(),
                 )
             } else {
-                (text.to_string(), Style::default().fg(Color::White))
+                (text.to_string(), Style::default().fg(COLOR_TEXT_PRIMARY))
             }
         } else {
             let filter = self
@@ -1756,11 +1751,11 @@ impl App {
                 .get(self.slot_index)
                 .and_then(|f| f.as_deref());
             if let Some(text) = filter {
-                (text.to_string(), Style::default().fg(Color::Yellow))
+                (text.to_string(), style_pending())
             } else {
                 (
                     "Search or create...".to_string(),
-                    Style::default().fg(Color::DarkGray),
+                    style_text_muted(),
                 )
             }
         };
@@ -1841,7 +1836,7 @@ impl App {
                     Block::default()
                         .title("Board")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Blue)),
+                        .border_style(style_idle_border()),
                 ),
                 area,
             );
@@ -1910,9 +1905,9 @@ impl App {
                 .unwrap_or_default();
             let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
             let border_color = if is_selected_slot {
-                Color::Cyan
+                COLOR_FOCUS
             } else {
-                Color::Blue
+                COLOR_IDLE
             };
             let (slot_columns_owned, slot_item_column_index) =
                 match (&slot.context, current_view.as_ref()) {
@@ -2028,7 +2023,7 @@ impl App {
                     );
                     cells.push(Cell::from(Span::styled(
                         empty_msg,
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )));
                     cells.extend(
                         layout.columns[item_board_column_index..]
@@ -2191,10 +2186,10 @@ impl App {
                     let item_refs: Vec<&Item> = slot.items.iter().collect();
                     let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
                     let summary_style = Style::default()
-                        .fg(Color::White)
-                        .bg(Color::DarkGray)
+                        .fg(COLOR_TEXT_PRIMARY)
+                        .bg(COLOR_CURSOR_BG)
                         .add_modifier(Modifier::BOLD);
-                    let pad_style = Style::default().bg(Color::DarkGray);
+                    let pad_style = Style::default().bg(COLOR_CURSOR_BG);
                     let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
                     let mut spans: Vec<Span> = Vec::new();
                     // Pad for marker + note + spacing (border + left padding of block = 1)
@@ -2366,7 +2361,7 @@ impl App {
                         Cell::from(String::new()),
                         Cell::from(Span::styled(
                             empty_msg,
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                         Cell::from(String::new()),
                     ])]
@@ -2528,9 +2523,9 @@ impl App {
                 .unwrap_or_default();
             let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
             let border_color = if is_selected_slot {
-                Color::Cyan
+                COLOR_FOCUS
             } else {
-                Color::Blue
+                COLOR_IDLE
             };
             let effective_display_mode = self.effective_board_display_mode_for_slot(slot);
             let card_width = slot_area.width.saturating_sub(4) as usize;
@@ -2545,33 +2540,33 @@ impl App {
                     vec![
                         Line::from(Span::styled(
                             "empty board",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                         Line::from(Span::styled(
                             "n:add item  v:views  q:quit",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                     ]
                 } else if has_filter {
                     vec![
                         Line::from(Span::styled(
                             "no matches",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                         Line::from(Span::styled(
                             "Esc:clear filter",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                     ]
                 } else {
                     vec![
                         Line::from(Span::styled(
                             "empty lane",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                         Line::from(Span::styled(
                             "n:add item",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )),
                     ]
                 };
@@ -2673,12 +2668,12 @@ impl App {
                         }
                         lines.push(Line::from(Span::styled(
                             format!("   {}", meta),
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )));
                         if item_index + 1 < slot.items.len() {
                             lines.push(Line::from(Span::styled(
                                 format!(" {}", "-".repeat(separator_width)),
-                                Style::default().fg(MUTED_TEXT_COLOR),
+                                Style::default().fg(COLOR_TEXT_MUTED),
                             )));
                         }
                     }
@@ -2796,13 +2791,13 @@ impl App {
                     Block::default()
                         .title("Preview: Info")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(
+                        .border_style(
                             if self.normal_focus == NormalFocus::Preview {
-                                Color::Cyan
+                                style_focus_border()
                             } else {
-                                Color::Yellow
+                                style_idle_border()
                             },
-                        )),
+                        ),
                 ),
             area,
             &mut state,
@@ -2950,13 +2945,13 @@ impl App {
                 Block::default()
                     .title("Preview: Summary")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(
+                    .border_style(
                         if self.normal_focus == NormalFocus::Preview {
-                            Color::Cyan
+                            style_focus_border()
                         } else {
-                            Color::Yellow
+                            style_idle_border()
                         },
-                    )),
+                    ),
             )
             .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
@@ -2992,11 +2987,9 @@ impl App {
         // === Left pane: item list ===
         let items_focused = state.focus == SuggestionReviewFocus::Items;
         let items_border_style = if items_focused {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            style_focus_border().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Cyan)
+            style_idle_border()
         };
         let items_title = if items_focused {
             format!(" > Items ({}) ", state.items.len())
@@ -3026,7 +3019,7 @@ impl App {
                         Span::styled(&*item.item_text, sel.add_modifier(Modifier::BOLD)),
                         Span::styled(
                             format!("  ({count})"),
-                            Style::default().fg(Color::Black).bg(Color::Cyan),
+                            Style::default().fg(Color::Black).bg(COLOR_SELECTED_BG),
                         ),
                     ])
                 } else {
@@ -3040,7 +3033,7 @@ impl App {
                     Line::from(vec![
                         Span::styled(prefix, style),
                         Span::styled(&*item.item_text, style),
-                        Span::styled(format!("  ({count})"), Style::default().fg(Color::Yellow)),
+                        Span::styled(format!("  ({count})"), style_pending()),
                     ])
                 }
             })
@@ -3054,11 +3047,9 @@ impl App {
         // === Right pane: selected item detail + suggestions ===
         let sugg_focused = state.focus == SuggestionReviewFocus::Suggestions;
         let sugg_border_style = if sugg_focused {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            style_focus_border().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Cyan)
+            style_idle_border()
         };
 
         if let Some(item) = state.items.get(state.item_index) {
@@ -3085,7 +3076,7 @@ impl App {
 
             // Item header
             let mut header_lines = vec![Line::from(vec![
-                Span::styled("Item: ", Style::default().fg(Color::Gray)),
+                Span::styled("Item: ", style_text_secondary()),
                 Span::styled(
                     &*item.item_text,
                     Style::default()
@@ -3095,13 +3086,13 @@ impl App {
             ])];
             if let Some(note) = &item.note_excerpt {
                 header_lines.push(Line::from(vec![
-                    Span::styled("Note: ", Style::default().fg(Color::Gray)),
-                    Span::styled(note.as_str(), Style::default().fg(Color::Gray)),
+                    Span::styled("Note: ", style_text_secondary()),
+                    Span::styled(note.as_str(), style_text_secondary()),
                 ]));
             }
             if !item.current_assignments.is_empty() {
                 header_lines.push(Line::from(vec![
-                    Span::styled("Assigned: ", Style::default().fg(Color::Gray)),
+                    Span::styled("Assigned: ", style_text_secondary()),
                     Span::styled(
                         item.current_assignments.join(", "),
                         Style::default().fg(Color::White),
@@ -3120,9 +3111,9 @@ impl App {
                     let is_cursor = sugg_focused && i == state.suggestion_cursor;
                     let marker = if review.accepted { "[x]" } else { "[ ]" };
                     let marker_color = if review.accepted {
-                        Color::LightGreen
+                        COLOR_SUCCESS
                     } else {
-                        Color::LightRed
+                        COLOR_ERROR
                     };
                     let category_name =
                         candidate_assignment_label(&review.suggestion.assignment, &cat_names);
@@ -3153,7 +3144,7 @@ impl App {
                             Span::styled(category_name, sel.add_modifier(Modifier::BOLD)),
                             Span::styled(
                                 format!("  ({rationale})"),
-                                Style::default().fg(Color::DarkGray).bg(Color::Cyan),
+                                Style::default().fg(COLOR_TEXT_MUTED).bg(COLOR_SELECTED_BG),
                             ),
                         ])
                     } else {
@@ -3169,7 +3160,7 @@ impl App {
                             ),
                             Span::styled(
                                 format!("  ({rationale})"),
-                                Style::default().fg(Color::Gray),
+                                style_text_secondary(),
                             ),
                         ])
                     }
@@ -3217,11 +3208,11 @@ impl App {
             }
             spans.push(Span::styled(
                 format!("{}:", key),
-                Style::default().fg(Color::LightCyan),
+                style_focus_border(),
             ));
             spans.push(Span::styled(
                 desc.to_string(),
-                Style::default().fg(MUTED_TEXT_COLOR),
+                Style::default().fg(COLOR_TEXT_MUTED),
             ));
             used += entry_len;
         }
@@ -3230,8 +3221,8 @@ impl App {
             if !spans.is_empty() {
                 spans.push(Span::raw("  "));
             }
-            spans.push(Span::styled("?:", Style::default().fg(Color::LightCyan)));
-            spans.push(Span::styled("help", Style::default().fg(MUTED_TEXT_COLOR)));
+            spans.push(Span::styled("?:", style_focus_border()));
+            spans.push(Span::styled("help", Style::default().fg(COLOR_TEXT_MUTED)));
         }
         let text = ratatui::text::Text::from(vec![
             ratatui::text::Line::from(status),
@@ -3695,7 +3686,7 @@ impl App {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let key_style = Style::default()
-            .fg(Color::Yellow)
+            .fg(COLOR_FOCUS)
             .add_modifier(Modifier::BOLD);
 
         let help_entry = |key: &str, desc: &str| -> Line<'static> {
@@ -3771,7 +3762,7 @@ impl App {
             Line::from(""),
             Line::from(Span::styled(
                 "              Esc / Enter / ? to close",
-                Style::default().fg(Color::DarkGray),
+                style_text_muted(),
             )),
         ];
 
@@ -3840,9 +3831,7 @@ impl App {
             panel.focus == InputPanelFocus::Text,
         );
         let text_prefix_style = if panel.focus == InputPanelFocus::Text {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            style_pending().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -3856,7 +3845,7 @@ impl App {
             if let Some(context_rect) = regions.context {
                 frame.render_widget(
                     Paragraph::new(format!("  {}", panel.preview_context))
-                        .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                        .style(Style::default().fg(COLOR_TEXT_MUTED)),
                     context_rect,
                 );
             }
@@ -3866,7 +3855,7 @@ impl App {
             if let Some(context_rect) = regions.context {
                 let context_text = format!("Item: {}", panel.preview_context);
                 frame.render_widget(
-                    Paragraph::new(context_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+                    Paragraph::new(context_text).style(Style::default().fg(COLOR_TEXT_MUTED)),
                     context_rect,
                 );
             }
@@ -3885,16 +3874,14 @@ impl App {
                 when_focused,
             );
             let when_prefix_style = if when_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+                style_pending().add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
             let when_value_style = if when_focused {
                 Style::default()
             } else if panel.when_buffer.text().is_empty() {
-                Style::default().fg(MUTED_TEXT_COLOR)
+                Style::default().fg(COLOR_TEXT_MUTED)
             } else {
                 Style::default()
             };
@@ -3914,24 +3901,17 @@ impl App {
         if let Some(note_rect) = regions.note {
             let note_focused = panel.focus == InputPanelFocus::Note;
             let note_border_style = if note_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+                style_focus_border().add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Cyan)
+                style_idle_border()
             };
             let mut note_widget = panel.note.widget().clone();
             note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
-            note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+            note_widget.set_placeholder_style(Style::default().fg(COLOR_TEXT_MUTED));
             note_widget.set_style(Style::default());
             if note_focused {
-                note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
-                note_widget.set_cursor_style(
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                );
+                note_widget.set_cursor_line_style(style_edit_area());
+                note_widget.set_cursor_style(style_cell_cursor());
             }
             note_widget.set_block(
                 Block::default()
@@ -3954,11 +3934,9 @@ impl App {
         if let Some(cat_rect) = regions.categories {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
             let cat_border_style = if cat_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+                style_focus_border().add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Cyan)
+                style_idle_border()
             };
             let visible_indices = self.input_panel_visible_category_row_indices();
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
@@ -3986,7 +3964,7 @@ impl App {
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         format!("> Filter> {}", panel.category_filter.text()),
-                        Style::default().fg(Color::Yellow),
+                        style_pending(),
                     ))),
                     cat_filter_rect,
                 );
@@ -3998,22 +3976,22 @@ impl App {
             let suggestion_len = panel.pending_suggestions.len();
             if suggestion_len > 0 {
                 lines.push(Line::from(vec![
-                    Span::styled("─── Suggested ", Style::default().fg(Color::Yellow)),
-                    Span::styled("(Space: toggle) ", Style::default().fg(Color::Gray)),
-                    Span::styled("───", Style::default().fg(Color::Yellow)),
+                    Span::styled("─── Suggested ", style_pending()),
+                    Span::styled("(Space: toggle) ", style_text_secondary()),
+                    Span::styled("───", style_pending()),
                 ]));
                 let suggestion_cat_names = category_name_map(&self.categories);
                 for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate() {
                     let is_cursor = cat_focused && panel.category_cursor == si;
                     let marker = decision.marker();
                     let marker_style = match decision {
-                        SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
-                        SuggestionDecision::Accept => Style::default().fg(Color::LightGreen),
-                        SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
+                        SuggestionDecision::Pending => style_pending(),
+                        SuggestionDecision::Accept => style_success(),
+                        SuggestionDecision::Reject => style_error(),
                     };
                     let marker_style = if is_cursor {
                         marker_style
-                            .bg(Color::DarkGray)
+                            .bg(COLOR_CURSOR_BG)
                             .add_modifier(Modifier::BOLD)
                     } else {
                         marker_style
@@ -4022,14 +4000,14 @@ impl App {
                         candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
                     let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
                     let base_style = if is_cursor {
-                        Style::default().fg(Color::White).bg(Color::DarkGray)
+                        Style::default().fg(COLOR_TEXT_PRIMARY).bg(COLOR_CURSOR_BG)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(COLOR_TEXT_PRIMARY)
                     };
                     let dim_style = if is_cursor {
-                        Style::default().fg(Color::Gray).bg(Color::DarkGray)
+                        Style::default().fg(COLOR_TEXT_SECONDARY).bg(COLOR_CURSOR_BG)
                     } else {
-                        Style::default().fg(Color::Gray)
+                        style_text_secondary()
                     };
                     lines.push(Line::from(vec![
                         Span::styled(format!("{marker} "), marker_style),
@@ -4039,7 +4017,7 @@ impl App {
                 }
                 lines.push(Line::from(Span::styled(
                     "─────────────────",
-                    Style::default().fg(Color::Yellow),
+                    style_pending(),
                 )));
             }
 
@@ -4047,12 +4025,12 @@ impl App {
             let cat_lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
                 vec![Line::from(Span::styled(
                     "(no categories)",
-                    Style::default().fg(MUTED_TEXT_COLOR),
+                    Style::default().fg(COLOR_TEXT_MUTED),
                 ))]
             } else if visible_indices.is_empty() {
                 vec![Line::from(Span::styled(
                     "(no matching categories)",
-                    Style::default().fg(MUTED_TEXT_COLOR),
+                    Style::default().fg(COLOR_TEXT_MUTED),
                 ))]
             } else {
                 visible_indices
@@ -4077,20 +4055,19 @@ impl App {
                         let indent = "  ".repeat(row.depth);
 
                         let base_style = if is_cursor {
-                            Style::default().fg(Color::Black).bg(Color::Cyan)
+                            style_selected_row()
                         } else if row.is_reserved {
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(COLOR_TEXT_MUTED)
                                 .add_modifier(Modifier::DIM)
                         } else {
                             Style::default()
                         };
 
                         let suffix_style = if is_cursor {
-                            // On cursor row, suffix keeps same bg but dims fg
-                            Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                            Style::default().fg(COLOR_TEXT_MUTED).bg(COLOR_SELECTED_BG)
                         } else {
-                            Style::default().fg(MUTED_TEXT_COLOR)
+                            style_text_muted()
                         };
 
                         let type_suffix = if row.is_reserved {
@@ -4123,9 +4100,9 @@ impl App {
                                     " ".to_string()
                                 };
                                 let value_style = if is_cursor {
-                                    Style::default().fg(Color::Black).bg(Color::LightCyan)
+                                    style_selected_row()
                                 } else {
-                                    Style::default().fg(Color::Cyan)
+                                    Style::default().fg(COLOR_FOCUS)
                                 };
                                 let mut spans = vec![Span::styled(main_prefix, base_style)];
                                 if !type_suffix.is_empty() {
@@ -4291,7 +4268,7 @@ impl App {
             let is_when_error = self.status.starts_with("Could not parse")
                 || self.status.starts_with("When edit failed:");
             if is_when_error {
-                help_style = Style::default().fg(Color::LightRed);
+                help_style = style_error();
                 self.status.clone()
             } else {
                 base_help.to_string()
@@ -4309,9 +4286,9 @@ impl App {
                 let is_error = self.status.starts_with("Could not parse")
                     || self.status.starts_with("When edit failed:");
                 let hint_style = if is_error {
-                    Style::default().fg(Color::LightRed)
+                    style_error()
                 } else {
-                    Style::default().fg(MUTED_TEXT_COLOR)
+                    style_text_muted()
                 };
                 let hint_text = if is_error {
                     // On error, repeat the error on line 2 (line 1 already has key hints)
@@ -4489,26 +4466,26 @@ impl App {
             .map(|c| c.name.as_str())
             .unwrap_or("(unset)");
         let summary_line = Line::from(vec![
-            Span::styled("Auto classification", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Auto classification", Style::default().fg(COLOR_TEXT_MUTED)),
             Span::raw(": "),
             Span::styled(
                 classification_mode,
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" (m)", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled(" (m)", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(" | ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled("Ready queue", Style::default().fg(COLOR_TEXT_MUTED)),
             Span::raw(": "),
             Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled(" | ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled("Claim result", Style::default().fg(COLOR_TEXT_MUTED)),
             Span::raw(": "),
             Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" (w)", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled(" (w)", Style::default().fg(COLOR_TEXT_MUTED)),
         ]);
         frame.render_widget(
             Paragraph::new(summary_line)
-                .style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                .style(Style::default().fg(COLOR_FOCUS))
                 .wrap(Wrap { trim: false }),
             layout[0],
         );
@@ -4522,21 +4499,21 @@ impl App {
             .constraints([Constraint::Length(3), Constraint::Min(1)])
             .split(body[0]);
 
-        let pane_idle = CATEGORY_MANAGER_PANE_IDLE;
+        let pane_idle = COLOR_IDLE;
         let tree_border = if manager_focus == CategoryManagerFocus::Tree {
-            CATEGORY_MANAGER_PANE_FOCUS
+            COLOR_FOCUS
         } else {
             pane_idle
         };
         let filter_border = if self.category_manager_filter_editing() {
-            CATEGORY_MANAGER_TEXT_ENTRY
+            COLOR_SPECIAL_MODE
         } else if manager_focus == CategoryManagerFocus::Filter {
-            CATEGORY_MANAGER_PANE_FOCUS
+            COLOR_FOCUS
         } else {
             pane_idle
         };
         let details_border = if manager_focus == CategoryManagerFocus::Details {
-            CATEGORY_MANAGER_PANE_FOCUS
+            COLOR_FOCUS
         } else {
             pane_idle
         };
@@ -4847,7 +4824,7 @@ impl App {
                         });
                     let decimal_style = if integer_mode {
                         Style::default()
-                            .fg(MUTED_TEXT_COLOR)
+                            .fg(COLOR_TEXT_MUTED)
                             .add_modifier(Modifier::DIM)
                     } else if decimal_focused {
                         focused_cell_style()
@@ -4931,21 +4908,21 @@ impl App {
                     if is_ready_queue_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Ready Queue",
-                            Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
+                            Style::default().fg(COLOR_FOCUS),
                         )));
                         lines.push(Line::from(Span::styled(
                             "  (items need this to be claimable)",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )));
                     }
                     if is_claim_target_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Claim Result",
-                            Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
+                            Style::default().fg(COLOR_FOCUS),
                         )));
                         lines.push(Line::from(Span::styled(
                             "  (assigned by the CLI claim workflow)",
-                            Style::default().fg(MUTED_TEXT_COLOR),
+                            Style::default().fg(COLOR_TEXT_MUTED),
                         )));
                     }
                     lines
@@ -4965,7 +4942,7 @@ impl App {
                             .title(flags_title)
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(if flags_border_focused {
-                                CATEGORY_MANAGER_EDIT_FOCUS
+                                COLOR_EDIT_BG
                             } else {
                                 pane_idle
                             })),
@@ -4988,16 +4965,10 @@ impl App {
                         let mut also_match_widget = state.details_also_match.widget().clone();
                         also_match_widget.set_placeholder_text(ALSO_MATCH_PLACEHOLDER_TEXT);
                         also_match_widget
-                            .set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+                            .set_placeholder_style(Style::default().fg(COLOR_TEXT_MUTED));
                         if also_match_editing {
-                            also_match_widget
-                                .set_cursor_line_style(Style::default().bg(Color::DarkGray));
-                            also_match_widget.set_cursor_style(
-                                Style::default()
-                                    .fg(Color::Black)
-                                    .bg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            );
+                            also_match_widget.set_cursor_line_style(style_edit_area());
+                            also_match_widget.set_cursor_style(style_cell_cursor());
                         }
                         also_match_widget.set_block(
                             Block::default()
@@ -5008,9 +4979,9 @@ impl App {
                                 })
                                 .borders(Borders::ALL)
                                 .border_style(Style::default().fg(if also_match_editing {
-                                    CATEGORY_MANAGER_EDIT_FOCUS
+                                    COLOR_EDIT_BG
                                 } else if also_match_block_focus {
-                                    CATEGORY_MANAGER_PANE_FOCUS
+                                    COLOR_FOCUS
                                 } else {
                                     pane_idle
                                 })),
@@ -5041,15 +5012,10 @@ impl App {
                 if let Some(state) = self.category_manager.as_ref() {
                     let mut note_widget = state.details_note.widget().clone();
                     note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
-                    note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+                    note_widget.set_placeholder_style(Style::default().fg(COLOR_TEXT_MUTED));
                     if note_editing {
-                        note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
-                        note_widget.set_cursor_style(
-                            Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        );
+                        note_widget.set_cursor_line_style(style_edit_area());
+                        note_widget.set_cursor_style(style_cell_cursor());
                     }
                     note_widget.set_block(
                         Block::default()
@@ -5060,9 +5026,9 @@ impl App {
                             })
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(if note_editing {
-                                CATEGORY_MANAGER_EDIT_FOCUS
+                                COLOR_EDIT_BG
                             } else if note_block_focus {
-                                CATEGORY_MANAGER_PANE_FOCUS
+                                COLOR_FOCUS
                             } else {
                                 pane_idle
                             })),
@@ -5169,7 +5135,7 @@ impl App {
                     Block::default()
                         .title(" Confirm ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                        .border_style(Style::default().fg(COLOR_EDIT_BG)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
@@ -5211,16 +5177,16 @@ impl App {
                 Paragraph::new(vec![
                     Line::from(Span::styled(
                         "This config enables the CLI claim workflow.",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         "Pick two categories used by agenda-cli claim:",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Ready Queue    items eligible to be claimed",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         format!("{}Ready Queue:   {}", indicator(0), ready_name),
@@ -5229,7 +5195,7 @@ impl App {
                     Line::from(""),
                     Line::from(Span::styled(
                         "Claim Result   category applied after claim",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         format!("{}Claim Result:  {}", indicator(1), claim_name),
@@ -5238,11 +5204,11 @@ impl App {
                     Line::from(""),
                     Line::from(Span::styled(
                         "Press Enter to choose a category for the",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         "highlighted role from a category picker.",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(""),
                     Line::from("j/k:role  Enter:choose  x:clear  Esc:close"),
@@ -5251,7 +5217,7 @@ impl App {
                     Block::default()
                         .title(" Workflow Setup ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        .border_style(Style::default().fg(COLOR_FOCUS)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
@@ -5298,23 +5264,23 @@ impl App {
                 Paragraph::new(vec![
                     Line::from(Span::styled(
                         format!("Choose the category used as {role_label}."),
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         format!("Current: {current_name}"),
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Only normal tag categories can be used here.",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                 ])
                 .block(
                     Block::default()
                         .title(format!(" Pick {role_label} "))
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        .border_style(Style::default().fg(COLOR_FOCUS)),
                 )
                 .wrap(Wrap { trim: false }),
                 chunks[0],
@@ -5323,7 +5289,7 @@ impl App {
             let items: Vec<ListItem<'_>> = if row_indices.is_empty() {
                 vec![ListItem::new(Line::from(Span::styled(
                     "(no eligible categories)",
-                    Style::default().fg(MUTED_TEXT_COLOR),
+                    Style::default().fg(COLOR_TEXT_MUTED),
                 )))]
             } else {
                 row_indices
@@ -5371,7 +5337,7 @@ impl App {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                            .border_style(Style::default().fg(COLOR_EDIT_BG)),
                     ),
                 chunks[1],
                 &mut state,
@@ -5381,7 +5347,7 @@ impl App {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     "j/k:select  Enter:assign  Esc:back",
-                    Style::default().fg(MUTED_TEXT_COLOR),
+                    Style::default().fg(COLOR_TEXT_MUTED),
                 ))),
                 chunks[2],
             );
@@ -5410,16 +5376,16 @@ impl App {
                 Paragraph::new(vec![
                     Line::from(Span::styled(
                         "How should categories be assigned to",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         "new or edited items?",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
                         format!("Current: {current_mode}"),
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(Span::styled(
                         format!("{}Off             no auto-classification", indicator(0)),
@@ -5439,19 +5405,19 @@ impl App {
                     Line::from(""),
                     Line::from(Span::styled(
                         "Classification runs when you save an item or change categories.",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
                         "j/k:select  Enter:apply  Esc:close",
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     )),
                 ])
                 .block(
                     Block::default()
                         .title(" Classification Mode ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        .border_style(Style::default().fg(COLOR_FOCUS)),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
@@ -5498,8 +5464,8 @@ impl App {
             (panes[1], None)
         };
 
-        let focused_border = Color::Cyan;
-        let inactive_border = Color::Blue;
+        let focused_border = COLOR_FOCUS;
+        let inactive_border = COLOR_IDLE;
 
         let category_names = category_name_map(&self.categories);
 
@@ -5578,7 +5544,7 @@ impl App {
                     SectionFlow::Horizontal => "horizontal (kanban lanes)",
                 };
 
-                let separator_style = Style::default().fg(Color::DarkGray);
+                let separator_style = style_text_muted();
                 let pad = 26; // column alignment width
 
                 // Helper: style + track selected_line for unmatched-region fields
@@ -5786,7 +5752,7 @@ impl App {
                 for (cat_name, alias) in &configured_aliases {
                     items.push(ListItem::new(Line::from(Span::styled(
                         format!("      {} \u{2192} {}", cat_name, alias),
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        Style::default().fg(COLOR_TEXT_MUTED),
                     ))));
                 }
 
@@ -5868,7 +5834,7 @@ impl App {
                     section.title.clone()
                 };
 
-                let separator_style = Style::default().fg(Color::DarkGray);
+                let separator_style = style_text_muted();
                 let pad = 26; // column alignment width
 
                 // Helper: style + track selected_line for a given field index
@@ -6445,7 +6411,7 @@ impl App {
                     let block = Block::default()
                         .title(title)
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow));
+                        .border_style(style_focus_border());
                     let mut list_state = Self::list_state_for(
                         overlay_area,
                         if filtered_indices.is_empty() {
@@ -6478,7 +6444,7 @@ impl App {
                     let block = Block::default()
                         .title(" Pick bucket ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow));
+                        .border_style(style_focus_border());
                     let mut list_state =
                         Self::list_state_for(overlay_area, Some(state.picker_index));
                     frame.render_stateful_widget(
@@ -6508,7 +6474,7 @@ impl App {
                     Block::default()
                         .title(" Confirm ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
+                        .border_style(style_focus_border()),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,
@@ -6539,7 +6505,7 @@ impl App {
                     Block::default()
                         .title(" Confirm Delete ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
+                        .border_style(style_focus_border()),
                 )
                 .wrap(Wrap { trim: false }),
                 overlay_area,

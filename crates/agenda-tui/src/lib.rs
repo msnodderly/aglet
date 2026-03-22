@@ -44,6 +44,7 @@ mod input_panel;
 mod modes;
 mod render;
 mod text_buffer;
+pub(crate) mod theme;
 mod ui_support;
 
 pub use error::{TuiError, TuiResult};

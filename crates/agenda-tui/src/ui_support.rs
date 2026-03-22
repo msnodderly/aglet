@@ -1,4 +1,5 @@
 use super::*;
+use crate::theme::*;
 
 pub(super) fn next_index(current: usize, len: usize, delta: i32) -> usize {
     if len == 0 {
@@ -761,24 +762,21 @@ pub(super) fn truncate_board_cell(text: &str, width: usize) -> String {
 }
 
 pub(super) fn selected_row_style() -> Style {
-    Style::default().fg(Color::Black).bg(Color::Cyan)
+    style_selected_row()
 }
 
 pub(super) fn selected_board_row_style() -> Style {
-    Style::default().bg(Color::DarkGray)
+    style_cursor_row()
 }
 
 pub(super) fn marked_board_row_style() -> Style {
     Style::default()
         .fg(Color::White)
-        .bg(Color::Rgb(40, 70, 120))
+        .bg(COLOR_MARKED_BG)
 }
 
 pub(super) fn focused_cell_style() -> Style {
-    Style::default()
-        .fg(Color::Black)
-        .bg(Color::Yellow)
-        .add_modifier(Modifier::BOLD)
+    style_cell_cursor()
 }
 
 pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRow> {
