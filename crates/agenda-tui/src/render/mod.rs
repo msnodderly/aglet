@@ -3406,13 +3406,13 @@ impl App {
                         ("Esc", "close"),
                     ]
                 } else if self.category_manager_details_note_editing() {
-                    vec![("Tab", "leave note"), ("Esc", "discard")]
+                    vec![("Tab", "next section"), ("Esc", "stop edit")]
                 } else if self.category_manager_details_also_match_editing() {
                     vec![
                         ("Type", "edit"),
                         ("Enter", "newline"),
-                        ("Tab", "leave"),
-                        ("Esc", "discard"),
+                        ("Tab", "next section"),
+                        ("Esc", "stop edit"),
                     ]
                 } else if let Some(action) = self.category_manager_inline_action() {
                     match action {
@@ -3429,15 +3429,15 @@ impl App {
                     vec![
                         ("Type", "filter"),
                         ("Esc", "clear"),
-                        ("Tab", "next"),
+                        ("Tab", "tree"),
                         ("Enter", "details"),
                     ]
                 } else if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
                     vec![
                         ("j/k", "field"),
-                        ("Enter/Space", "toggle"),
-                        ("S", "save"),
-                        ("Tab", "pane"),
+                        ("Enter", "apply+back"),
+                        ("Space", "toggle"),
+                        ("Tab", "section"),
                         ("Esc", "close"),
                     ]
                 } else {
@@ -5091,9 +5091,9 @@ impl App {
                 }
 
                 let details_hint = if note_editing {
-                    "Type to edit  Esc:discard  Tab:leave (warn if unsaved)"
+                    "Type to edit  Esc:stop editing  Tab:leave (warn if unsaved)"
                 } else if also_match_editing {
-                    "Type terms line-by-line  Enter:new line  Esc:discard  Tab:leave"
+                    "Type terms line-by-line  Enter:new line  Esc:stop editing  Tab:leave"
                 } else {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive => {

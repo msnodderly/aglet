@@ -7681,7 +7681,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_tab_cycles_tree_details_and_filter() {
+    fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7700,19 +7700,56 @@ mod tests {
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Details)
         );
-
-        app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to filter");
         assert_eq!(
-            app.category_manager_focus(),
-            Some(CategoryManagerFocus::Filter)
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Exclusive)
         );
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to tree");
+            .expect("tab to also-match");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::AlsoMatch)
+        );
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to note");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Note)
+        );
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab wraps to flags");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Exclusive)
+        );
+
+        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
+            .expect("shift-tab returns to tree");
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Tree)
+        );
+
+        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
+            .expect("shift-tab reaches filter");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Filter)
         );
     }
 
@@ -10368,7 +10405,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_also_match_esc_discards_changes() {
+    fn category_manager_details_also_match_esc_keeps_unsaved_draft() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10398,13 +10435,14 @@ mod tests {
         assert!(app.category_manager_details_also_match_dirty());
 
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("discard also-match edit");
+            .expect("leave also-match edit");
         assert!(!app.category_manager_details_also_match_editing());
-        assert!(!app.category_manager_details_also_match_dirty());
+        assert!(app.category_manager_details_also_match_dirty());
         assert_eq!(
             app.category_manager_details_also_match_text(),
-            Some("phone")
+            Some("phoned")
         );
+        assert!(app.status.contains("retained"));
 
         let saved = store.get_category(category.id).expect("load category");
         assert_eq!(saved.also_match, vec!["phone".to_string()]);
@@ -10453,14 +10491,18 @@ mod tests {
             .expect("leave details pane");
         assert_eq!(
             app.category_manager_focus(),
-            Some(CategoryManagerFocus::Filter)
+            Some(CategoryManagerFocus::Details)
         );
         assert!(!app.category_manager_details_also_match_editing());
         assert_eq!(app.category_manager_details_also_match_text(), Some("dial"));
         assert!(app.category_manager_details_also_match_dirty());
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Note)
+        );
 
         app.handle_category_manager_key(KeyCode::BackTab, &agenda)
-            .expect("return to details");
+            .expect("return to also-match");
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Details)
@@ -10527,7 +10569,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_note_edit_esc_discards_changes() {
+    fn category_manager_details_note_edit_esc_keeps_unsaved_draft() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10557,15 +10599,73 @@ mod tests {
         assert!(app.category_manager_details_note_dirty());
 
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("esc discards note edit");
+            .expect("esc leaves note edit");
 
-        // Esc should discard, not save
+        // Esc should keep the draft and leave edit mode.
         let loaded = store.get_category(category.id).expect("load category");
         assert_eq!(loaded.note.as_deref(), Some("seed"));
-        assert_eq!(app.category_manager_details_note_text(), Some("seed"));
+        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
         assert!(!app.category_manager_details_note_editing());
-        assert!(!app.category_manager_details_note_dirty());
-        assert!(app.status.contains("discarded"));
+        assert!(app.category_manager_details_note_dirty());
+        assert!(app.status.contains("retained"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_dirty_note_is_discarded_only_via_close_prompt() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-note-discard-via-prompt-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Work".to_string());
+        category.note = Some("seed".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("leave note edit but keep draft");
+
+        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        assert!(
+            app.category_manager
+                .as_ref()
+                .expect("manager state")
+                .discard_confirm
+        );
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("discard and close");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+        assert_eq!(
+            store.get_category(category.id).expect("load category").note,
+            Some("seed".to_string())
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -10817,6 +10917,44 @@ mod tests {
         assert_eq!(loaded.match_category_name, !initial.match_category_name);
         assert_eq!(loaded.is_actionable, !initial.is_actionable);
         assert_eq!(app.mode, Mode::CategoryManager);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_enter_on_flag_toggles_and_returns_to_tree() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-enter-returns-to-tree-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AutoMatch);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle auto-match and leave details");
+
+        let loaded = store.get_category(category.id).expect("load category");
+        assert!(!loaded.enable_implicit_string);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -11427,7 +11565,13 @@ mod tests {
             .expect("toggle integer on");
         let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
         assert_eq!(fmt.decimal_places, 0);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
 
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("toggle integer off");
         let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
