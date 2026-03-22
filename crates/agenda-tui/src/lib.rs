@@ -17,14 +17,14 @@ use agenda_core::model::{
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
 use agenda_core::workflow::WorkflowConfig;
-use jiff::civil::{Date, DateTime};
-use jiff::Timestamp;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use jiff::civil::{Date, DateTime};
+use jiff::Timestamp;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -483,6 +483,7 @@ enum CategoryManagerDetailsFocus {
     Exclusive,
     MatchName,
     Actionable,
+    AlsoMatch,
     Integer,
     DecimalPlaces,
     CurrencySymbol,
@@ -511,7 +512,8 @@ impl CategoryManagerDetailsFocus {
             match self {
                 Self::Exclusive => Self::MatchName,
                 Self::MatchName => Self::Actionable,
-                Self::Actionable => Self::Note,
+                Self::Actionable => Self::AlsoMatch,
+                Self::AlsoMatch => Self::Note,
                 Self::Note => Self::Exclusive,
                 _ => Self::Exclusive,
             }
@@ -539,7 +541,8 @@ impl CategoryManagerDetailsFocus {
                 Self::Exclusive => Self::Note,
                 Self::MatchName => Self::Exclusive,
                 Self::Actionable => Self::MatchName,
-                Self::Note => Self::Actionable,
+                Self::AlsoMatch => Self::Actionable,
+                Self::Note => Self::AlsoMatch,
                 _ => Self::Actionable,
             }
         }
@@ -583,6 +586,10 @@ struct CategoryManagerState {
     details_note: text_buffer::TextBuffer,
     details_note_dirty: bool,
     details_note_editing: bool,
+    details_also_match_category_id: Option<CategoryId>,
+    details_also_match: text_buffer::TextBuffer,
+    details_also_match_dirty: bool,
+    details_also_match_editing: bool,
     details_inline_input: Option<CategoryManagerDetailsInlineInput>,
     tree_index: usize,
     visible_row_indices: Vec<usize>,
@@ -1461,8 +1468,8 @@ mod tests {
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, Mode,
-        NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, Mode, NameInputContext,
+        SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{ClassificationConfig, ContinuousMode};
@@ -1473,8 +1480,8 @@ mod tests {
         NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
     };
     use agenda_core::store::Store;
-    use jiff::civil::Date;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use jiff::civil::Date;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::Terminal;
@@ -3383,11 +3390,7 @@ mod tests {
         let loaded = store.get_item(item_id).expect("load item");
         assert_eq!(
             loaded.when_date,
-            Some(
-                Date::new(2026, 3, 7)
-                    .expect("date")
-                    .at(14, 25, 0, 0)
-            )
+            Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 0, 0))
         );
         let assignments = store
             .get_assignments_for_item(item_id)
@@ -3427,11 +3430,7 @@ mod tests {
         let loaded = store.get_item(item_id).expect("load item");
         assert_eq!(
             loaded.when_date,
-            Some(
-                Date::new(2026, 3, 7)
-                    .expect("date")
-                    .at(14, 25, 59, 0)
-            )
+            Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 59, 0))
         );
 
         let _ = std::fs::remove_file(&db_path);
@@ -3544,11 +3543,7 @@ mod tests {
         agenda
             .set_item_when_date(
                 item_id,
-                Some(
-                    Date::new(2026, 3, 7)
-                        .expect("date")
-                        .at(14, 25, 0, 0),
-                ),
+                Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 0, 0)),
                 Some("manual:test-setup".to_string()),
             )
             .expect("seed when date");
@@ -4921,9 +4916,7 @@ mod tests {
 
     #[test]
     fn add_capture_status_message_includes_parsed_datetime_when_present() {
-        let when = Date::new(2026, 2, 24)
-            .expect("valid date")
-            .at(15, 0, 0, 0);
+        let when = Date::new(2026, 2, 24).expect("valid date").at(15, 0, 0, 0);
 
         assert_eq!(
             add_capture_status_message(Some(when), &[]),
@@ -10311,6 +10304,171 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_details_also_match_save_persists_one_entry_per_line() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-also-match-save-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Phone Calls".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+
+        for code in [
+            KeyCode::Char('d'),
+            KeyCode::Char('i'),
+            KeyCode::Char('a'),
+            KeyCode::Char('l'),
+            KeyCode::Enter,
+            KeyCode::Char('r'),
+            KeyCode::Char('i'),
+            KeyCode::Char('n'),
+            KeyCode::Char('g'),
+        ] {
+            app.handle_category_manager_key(code, &agenda)
+                .expect("edit also-match");
+        }
+        assert!(app.category_manager_details_also_match_editing());
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave also-match edit");
+        assert!(!app.category_manager_details_also_match_editing());
+
+        app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
+            .expect("save also-match");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(
+            saved.also_match,
+            vec!["dial".to_string(), "ring".to_string()]
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_details_also_match_esc_discards_changes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-also-match-esc-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Phone Calls".to_string());
+        category.also_match = vec!["phone".to_string()];
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+
+        app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+            .expect("start also-match edit");
+        assert!(app.category_manager_details_also_match_editing());
+        assert!(app.category_manager_details_also_match_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("discard also-match edit");
+        assert!(!app.category_manager_details_also_match_editing());
+        assert!(!app.category_manager_details_also_match_dirty());
+        assert_eq!(
+            app.category_manager_details_also_match_text(),
+            Some("phone")
+        );
+
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.also_match, vec!["phone".to_string()]);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_details_also_match_tab_away_preserves_unsaved_text() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-details-also-match-preserve-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Phone Calls".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+
+        for code in [
+            KeyCode::Char('d'),
+            KeyCode::Char('i'),
+            KeyCode::Char('a'),
+            KeyCode::Char('l'),
+        ] {
+            app.handle_category_manager_key(code, &agenda)
+                .expect("edit also-match");
+        }
+        assert!(app.category_manager_details_also_match_editing());
+        assert!(app.category_manager_details_also_match_dirty());
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("leave details pane");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Filter)
+        );
+        assert!(!app.category_manager_details_also_match_editing());
+        assert_eq!(app.category_manager_details_also_match_text(), Some("dial"));
+        assert!(app.category_manager_details_also_match_dirty());
+
+        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
+            .expect("return to details");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::AlsoMatch)
+        );
+        assert_eq!(app.category_manager_details_also_match_text(), Some("dial"));
+        assert!(app.category_manager_details_also_match_dirty());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -12583,11 +12741,7 @@ mod tests {
         agenda
             .set_item_when_date(
                 item.id,
-                Some(
-                    Date::new(2026, 3, 7)
-                        .expect("date")
-                        .at(14, 25, 0, 0),
-                ),
+                Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 0, 0)),
                 Some("test:when".to_string()),
             )
             .expect("set when");
@@ -12742,11 +12896,7 @@ mod tests {
         agenda
             .set_item_when_date(
                 item.id,
-                Some(
-                    Date::new(2026, 3, 7)
-                        .expect("date")
-                        .at(14, 25, 0, 0),
-                ),
+                Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 0, 0)),
                 Some("test:when".to_string()),
             )
             .expect("set when");
@@ -12804,11 +12954,7 @@ mod tests {
         agenda
             .set_item_when_date(
                 item.id,
-                Some(
-                    Date::new(2026, 3, 7)
-                        .expect("date")
-                        .at(14, 25, 0, 0),
-                ),
+                Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 0, 0)),
                 Some("test:when".to_string()),
             )
             .expect("set when");
@@ -17347,9 +17493,7 @@ mod tests {
             show_children: false,
             board_display_mode_override: None,
         };
-        section
-            .criteria
-            .set_criterion(CriterionMode::And, ready.id);
+        section.criteria.set_criterion(CriterionMode::And, ready.id);
         view.sections.push(section);
         store.create_view(&view).expect("create view");
 

@@ -275,7 +275,9 @@ fn evaluate_category_match(
 ) -> Option<MatchReason> {
     if enable_implicit_string
         && category.enable_implicit_string
-        && classifier.classify(item_text, &category.name).is_some()
+        && classifier
+            .classify(item_text, &category.name, &category.also_match)
+            .is_some()
     {
         return Some(MatchReason::ImplicitString);
     }
@@ -932,8 +934,8 @@ mod tests {
             options: ProcessOptions::default(),
         };
 
-        let pass_result = run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs)
-            .unwrap();
+        let pass_result =
+            run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs).unwrap();
 
         assert!(pass_result.new_assignments.contains(&alpha.id));
         assert!(!pass_result.new_assignments.contains(&projects.id));

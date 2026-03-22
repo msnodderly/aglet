@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::dates::{BasicDateParser, DateParser};
 use crate::error::Result;
-use crate::matcher::Classifier;
+use crate::matcher::{Classifier, ImplicitMatchSource};
 use crate::model::{
     AssignmentSource, CategoryId, CategoryValueKind, Item, ItemId, RESERVED_CATEGORY_NAMES,
 };
@@ -78,6 +78,7 @@ pub enum ProviderMode {
 pub struct CategoryDescriptor {
     pub id: CategoryId,
     pub name: String,
+    pub also_match: Vec<String>,
     pub parent_id: Option<CategoryId>,
     pub value_kind: CategoryValueKind,
 }
@@ -236,20 +237,27 @@ impl ClassificationProvider for ImplicitStringProvider<'_> {
         let match_text = request.match_text();
         let mut out = Vec::new();
         for category in &request.candidate_categories {
-            if self
-                .classifier
-                .classify(&match_text, &category.name)
-                .is_none()
-            {
+            let Some(matched) =
+                self.classifier
+                    .classify(&match_text, &category.name, &category.also_match)
+            else {
                 continue;
-            }
+            };
+            let rationale = match matched.source {
+                ImplicitMatchSource::CategoryName => {
+                    format!("matched category name '{}'", matched.matched_term)
+                }
+                ImplicitMatchSource::AlsoMatch => {
+                    format!("matched also-match term '{}'", matched.matched_term)
+                }
+            };
             out.push(ClassificationCandidate {
                 item_id: request.item_id,
                 assignment: CandidateAssignment::Category(category.id),
                 provider: self.id().to_string(),
                 model: None,
                 confidence: Some(1.0),
-                rationale: Some(format!("matched category name '{}'", category.name)),
+                rationale: Some(rationale),
                 context_hash: "request:v1".to_string(),
             });
         }
@@ -366,6 +374,7 @@ impl<'a> ClassificationService<'a> {
             .map(|category| CategoryDescriptor {
                 id: category.id,
                 name: category.name,
+                also_match: category.also_match,
                 parent_id: category.parent,
                 value_kind: category.value_kind,
             })

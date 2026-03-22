@@ -6,6 +6,7 @@ const CATEGORY_MANAGER_PANE_FOCUS: Color = Color::LightCyan;
 const CATEGORY_MANAGER_TEXT_ENTRY: Color = Color::LightMagenta;
 const CATEGORY_MANAGER_EDIT_FOCUS: Color = Color::Yellow;
 const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
+const ALSO_MATCH_PLACEHOLDER_TEXT: &str = "One term or phrase per line...";
 const FOOTER_HEIGHT: u16 = 4;
 const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
 const CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC: u16 = 6;
@@ -3039,16 +3040,12 @@ impl App {
                     Line::from(vec![
                         Span::styled(prefix, style),
                         Span::styled(&*item.item_text, style),
-                        Span::styled(
-                            format!("  ({count})"),
-                            Style::default().fg(Color::Yellow),
-                        ),
+                        Span::styled(format!("  ({count})"), Style::default().fg(Color::Yellow)),
                     ])
                 }
             })
             .collect();
-        let item_scroll =
-            list_scroll_for_selected_line(items_inner, Some(state.item_index));
+        let item_scroll = list_scroll_for_selected_line(items_inner, Some(state.item_index));
         frame.render_widget(
             Paragraph::new(item_lines).scroll((item_scroll, 0)),
             items_inner,
@@ -3153,24 +3150,16 @@ impl App {
                             Span::styled("> ", sel),
                             Span::styled(marker, sel_marker),
                             Span::styled(" ", sel),
-                            Span::styled(
-                                category_name,
-                                sel.add_modifier(Modifier::BOLD),
-                            ),
+                            Span::styled(category_name, sel.add_modifier(Modifier::BOLD)),
                             Span::styled(
                                 format!("  ({rationale})"),
-                                Style::default()
-                                    .fg(Color::DarkGray)
-                                    .bg(Color::Cyan),
+                                Style::default().fg(Color::DarkGray).bg(Color::Cyan),
                             ),
                         ])
                     } else {
                         Line::from(vec![
                             Span::raw("  "),
-                            Span::styled(
-                                marker,
-                                Style::default().fg(marker_color),
-                            ),
+                            Span::styled(marker, Style::default().fg(marker_color)),
                             Span::raw(" "),
                             Span::styled(
                                 category_name,
@@ -3965,46 +3954,29 @@ impl App {
             let suggestion_len = panel.pending_suggestions.len();
             if suggestion_len > 0 {
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        "─── Suggested ",
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::styled(
-                        "(Space: toggle) ",
-                        Style::default().fg(Color::Gray),
-                    ),
-                    Span::styled(
-                        "───",
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled("─── Suggested ", Style::default().fg(Color::Yellow)),
+                    Span::styled("(Space: toggle) ", Style::default().fg(Color::Gray)),
+                    Span::styled("───", Style::default().fg(Color::Yellow)),
                 ]));
                 let suggestion_cat_names = category_name_map(&self.categories);
-                for (si, (suggestion, decision)) in
-                    panel.pending_suggestions.iter().enumerate()
-                {
+                for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate() {
                     let is_cursor = cat_focused && panel.category_cursor == si;
                     let marker = decision.marker();
                     let marker_style = match decision {
-                        SuggestionDecision::Pending => {
-                            Style::default().fg(Color::Yellow)
-                        }
-                        SuggestionDecision::Accept => {
-                            Style::default().fg(Color::LightGreen)
-                        }
-                        SuggestionDecision::Reject => {
-                            Style::default().fg(Color::LightRed)
-                        }
+                        SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
+                        SuggestionDecision::Accept => Style::default().fg(Color::LightGreen),
+                        SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
                     };
                     let marker_style = if is_cursor {
-                        marker_style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                        marker_style
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         marker_style
                     };
-                    let cat_name = candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
-                    let rationale = suggestion
-                        .rationale
-                        .as_deref()
-                        .unwrap_or("text match");
+                    let cat_name =
+                        candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
+                    let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
                     let base_style = if is_cursor {
                         Style::default().fg(Color::White).bg(Color::DarkGray)
                     } else {
@@ -4047,7 +4019,8 @@ impl App {
                         let is_assigned = panel.categories.contains(&row.id);
                         let is_numeric =
                             row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
-                        let is_cursor = cat_focused && (i + suggestion_len) == panel.category_cursor;
+                        let is_cursor =
+                            cat_focused && (i + suggestion_len) == panel.category_cursor;
 
                         let check = if is_assigned && is_numeric {
                             "[#] "
@@ -4143,8 +4116,7 @@ impl App {
             } else {
                 panel.category_cursor
             };
-            let cat_scroll =
-                list_scroll_for_selected_line(cat_list_rect, Some(visual_cursor));
+            let cat_scroll = list_scroll_for_selected_line(cat_list_rect, Some(visual_cursor));
             let item_count = lines.len();
 
             if cat_list_rect.width > 0 && cat_list_rect.height > 0 {
@@ -4681,6 +4653,8 @@ impl App {
                     .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
                 let note_editing = self.category_manager_details_note_editing();
                 let note_dirty = self.category_manager_details_note_dirty();
+                let also_match_editing = self.category_manager_details_also_match_editing();
+                let also_match_dirty = self.category_manager_details_also_match_dirty();
 
                 let mut parent_name = "(root)".to_string();
                 let mut child_count = 0usize;
@@ -4723,15 +4697,30 @@ impl App {
                 } else {
                     5 + workflow_role_height
                 };
-                let details_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(info_height),
-                        Constraint::Length(flags_height),
-                        Constraint::Min(5),
-                        Constraint::Length(2),
-                    ])
-                    .split(details_inner);
+                let details_chunks = if is_numeric_category {
+                    Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(info_height),
+                            Constraint::Length(flags_height),
+                            Constraint::Min(5),
+                            Constraint::Length(2),
+                        ])
+                        .split(details_inner)
+                } else {
+                    Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(info_height),
+                            Constraint::Length(flags_height),
+                            Constraint::Length(6),
+                            Constraint::Min(5),
+                            Constraint::Length(2),
+                        ])
+                        .split(details_inner)
+                };
+                let note_chunk_index = if is_numeric_category { 2 } else { 3 };
+                let hint_chunk_index = if is_numeric_category { 3 } else { 4 };
 
                 let assigned_item_count = self
                     .category_assignment_counts
@@ -4917,8 +4906,10 @@ impl App {
                 } else {
                     "Flags"
                 };
-                let flags_border_focused =
-                    !matches!(details_focus, CategoryManagerDetailsFocus::Note);
+                let flags_border_focused = !matches!(
+                    details_focus,
+                    CategoryManagerDetailsFocus::Note | CategoryManagerDetailsFocus::AlsoMatch
+                );
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
@@ -4933,6 +4924,62 @@ impl App {
                     details_chunks[1],
                 );
 
+                if !is_numeric_category {
+                    let also_match_block_focus =
+                        details_focus == CategoryManagerDetailsFocus::AlsoMatch;
+                    let also_match_title = if also_match_editing {
+                        "Also Match (editing)"
+                    } else if also_match_dirty {
+                        "Also Match (unsaved)"
+                    } else {
+                        "Also Match"
+                    };
+                    let also_match_rect = details_chunks[2];
+                    if let Some(state) = self.category_manager.as_ref() {
+                        let mut also_match_widget = state.details_also_match.widget().clone();
+                        also_match_widget.set_placeholder_text(ALSO_MATCH_PLACEHOLDER_TEXT);
+                        also_match_widget
+                            .set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+                        if also_match_editing {
+                            also_match_widget
+                                .set_cursor_line_style(Style::default().bg(Color::DarkGray));
+                            also_match_widget.set_cursor_style(
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            );
+                        }
+                        also_match_widget.set_block(
+                            Block::default()
+                                .title(if also_match_block_focus {
+                                    format!("> {also_match_title}")
+                                } else {
+                                    also_match_title.to_string()
+                                })
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(if also_match_editing {
+                                    CATEGORY_MANAGER_EDIT_FOCUS
+                                } else if also_match_block_focus {
+                                    CATEGORY_MANAGER_PANE_FOCUS
+                                } else {
+                                    pane_idle
+                                })),
+                        );
+                        frame.render_widget(&also_match_widget, also_match_rect);
+                        let also_match_scroll = list_scroll_for_selected_line(
+                            also_match_rect,
+                            Some(state.details_also_match.line_col().0),
+                        );
+                        Self::render_vertical_scrollbar(
+                            frame,
+                            also_match_rect,
+                            state.details_also_match.text().lines().count().max(1),
+                            also_match_scroll as usize,
+                        );
+                    }
+                }
+
                 let note_block_focus = details_focus == CategoryManagerDetailsFocus::Note;
                 let note_title = if note_editing {
                     "Note (editing)"
@@ -4941,7 +4988,7 @@ impl App {
                 } else {
                     "Note"
                 };
-                let note_rect = details_chunks[2];
+                let note_rect = details_chunks[note_chunk_index];
                 if let Some(state) = self.category_manager.as_ref() {
                     let mut note_widget = state.details_note.widget().clone();
                     note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
@@ -4996,6 +5043,8 @@ impl App {
 
                 let details_hint = if note_editing {
                     "Type to edit  Esc:discard  Tab:leave (warn if unsaved)"
+                } else if also_match_editing {
+                    "Type terms line-by-line  Enter:new line  Esc:discard  Tab:leave"
                 } else {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive => {
@@ -5006,6 +5055,9 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
+                        }
+                        CategoryManagerDetailsFocus::AlsoMatch => {
+                            "Enter/Space: edit also-match terms  One term or phrase per line"
                         }
                         CategoryManagerDetailsFocus::Integer => {
                             "Enter/Space: toggle Integer mode (on sets 0dp, off restores 2dp)"
@@ -5028,7 +5080,10 @@ impl App {
                         }
                     }
                 };
-                frame.render_widget(Paragraph::new(details_hint), details_chunks[3]);
+                frame.render_widget(
+                    Paragraph::new(details_hint),
+                    details_chunks[hint_chunk_index],
+                );
                 if let Some((x, y)) = self.category_manager_details_cursor_position(body[1]) {
                     frame.set_cursor_position((x, y));
                 }
