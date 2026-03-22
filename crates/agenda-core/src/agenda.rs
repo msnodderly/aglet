@@ -9,7 +9,7 @@ use crate::classification::{
     ContinuousMode, ImplicitStringProvider, SuggestionStatus, WhenParserProvider,
     PROVIDER_ID_WHEN_PARSER,
 };
-use crate::dates::{BasicDateParser, DateParser};
+use crate::dates::BasicDateParser;
 use crate::engine::{
     evaluate_all_items_with_options, process_item_with_options, EvaluateAllItemsResult,
     ProcessItemResult, ProcessOptions,
@@ -1060,17 +1060,6 @@ impl<'a> Agenda<'a> {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn parse_datetime_from_text(
-        &self,
-        text: &str,
-        reference_date: jiff::civil::Date,
-    ) -> Option<jiff::civil::DateTime> {
-        self.date_parser
-            .parse(text, reference_date)
-            .map(|parsed| parsed.datetime)
-    }
-
     fn sync_when_assignment(
         &self,
         item_id: ItemId,
@@ -1105,10 +1094,10 @@ impl<'a> Agenda<'a> {
 
     fn default_when_assignment() -> Assignment {
         Assignment {
-            source: AssignmentSource::Manual,
+            source: AssignmentSource::AutoClassified,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: Some(origin_const::MANUAL_WHEN.to_string()),
+            origin: Some(origin_const::NLP_DATE.to_string()),
             numeric_value: None,
         }
     }

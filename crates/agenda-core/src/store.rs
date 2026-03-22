@@ -1198,7 +1198,15 @@ impl Store {
         for row in rows {
             let (cat_str, source_str, assigned_str, sticky_int, origin, numeric_value_str) = row?;
             let cat_id = Uuid::parse_str(&cat_str).unwrap_or_default();
-            let source = assignment_source_from_db(&source_str);
+            let source = match source_str.as_str() {
+                "Manual" => AssignmentSource::Manual,
+                "AutoMatch" => AssignmentSource::AutoMatch,
+                "AutoClassified" => AssignmentSource::AutoClassified,
+                "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
+                "Action" => AssignmentSource::Action,
+                "Subsumption" => AssignmentSource::Subsumption,
+                _ => AssignmentSource::Manual,
+            };
             let assigned_at = assigned_str.parse::<Timestamp>().unwrap_or_default();
             let numeric_value = numeric_value_str.and_then(|s| s.parse::<Decimal>().ok());
             item.assignments.insert(
@@ -1235,12 +1243,16 @@ impl Store {
             ),
             "when" => CandidateAssignment::When(
                 when_value
-                    .and_then(|value| {
-                        value.replace(' ', "T").parse::<jiff::civil::DateTime>().ok()
-                    })
-                    .unwrap_or_default(),
+                    .and_then(|value| value.parse::<jiff::civil::DateTime>().ok())
+                    .unwrap_or_else(|| {
+                        jiff::civil::DateTime::new(1970, 1, 1, 0, 0, 0, 0)
+                            .expect("fallback datetime is valid")
+                    }),
             ),
-            _ => CandidateAssignment::When(jiff::civil::DateTime::default()),
+            _ => CandidateAssignment::When(
+                jiff::civil::DateTime::new(1970, 1, 1, 0, 0, 0, 0)
+                    .expect("fallback datetime is valid"),
+            ),
         };
 
         Ok(ClassificationSuggestion {
@@ -2188,18 +2200,6 @@ impl Store {
             }
         }
         Ok(false)
-    }
-}
-
-fn assignment_source_from_db(source: &str) -> AssignmentSource {
-    match source {
-        "Manual" => AssignmentSource::Manual,
-        "AutoMatch" => AssignmentSource::AutoMatch,
-        "AutoClassified" => AssignmentSource::AutoClassified,
-        "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
-        "Action" => AssignmentSource::Action,
-        "Subsumption" => AssignmentSource::Subsumption,
-        _ => AssignmentSource::Manual,
     }
 }
 

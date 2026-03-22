@@ -4741,8 +4741,6 @@ impl App {
         Ok(())
     }
 
-
-
     pub(crate) fn handle_item_assign_category_key(
         &mut self,
         code: KeyCode,
