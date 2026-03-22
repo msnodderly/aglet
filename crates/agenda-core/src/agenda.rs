@@ -1323,6 +1323,7 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let mut phone_calls = category("Phone Calls", true);
+        phone_calls.match_category_name = false;
         phone_calls.also_match = vec!["dial".to_string(), "ring".to_string()];
         store.create_category(&phone_calls).unwrap();
 
@@ -1332,6 +1333,26 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&phone_calls.id));
+    }
+
+    #[test]
+    fn create_item_does_not_match_literal_category_name_when_disabled() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut person = category("Person", true);
+        person.match_category_name = false;
+        person.also_match = vec!["bob".to_string(), "sally".to_string()];
+        store.create_category(&person).unwrap();
+
+        let person_item = Item::new("Person".to_string());
+        let person_result = agenda.create_item(&person_item).unwrap();
+        assert!(!person_result.new_assignments.contains(&person.id));
+
+        let bob_item = Item::new("Call Bob tomorrow".to_string());
+        let bob_result = agenda.create_item(&bob_item).unwrap();
+        assert!(bob_result.new_assignments.contains(&person.id));
     }
 
     #[test]

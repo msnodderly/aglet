@@ -486,7 +486,8 @@ impl App {
             && matches!(
                 details_focus,
                 CategoryManagerDetailsFocus::Exclusive
-                    | CategoryManagerDetailsFocus::MatchName
+                    | CategoryManagerDetailsFocus::AutoMatch
+                    | CategoryManagerDetailsFocus::MatchCategoryName
                     | CategoryManagerDetailsFocus::Actionable
                     | CategoryManagerDetailsFocus::AlsoMatch
             )
@@ -648,8 +649,12 @@ impl App {
                     self.toggle_selected_category_exclusive(agenda)?;
                     return Ok(true);
                 }
-                CategoryManagerDetailsFocus::MatchName => {
+                CategoryManagerDetailsFocus::AutoMatch => {
                     self.toggle_selected_category_implicit(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::MatchCategoryName => {
+                    self.toggle_selected_category_match_category_name(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Actionable => {
@@ -1492,9 +1497,17 @@ impl App {
             }
             KeyCode::Char('i') => {
                 if self.selected_category_is_numeric() {
-                    self.status = "Match not applicable to numeric categories".to_string();
+                    self.status = "Auto-match not applicable to numeric categories".to_string();
                 } else {
                     self.toggle_selected_category_implicit(agenda)?;
+                }
+            }
+            KeyCode::Char('g') => {
+                if self.selected_category_is_numeric() {
+                    self.status =
+                        "Match-category-name not applicable to numeric categories".to_string();
+                } else {
+                    self.toggle_selected_category_match_category_name(agenda)?;
                 }
             }
             KeyCode::Char('a') => {
@@ -1602,9 +1615,37 @@ impl App {
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
-            "{} match-category-name={} (processed_items={}, affected_items={})",
+            "{} auto-match={} (processed_items={}, affected_items={})",
             updated.name,
             updated.enable_implicit_string,
+            result.processed_items,
+            result.affected_items
+        );
+        Ok(())
+    }
+
+    pub(crate) fn toggle_selected_category_match_category_name(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<()> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda.store().get_category(category_id)?;
+        category.match_category_name = !category.match_category_name;
+        let updated = category.clone();
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} match-category-name={} (processed_items={}, affected_items={})",
+            updated.name,
+            updated.match_category_name,
             result.processed_items,
             result.affected_items
         );

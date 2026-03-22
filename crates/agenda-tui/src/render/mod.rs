@@ -4695,7 +4695,7 @@ impl App {
                 let flags_height = if is_numeric_category {
                     7
                 } else {
-                    5 + workflow_role_height
+                    6 + workflow_role_height
                 };
                 let details_chunks = if is_numeric_category {
                     Layout::default()
@@ -4869,9 +4869,14 @@ impl App {
                             row.is_exclusive,
                         ),
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::MatchName,
+                            details_focus == CategoryManagerDetailsFocus::AutoMatch,
                             "Auto-match",
                             row.enable_implicit_string,
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::MatchCategoryName,
+                            "Match category name",
+                            row.match_category_name,
                         ),
                         flag_line(
                             details_focus == CategoryManagerDetailsFocus::Actionable,
@@ -5050,8 +5055,11 @@ impl App {
                         CategoryManagerDetailsFocus::Exclusive => {
                             "Only one child can be assigned to an item at a time"
                         }
-                        CategoryManagerDetailsFocus::MatchName => {
+                        CategoryManagerDetailsFocus::AutoMatch => {
                             "Auto-assign when category name appears in item text"
+                        }
+                        CategoryManagerDetailsFocus::MatchCategoryName => {
+                            "Include the literal category name alongside also-match terms"
                         }
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"

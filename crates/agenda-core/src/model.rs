@@ -112,6 +112,8 @@ pub struct Category {
     pub is_exclusive: bool,
     pub is_actionable: bool,
     pub enable_implicit_string: bool,
+    #[serde(default = "default_true")]
+    pub match_category_name: bool,
     #[serde(default)]
     pub also_match: Vec<String>,
     pub note: Option<String>,
@@ -123,6 +125,10 @@ pub struct Category {
     pub value_kind: CategoryValueKind,
     #[serde(default)]
     pub numeric_format: Option<NumericFormat>,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -478,6 +484,7 @@ impl Category {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            match_category_name: true,
             also_match: Vec::new(),
             note: None,
             created_at: now,

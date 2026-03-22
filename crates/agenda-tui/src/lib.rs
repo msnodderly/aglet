@@ -171,6 +171,7 @@ struct CategoryListRow {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
+    match_category_name: bool,
     value_kind: CategoryValueKind,
 }
 
@@ -481,7 +482,8 @@ enum CategoryManagerFocus {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryManagerDetailsFocus {
     Exclusive,
-    MatchName,
+    AutoMatch,
+    MatchCategoryName,
     Actionable,
     AlsoMatch,
     Integer,
@@ -510,8 +512,9 @@ impl CategoryManagerDetailsFocus {
             }
         } else {
             match self {
-                Self::Exclusive => Self::MatchName,
-                Self::MatchName => Self::Actionable,
+                Self::Exclusive => Self::AutoMatch,
+                Self::AutoMatch => Self::MatchCategoryName,
+                Self::MatchCategoryName => Self::Actionable,
                 Self::Actionable => Self::AlsoMatch,
                 Self::AlsoMatch => Self::Note,
                 Self::Note => Self::Exclusive,
@@ -539,8 +542,9 @@ impl CategoryManagerDetailsFocus {
         } else {
             match self {
                 Self::Exclusive => Self::Note,
-                Self::MatchName => Self::Exclusive,
-                Self::Actionable => Self::MatchName,
+                Self::AutoMatch => Self::Exclusive,
+                Self::MatchCategoryName => Self::AutoMatch,
+                Self::Actionable => Self::MatchCategoryName,
                 Self::AlsoMatch => Self::Actionable,
                 Self::Note => Self::AlsoMatch,
                 _ => Self::Actionable,
@@ -4998,6 +5002,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
         let user = CategoryListRow {
@@ -5009,6 +5014,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
 
@@ -5029,6 +5035,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
         let when = CategoryListRow {
@@ -5040,6 +5047,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
 
@@ -10794,7 +10802,9 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("toggle exclusive from details");
         app.handle_category_manager_key(KeyCode::Char('i'), &agenda)
-            .expect("quick toggle match-name");
+            .expect("quick toggle auto-match");
+        app.handle_category_manager_key(KeyCode::Char('g'), &agenda)
+            .expect("quick toggle match-category-name");
         app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
             .expect("quick toggle actionable");
 
@@ -10804,6 +10814,7 @@ mod tests {
             loaded.enable_implicit_string,
             !initial.enable_implicit_string
         );
+        assert_eq!(loaded.match_category_name, !initial.match_category_name);
         assert_eq!(loaded.is_actionable, !initial.is_actionable);
         assert_eq!(app.mode, Mode::CategoryManager);
 
@@ -11261,7 +11272,23 @@ mod tests {
             .expect("details next field");
         assert_eq!(
             app.category_manager_details_focus(),
-            Some(CategoryManagerDetailsFocus::MatchName)
+            Some(CategoryManagerDetailsFocus::AutoMatch)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("details next field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::MatchCategoryName)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('k'), &agenda)
+            .expect("details previous field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::AutoMatch)
         );
         assert_eq!(app.selected_category_id(), Some(alpha.id));
 

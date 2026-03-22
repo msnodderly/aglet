@@ -276,7 +276,12 @@ fn evaluate_category_match(
     if enable_implicit_string
         && category.enable_implicit_string
         && classifier
-            .classify(item_text, &category.name, &category.also_match)
+            .classify(
+                item_text,
+                &category.name,
+                category.match_category_name,
+                &category.also_match,
+            )
             .is_some()
     {
         return Some(MatchReason::ImplicitString);
