@@ -267,7 +267,7 @@ struct SuggestionReviewState {
 #[derive(Clone, Debug)]
 struct ReviewSuggestion {
     suggestion: ClassificationSuggestion,
-    /// true = accept, false = reject. Defaults to true in g? bulk triage.
+    /// true = accept, false = reject. Defaults to true in Shift-C bulk triage.
     accepted: bool,
 }
 
@@ -4790,7 +4790,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
             .expect("gH should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g?)");
+        assert_eq!(app.status, "Unknown g command (use ga or g/)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -4802,7 +4802,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
             .expect("gL should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g?)");
+        assert_eq!(app.status, "Unknown g command (use ga or g/)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -7499,11 +7499,8 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
 
-        // Simulate g? sequence
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix");
-        app.handle_normal_key(KeyCode::Char('?'), &agenda)
-            .expect("open suggestion review");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open suggestion review");
 
         assert_eq!(app.mode, Mode::SuggestionReview);
         assert!(app.suggestion_review.is_some());
@@ -7515,7 +7512,7 @@ mod tests {
     }
 
     #[test]
-    fn g_question_with_no_pending_stays_normal() {
+    fn shift_c_with_no_pending_stays_normal() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7523,10 +7520,8 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
 
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix");
-        app.handle_normal_key(KeyCode::Char('?'), &agenda)
-            .expect("open suggestion review");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open suggestion review");
 
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.suggestion_review.is_none());
@@ -7558,10 +7553,8 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
 
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix");
-        app.handle_normal_key(KeyCode::Char('?'), &agenda)
-            .expect("open suggestion review");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open suggestion review");
         assert_eq!(app.mode, Mode::SuggestionReview);
 
         // Confirm (Enter) — all suggestions default to accepted
@@ -7603,10 +7596,8 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
 
-        app.handle_normal_key(KeyCode::Char('g'), &agenda)
-            .expect("g prefix");
-        app.handle_normal_key(KeyCode::Char('?'), &agenda)
-            .expect("open suggestion review");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("C should open suggestion review");
 
         // Toggle first suggestion off
         app.handle_key(KeyCode::Char(' '), &agenda)
@@ -11514,7 +11505,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_shift_c_opens_global_search_session() {
+    fn normal_mode_g_slash_opens_global_search_session() {
         let (store, db_path) = make_two_section_store("g-slash-open");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -11525,8 +11516,10 @@ mod tests {
         app.refresh(&store).expect("refresh test view");
         app.mode = Mode::Normal;
 
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("C should open global search");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("g/ should open global search");
 
         assert_eq!(app.mode, Mode::SearchBarFocused);
         assert_eq!(
@@ -11561,8 +11554,10 @@ mod tests {
         app.search_buffer.set("timeout".to_string());
         app.refresh(&store).expect("refresh with local filter");
 
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("C should open global search");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("g/ should open global search");
 
         for ch in "buy".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
@@ -11634,8 +11629,10 @@ mod tests {
         app.refresh(&store).expect("refresh test view");
         app.mode = Mode::Normal;
 
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("C should open global search");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('/'), &agenda)
+            .expect("g/ should open global search");
         for ch in "kanban task".chars() {
             app.handle_search_bar_key(KeyCode::Char(ch), &agenda)
                 .expect("type global query");

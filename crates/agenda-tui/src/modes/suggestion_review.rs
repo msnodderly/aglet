@@ -1,7 +1,7 @@
 use crate::*;
 
 impl App {
-    /// Opens the suggestion review overlay (g? bulk triage).
+    /// Opens the suggestion review overlay (Shift-C bulk triage).
     /// Builds the full queue of items with pending suggestions.
     pub(crate) fn open_suggestion_review(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         self.refresh(agenda.store())?;

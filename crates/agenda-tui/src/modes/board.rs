@@ -2120,8 +2120,8 @@ impl App {
                     self.status = "Jumped to All Items view".to_string();
                     return Ok(false);
                 }
-                (NormalModePrefix::G, KeyCode::Char('?')) => {
-                    self.open_suggestion_review(agenda)?;
+                (NormalModePrefix::G, KeyCode::Char('/')) => {
+                    self.begin_global_search_session(agenda)?;
                     return Ok(false);
                 }
                 (NormalModePrefix::G, KeyCode::Esc) => {
@@ -2129,7 +2129,7 @@ impl App {
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga or g?)".to_string();
+                    self.status = "Unknown g command (use ga or g/)".to_string();
                     return Ok(false);
                 }
             }
@@ -2236,7 +2236,7 @@ impl App {
                 self.open_input_panel_edit_item();
             }
             KeyCode::Char('C') => {
-                self.begin_global_search_session(agenda)?;
+                self.open_suggestion_review(agenda)?;
             }
             KeyCode::Enter => {
                 if self.column_index != self.current_slot_item_column_index() {
@@ -2304,7 +2304,7 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status = "g-prefix: ga=All Items, g?=Review suggestions".to_string();
+                self.status = "g-prefix: ga=All Items, g/=Global search".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -4506,7 +4506,7 @@ impl App {
             );
         }
         if let Some(suffix) = self.classification_pending_suffix() {
-            status = format!("{status} | {suffix}. Press g? to review.");
+            status = format!("{status} | {suffix}. Press C to review.");
         }
         self.status = status;
         Ok(())
