@@ -133,6 +133,57 @@ This reclaims 4 vertical rows for the tree. At a 40-row terminal, that's ~10% mo
 
 Alternative (less aggressive): make the Global Settings pane collapsible — show full pane only when `CategoryManagerFocus::Global`, collapse to summary line otherwise.
 
+### S4b. Make global options read like actions, not labels
+**Priority: medium | Effort: medium**
+
+The current summary line is compact, but it still reads like passive metadata. The two global controls that matter most here are:
+
+- how auto-classification behaves for new/edited items
+- which categories power the ready/claim workflow
+
+Those should read like actionable settings with direct hints, not just nouns with values.
+
+Suggested mockup:
+
+```text
+Agenda Reborn  view:Aglet  mode:CategoryManager
+Auto classification: Suggest/Review (m change)  |  Ready queue: Ready  |  Claim result: In Progress (w roles)
+
+Action / Filter
+Press / to filter categories. Press m to change auto-classification. Press w to edit ready/claim queues.
+
+Category Manager                                  Details
++ Categories are shared across the database.      + Flags
++ Shift-Up/Down: reorder siblings                 | [x] Exclusive      one child per item
++ H/L or << / >>: change level                    | [ ] Auto-match     assign by name in item text
++ Tab: details                                    | [x] Actionable     required before marking done
+                                                   |
+                                                   | Also Match
+                                                   | ...
+                                                   |
+                                                   | Note
+                                                   | ...
+                                                   |
+                                                   | Parent: Status  Children: 5  Items: 12
+```
+
+Why this is better:
+
+- `m change` and `w roles` explain intent, not just the raw shortcut.
+- The action/filter strip can carry one line of "what can I do here?" guidance without needing a permanent global-settings pane.
+- Tree movement hints become visible in the body, where users look while reorganizing categories.
+- Ready/claim roles stay visible as database-level settings instead of feeling like per-category toggles.
+
+Implementation notes:
+
+- Keep the single-line global summary from S4, but rename labels to `Auto classification`, `Ready queue`, and `Claim result`.
+- Default filter/action copy should mention `/`, `m`, and `w`.
+- Footer hints should be focus-sensitive:
+  - Tree: create/rename/delete/reorder/filter/global options
+  - Details: field nav/toggle/save
+  - Filter: type/clear/leave
+  - Overlays: picker-specific controls only
+
 ### S5. Style-based badges instead of text tags
 **Priority: medium | Effort: medium**
 

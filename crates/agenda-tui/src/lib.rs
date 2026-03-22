@@ -7659,15 +7659,15 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Classification: Auto-apply"),
+            rendered.contains("Auto classification: Auto-apply"),
             "category manager should show classification summary: {rendered}"
         );
         assert!(
-            rendered.contains("Ready Queue: (unset)"),
+            rendered.contains("Ready queue: (unset)"),
             "category manager should show ready queue summary: {rendered}"
         );
         assert!(
-            rendered.contains("Claim Result: (unset)"),
+            rendered.contains("Claim result: (unset)"),
             "category manager should show claim summary: {rendered}"
         );
     }
@@ -15605,6 +15605,80 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_shift_down_moves_item_to_next_section_like_right_bracket() {
+        let (store, db_path) = make_two_section_store("shift-down-move");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        let moved_item_id = app.slots[0].items[0].id;
+        app.slot_index = 0;
+        app.item_index = 0;
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT), &agenda)
+            .expect("shift-down moves item to next section");
+
+        assert_eq!(app.slot_index, 1);
+        assert!(
+            app.slots[1]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should move into the next section"
+        );
+        assert!(
+            !app.slots[0]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should leave the original section"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_shift_up_moves_item_to_previous_section_like_left_bracket() {
+        let (store, db_path) = make_two_section_store("shift-up-move");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        let moved_item_id = app.slots[1].items[0].id;
+        app.slot_index = 1;
+        app.item_index = 0;
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT), &agenda)
+            .expect("shift-up moves item to previous section");
+
+        assert_eq!(app.slot_index, 0);
+        assert!(
+            app.slots[0]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should move into the previous section"
+        );
+        assert!(
+            !app.slots[1]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should leave the original section"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_index() {
         let (store, db_path) = make_two_section_store("horizontal-flow-nav");
         let classifier = SubstringClassifier;
@@ -16669,6 +16743,79 @@ mod tests {
             app.slot_sort_keys[0].is_empty(),
             "third sort press on primary should clear that key"
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_sorting_angle_brackets_alias_ascending_and_descending_sort() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-sort-angle-aliases-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let ten = Item::new("Ten".to_string());
+        let five = Item::new("Five".to_string());
+        store.create_item(&ten).expect("create ten");
+        store.create_item(&five).expect("create five");
+
+        agenda
+            .assign_item_numeric_manual(
+                ten.id,
+                cost.id,
+                rust_decimal::Decimal::new(10, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign ten");
+        agenda
+            .assign_item_numeric_manual(
+                five.id,
+                cost.id,
+                rust_decimal::Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign five");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 1;
+        app.handle_key(KeyCode::Char('<'), &agenda)
+            .expect("ascending sort alias");
+        assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Asc);
+
+        app.handle_key(KeyCode::Char('>'), &agenda)
+            .expect("descending sort alias");
+        assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Desc);
 
         let _ = std::fs::remove_file(&db_path);
     }
