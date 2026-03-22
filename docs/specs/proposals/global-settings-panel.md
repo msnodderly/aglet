@@ -128,13 +128,11 @@ Classification: Auto-apply  │  Ready: Ready  │  Claim: In Progress
 
 This aligns with proposal S4 in category-manager-ux-improvements and reclaims 4 vertical rows for the category tree.
 
-The `m` (classification mode) and `w` (workflow setup) keybindings in Category Manager can either:
-- **Option A**: Open GlobalSettings directly, focused on the relevant row (preferred — single source of truth)
-- **Option B**: Continue to open the current picker overlays (less churn, worse discoverability)
+Remove `m` and `w` from Category Manager entirely. Users who want to change classification mode or workflow roles open GlobalSettings via `F10`. The summary line (see S4 in category-manager-ux-improvements) remains as read-only context.
 
 ### Normal Mode
 
-Remove the `Ctrl+R` auto-refresh cycling shortcut, or keep it as a convenience alias. The status bar label currently showing the refresh interval remains.
+Remove the `Ctrl+R` auto-refresh cycling shortcut. Auto-refresh is configured exclusively via GlobalSettings.
 
 Add the GlobalSettings key binding to the Normal mode footer hint.
 
@@ -183,10 +181,4 @@ enum GlobalSettingsFocus {
 
 **Save on change:** Write immediately on each value change (same pattern as current behavior).
 
----
-
-## Open Questions
-
-1. Should `Ctrl+R` be kept as a shortcut alias after GlobalSettings exists? Convenience vs. discoverability tension.
-2. For workflow category assignment, should the category picker open inline within the settings panel, or as a separate overlay above it?
-3. Should GlobalSettings be accessible from CategoryManager via `m`/`w` redirect (Option A above) or keep the existing overlays (Option B)?
+**Workflow category picker:** When the user presses `Enter` on a workflow row, the existing category column picker opens as an overlay above the GlobalSettings panel. On selection, the picker closes and GlobalSettings remains open with the updated value.
