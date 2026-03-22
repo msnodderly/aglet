@@ -19,7 +19,7 @@ use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config,
     workflow_setup_error_message, READY_QUEUE_VIEW_NAME,
 };
-use chrono::{Local, NaiveDate, NaiveDateTime};
+use jiff::civil::{Date, DateTime};
 use clap::{Parser, Subcommand, ValueEnum};
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -92,7 +92,7 @@ enum Command {
     Edit {
         /// Item id (full UUID or unique hex prefix).
         item_id: String,
-        /// New text (positional shorthand; also available as --text)
+        /// New text (positional argument)
         text: Option<String>,
         /// Replace the entire note. Mutually exclusive with other note flags.
         #[arg(long)]
@@ -950,6 +950,9 @@ fn cmd_add(
     categories: Vec<String>,
     values: Vec<String>,
 ) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("text cannot be empty".to_string());
+    }
     let category_names: Vec<String> = agenda
         .store()
         .get_hierarchy()
@@ -966,7 +969,7 @@ fn cmd_add(
     let mut item = Item::new(text);
     item.note = note;
 
-    let reference_date = Local::now().date_naive();
+    let reference_date = jiff::Zoned::now().date();
     let result = agenda
         .create_item_with_reference_date(&item, reference_date)
         .map_err(|e| e.to_string())?;
@@ -1107,8 +1110,8 @@ fn cmd_edit(
             }
         }
 
-        item.modified_at = chrono::Utc::now();
-        let reference_date = Local::now().date_naive();
+        item.modified_at = jiff::Timestamp::now();
+        let reference_date = jiff::Zoned::now().date();
         agenda
             .update_item_with_reference_date(&item, reference_date)
             .map_err(|e| e.to_string())?;
@@ -1162,8 +1165,8 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     println!("text:       {}", item.text);
     println!("status:     {}", done);
     println!("when:       {}", when);
-    println!("created_at: {}", item.created_at.to_rfc3339());
-    println!("modified_at: {}", item.modified_at.to_rfc3339());
+    println!("created_at: {}", item.created_at);
+    println!("modified_at: {}", item.modified_at);
     if let Some(done_date) = item.done_date {
         println!("done_date:  {}", done_date);
     }
@@ -1287,7 +1290,7 @@ fn cmd_ready(
     )
 }
 
-fn parsed_when_feedback_line(when_date: Option<NaiveDateTime>) -> Option<String> {
+fn parsed_when_feedback_line(when_date: Option<DateTime>) -> Option<String> {
     when_date.map(|when| format!("parsed_when={when}"))
 }
 
@@ -1635,7 +1638,7 @@ fn cmd_search(
         text_search: Some(query),
         ..Query::default()
     };
-    let reference_date = Local::now().date_naive();
+    let reference_date = jiff::Zoned::now().date();
     let matches = evaluate_query(&q, &items, reference_date);
 
     let mut matched_items: Vec<Item> = matches.into_iter().cloned().collect();
@@ -1693,7 +1696,7 @@ fn cmd_deleted(store: &Store) -> Result<(), String> {
             "{} | item={} | deleted_at={} | by={} | {}",
             entry.id,
             entry.item_id,
-            entry.deleted_at.to_rfc3339(),
+            entry.deleted_at,
             entry.deleted_by,
             entry.text
         );
@@ -1995,8 +1998,8 @@ fn cmd_category(
                     }
                 }
             }
-            println!("created_at:      {}", category.created_at.to_rfc3339());
-            println!("modified_at:     {}", category.modified_at.to_rfc3339());
+            println!("created_at:      {}", category.created_at);
+            println!("modified_at:     {}", category.modified_at);
             Ok(())
         }
         CategoryCommand::Create {
@@ -2894,7 +2897,7 @@ fn cmd_import(agenda: &Agenda<'_>, store: &Store, command: ImportCommand) -> Res
                 let mut item = Item::new(title);
                 item.note = note;
                 agenda
-                    .create_item_with_reference_date(&item, Local::now().date_naive())
+                    .create_item_with_reference_date(&item, jiff::Zoned::now().date())
                     .map_err(|e| e.to_string())?;
                 if let Some(when_date) = parsed_when {
                     agenda
@@ -3021,26 +3024,21 @@ fn parse_decimal_value(input: &str) -> Result<Decimal, String> {
         .map_err(|e| format!("invalid decimal value '{input}': {e}"))
 }
 
-fn parse_when_datetime_input(input: &str) -> Result<NaiveDateTime, String> {
+fn parse_when_datetime_input(input: &str) -> Result<DateTime, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("date/time cannot be empty".to_string());
     }
 
-    if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M") {
+    if let Ok(value) = trimmed.replace(' ', "T").parse::<DateTime>() {
         return Ok(value);
     }
-    if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
-        return Ok(value);
-    }
-    if let Ok(date_only) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        return Ok(date_only
-            .and_hms_opt(0, 0, 0)
-            .expect("midnight is a valid time"));
+    if let Ok(date_only) = trimmed.parse::<Date>() {
+        return Ok(date_only.at(0, 0, 0, 0));
     }
 
     let parser = BasicDateParser::default();
-    if let Some(parsed) = parser.parse(trimmed, Local::now().date_naive()) {
+    if let Some(parsed) = parser.parse(trimmed, jiff::Zoned::now().date()) {
         return Ok(parsed.datetime);
     }
 
@@ -3537,7 +3535,7 @@ fn build_markdown_export(
         let view = view_by_name(store, name)?;
         out.push_str(&format!("# {}\n\n", view.name));
 
-        let reference_date = Local::now().date_naive();
+        let reference_date = jiff::Zoned::now().date();
         let result = resolve_view(&view, &items, &categories, reference_date);
         let mut rendered_any = false;
 
@@ -3673,7 +3671,7 @@ fn print_items_for_view(
     output_format: OutputFormatArg,
     blocked_item_ids: &HashSet<ItemId>,
 ) -> Result<(), String> {
-    let reference_date = Local::now().date_naive();
+    let reference_date = jiff::Zoned::now().date();
     let mut result = resolve_view(view, items, categories, reference_date);
     if view.hide_dependent_items {
         for section in &mut result.sections {
@@ -4245,7 +4243,7 @@ mod tests {
         Section, SummaryFn, View,
     };
     use agenda_core::store::Store;
-    use chrono::NaiveDate;
+    use jiff::civil::date;
     use clap::{CommandFactory, Parser};
     use rust_decimal::Decimal;
     use std::collections::{HashMap, HashSet};
@@ -4304,13 +4302,10 @@ mod tests {
 
     #[test]
     fn parsed_when_feedback_line_includes_datetime_when_present() {
-        let when = NaiveDate::from_ymd_opt(2026, 2, 24)
-            .expect("valid date")
-            .and_hms_opt(15, 0, 0)
-            .expect("valid time");
+        let when = date(2026, 2, 24).at(15, 0, 0, 0);
 
         let line = parsed_when_feedback_line(Some(when)).expect("expected line");
-        assert_eq!(line, "parsed_when=2026-02-24 15:00:00");
+        assert_eq!(line, "parsed_when=2026-02-24T15:00:00");
     }
 
     #[test]
@@ -4321,13 +4316,7 @@ mod tests {
     #[test]
     fn parse_when_datetime_input_supports_date_only_at_midnight() {
         let parsed = parse_when_datetime_input("2026-02-20").expect("parse date-only");
-        assert_eq!(
-            parsed,
-            NaiveDate::from_ymd_opt(2026, 2, 20)
-                .expect("valid date")
-                .and_hms_opt(0, 0, 0)
-                .expect("midnight")
-        );
+        assert_eq!(parsed, date(2026, 2, 20).at(0, 0, 0, 0));
     }
 
     #[test]
@@ -4394,12 +4383,7 @@ mod tests {
         assert_eq!(item.text, "DRZ Payment");
         assert_eq!(
             item.when_date,
-            Some(
-                NaiveDate::from_ymd_opt(2026, 2, 20)
-                    .expect("valid date")
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight")
-            )
+            Some(date(2026, 2, 20).at(0, 0, 0, 0))
         );
         assert!(item.assignments.contains_key(&budget.id));
         assert!(item.assignments.contains_key(&vendor.id));
@@ -4436,12 +4420,7 @@ mod tests {
         let updated = store.get_item(item.id).expect("load item");
         assert_eq!(
             updated.when_date,
-            Some(
-                NaiveDate::from_ymd_opt(2026, 3, 1)
-                    .expect("valid date")
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight")
-            )
+            Some(date(2026, 3, 1).at(0, 0, 0, 0))
         );
 
         cmd_edit(
@@ -5412,7 +5391,7 @@ mod tests {
             cost.id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(100, 0)),
@@ -5423,7 +5402,7 @@ mod tests {
             cost.id,
             agenda_core::model::Assignment {
                 source: agenda_core::model::AssignmentSource::Manual,
-                assigned_at: chrono::Utc::now(),
+                assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: Some(Decimal::new(250, 0)),
@@ -5825,12 +5804,7 @@ mod tests {
             .expect("YCRS item");
         assert_eq!(
             ycrs.when_date,
-            Some(
-                NaiveDate::from_ymd_opt(2026, 2, 20)
-                    .expect("valid date")
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight")
-            )
+            Some(date(2026, 2, 20).at(0, 0, 0, 0))
         );
         assert_eq!(ycrs.note.as_deref(), Some("School day"));
 
@@ -7062,5 +7036,95 @@ mod tests {
             OutputFormatArg::Table,
         );
         assert!(result.is_ok(), "explicit --view should work: {result:?}");
+    }
+
+    // ── cmd_add ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cmd_add_rejects_empty_text() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let err = cmd_add(&agenda, "".to_string(), None, None, vec![], vec![])
+            .expect_err("empty text should be rejected");
+        assert!(err.contains("text cannot be empty"), "error was: {err}");
+    }
+
+    #[test]
+    fn cmd_add_rejects_whitespace_only_text() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let err = cmd_add(&agenda, "   ".to_string(), None, None, vec![], vec![])
+            .expect_err("whitespace-only text should be rejected");
+        assert!(err.contains("text cannot be empty"), "error was: {err}");
+    }
+
+    // ── edit --text flag ───────────────────────────────────────────────────────
+
+    #[test]
+    fn clap_edit_rejects_unknown_text_flag() {
+        // The edit command only accepts text as a positional argument; --text is
+        // not a recognised flag and clap should reject it.
+        let result = Cli::try_parse_from([
+            "agenda",
+            "edit",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--text",
+            "some text",
+        ]);
+        assert!(
+            result.is_err(),
+            "--text should not be a recognised flag for edit"
+        );
+    }
+
+    // ── cmd_unlink idempotency ─────────────────────────────────────────────────
+
+    #[test]
+    fn cmd_unlink_is_idempotent_for_nonexistent_link() {
+        // Unlinking a dependency that was never created should succeed silently
+        // (idempotent behaviour confirmed by the CLI demo exercise).
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let a = Item::new("Task A".to_string());
+        let b = Item::new("Task B".to_string());
+        store.create_item(&a).expect("create a");
+        store.create_item(&b).expect("create b");
+
+        // No link was ever created between a and b; unlink should still succeed.
+        cmd_unlink(
+            &agenda,
+            UnlinkCommand::DependsOn {
+                item_id: a.id.to_string(),
+                depends_on_item_id: b.id.to_string(),
+            },
+        )
+        .expect("unlink of nonexistent link should succeed");
+    }
+
+    // ── cmd_claim missing workflow ─────────────────────────────────────────────
+
+    #[test]
+    fn cmd_claim_fails_when_no_workflow_configured() {
+        // cmd_claim requires a workflow to be configured in the store.
+        // Without one, it should fail with an informative error.
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Some task".to_string());
+        store.create_item(&item).expect("create item");
+
+        let err = cmd_claim(&agenda, &store, item.id.to_string())
+            .expect_err("claim should fail when no workflow is configured");
+        assert!(
+            !err.is_empty(),
+            "expected a non-empty error message, got: {err}"
+        );
     }
 }

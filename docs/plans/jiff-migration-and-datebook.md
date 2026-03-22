@@ -1,6 +1,6 @@
 # Jiff Migration
 
-**Status:** Approved
+**Status:** Complete
 **Branch:** `claude/evaluate-jiff-library-M0vi2`
 **Scope:** Replace `chrono` with `jiff` across `agenda-core`, `agenda-cli`, and `agenda-tui`
 
@@ -405,14 +405,82 @@ from all `Cargo.toml` files and verify tests pass.
 
 ---
 
-## Implementation Order
+## Implementation Checklist
 
-1. **Phase 0** — Spike: confirm format compatibility, add to dev dependencies
-2. **Phase 1** — Add jiff dep alongside chrono, CI green
-3. **Phase 2** — Migrate `dates.rs`, all existing tests pass
-4. **Phase 3** — Migrate `model.rs`, update serde impls
-5. **Phase 4** — Migrate `store.rs` with schema migration (Option A)
-6. **Phase 5** — Migrate `query.rs`
-7. **Phase 6** — Remove chrono, final cleanup
+### Phase 0: Spike
+- [x] Add `jiff = { version = "0.2", features = ["serde"] }` to `agenda-core/Cargo.toml` as dev-dependency
+- [x] Write spike test: `jiff::civil::DateTime` display produces `YYYY-MM-DDTHH:MM:SS`
+- [x] Write spike test: `jiff::civil::DateTime` parses ISO 8601 with `T` separator
+- [x] Write spike test: `jiff::Timestamp` round-trips via RFC 3339 (matches chrono `DateTime<Utc>`)
+- [x] Write spike test: `jiff::Span` day/week arithmetic produces correct results
+- [x] Write spike test: serde round-trip for `civil::DateTime` and `Timestamp`
 
-Each phase is independently mergeable.
+### Phase 1: Add jiff dependency
+- [x] Add `jiff = { version = "0.2", features = ["serde"] }` to `agenda-core/Cargo.toml` (production dep)
+- [x] Add `jiff = "0.2"` to `agenda-cli/Cargo.toml`
+- [x] Add `jiff = "0.2"` to `agenda-tui/Cargo.toml`
+- [x] Verify clean compile with both chrono and jiff present
+
+### Phase 2: Migrate `dates.rs`
+- [x] Replace `use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Weekday}` with jiff imports
+- [x] Update `ParsedDate.datetime` type: `NaiveDateTime` → `jiff::civil::DateTime`
+- [x] Update `DateParser` trait: `reference_date: NaiveDate` → `jiff::civil::Date`
+- [x] Update `BasicDateParser::parse` signature and implementation
+- [x] Replace `Weekday::Mon/Tue/...` → `Weekday::Monday/Tuesday/...` in WEEKDAYS const
+- [x] Replace `Duration::days()` → `Span::new().days()` in `scan_relative_dates`
+- [x] Replace `num_days_from_monday()` → `to_monday_zero_offset()` in weekday delta functions
+- [x] Update `at_midnight`: `date.and_hms_opt(0,0,0)` → `date.at(0,0,0,0)`
+- [x] Update `attach_trailing_time`: `and_hms_opt` → `date.at(h, m, 0, 0)`
+- [x] Update `resolve_month_day_without_year`: `NaiveDate::from_ymd_opt` → `jiff::civil::Date::new`
+- [x] Update `scan_absolute_dates` / `scan_month_day_dates` / `scan_year_month_day`: all `from_ymd_opt` calls
+- [x] Update test module imports and helpers (`date()`, `datetime()` helpers)
+- [x] Verify all 40+ existing tests pass
+
+### Phase 3: Migrate `model.rs`
+- [x] Replace `use chrono::{DateTime, NaiveDateTime, Utc}` with jiff imports
+- [x] Update `Item` struct: `DateTime<Utc>` → `Timestamp`, `NaiveDateTime` → `civil::DateTime`
+- [x] Update `Assignment.assigned_at`: `DateTime<Utc>` → `Timestamp`
+- [x] Update `ItemLink.created_at`: `DateTime<Utc>` → `Timestamp`
+- [x] Update `Category.created_at/modified_at`: `DateTime<Utc>` → `Timestamp`
+- [x] Update `DeletionLogEntry` date fields
+- [x] Update `Item::new()`: `Utc::now()` → `Timestamp::now()`
+- [x] Update `Category::new()`: `Utc::now()` → `Timestamp::now()`
+- [x] Fix all downstream compile errors in files that use model types
+
+### Phase 4: Migrate `store.rs`
+- [x] Bump `SCHEMA_VERSION` from 10 to 11
+- [x] Add migration SQL: `REPLACE(when_date, ' ', 'T')` and `REPLACE(done_date, ' ', 'T')`
+- [x] Replace `DateTime::parse_from_rfc3339` → `Timestamp` `.parse()` for created_at/modified_at/assigned_at
+- [x] Replace `.with_timezone(&Utc)` calls (no longer needed with Timestamp)
+- [x] Replace `.to_rfc3339()` → `.to_string()` for Timestamp serialization
+- [x] Replace `NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")` → `civil::DateTime` `.parse()` (ISO 8601)
+- [x] Replace `NaiveDateTime.to_string()` → `civil::DateTime.to_string()` for when_date/done_date writes
+- [x] Update `Utc::now()` → `Timestamp::now()` throughout store.rs
+- [x] Write test: schema migration v10→v11 correctly rewrites existing rows
+- [x] Verify all existing store tests pass
+
+### Phase 5: Migrate `query.rs`
+- [x] Replace `use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime}` with jiff imports
+- [x] Update `resolve_when_bucket` signature: `NaiveDateTime`/`NaiveDate` → jiff types
+- [x] Replace `Duration::days()` → `Span::new().days()` in week calculations
+- [x] Replace `succ_opt()` → `checked_add(Span::new().days(1))`
+- [x] Update `start_of_iso_week`: `checked_sub_signed` → `checked_sub`, `num_days_from_monday` → `to_monday_zero_offset`
+- [x] Update test module helpers and imports
+- [x] Verify all existing query tests pass
+
+### Phase 6: Migrate remaining files and remove chrono
+- [x] Migrate `agenda.rs`: `Utc::now()` → `Timestamp::now()`, update `NaiveDate`/`NaiveDateTime` refs, remove `Timelike` import
+- [x] Migrate `engine.rs`: `Utc::now()` → `Timestamp::now()`
+- [x] Migrate `classification.rs`: update date type references (if file exists)
+- [x] Migrate `agenda-cli/src/main.rs`: `Local::now().date_naive()` → `jiff::Zoned::now().date()`, update parse helpers
+- [x] Migrate `agenda-tui/src/lib.rs`: same Local→Zoned pattern, update `Utc::now()` calls
+- [x] Migrate `agenda-tui/src/app.rs`: `Local::now().date_naive()` → `jiff::Zoned::now().date()`
+- [x] Migrate `agenda-tui/src/modes/board.rs`: update `parse_when_datetime_input`, `.format()` → `.strftime()`, Local/Utc calls
+- [x] Migrate `agenda-tui/src/modes/view_edit.rs`: Local→Zoned
+- [x] Migrate `agenda-tui/src/render/mod.rs`: Local→Zoned
+- [x] Migrate `agenda-tui/src/ui_support.rs`: update test fixtures
+- [x] Remove `chrono` from `agenda-core/Cargo.toml`
+- [x] Remove `chrono` from `agenda-cli/Cargo.toml`
+- [x] Remove `chrono` from `agenda-tui/Cargo.toml`
+- [x] Verify no remaining `use chrono` imports
+- [x] Full test suite green: `cargo test --workspace`

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use jiff::Timestamp;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use rust_decimal::Decimal;
 use serde_json;
@@ -330,8 +330,8 @@ impl Store {
                 suggestion_status_label(suggestion.status),
                 suggestion.context_hash,
                 suggestion.item_revision_hash,
-                suggestion.created_at.to_rfc3339(),
-                suggestion.decided_at.map(|value| value.to_rfc3339()),
+                suggestion.created_at.to_string(),
+                suggestion.decided_at.map(|value| value.to_string()),
             ],
         )?;
         Ok(())
@@ -353,7 +353,7 @@ impl Store {
             params![
                 suggestion_id.to_string(),
                 suggestion_status_label(status),
-                Utc::now().to_rfc3339(),
+                Timestamp::now().to_string(),
             ],
         )?;
         Ok(())
@@ -374,7 +374,7 @@ impl Store {
             params![
                 item_id.to_string(),
                 new_revision_hash,
-                Utc::now().to_rfc3339()
+                Timestamp::now().to_string()
             ],
         )?;
         Ok(())
@@ -390,9 +390,9 @@ impl Store {
                 item.id.to_string(),
                 item.text,
                 item.note,
-                item.created_at.to_rfc3339(),
-                item.modified_at.to_rfc3339(),
-                item.created_at.date_naive().to_string(),
+                item.created_at.to_string(),
+                item.modified_at.to_string(),
+                item.created_at.to_zoned(jiff::tz::TimeZone::UTC).date().to_string(),
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
@@ -465,7 +465,7 @@ impl Store {
             params![
                 item.text,
                 item.note,
-                item.modified_at.to_rfc3339(),
+                item.modified_at.to_string(),
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
@@ -495,12 +495,12 @@ impl Store {
                 item.id.to_string(),
                 item.text,
                 item.note,
-                item.created_at.date_naive().to_string(),
+                item.created_at.to_zoned(jiff::tz::TimeZone::UTC).date().to_string(),
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
                 assignments_json,
-                Utc::now().to_rfc3339(),
+                Timestamp::now().to_string(),
                 deleted_by,
             ],
         )?;
@@ -561,7 +561,7 @@ impl Store {
             });
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let item = Item {
             id: entry.item_id,
             text: entry.text,
@@ -637,8 +637,8 @@ impl Store {
                     category.is_actionable as i32,
                     category.enable_implicit_string as i32,
                     category.note,
-                    category.created_at.to_rfc3339(),
-                    category.modified_at.to_rfc3339(),
+                    category.created_at.to_string(),
+                    category.modified_at.to_string(),
                     sort_order,
                     conditions_json,
                     actions_json,
@@ -720,7 +720,7 @@ impl Store {
                     source: Box::new(err),
                 }
             })?;
-        let modified_at = Utc::now();
+        let modified_at = Timestamp::now();
 
         self.conn
             .execute(
@@ -744,7 +744,7 @@ impl Store {
                     category.is_actionable as i32,
                     category.enable_implicit_string as i32,
                     category.note,
-                    modified_at.to_rfc3339(),
+                    modified_at.to_string(),
                     conditions_json,
                     actions_json,
                     Self::category_value_kind_to_db(category.value_kind),
@@ -1141,16 +1141,10 @@ impl Store {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
             text: row.get(1)?,
             note: row.get(2)?,
-            created_at: DateTime::parse_from_rfc3339(&created_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_default(),
-            modified_at: DateTime::parse_from_rfc3339(&modified_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_default(),
-            when_date: when_str
-                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
-            done_date: done_str
-                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            created_at: created_str.parse::<Timestamp>().unwrap_or_default(),
+            modified_at: modified_str.parse::<Timestamp>().unwrap_or_default(),
+            when_date: when_str.and_then(|s| s.parse::<jiff::civil::DateTime>().ok()),
+            done_date: done_str.and_then(|s| s.parse::<jiff::civil::DateTime>().ok()),
             is_done: is_done_int != 0,
             assignments: HashMap::new(),
         })
@@ -1170,15 +1164,11 @@ impl Store {
             item_id: Uuid::parse_str(&item_id_str).unwrap_or_default(),
             text: row.get(2)?,
             note: row.get(3)?,
-            when_date: when_str
-                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
-            done_date: done_str
-                .and_then(|s| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()),
+            when_date: when_str.and_then(|s| s.parse::<jiff::civil::DateTime>().ok()),
+            done_date: done_str.and_then(|s| s.parse::<jiff::civil::DateTime>().ok()),
             is_done: is_done_int != 0,
             assignments_json: row.get(8)?,
-            deleted_at: DateTime::parse_from_rfc3339(&deleted_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_default(),
+            deleted_at: deleted_at_str.parse::<Timestamp>().unwrap_or_default(),
             deleted_by: row.get(10)?,
         })
     }
@@ -1208,10 +1198,16 @@ impl Store {
         for row in rows {
             let (cat_str, source_str, assigned_str, sticky_int, origin, numeric_value_str) = row?;
             let cat_id = Uuid::parse_str(&cat_str).unwrap_or_default();
-            let source = assignment_source_from_db(&source_str);
-            let assigned_at = DateTime::parse_from_rfc3339(&assigned_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_default();
+            let source = match source_str.as_str() {
+                "Manual" => AssignmentSource::Manual,
+                "AutoMatch" => AssignmentSource::AutoMatch,
+                "AutoClassified" => AssignmentSource::AutoClassified,
+                "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
+                "Action" => AssignmentSource::Action,
+                "Subsumption" => AssignmentSource::Subsumption,
+                _ => AssignmentSource::Manual,
+            };
+            let assigned_at = assigned_str.parse::<Timestamp>().unwrap_or_default();
             let numeric_value = numeric_value_str.and_then(|s| s.parse::<Decimal>().ok());
             item.assignments.insert(
                 cat_id,
@@ -1247,12 +1243,16 @@ impl Store {
             ),
             "when" => CandidateAssignment::When(
                 when_value
-                    .and_then(|value| {
-                        NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M:%S").ok()
-                    })
-                    .unwrap_or_default(),
+                    .and_then(|value| value.parse::<jiff::civil::DateTime>().ok())
+                    .unwrap_or_else(|| {
+                        jiff::civil::DateTime::new(1970, 1, 1, 0, 0, 0, 0)
+                            .expect("fallback datetime is valid")
+                    }),
             ),
-            _ => CandidateAssignment::When(NaiveDateTime::default()),
+            _ => CandidateAssignment::When(
+                jiff::civil::DateTime::new(1970, 1, 1, 0, 0, 0, 0)
+                    .expect("fallback datetime is valid"),
+            ),
         };
 
         Ok(ClassificationSuggestion {
@@ -1266,14 +1266,8 @@ impl Store {
             status: suggestion_status_from_db(&status),
             context_hash: row.get(10)?,
             item_revision_hash: row.get(11)?,
-            created_at: DateTime::parse_from_rfc3339(&created_at)
-                .map(|value| value.with_timezone(&Utc))
-                .unwrap_or_default(),
-            decided_at: decided_at.and_then(|value| {
-                DateTime::parse_from_rfc3339(&value)
-                    .ok()
-                    .map(|parsed| parsed.with_timezone(&Utc))
-            }),
+            created_at: created_at.parse::<Timestamp>().unwrap_or_default(),
+            decided_at: decided_at.and_then(|value| value.parse::<Timestamp>().ok()),
         })
     }
 
@@ -1332,7 +1326,7 @@ impl Store {
                 link.item_id.to_string(),
                 link.other_item_id.to_string(),
                 Self::item_link_kind_to_db(link.kind),
-                link.created_at.to_rfc3339(),
+                link.created_at.to_string(),
                 link.origin,
             ],
         )?;
@@ -1494,13 +1488,11 @@ impl Store {
         let other_item_id =
             Self::parse_uuid_from_db_text(other_item_id_str, "item_links.other_item_id")?;
         let kind = Self::item_link_kind_from_db(kind_str)?;
-        let created_at = DateTime::parse_from_rfc3339(created_at_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                Self::storage_data_error(format!(
-                    "invalid item_links.created_at '{created_at_str}': {e}"
-                ))
-            })?;
+        let created_at = created_at_str.parse::<Timestamp>().map_err(|e| {
+            Self::storage_data_error(format!(
+                "invalid item_links.created_at '{created_at_str}': {e}"
+            ))
+        })?;
 
         Ok(ItemLink {
             item_id,
@@ -1542,7 +1534,7 @@ impl Store {
                 item_id.to_string(),
                 category_id.to_string(),
                 assignment_source_label(assignment.source),
-                assignment.assigned_at.to_rfc3339(),
+                assignment.assigned_at.to_string(),
                 assignment.sticky as i32,
                 assignment.origin,
                 assignment.numeric_value.map(|v| v.to_string()),
@@ -1603,12 +1595,8 @@ impl Store {
                 is_actionable: is_actionable != 0,
                 enable_implicit_string: enable_implicit_string != 0,
                 note: row.get(6)?,
-                created_at: DateTime::parse_from_rfc3339(&created_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_default(),
-                modified_at: DateTime::parse_from_rfc3339(&modified_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_default(),
+                created_at: created_str.parse::<Timestamp>().unwrap_or_default(),
+                modified_at: modified_str.parse::<Timestamp>().unwrap_or_default(),
                 conditions,
                 actions,
                 value_kind,
@@ -1705,14 +1693,14 @@ impl Store {
         category_id: CategoryId,
         new_parent_id: Option<CategoryId>,
     ) -> Result<()> {
-        let modified_at = Utc::now();
+        let modified_at = Timestamp::now();
         let rows = self.conn.execute(
             "UPDATE categories
              SET parent_id = ?1, modified_at = ?2
              WHERE id = ?3",
             params![
                 new_parent_id.map(|id| id.to_string()),
-                modified_at.to_rfc3339(),
+                modified_at.to_string(),
                 category_id.to_string()
             ],
         )?;
@@ -1934,7 +1922,7 @@ impl Store {
 
     fn insert_reserved_category(&self, name: &str) -> Result<CategoryId> {
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now = Timestamp::now().to_string();
         let sort_order = self.next_category_sort_order(None)?;
 
         // Reserved categories have implicit string matching disabled by default.
@@ -2187,6 +2175,17 @@ impl Store {
                 }
             }
         }
+
+        if from_version < 11 {
+            // Migrate when_date / done_date from "YYYY-MM-DD HH:MM:SS" to "YYYY-MM-DDTHH:MM:SS"
+            self.conn.execute_batch(
+                "UPDATE items SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
+                 UPDATE items SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;
+                 UPDATE deletion_log SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
+                 UPDATE deletion_log SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -2201,18 +2200,6 @@ impl Store {
             }
         }
         Ok(false)
-    }
-}
-
-fn assignment_source_from_db(source: &str) -> AssignmentSource {
-    match source {
-        "Manual" => AssignmentSource::Manual,
-        "AutoMatch" => AssignmentSource::AutoMatch,
-        "AutoClassified" => AssignmentSource::AutoClassified,
-        "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
-        "Action" => AssignmentSource::Action,
-        "Subsumption" => AssignmentSource::Subsumption,
-        _ => AssignmentSource::Manual,
     }
 }
 
@@ -2258,7 +2245,7 @@ mod tests {
         SectionFlow, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE,
         RESERVED_CATEGORY_NAME_WHEN,
     };
-    use chrono::{Duration, Utc};
+    use jiff::Timestamp;
     use rusqlite::params;
     use rust_decimal::Decimal;
     use std::collections::{BTreeMap, HashSet};
@@ -2284,7 +2271,7 @@ mod tests {
             item_id,
             other_item_id,
             kind,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             origin: Some("test".to_string()),
         }
     }
@@ -2661,7 +2648,7 @@ mod tests {
             status: SuggestionStatus::Pending,
             context_hash: "request:v1".to_string(),
             item_revision_hash: "rev-1".to_string(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             decided_at: None,
         };
         let mut rejected = pending.clone();
@@ -2770,7 +2757,7 @@ mod tests {
 
         item.text = "Final version".to_string();
         item.note = Some("Added details".to_string());
-        item.modified_at = Utc::now();
+        item.modified_at = Timestamp::now();
         store.update_item(&item).unwrap();
 
         let loaded = store.get_item(item.id).unwrap();
@@ -2840,7 +2827,7 @@ mod tests {
         store.create_item(&item).unwrap();
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
             numeric_value: None,
@@ -3134,7 +3121,7 @@ mod tests {
             .conn
             .execute(
                 "INSERT INTO categories (id, name, created_at, modified_at) VALUES (?1, ?2, ?3, ?3)",
-                params![cat_id.to_string(), "TestCat", Utc::now().to_rfc3339()],
+                params![cat_id.to_string(), "TestCat", Timestamp::now().to_string()],
             )
             .unwrap();
         store
@@ -3146,7 +3133,7 @@ mod tests {
                     item_id.to_string(),
                     cat_id.to_string(),
                     "Manual",
-                    Utc::now().to_rfc3339(),
+                    Timestamp::now().to_string(),
                     1,
                     "manual",
                 ],
@@ -3165,7 +3152,7 @@ mod tests {
             .conn
             .execute(
                 "INSERT INTO categories (id, name, created_at, modified_at) VALUES (?1, ?2, ?3, ?3)",
-                params![id.to_string(), name, Utc::now().to_rfc3339()],
+                params![id.to_string(), name, Timestamp::now().to_string()],
             )
             .unwrap();
         id
@@ -3181,7 +3168,7 @@ mod tests {
         let cat_id = make_category(&store, "Project");
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual".to_string()),
             numeric_value: None,
@@ -3208,7 +3195,7 @@ mod tests {
 
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual".to_string()),
             numeric_value: Some(Decimal::new(24596, 2)),
@@ -3232,7 +3219,7 @@ mod tests {
         let cat_id = make_category(&store, "Status");
         let a1 = Assignment {
             source: AssignmentSource::AutoMatch,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("cat:Status".to_string()),
             numeric_value: None,
@@ -3242,7 +3229,7 @@ mod tests {
         // Re-assign with different source — should replace.
         let a2 = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: false,
             origin: Some("manual".to_string()),
             numeric_value: None,
@@ -3265,7 +3252,7 @@ mod tests {
         let cat_id = make_category(&store, "Remove");
         let assignment = Assignment {
             source: AssignmentSource::Manual,
-            assigned_at: Utc::now(),
+            assigned_at: Timestamp::now(),
             sticky: true,
             origin: None,
             numeric_value: None,
@@ -3302,7 +3289,7 @@ mod tests {
         ] {
             let a = Assignment {
                 source: src,
-                assigned_at: Utc::now(),
+                assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
                 numeric_value: None,
@@ -3429,7 +3416,7 @@ mod tests {
     fn test_update_category_touches_modified_at() {
         let store = Store::open_memory().unwrap();
         let mut category = new_category("Draft");
-        category.modified_at = Utc::now() - Duration::minutes(10);
+        category.modified_at = Timestamp::now() - jiff::SignedDuration::from_mins(10);
         store.create_category(&category).unwrap();
 
         let original_modified_at = category.modified_at;
@@ -4295,5 +4282,84 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert_eq!(kind, "Standard");
+    }
+
+    // ── Phase 0 spike: jiff format compatibility ──────────────────────
+
+    #[test]
+    fn spike_jiff_civil_datetime_display_format() {
+        let dt = jiff::civil::DateTime::new(2026, 3, 20, 14, 30, 0, 0).unwrap();
+        assert_eq!(dt.to_string(), "2026-03-20T14:30:00");
+    }
+
+    #[test]
+    fn spike_jiff_civil_datetime_parse_iso8601() {
+        let dt: jiff::civil::DateTime = "2026-03-20T14:30:00".parse().unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.day(), 20);
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.minute(), 30);
+    }
+
+    #[test]
+    fn spike_jiff_timestamp_rfc3339_roundtrip() {
+        // Chrono produces RFC 3339 like "2026-03-20T14:30:00+00:00"
+        // Jiff Timestamp should parse and re-emit compatible format
+        let ts: jiff::Timestamp = "2026-03-20T14:30:00+00:00".parse().unwrap();
+        let s = ts.to_string();
+        // Jiff may emit "2026-03-20T14:30:00Z" — both are valid RFC 3339
+        assert!(s.contains("2026-03-20T14:30:00"));
+        // Verify round-trip
+        let ts2: jiff::Timestamp = s.parse().unwrap();
+        assert_eq!(ts, ts2);
+    }
+
+    #[test]
+    fn spike_jiff_span_day_arithmetic() {
+        let date = jiff::civil::Date::new(2026, 3, 20).unwrap();
+        let tomorrow = date.checked_add(jiff::Span::new().days(1)).unwrap();
+        assert_eq!(tomorrow.to_string(), "2026-03-21");
+
+        let next_week = date.checked_add(jiff::Span::new().days(7)).unwrap();
+        assert_eq!(next_week.to_string(), "2026-03-27");
+
+        let prev = date.checked_sub(jiff::Span::new().days(3)).unwrap();
+        assert_eq!(prev.to_string(), "2026-03-17");
+    }
+
+    #[test]
+    fn spike_jiff_serde_roundtrip() {
+        // civil::DateTime serde
+        let dt = jiff::civil::DateTime::new(2026, 3, 20, 14, 30, 0, 0).unwrap();
+        let json = serde_json::to_string(&dt).unwrap();
+        let dt2: jiff::civil::DateTime = serde_json::from_str(&json).unwrap();
+        assert_eq!(dt, dt2);
+
+        // Timestamp serde
+        let ts: jiff::Timestamp = "2026-03-20T14:30:00Z".parse().unwrap();
+        let json = serde_json::to_string(&ts).unwrap();
+        let ts2: jiff::Timestamp = serde_json::from_str(&json).unwrap();
+        assert_eq!(ts, ts2);
+    }
+
+    #[test]
+    fn spike_jiff_weekday_offset() {
+        use jiff::civil::Weekday;
+        // Monday = 0, Sunday = 6 (same semantics as chrono's num_days_from_monday)
+        assert_eq!(Weekday::Monday.to_monday_zero_offset(), 0);
+        assert_eq!(Weekday::Tuesday.to_monday_zero_offset(), 1);
+        assert_eq!(Weekday::Sunday.to_monday_zero_offset(), 6);
+    }
+
+    #[test]
+    fn spike_jiff_schema_migration_format() {
+        // Verify that REPLACE(' ', 'T') on chrono's format produces valid jiff input
+        let chrono_format = "2026-03-20 14:30:00";
+        let migrated = chrono_format.replace(' ', "T");
+        assert_eq!(migrated, "2026-03-20T14:30:00");
+        let dt: jiff::civil::DateTime = migrated.parse().unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.hour(), 14);
     }
 }

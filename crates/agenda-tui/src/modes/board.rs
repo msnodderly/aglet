@@ -1495,7 +1495,7 @@ impl App {
         let current_value = self
             .selected_item()
             .and_then(|item| item.when_date)
-            .map(|value| value.format("%Y-%m-%d %H:%M").to_string())
+            .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
 
         self.when_edit_target = Some(WhenEditTarget {
@@ -1506,6 +1506,29 @@ impl App {
             &meta.item_label,
         ));
         self.input_panel_discard_confirm = false;
+        self.name_input_context = Some(NameInputContext::WhenDateEdit);
+        self.mode = Mode::InputPanel;
+        self.status = String::new();
+    }
+
+    /// Open the WhenDate editor for the currently selected item (direct `w` keybinding).
+    pub(crate) fn open_when_date_editor(&mut self) {
+        let Some(item) = self.selected_item() else {
+            self.status = "No selected item".to_string();
+            return;
+        };
+        let item_id = item.id;
+        let item_label = item.text.clone();
+        let current_value = item
+            .when_date
+            .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+
+        self.when_edit_target = Some(WhenEditTarget { item_id });
+        self.input_panel = Some(input_panel::InputPanel::new_when_date_input(
+            &current_value,
+            &item_label,
+        ));
         self.name_input_context = Some(NameInputContext::WhenDateEdit);
         self.mode = Mode::InputPanel;
         self.status = String::new();
@@ -2205,6 +2228,9 @@ impl App {
             }
             KeyCode::Char('e') => {
                 self.open_input_panel_edit_item();
+            }
+            KeyCode::Char('w') => {
+                self.open_when_date_editor();
             }
             KeyCode::Enter => {
                 if self.column_index != self.current_slot_item_column_index() {
@@ -4104,7 +4130,7 @@ impl App {
                 } else if matches!(
                     self.name_input_context,
                     Some(NameInputContext::WhenDateEdit)
-                ) && self.status.starts_with("Could not parse date/time")
+                ) && self.status.starts_with("Could not parse")
                 {
                     self.status.clear();
                 }
@@ -4155,14 +4181,14 @@ impl App {
 
         // Create item (parses When, applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
-        let reference_date = Local::now().date_naive();
+        let reference_date = jiff::Zoned::now().date();
         agenda.create_item_with_reference_date(&item, reference_date)?;
 
         // Set note if provided.
         if note.is_some() {
             let mut loaded = agenda.store().get_item(item.id)?;
             loaded.note = note;
-            loaded.modified_at = Utc::now();
+            loaded.modified_at = Timestamp::now();
             agenda.update_item_with_reference_date(&loaded, reference_date)?;
         }
 
@@ -4301,8 +4327,8 @@ impl App {
         // Update text and note.
         item.text = updated_text;
         item.note = updated_note;
-        item.modified_at = Utc::now();
-        let reference_date = Local::now().date_naive();
+        item.modified_at = Timestamp::now();
+        let reference_date = jiff::Zoned::now().date();
         agenda.update_item_with_reference_date(&item, reference_date)?;
 
         // Apply category changes.
@@ -4367,8 +4393,8 @@ impl App {
 
     fn parse_when_datetime_input_with_reference_date(
         input: &str,
-        reference_date: chrono::NaiveDate,
-    ) -> TuiResult<Option<NaiveDateTime>> {
+        reference_date: Date,
+    ) -> TuiResult<Option<DateTime>> {
         use agenda_core::dates::DateParser;
 
         let trimmed = input.trim();
@@ -4376,18 +4402,11 @@ impl App {
             return Ok(None);
         }
 
-        if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M") {
+        if let Ok(value) = trimmed.replace(' ', "T").parse::<DateTime>() {
             return Ok(Some(value));
         }
-        if let Ok(value) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
-            return Ok(Some(value));
-        }
-        if let Ok(date_only) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-            return Ok(Some(
-                date_only
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight is a valid time"),
-            ));
+        if let Ok(date_only) = trimmed.parse::<Date>() {
+            return Ok(Some(date_only.at(0, 0, 0, 0)));
         }
 
         let parser = agenda_core::dates::BasicDateParser::default();
@@ -4401,8 +4420,8 @@ impl App {
         ).into())
     }
 
-    fn parse_when_datetime_input(input: &str) -> TuiResult<Option<NaiveDateTime>> {
-        Self::parse_when_datetime_input_with_reference_date(input, Utc::now().date_naive())
+    fn parse_when_datetime_input(input: &str) -> TuiResult<Option<DateTime>> {
+        Self::parse_when_datetime_input_with_reference_date(input, jiff::Zoned::now().date())
     }
 
     /// Save an InputPanel(NameInput) — dispatches on name_input_context.
@@ -4632,7 +4651,7 @@ impl App {
                         self.mode = Mode::Normal;
                         self.status = match parsed_when {
                             Some(value) => {
-                                format!("When set to {}", value.format("%Y-%m-%d %H:%M"))
+                                format!("When set to {}", value.strftime("%Y-%m-%d %H:%M"))
                             }
                             None => "When cleared".to_string(),
                         };
@@ -5245,7 +5264,7 @@ mod tests {
     use super::*;
     use agenda_core::dates::{BasicDateParser, DateParser};
     use agenda_core::model::CategoryId;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
 
     fn make_row(id: CategoryId, depth: usize, is_exclusive: bool) -> CategoryListRow {
         CategoryListRow {
@@ -5952,7 +5971,7 @@ mod tests {
 
     #[test]
     fn parse_when_datetime_input_supports_core_relative_phrase_forms() {
-        let reference = NaiveDate::from_ymd_opt(2026, 2, 16).expect("valid date");
+        let reference = Date::new(2026, 2, 16).expect("valid date");
         let input = "next Tuesday at 3pm";
         let expected = BasicDateParser::default()
             .parse(input, reference)
@@ -5968,7 +5987,7 @@ mod tests {
 
     #[test]
     fn parse_when_datetime_input_reports_unparsable_input() {
-        let reference = NaiveDate::from_ymd_opt(2026, 2, 16).expect("valid date");
+        let reference = Date::new(2026, 2, 16).expect("valid date");
         let err = App::parse_when_datetime_input_with_reference_date("next weem", reference)
             .expect_err("invalid phrase should return error");
         let err_msg = err.to_string();

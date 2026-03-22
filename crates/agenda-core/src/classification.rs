@@ -1,4 +1,5 @@
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use jiff::civil::{Date, DateTime};
+use jiff::Timestamp;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -86,7 +87,7 @@ pub struct ClassificationRequest {
     pub item_id: ItemId,
     pub text: String,
     pub note: Option<String>,
-    pub when_date: Option<NaiveDateTime>,
+    pub when_date: Option<DateTime>,
     pub manual_category_ids: Vec<CategoryId>,
     pub visible_view_name: Option<String>,
     pub visible_section_title: Option<String>,
@@ -117,7 +118,7 @@ pub struct ClassificationCandidate {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CandidateAssignment {
     Category(CategoryId),
-    When(NaiveDateTime),
+    When(DateTime),
 }
 
 impl CandidateAssignment {
@@ -142,7 +143,7 @@ impl CandidateAssignment {
         }
     }
 
-    pub fn when_value(&self) -> Option<NaiveDateTime> {
+    pub fn when_value(&self) -> Option<DateTime> {
         match self {
             Self::When(value) => Some(*value),
             Self::Category(_) => None,
@@ -170,8 +171,8 @@ pub struct ClassificationSuggestion {
     pub status: SuggestionStatus,
     pub context_hash: String,
     pub item_revision_hash: String,
-    pub created_at: DateTime<Utc>,
-    pub decided_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub decided_at: Option<Timestamp>,
 }
 
 impl ClassificationSuggestion {
@@ -190,7 +191,7 @@ impl ClassificationSuggestion {
         let decided_at = match status {
             SuggestionStatus::Accepted
             | SuggestionStatus::Rejected
-            | SuggestionStatus::Superseded => Some(Utc::now()),
+            | SuggestionStatus::Superseded => Some(Timestamp::now()),
             SuggestionStatus::Pending => None,
         };
         Self {
@@ -204,7 +205,7 @@ impl ClassificationSuggestion {
             status,
             context_hash: candidate.context_hash.clone(),
             item_revision_hash,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             decided_at,
         }
     }
@@ -258,7 +259,7 @@ impl ClassificationProvider for ImplicitStringProvider<'_> {
 
 pub struct WhenParserProvider {
     pub parser: BasicDateParser,
-    pub reference_date: NaiveDate,
+    pub reference_date: Date,
 }
 
 impl ClassificationProvider for WhenParserProvider {

@@ -188,7 +188,7 @@ impl App {
     }
 
     pub(crate) fn preview_count_for_query(&self, query: &Query) -> usize {
-        let reference_date = Local::now().date_naive();
+        let reference_date = jiff::Zoned::now().date();
         evaluate_query(query, &self.all_items, reference_date).len()
     }
 
