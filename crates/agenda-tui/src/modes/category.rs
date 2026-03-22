@@ -465,6 +465,119 @@ impl App {
         Ok(())
     }
 
+    fn category_manager_details_context(&self) -> (bool, bool) {
+        let is_numeric = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        let integer_mode = self
+            .selected_category_id()
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.numeric_format.clone().unwrap_or_default().decimal_places == 0)
+            .unwrap_or(false);
+        (is_numeric, integer_mode)
+    }
+
+    fn cycle_category_manager_details_section(&mut self, delta: i32) {
+        let Some(details_focus) = self.category_manager_details_focus() else {
+            return;
+        };
+        let (is_numeric, _integer_mode) = self.category_manager_details_context();
+        let target = match delta.signum() {
+            d if d > 0 => {
+                if is_numeric {
+                    match details_focus {
+                        CategoryManagerDetailsFocus::Integer
+                        | CategoryManagerDetailsFocus::DecimalPlaces
+                        | CategoryManagerDetailsFocus::CurrencySymbol
+                        | CategoryManagerDetailsFocus::ThousandsSeparator => {
+                            CategoryManagerDetailsFocus::Note
+                        }
+                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::Integer,
+                        _ => CategoryManagerDetailsFocus::Integer,
+                    }
+                } else {
+                    match details_focus {
+                        CategoryManagerDetailsFocus::Exclusive
+                        | CategoryManagerDetailsFocus::AutoMatch
+                        | CategoryManagerDetailsFocus::MatchCategoryName
+                        | CategoryManagerDetailsFocus::Actionable => {
+                            CategoryManagerDetailsFocus::AlsoMatch
+                        }
+                        CategoryManagerDetailsFocus::AlsoMatch => CategoryManagerDetailsFocus::Note,
+                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::Exclusive,
+                        _ => CategoryManagerDetailsFocus::Exclusive,
+                    }
+                }
+            }
+            d if d < 0 => {
+                if is_numeric {
+                    match details_focus {
+                        CategoryManagerDetailsFocus::Note => {
+                            CategoryManagerDetailsFocus::ThousandsSeparator
+                        }
+                        CategoryManagerDetailsFocus::Integer
+                        | CategoryManagerDetailsFocus::DecimalPlaces
+                        | CategoryManagerDetailsFocus::CurrencySymbol
+                        | CategoryManagerDetailsFocus::ThousandsSeparator => {
+                            self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                            return;
+                        }
+                        _ => {
+                            self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                            return;
+                        }
+                    }
+                } else {
+                    match details_focus {
+                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::AlsoMatch,
+                        CategoryManagerDetailsFocus::AlsoMatch => {
+                            CategoryManagerDetailsFocus::Actionable
+                        }
+                        CategoryManagerDetailsFocus::Exclusive
+                        | CategoryManagerDetailsFocus::AutoMatch
+                        | CategoryManagerDetailsFocus::MatchCategoryName
+                        | CategoryManagerDetailsFocus::Actionable => {
+                            self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                            return;
+                        }
+                        _ => {
+                            self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                            return;
+                        }
+                    }
+                }
+            }
+            _ => details_focus,
+        };
+        self.set_category_manager_focus(CategoryManagerFocus::Details);
+        self.set_category_manager_details_focus(target);
+    }
+
+    fn handle_category_manager_tab_navigation(&mut self, reverse: bool) {
+        match self.category_manager_focus() {
+            Some(CategoryManagerFocus::Filter) => {
+                self.set_category_manager_filter_editing(false);
+                if reverse {
+                    self.set_category_manager_focus(CategoryManagerFocus::Details);
+                } else {
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                }
+            }
+            Some(CategoryManagerFocus::Tree) => {
+                self.set_category_manager_focus(if reverse {
+                    CategoryManagerFocus::Filter
+                } else {
+                    CategoryManagerFocus::Details
+                });
+            }
+            Some(CategoryManagerFocus::Details) => {
+                self.cycle_category_manager_details_section(if reverse { -1 } else { 1 });
+            }
+            None => {}
+        }
+    }
+
     fn handle_category_manager_details_key(
         &mut self,
         code: KeyCode,
@@ -486,7 +599,8 @@ impl App {
             && matches!(
                 details_focus,
                 CategoryManagerDetailsFocus::Exclusive
-                    | CategoryManagerDetailsFocus::MatchName
+                    | CategoryManagerDetailsFocus::AutoMatch
+                    | CategoryManagerDetailsFocus::MatchCategoryName
                     | CategoryManagerDetailsFocus::Actionable
                     | CategoryManagerDetailsFocus::AlsoMatch
             )
@@ -518,17 +632,28 @@ impl App {
             return Ok(false);
         }
 
+        if self.category_manager_save_key_pressed(code)
+            && (self.category_manager_details_note_dirty()
+                || self.category_manager_details_also_match_dirty())
+            && !self.category_manager_details_note_editing()
+            && !self.category_manager_details_also_match_editing()
+        {
+            // Let category-manager level save handling persist any dirty detail drafts
+            // before text-entry auto-start consumes the key.
+            return Ok(false);
+        }
+
         if details_focus == CategoryManagerDetailsFocus::Note
             && self.category_manager_details_note_editing()
         {
             match code {
                 KeyCode::Esc => {
-                    if self.category_manager_details_note_dirty() {
-                        self.reload_category_manager_details_note_from_selected();
-                        self.mark_category_manager_details_note_dirty(false);
-                        self.status = "Note changes discarded".to_string();
-                    }
                     self.set_category_manager_details_note_editing(false);
+                    self.status = if self.category_manager_details_note_dirty() {
+                        "Note draft retained (Esc again to choose save/discard)".to_string()
+                    } else {
+                        "Exited note edit".to_string()
+                    };
                     return Ok(true);
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
@@ -551,26 +676,17 @@ impl App {
             return Ok(false);
         }
 
-        if details_focus == CategoryManagerDetailsFocus::Note
-            && !self.category_manager_details_note_editing()
-            && self.category_manager_details_note_dirty()
-            && self.category_manager_save_key_pressed(code)
-        {
-            // Let category-manager level save handling persist the draft.
-            return Ok(false);
-        }
-
         if details_focus == CategoryManagerDetailsFocus::AlsoMatch
             && self.category_manager_details_also_match_editing()
         {
             match code {
                 KeyCode::Esc => {
-                    if self.category_manager_details_also_match_dirty() {
-                        self.reload_category_manager_details_also_match_from_selected();
-                        self.mark_category_manager_details_also_match_dirty(false);
-                        self.status = "Also-match changes discarded".to_string();
-                    }
                     self.set_category_manager_details_also_match_editing(false);
+                    self.status = if self.category_manager_details_also_match_dirty() {
+                        "Also-match draft retained (Esc again to choose save/discard)".to_string()
+                    } else {
+                        "Exited also-match edit".to_string()
+                    };
                     return Ok(true);
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
@@ -591,14 +707,6 @@ impl App {
                     }
                 }
             }
-            return Ok(false);
-        }
-
-        if details_focus == CategoryManagerDetailsFocus::AlsoMatch
-            && !self.category_manager_details_also_match_editing()
-            && self.category_manager_details_also_match_dirty()
-            && self.category_manager_save_key_pressed(code)
-        {
             return Ok(false);
         }
 
@@ -643,13 +751,69 @@ impl App {
                 self.cycle_category_manager_details_focus(1);
                 return Ok(true);
             }
-            KeyCode::Enter | KeyCode::Char(' ') => match details_focus {
+            KeyCode::Enter => match details_focus {
+                CategoryManagerDetailsFocus::Exclusive => {
+                    self.toggle_selected_category_exclusive(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::AutoMatch => {
+                    self.toggle_selected_category_implicit(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::MatchCategoryName => {
+                    self.toggle_selected_category_match_category_name(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Actionable => {
+                    self.toggle_selected_category_actionable(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::AlsoMatch => {
+                    self.start_category_manager_details_also_match_edit();
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Integer => {
+                    self.toggle_selected_category_integer_mode(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::DecimalPlaces => {
+                    self.start_category_manager_numeric_inline_edit(
+                        CategoryManagerDetailsInlineField::DecimalPlaces,
+                    )?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::CurrencySymbol => {
+                    self.start_category_manager_numeric_inline_edit(
+                        CategoryManagerDetailsInlineField::CurrencySymbol,
+                    )?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::ThousandsSeparator => {
+                    self.toggle_selected_category_thousands_separator(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Note => {
+                    self.start_category_manager_details_note_edit();
+                    return Ok(true);
+                }
+            },
+            KeyCode::Char(' ') => match details_focus {
                 CategoryManagerDetailsFocus::Exclusive => {
                     self.toggle_selected_category_exclusive(agenda)?;
                     return Ok(true);
                 }
-                CategoryManagerDetailsFocus::MatchName => {
+                CategoryManagerDetailsFocus::AutoMatch => {
                     self.toggle_selected_category_implicit(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::MatchCategoryName => {
+                    self.toggle_selected_category_match_category_name(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Actionable => {
@@ -664,20 +828,8 @@ impl App {
                     self.toggle_selected_category_integer_mode(agenda)?;
                     return Ok(true);
                 }
-                CategoryManagerDetailsFocus::DecimalPlaces => {
-                    if matches!(code, KeyCode::Enter) {
-                        self.start_category_manager_numeric_inline_edit(
-                            CategoryManagerDetailsInlineField::DecimalPlaces,
-                        )?;
-                    }
-                    return Ok(true);
-                }
-                CategoryManagerDetailsFocus::CurrencySymbol => {
-                    if matches!(code, KeyCode::Enter) {
-                        self.start_category_manager_numeric_inline_edit(
-                            CategoryManagerDetailsInlineField::CurrencySymbol,
-                        )?;
-                    }
+                CategoryManagerDetailsFocus::DecimalPlaces
+                | CategoryManagerDetailsFocus::CurrencySymbol => {
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::ThousandsSeparator => {
@@ -1378,12 +1530,10 @@ impl App {
         }
         match code {
             KeyCode::Tab => {
-                self.set_category_manager_filter_editing(false);
-                self.cycle_category_manager_focus(1);
+                self.handle_category_manager_tab_navigation(false);
             }
             KeyCode::BackTab => {
-                self.set_category_manager_filter_editing(false);
-                self.cycle_category_manager_focus(-1);
+                self.handle_category_manager_tab_navigation(true);
             }
             KeyCode::Char('/') => {
                 self.set_category_manager_focus(CategoryManagerFocus::Filter);
@@ -1492,9 +1642,17 @@ impl App {
             }
             KeyCode::Char('i') => {
                 if self.selected_category_is_numeric() {
-                    self.status = "Match not applicable to numeric categories".to_string();
+                    self.status = "Auto-match not applicable to numeric categories".to_string();
                 } else {
                     self.toggle_selected_category_implicit(agenda)?;
+                }
+            }
+            KeyCode::Char('g') => {
+                if self.selected_category_is_numeric() {
+                    self.status =
+                        "Match-category-name not applicable to numeric categories".to_string();
+                } else {
+                    self.toggle_selected_category_match_category_name(agenda)?;
                 }
             }
             KeyCode::Char('a') => {
@@ -1602,9 +1760,37 @@ impl App {
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(updated.id);
         self.status = format!(
-            "{} match-category-name={} (processed_items={}, affected_items={})",
+            "{} auto-match={} (processed_items={}, affected_items={})",
             updated.name,
             updated.enable_implicit_string,
+            result.processed_items,
+            result.affected_items
+        );
+        Ok(())
+    }
+
+    pub(crate) fn toggle_selected_category_match_category_name(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<()> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda.store().get_category(category_id)?;
+        category.match_category_name = !category.match_category_name;
+        let updated = category.clone();
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} match-category-name={} (processed_items={}, affected_items={})",
+            updated.name,
+            updated.match_category_name,
             result.processed_items,
             result.affected_items
         );

@@ -78,6 +78,7 @@ pub enum ProviderMode {
 pub struct CategoryDescriptor {
     pub id: CategoryId,
     pub name: String,
+    pub match_category_name: bool,
     pub also_match: Vec<String>,
     pub parent_id: Option<CategoryId>,
     pub value_kind: CategoryValueKind,
@@ -237,10 +238,12 @@ impl ClassificationProvider for ImplicitStringProvider<'_> {
         let match_text = request.match_text();
         let mut out = Vec::new();
         for category in &request.candidate_categories {
-            let Some(matched) =
-                self.classifier
-                    .classify(&match_text, &category.name, &category.also_match)
-            else {
+            let Some(matched) = self.classifier.classify(
+                &match_text,
+                &category.name,
+                category.match_category_name,
+                &category.also_match,
+            ) else {
                 continue;
             };
             let rationale = match matched.source {
@@ -374,6 +377,7 @@ impl<'a> ClassificationService<'a> {
             .map(|category| CategoryDescriptor {
                 id: category.id,
                 name: category.name,
+                match_category_name: category.match_category_name,
                 also_match: category.also_match,
                 parent_id: category.parent,
                 value_kind: category.value_kind,

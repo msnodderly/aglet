@@ -171,6 +171,7 @@ struct CategoryListRow {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
+    match_category_name: bool,
     value_kind: CategoryValueKind,
 }
 
@@ -517,7 +518,8 @@ enum CategoryManagerFocus {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CategoryManagerDetailsFocus {
     Exclusive,
-    MatchName,
+    AutoMatch,
+    MatchCategoryName,
     Actionable,
     AlsoMatch,
     Integer,
@@ -546,8 +548,9 @@ impl CategoryManagerDetailsFocus {
             }
         } else {
             match self {
-                Self::Exclusive => Self::MatchName,
-                Self::MatchName => Self::Actionable,
+                Self::Exclusive => Self::AutoMatch,
+                Self::AutoMatch => Self::MatchCategoryName,
+                Self::MatchCategoryName => Self::Actionable,
                 Self::Actionable => Self::AlsoMatch,
                 Self::AlsoMatch => Self::Note,
                 Self::Note => Self::Exclusive,
@@ -575,8 +578,9 @@ impl CategoryManagerDetailsFocus {
         } else {
             match self {
                 Self::Exclusive => Self::Note,
-                Self::MatchName => Self::Exclusive,
-                Self::Actionable => Self::MatchName,
+                Self::AutoMatch => Self::Exclusive,
+                Self::MatchCategoryName => Self::AutoMatch,
+                Self::Actionable => Self::MatchCategoryName,
                 Self::AlsoMatch => Self::Actionable,
                 Self::Note => Self::AlsoMatch,
                 _ => Self::Actionable,
@@ -5042,6 +5046,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
         let user = CategoryListRow {
@@ -5053,6 +5058,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
 
@@ -5073,6 +5079,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
         let when = CategoryListRow {
@@ -5084,6 +5091,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
 
@@ -7703,21 +7711,21 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Classification: Auto-apply"),
+            rendered.contains("Auto classification: Auto-apply"),
             "category manager should show classification summary: {rendered}"
         );
         assert!(
-            rendered.contains("Ready Queue: (unset)"),
+            rendered.contains("Ready queue: (unset)"),
             "category manager should show ready queue summary: {rendered}"
         );
         assert!(
-            rendered.contains("Claim Result: (unset)"),
+            rendered.contains("Claim result: (unset)"),
             "category manager should show claim summary: {rendered}"
         );
     }
 
     #[test]
-    fn category_manager_tab_cycles_tree_details_and_filter() {
+    fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7736,19 +7744,56 @@ mod tests {
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Details)
         );
-
-        app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to filter");
         assert_eq!(
-            app.category_manager_focus(),
-            Some(CategoryManagerFocus::Filter)
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Exclusive)
         );
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab to tree");
+            .expect("tab to also-match");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::AlsoMatch)
+        );
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to note");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Note)
+        );
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab wraps to flags");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Exclusive)
+        );
+
+        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
+            .expect("shift-tab returns to tree");
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Tree)
+        );
+
+        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
+            .expect("shift-tab reaches filter");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Filter)
         );
     }
 
@@ -10404,7 +10449,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_also_match_esc_discards_changes() {
+    fn category_manager_details_also_match_esc_keeps_unsaved_draft() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10434,13 +10479,14 @@ mod tests {
         assert!(app.category_manager_details_also_match_dirty());
 
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("discard also-match edit");
+            .expect("leave also-match edit");
         assert!(!app.category_manager_details_also_match_editing());
-        assert!(!app.category_manager_details_also_match_dirty());
+        assert!(app.category_manager_details_also_match_dirty());
         assert_eq!(
             app.category_manager_details_also_match_text(),
-            Some("phone")
+            Some("phoned")
         );
+        assert!(app.status.contains("retained"));
 
         let saved = store.get_category(category.id).expect("load category");
         assert_eq!(saved.also_match, vec!["phone".to_string()]);
@@ -10489,14 +10535,18 @@ mod tests {
             .expect("leave details pane");
         assert_eq!(
             app.category_manager_focus(),
-            Some(CategoryManagerFocus::Filter)
+            Some(CategoryManagerFocus::Details)
         );
         assert!(!app.category_manager_details_also_match_editing());
         assert_eq!(app.category_manager_details_also_match_text(), Some("dial"));
         assert!(app.category_manager_details_also_match_dirty());
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Note)
+        );
 
         app.handle_category_manager_key(KeyCode::BackTab, &agenda)
-            .expect("return to details");
+            .expect("return to also-match");
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Details)
@@ -10563,7 +10613,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_note_edit_esc_discards_changes() {
+    fn category_manager_details_note_edit_esc_keeps_unsaved_draft() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10593,15 +10643,73 @@ mod tests {
         assert!(app.category_manager_details_note_dirty());
 
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("esc discards note edit");
+            .expect("esc leaves note edit");
 
-        // Esc should discard, not save
+        // Esc should keep the draft and leave edit mode.
         let loaded = store.get_category(category.id).expect("load category");
         assert_eq!(loaded.note.as_deref(), Some("seed"));
-        assert_eq!(app.category_manager_details_note_text(), Some("seed"));
+        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
         assert!(!app.category_manager_details_note_editing());
-        assert!(!app.category_manager_details_note_dirty());
-        assert!(app.status.contains("discarded"));
+        assert!(app.category_manager_details_note_dirty());
+        assert!(app.status.contains("retained"));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_dirty_note_is_discarded_only_via_close_prompt() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-manager-note-discard-via-prompt-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut category = Category::new("Work".to_string());
+        category.note = Some("seed".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("begin note edit");
+        app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
+            .expect("type note");
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("leave note edit but keep draft");
+
+        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
+        assert!(app.category_manager_details_note_dirty());
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("open close confirm");
+        assert!(
+            app.category_manager
+                .as_ref()
+                .expect("manager state")
+                .discard_confirm
+        );
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("discard and close");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
+        assert_eq!(
+            store.get_category(category.id).expect("load category").note,
+            Some("seed".to_string())
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -10838,7 +10946,9 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("toggle exclusive from details");
         app.handle_category_manager_key(KeyCode::Char('i'), &agenda)
-            .expect("quick toggle match-name");
+            .expect("quick toggle auto-match");
+        app.handle_category_manager_key(KeyCode::Char('g'), &agenda)
+            .expect("quick toggle match-category-name");
         app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
             .expect("quick toggle actionable");
 
@@ -10848,8 +10958,47 @@ mod tests {
             loaded.enable_implicit_string,
             !initial.enable_implicit_string
         );
+        assert_eq!(loaded.match_category_name, !initial.match_category_name);
         assert_eq!(loaded.is_actionable, !initial.is_actionable);
         assert_eq!(app.mode, Mode::CategoryManager);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_enter_on_flag_toggles_and_returns_to_tree() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-enter-returns-to-tree-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AutoMatch);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle auto-match and leave details");
+
+        let loaded = store.get_category(category.id).expect("load category");
+        assert!(!loaded.enable_implicit_string);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -11305,7 +11454,23 @@ mod tests {
             .expect("details next field");
         assert_eq!(
             app.category_manager_details_focus(),
-            Some(CategoryManagerDetailsFocus::MatchName)
+            Some(CategoryManagerDetailsFocus::AutoMatch)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("details next field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::MatchCategoryName)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('k'), &agenda)
+            .expect("details previous field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::AutoMatch)
         );
         assert_eq!(app.selected_category_id(), Some(alpha.id));
 
@@ -11444,7 +11609,13 @@ mod tests {
             .expect("toggle integer on");
         let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
         assert_eq!(fmt.decimal_places, 0);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
 
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
         app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("toggle integer off");
         let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
@@ -15649,6 +15820,80 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_shift_down_moves_item_to_next_section_like_right_bracket() {
+        let (store, db_path) = make_two_section_store("shift-down-move");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        let moved_item_id = app.slots[0].items[0].id;
+        app.slot_index = 0;
+        app.item_index = 0;
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT), &agenda)
+            .expect("shift-down moves item to next section");
+
+        assert_eq!(app.slot_index, 1);
+        assert!(
+            app.slots[1]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should move into the next section"
+        );
+        assert!(
+            !app.slots[0]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should leave the original section"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_shift_up_moves_item_to_previous_section_like_left_bracket() {
+        let (store, db_path) = make_two_section_store("shift-up-move");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with TestView selected");
+
+        let moved_item_id = app.slots[1].items[0].id;
+        app.slot_index = 1;
+        app.item_index = 0;
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT), &agenda)
+            .expect("shift-up moves item to previous section");
+
+        assert_eq!(app.slot_index, 0);
+        assert!(
+            app.slots[0]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should move into the previous section"
+        );
+        assert!(
+            !app.slots[1]
+                .items
+                .iter()
+                .any(|item| item.id == moved_item_id),
+            "item should leave the original section"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_index() {
         let (store, db_path) = make_two_section_store("horizontal-flow-nav");
         let classifier = SubstringClassifier;
@@ -16713,6 +16958,79 @@ mod tests {
             app.slot_sort_keys[0].is_empty(),
             "third sort press on primary should clear that key"
         );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_sorting_angle_brackets_alias_ascending_and_descending_sort() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-sort-angle-aliases-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).expect("create cost");
+
+        let ten = Item::new("Ten".to_string());
+        let five = Item::new("Five".to_string());
+        store.create_item(&ten).expect("create ten");
+        store.create_item(&five).expect("create five");
+
+        agenda
+            .assign_item_numeric_manual(
+                ten.id,
+                cost.id,
+                rust_decimal::Decimal::new(10, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign ten");
+        agenda
+            .assign_item_numeric_manual(
+                five.id,
+                cost.id,
+                rust_decimal::Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign five");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: cost.id,
+                width: 12,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 1;
+        app.handle_key(KeyCode::Char('<'), &agenda)
+            .expect("ascending sort alias");
+        assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Asc);
+
+        app.handle_key(KeyCode::Char('>'), &agenda)
+            .expect("descending sort alias");
+        assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Desc);
 
         let _ = std::fs::remove_file(&db_path);
     }

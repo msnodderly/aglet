@@ -6,6 +6,7 @@ pub trait Classifier: Send + Sync {
         &self,
         text: &str,
         category_name: &str,
+        match_category_name: bool,
         also_match: &[String],
     ) -> Option<ImplicitMatch>;
 }
@@ -32,6 +33,7 @@ impl Classifier for SubstringClassifier {
         &self,
         text: &str,
         category_name: &str,
+        match_category_name: bool,
         also_match: &[String],
     ) -> Option<ImplicitMatch> {
         let haystack_tokens = tokenize_and_normalize(text);
@@ -39,13 +41,13 @@ impl Classifier for SubstringClassifier {
             return None;
         }
 
-        for (candidate, source) in
-            std::iter::once((category_name, ImplicitMatchSource::CategoryName)).chain(
-                also_match
-                    .iter()
-                    .map(|term| (term.as_str(), ImplicitMatchSource::AlsoMatch)),
-            )
-        {
+        let name_candidates = match_category_name
+            .then_some((category_name, ImplicitMatchSource::CategoryName))
+            .into_iter();
+        let alias_candidates = also_match
+            .iter()
+            .map(|term| (term.as_str(), ImplicitMatchSource::AlsoMatch));
+        for (candidate, source) in name_candidates.chain(alias_candidates) {
             let term = candidate.trim();
             if term.is_empty() {
                 continue;
@@ -203,7 +205,7 @@ mod tests {
     fn test_basic_match() {
         let classifier = SubstringClassifier;
         let matched = classifier
-            .classify("Call Sarah tomorrow", "Sarah", &[])
+            .classify("Call Sarah tomorrow", "Sarah", true, &[])
             .expect("should match");
         assert_eq!(matched.matched_term, "Sarah");
         assert_eq!(matched.source, ImplicitMatchSource::CategoryName);
@@ -213,71 +215,89 @@ mod tests {
     fn test_case_insensitive_match() {
         let classifier = SubstringClassifier;
         assert!(classifier
-            .classify("call sarah tomorrow", "Sarah", &[])
+            .classify("call sarah tomorrow", "Sarah", true, &[])
             .is_some());
     }
 
     #[test]
     fn test_no_match() {
         let classifier = SubstringClassifier;
-        assert_eq!(classifier.classify("Call Bob tomorrow", "Sarah", &[]), None);
+        assert_eq!(
+            classifier.classify("Call Bob tomorrow", "Sarah", true, &[]),
+            None
+        );
     }
 
     #[test]
     fn test_word_boundary_no_partial_match() {
         let classifier = SubstringClassifier;
-        assert_eq!(classifier.classify("Sarahville", "Sarah", &[]), None);
-        assert_eq!(classifier.classify("Condone this", "Done", &[]), None);
+        assert_eq!(classifier.classify("Sarahville", "Sarah", true, &[]), None);
+        assert_eq!(classifier.classify("Condone this", "Done", true, &[]), None);
     }
 
     #[test]
     fn test_word_boundary_punctuation() {
         let classifier = SubstringClassifier;
-        assert!(classifier.classify("Get it Done!", "Done", &[]).is_some());
+        assert!(classifier
+            .classify("Get it Done!", "Done", true, &[])
+            .is_some());
     }
 
     #[test]
     fn test_word_boundary_hashtag_prefix() {
         let classifier = SubstringClassifier;
-        assert!(classifier.classify("#high priority", "High", &[]).is_some());
+        assert!(classifier
+            .classify("#high priority", "High", true, &[])
+            .is_some());
     }
 
     #[test]
     fn test_word_boundary_start_of_string() {
         let classifier = SubstringClassifier;
-        assert!(classifier.classify("Sarah called", "Sarah", &[]).is_some());
+        assert!(classifier
+            .classify("Sarah called", "Sarah", true, &[])
+            .is_some());
     }
 
     #[test]
     fn test_word_boundary_end_of_string() {
         let classifier = SubstringClassifier;
-        assert!(classifier.classify("Call Sarah", "Sarah", &[]).is_some());
+        assert!(classifier
+            .classify("Call Sarah", "Sarah", true, &[])
+            .is_some());
     }
 
     #[test]
     fn test_multi_word_match() {
         let classifier = SubstringClassifier;
         assert!(classifier
-            .classify("discuss Project Alpha today", "Project Alpha", &[])
+            .classify("discuss Project Alpha today", "Project Alpha", true, &[])
             .is_some());
     }
 
     #[test]
     fn test_no_match_unrelated_text() {
         let classifier = SubstringClassifier;
-        assert_eq!(classifier.classify("Buy groceries", "Sarah", &[]), None);
+        assert_eq!(
+            classifier.classify("Buy groceries", "Sarah", true, &[]),
+            None
+        );
     }
 
     #[test]
     fn test_suffix_normalization_matches_inflections() {
         let classifier = SubstringClassifier;
-        assert!(classifier.classify("calling Sarah", "Call", &[]).is_some());
-        assert!(classifier.classify("review calls", "Call", &[]).is_some());
         assert!(classifier
-            .classify("assigned caller queue", "Call", &[])
+            .classify("calling Sarah", "Call", true, &[])
             .is_some());
         assert!(classifier
-            .classify("designing logo", "Design", &[])
+            .classify("review calls", "Call", true, &[])
+            .is_some());
+        assert!(classifier
+            .classify("assigned caller queue", "Call", true, &[])
+            .is_some());
+        assert!(classifier
+            .classify("designing logo", "Design", true, &[])
             .is_some());
     }
 
@@ -288,6 +308,7 @@ mod tests {
             .classify(
                 "need to dial Alice tomorrow",
                 "Phone Calls",
+                true,
                 &["dial".to_string(), "ring".to_string()],
             )
             .expect("alias should match");
@@ -302,6 +323,7 @@ mod tests {
             .classify(
                 "board meetings tomorrow",
                 "Meetings",
+                true,
                 &["board meeting".to_string()],
             )
             .is_some());
@@ -309,6 +331,7 @@ mod tests {
             classifier.classify(
                 "meeting with the board tomorrow",
                 "Meetings",
+                true,
                 &["board meeting".to_string()],
             ),
             None
@@ -319,8 +342,25 @@ mod tests {
     fn test_possessive_s_is_ignored_for_phrase_matching() {
         let classifier = SubstringClassifier;
         assert!(classifier
-            .classify("tomorrow's board meeting", "Board Meeting", &[])
+            .classify("tomorrow's board meeting", "Board Meeting", true, &[])
             .is_some());
+    }
+
+    #[test]
+    fn test_can_disable_category_name_matching_while_preserving_aliases() {
+        let classifier = SubstringClassifier;
+        assert_eq!(classifier.classify("person", "Person", false, &[]), None);
+
+        let matched = classifier
+            .classify(
+                "Call Bob tomorrow",
+                "Person",
+                false,
+                &["bob".to_string(), "sally".to_string()],
+            )
+            .expect("should match alias without category name");
+        assert_eq!(matched.matched_term, "bob");
+        assert_eq!(matched.source, ImplicitMatchSource::AlsoMatch);
     }
 
     #[test]

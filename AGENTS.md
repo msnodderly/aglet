@@ -131,6 +131,20 @@ Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts
 The project has two binaries: `agenda-cli` and `agenda-tui`. Use
 `cargo run --bin agenda-cli` or `cargo run --bin agenda-tui` to run them.
 
+## Schema Version Drift Can Hide Missing Tables (Surprising)
+
+Some existing `.ag` files can already be stamped with `PRAGMA user_version = 11`
+but still be missing the current `classification_suggestions` table and its
+indexes.
+
+Practical implications:
+- `Store::init()` only runs `SCHEMA_SQL` + `apply_migrations()` when
+  `user_version < SCHEMA_VERSION`, so simply opening one of these DBs will not
+  add the missing table.
+- If a DB reports version 11 but lacks `classification_suggestions`, patch the
+  table/indexes idempotently with SQLite (or add a newer migration/version bump
+  in code) instead of assuming `agenda-cli` open is sufficient.
+
 ## Documentation Layout
 
 Active project docs now live under `docs/` grouped by purpose:

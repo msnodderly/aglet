@@ -3389,8 +3389,31 @@ impl App {
                         ("n", "discard"),
                         ("Esc", "keep editing"),
                     ]
+                } else if self.classification_mode_picker_open {
+                    vec![("j/k", "mode"), ("Enter", "apply"), ("Esc", "close")]
+                } else if self.workflow_role_picker.is_some() {
+                    vec![
+                        ("j/k", "pick"),
+                        ("Enter", "assign"),
+                        ("x", "clear"),
+                        ("Esc", "back"),
+                    ]
+                } else if self.workflow_setup_open {
+                    vec![
+                        ("j/k", "role"),
+                        ("Enter", "choose"),
+                        ("x", "clear"),
+                        ("Esc", "close"),
+                    ]
                 } else if self.category_manager_details_note_editing() {
-                    vec![("Tab", "leave note"), ("Esc", "discard")]
+                    vec![("Tab", "next section"), ("Esc", "stop edit")]
+                } else if self.category_manager_details_also_match_editing() {
+                    vec![
+                        ("Type", "edit"),
+                        ("Enter", "newline"),
+                        ("Tab", "next section"),
+                        ("Esc", "stop edit"),
+                    ]
                 } else if let Some(action) = self.category_manager_inline_action() {
                     match action {
                         CategoryInlineAction::Rename { .. } => {
@@ -3400,16 +3423,34 @@ impl App {
                             vec![("y", "confirm"), ("Esc", "cancel")]
                         }
                     }
+                } else if self.category_manager_filter_editing()
+                    || self.category_manager_focus() == Some(CategoryManagerFocus::Filter)
+                {
+                    vec![
+                        ("Type", "filter"),
+                        ("Esc", "clear"),
+                        ("Tab", "tree"),
+                        ("Enter", "details"),
+                    ]
+                } else if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    vec![
+                        ("j/k", "field"),
+                        ("Enter", "apply+back"),
+                        ("Space", "toggle"),
+                        ("Tab", "section"),
+                        ("Esc", "close"),
+                    ]
                 } else {
                     vec![
-                        ("S", "save"),
                         ("n", "new"),
                         ("r", "rename"),
                         ("x", "delete"),
-                        ("m", "classification"),
-                        ("Tab", "pane"),
+                        ("S-\u{2191}/\u{2193}", "move"),
+                        ("H/L", "level"),
+                        ("m", "auto"),
+                        ("w", "queues"),
                         ("/", "filter"),
-                        ("w", "claiming workflow"),
+                        ("Tab", "details"),
                         ("Esc", "close"),
                     ]
                 }
@@ -3685,7 +3726,10 @@ impl App {
             help_entry("d", "Toggle done on selected item(s)"),
             help_entry("r", "Remove item from current view (keeps item)"),
             help_entry("x", "Delete selected item(s)"),
-            help_entry("[/]", "Move item to previous / next section"),
+            help_entry(
+                "[/] or S-\u{2191}/\u{2193}",
+                "Move item to previous / next section",
+            ),
             help_entry("p", "Toggle the preview sidebar"),
             help_entry("i/o", "Cycle preview mode"),
             Line::from(""),
@@ -3714,7 +3758,7 @@ impl App {
             help_entry("H/L", "Move board column left / right"),
             help_entry("f", "Cycle numeric column format"),
             help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
-            help_entry("s/S", "Sort section by column (asc / desc)"),
+            help_entry("s/S or </>", "Sort section by column (asc / desc)"),
             Line::from(""),
             Line::from(Span::styled("VIEWS", header)),
             help_entry("v / F8", "Open the view picker"),
@@ -4551,7 +4595,7 @@ impl App {
             .map(|c| c.name.as_str())
             .unwrap_or("(unset)");
         let summary_line = Line::from(vec![
-            Span::styled("Classification", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Auto classification", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(
                 classification_mode,
@@ -4559,11 +4603,11 @@ impl App {
             ),
             Span::styled(" (m)", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Ready Queue", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Claim Result", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(" (w)", Style::default().fg(MUTED_TEXT_COLOR)),
@@ -4610,7 +4654,7 @@ impl App {
             {
                 format!("Filter: {}", filter_text)
             } else if filter_text.trim().is_empty() {
-                "Press / or Tab to edit the category filter.".to_string()
+                "Press / to filter. m: auto-classification  w: ready/claim queues.".to_string()
             } else {
                 format!("Filter: {}", filter_text)
             })
@@ -4801,7 +4845,7 @@ impl App {
                 let flags_height = if is_numeric_category {
                     7
                 } else {
-                    5 + workflow_role_height
+                    6 + workflow_role_height
                 };
                 let details_chunks = if is_numeric_category {
                     Layout::default()
@@ -4975,9 +5019,14 @@ impl App {
                             row.is_exclusive,
                         ),
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::MatchName,
+                            details_focus == CategoryManagerDetailsFocus::AutoMatch,
                             "Auto-match",
                             row.enable_implicit_string,
+                        ),
+                        flag_line(
+                            details_focus == CategoryManagerDetailsFocus::MatchCategoryName,
+                            "Match category name",
+                            row.match_category_name,
                         ),
                         flag_line(
                             details_focus == CategoryManagerDetailsFocus::Actionable,
@@ -5148,16 +5197,19 @@ impl App {
                 }
 
                 let details_hint = if note_editing {
-                    "Type to edit  Esc:discard  Tab:leave (warn if unsaved)"
+                    "Type to edit  Esc:stop editing  Tab:leave (warn if unsaved)"
                 } else if also_match_editing {
-                    "Type terms line-by-line  Enter:new line  Esc:discard  Tab:leave"
+                    "Type terms line-by-line  Enter:new line  Esc:stop editing  Tab:leave"
                 } else {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive => {
                             "Only one child can be assigned to an item at a time"
                         }
-                        CategoryManagerDetailsFocus::MatchName => {
-                            "Auto-assign when category name appears in item text"
+                        CategoryManagerDetailsFocus::AutoMatch => {
+                            "Enable fallback text matching for this category"
+                        }
+                        CategoryManagerDetailsFocus::MatchCategoryName => {
+                            "Include the literal category name alongside also-match terms"
                         }
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"

@@ -1682,23 +1682,6 @@ impl App {
         }
     }
 
-    pub(crate) fn cycle_category_manager_focus(&mut self, delta: i32) {
-        let Some(current) = self.category_manager_focus() else {
-            return;
-        };
-        let order = [
-            CategoryManagerFocus::Filter,
-            CategoryManagerFocus::Tree,
-            CategoryManagerFocus::Details,
-        ];
-        let current_index = order
-            .iter()
-            .position(|focus| *focus == current)
-            .unwrap_or(1);
-        let next = order[next_index(current_index, order.len(), delta)];
-        self.set_category_manager_focus(next);
-    }
-
     pub(crate) fn rebuild_category_manager_visible_rows(&mut self) {
         let Some(state) = &mut self.category_manager else {
             return;
