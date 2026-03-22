@@ -1691,7 +1691,8 @@ impl App {
                 }
                 None
             }
-            InputPanelFocus::TypePicker
+            InputPanelFocus::When
+            | InputPanelFocus::TypePicker
             | InputPanelFocus::SaveButton
             | InputPanelFocus::CancelButton => None,
         }
@@ -3345,6 +3346,7 @@ impl App {
                         },
                         match panel.focus {
                             InputPanelFocus::Text => "Text",
+                            InputPanelFocus::When => "When",
                             InputPanelFocus::Note => "Note",
                             InputPanelFocus::Categories => "Categories",
                             InputPanelFocus::TypePicker => "Type",
@@ -3603,7 +3605,7 @@ impl App {
                         ("x", "delete"),
                         ("Esc", "clear sel"),
                         ("/", "search"),
-                        ("g/", "global"),
+                        ("C", "global"),
                         ("v", "views"),
                         ("p", "preview"),
                         ("q", "quit"),
@@ -3622,8 +3624,7 @@ impl App {
                         ("F", "col summary"),
                         ("p", "preview"),
                         ("u", "deps"),
-                        ("C", "classify"),
-                        ("g/", "global"),
+                        ("C", "global search"),
                         ("z", "cards"),
                     ]);
                     if self.section_filters.iter().any(|f| f.is_some()) {
@@ -3700,7 +3701,7 @@ impl App {
             Line::from(""),
             Line::from(Span::styled("SEARCH", header)),
             help_entry("/", "Search within the focused section"),
-            help_entry("g/", "Search across all sections (global)"),
+            help_entry("C", "Search across all sections (global)"),
             help_entry("Esc", "Clear active section filter"),
             Line::from(""),
             Line::from(Span::styled("COLUMNS", header)),
@@ -3823,6 +3824,44 @@ impl App {
                     context_rect,
                 );
             }
+        }
+
+        // When-date field (AddItem/EditItem only)
+        if let Some(when_rect) = regions.when {
+            let when_focused = panel.focus == InputPanelFocus::When;
+            let when_marker = if when_focused { "> " } else { "  " };
+            let when_prefix = format!("{when_marker}When> ");
+            let when_width = when_rect.width as usize;
+            let (when_visible, _) = clip_text_for_row(
+                panel.when_buffer.text(),
+                panel.when_buffer.cursor(),
+                when_width.saturating_sub(when_prefix.chars().count()),
+                when_focused,
+            );
+            let when_prefix_style = if when_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let when_value_style = if when_focused {
+                Style::default()
+            } else if panel.when_buffer.text().is_empty() {
+                Style::default().fg(MUTED_TEXT_COLOR)
+            } else {
+                Style::default()
+            };
+            let when_display = if !when_focused && panel.when_buffer.text().is_empty() {
+                "(none — today, tomorrow, next week, 2026-03-25, …)"
+            } else {
+                &when_visible
+            };
+            let when_spans = vec![
+                Span::styled(when_prefix, when_prefix_style),
+                Span::styled(when_display, when_value_style),
+            ];
+            frame.render_widget(Paragraph::new(Line::from(when_spans)), when_rect);
         }
 
         // Note (not shown for NameInput)
@@ -4208,6 +4247,13 @@ impl App {
                 }
                 InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:actions",
                 InputPanelFocus::SaveButton => "Enter save  Tab:cancel  Shift-Tab:categories",
+                InputPanelFocus::When => {
+                    if panel.kind == InputPanelKind::EditItem {
+                        "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:discard?"
+                    } else {
+                        "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:cancel"
+                    }
+                }
                 InputPanelFocus::CancelButton => "Enter cancel  Tab:text  Shift-Tab:save",
             }
         };
