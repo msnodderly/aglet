@@ -2325,16 +2325,16 @@ impl App {
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
                     self.item_assign_preview = AssignmentPreview::default();
-                    self.compute_assignment_preview();
+                    self.compute_assignment_preview(agenda);
                     self.clear_input();
                     self.status = if self.has_selected_items() {
                         let selected_count = self.selected_count();
                         let item_suffix = if selected_count == 1 { "" } else { "s" };
                         format!(
-                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
+                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space apply, n or / type category, Enter apply+close, Esc cancel"
                         )
                     } else {
-                        "Item categories: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
+                        "Item categories: j/k select, Space apply, n or / type category, Enter apply+close, Esc cancel"
                             .to_string()
                     };
                 }
@@ -4911,7 +4911,7 @@ impl App {
                     .position(|r| matches!(r, ViewAssignRow::SectionRow { .. }))
                     .unwrap_or(0);
                 self.item_assign_preview = AssignmentPreview::default();
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Esc => {
                 let clear_selection = self.item_assign_dirty && self.has_selected_items();
@@ -4930,7 +4930,7 @@ impl App {
                 if !self.category_rows.is_empty() {
                     self.item_assign_category_index =
                         next_index(self.item_assign_category_index, self.category_rows.len(), 1);
-                    self.compute_assignment_preview();
+                    self.compute_assignment_preview(agenda);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -4940,7 +4940,7 @@ impl App {
                         self.category_rows.len(),
                         -1,
                     );
-                    self.compute_assignment_preview();
+                    self.compute_assignment_preview(agenda);
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('/') => {
@@ -5141,17 +5141,17 @@ impl App {
                 // Switch back to Categories pane.
                 self.item_assign_pane = ItemAssignPane::Categories;
                 self.item_assign_preview = AssignmentPreview::default();
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.item_assign_view_row_index =
                     next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, 1);
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.item_assign_view_row_index =
                     next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, -1);
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Char(' ') => {
                 self.apply_item_assign_view_selection(agenda)?;
@@ -5191,7 +5191,7 @@ impl App {
                 self.set_item_selection_by_id(focused_item_id);
                 self.view_assign_rows = build_view_assign_rows(&self.views);
                 self.item_assign_dirty = true;
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
                 self.status = match first_error {
                     None => format!("Removed {changed} item(s) from view"),
                     Some(err) => format!("Partial remove ({changed} ok): {err}"),
@@ -5307,7 +5307,7 @@ impl App {
         self.set_item_selection_by_id(focused_item_id);
         self.view_assign_rows = build_view_assign_rows(&self.views);
         self.item_assign_dirty = true;
-        self.compute_assignment_preview();
+        self.compute_assignment_preview(agenda);
 
         self.status = match first_error {
             None => format!("Moved {changed} item(s) to section"),

@@ -1516,8 +1516,8 @@ mod tests {
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, ItemAssignPane, Mode,
-        NameInputContext, SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, ItemAssignPane, Mode, NameInputContext,
+        SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{ClassificationConfig, ContinuousMode};
@@ -8373,6 +8373,66 @@ mod tests {
             app.status.contains("Moved 1 item(s) to section"),
             "status should preserve section move summary after closing: {}",
             app.status
+        );
+    }
+
+    #[test]
+    fn item_assign_preview_matches_subsumption_driven_section_membership() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create work");
+        let mut project = Category::new("Project Y".to_string());
+        project.parent = Some(work.id);
+        store.create_category(&project).expect("create project");
+
+        let mut view = View::new("Board".to_string());
+        let mut work_section = Section {
+            title: "Work".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        work_section
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
+        view.sections.push(work_section);
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Preview me".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_pane = ItemAssignPane::Categories;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == project.id)
+            .expect("project row should exist");
+
+        app.compute_assignment_preview(&agenda);
+
+        let board_view_index = app
+            .views
+            .iter()
+            .position(|candidate| candidate.name == "Board")
+            .expect("board view should be loaded");
+        assert!(
+            app.item_assign_preview
+                .section_to_gain
+                .contains(&(board_view_index, Some(0))),
+            "preview should show the item entering the Work section via subsumption"
         );
     }
 
