@@ -17308,6 +17308,78 @@ mod tests {
     }
 
     #[test]
+    fn moving_from_unmatched_to_section_preserves_view_remove_side_effect_categories() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let pinned = Category::new("Pinned".to_string());
+        store.create_category(&ready).expect("create ready");
+        store.create_category(&pinned).expect("create pinned");
+
+        let item = Item::new("Loose task".to_string());
+        store.create_item(&item).expect("create item");
+        store
+            .assign_item(
+                item.id,
+                pinned.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: jiff::Timestamp::now(),
+                    sticky: true,
+                    origin: Some("manual:test".to_string()),
+                    numeric_value: None,
+                },
+            )
+            .expect("assign pinned");
+
+        let mut view = View::new("Board".to_string());
+        view.show_unmatched = true;
+        view.remove_from_view_unassign.insert(pinned.id);
+        let mut section = Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+        view.sections.push(section);
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        assert_eq!(app.slots.len(), 2, "expected section + unmatched slots");
+        assert_eq!(app.slots[1].items.len(), 1, "item should start unmatched");
+
+        app.slot_index = 1;
+        app.item_index = 0;
+        app.move_selected_item_between_slots(-1, &agenda)
+            .expect("move item into section");
+
+        let assignments = store
+            .get_assignments_for_item(item.id)
+            .expect("load assignments");
+        assert!(
+            assignments.contains_key(&pinned.id),
+            "moving out of unmatched should not apply remove-from-view side effects"
+        );
+        assert!(
+            assignments.contains_key(&ready.id),
+            "moving into the section should assign its structural category"
+        );
+    }
+
+    #[test]
     fn header_shows_hide_dependent_indicator_when_enabled() {
         let mut view = View::new("Focus".to_string());
         view.hide_dependent_items = true;

@@ -285,9 +285,7 @@ impl<'a> Agenda<'a> {
         view: &View,
         section: &Section,
     ) -> Result<ProcessItemResult> {
-        let mut targets = section.on_insert_assign.clone();
-        targets.extend(section.criteria.and_category_ids());
-        targets.extend(view.criteria.and_category_ids());
+        let targets = Self::section_insert_targets(view, section);
 
         self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
         self.reprocess_existing_item(item_id)
@@ -306,9 +304,30 @@ impl<'a> Agenda<'a> {
     pub fn remove_item_from_section(
         &self,
         item_id: ItemId,
+        view: &View,
         section: &Section,
     ) -> Result<ProcessItemResult> {
-        self.unassign_categories(item_id, &section.on_remove_unassign)?;
+        let targets = Self::section_remove_targets(view, section);
+        self.unassign_categories(item_id, &targets)?;
+        self.reprocess_existing_item(item_id)
+    }
+
+    pub fn move_item_between_sections(
+        &self,
+        item_id: ItemId,
+        view: &View,
+        from_section: &Section,
+        to_section: &Section,
+    ) -> Result<ProcessItemResult> {
+        let mut to_unassign = Self::section_structural_targets(from_section);
+        let preserve = Self::section_insert_targets(view, to_section);
+        to_unassign.retain(|category_id| !preserve.contains(category_id));
+        to_unassign.extend(from_section.on_remove_unassign.iter().copied());
+
+        let to_assign = Self::section_insert_targets(view, to_section);
+
+        self.unassign_categories(item_id, &to_unassign)?;
+        self.assign_manual_categories(item_id, &to_assign, "edit:section.move")?;
         self.reprocess_existing_item(item_id)
     }
 
@@ -965,6 +984,31 @@ impl<'a> Agenda<'a> {
             self.store.unassign_item(item_id, *category_id)?;
         }
         Ok(())
+    }
+
+    fn section_insert_targets(view: &View, section: &Section) -> HashSet<CategoryId> {
+        let mut targets = section.on_insert_assign.clone();
+        targets.extend(section.criteria.and_category_ids());
+        targets.extend(view.criteria.and_category_ids());
+        targets
+    }
+
+    fn section_remove_targets(view: &View, section: &Section) -> HashSet<CategoryId> {
+        let mut targets = Self::section_structural_targets(section);
+        let preserve: HashSet<CategoryId> = view.criteria.and_category_ids().collect();
+        targets.retain(|category_id| !preserve.contains(category_id));
+        targets.extend(section.on_remove_unassign.iter().copied());
+        targets
+    }
+
+    fn section_structural_targets(section: &Section) -> HashSet<CategoryId> {
+        if section.criteria.or_category_ids().next().is_some() {
+            return HashSet::new();
+        }
+
+        let mut targets = section.on_insert_assign.clone();
+        targets.extend(section.criteria.and_category_ids());
+        targets
     }
 
     fn first_assigned_descendant(
@@ -2288,7 +2332,185 @@ mod tests {
     }
 
     #[test]
-    fn remove_from_section_unassigns_targets_and_preserves_others() {
+    fn move_between_sections_uses_structural_diff_without_manual_remove_targets() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let ready = category("Ready", false);
+        let in_progress = category("In Progress", false);
+        let personal = category("Personal", false);
+        for category in [&work, &ready, &in_progress, &personal] {
+            store.create_category(category).unwrap();
+        }
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        for category_id in [work.id, ready.id, personal.id] {
+            store
+                .assign_item(item.id, category_id, &manual_assignment("manual:user"))
+                .unwrap();
+        }
+
+        let mut current_view = view("Work Board");
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
+        let mut source_section = section("Ready");
+        source_section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+        let mut target_section = section("In Progress");
+        target_section
+            .criteria
+            .set_criterion(CriterionMode::And, in_progress.id);
+
+        agenda
+            .move_item_between_sections(item.id, &current_view, &source_section, &target_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        assert!(!assignments.contains_key(&ready.id));
+        assert!(assignments.contains_key(&in_progress.id));
+        assert!(assignments.contains_key(&personal.id));
+    }
+
+    #[test]
+    fn move_between_sections_honors_on_remove_side_effects() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = category("Ready", false);
+        let in_progress = category("In Progress", false);
+        let needs_review = category("Needs Review", false);
+        for category in [&ready, &in_progress, &needs_review] {
+            store.create_category(category).unwrap();
+        }
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        for category_id in [ready.id, needs_review.id] {
+            store
+                .assign_item(item.id, category_id, &manual_assignment("manual:user"))
+                .unwrap();
+        }
+
+        let mut source_section = section("Ready");
+        source_section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+        source_section.on_remove_unassign.insert(needs_review.id);
+
+        let mut target_section = section("In Progress");
+        target_section
+            .criteria
+            .set_criterion(CriterionMode::And, in_progress.id);
+
+        agenda
+            .move_item_between_sections(item.id, &view("Board"), &source_section, &target_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&ready.id));
+        assert!(assignments.contains_key(&in_progress.id));
+        assert!(!assignments.contains_key(&needs_review.id));
+    }
+
+    #[test]
+    fn move_between_sections_preserves_overlapping_categories() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let shared = category("Shared", false);
+        let urgent = category("Urgent", false);
+        let next = category("Next", false);
+        for category in [&shared, &urgent, &next] {
+            store.create_category(category).unwrap();
+        }
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        for category_id in [shared.id, urgent.id] {
+            store
+                .assign_item(item.id, category_id, &manual_assignment("manual:user"))
+                .unwrap();
+        }
+
+        let mut source_section = section("Urgent");
+        source_section
+            .criteria
+            .set_criterion(CriterionMode::And, shared.id);
+        source_section
+            .criteria
+            .set_criterion(CriterionMode::And, urgent.id);
+
+        let mut target_section = section("Next");
+        target_section
+            .criteria
+            .set_criterion(CriterionMode::And, shared.id);
+        target_section
+            .criteria
+            .set_criterion(CriterionMode::And, next.id);
+
+        agenda
+            .move_item_between_sections(item.id, &view("Board"), &source_section, &target_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&shared.id));
+        assert!(!assignments.contains_key(&urgent.id));
+        assert!(assignments.contains_key(&next.id));
+    }
+
+    #[test]
+    fn move_between_generated_subsections_swaps_child_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let parent = category("Project", false);
+        store.create_category(&parent).unwrap();
+        let alpha = child_category("Alpha", parent.id, false);
+        let beta = child_category("Beta", parent.id, false);
+        store.create_category(&alpha).unwrap();
+        store.create_category(&beta).unwrap();
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        for category_id in [parent.id, alpha.id] {
+            store
+                .assign_item(item.id, category_id, &manual_assignment("manual:user"))
+                .unwrap();
+        }
+
+        let mut source_section = section("Project");
+        source_section
+            .criteria
+            .set_criterion(CriterionMode::And, parent.id);
+        source_section.on_insert_assign.insert(alpha.id);
+
+        let mut target_section = section("Project");
+        target_section
+            .criteria
+            .set_criterion(CriterionMode::And, parent.id);
+        target_section.on_insert_assign.insert(beta.id);
+
+        agenda
+            .move_item_between_sections(item.id, &view("Board"), &source_section, &target_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&parent.id));
+        assert!(!assignments.contains_key(&alpha.id));
+        assert!(assignments.contains_key(&beta.id));
+    }
+
+    #[test]
+    fn remove_from_section_preserves_view_criteria_and_strips_structural_targets() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -2312,17 +2534,67 @@ mod tests {
             .assign_item(item.id, personal.id, &manual_assignment("manual:user"))
             .unwrap();
 
+        let mut current_view = view("Work");
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
         let mut current_section = section("Urgent");
-        current_section.on_remove_unassign.insert(urgent.id);
+        current_section
+            .criteria
+            .set_criterion(CriterionMode::And, urgent.id);
 
         agenda
-            .remove_item_from_section(item.id, &current_section)
+            .remove_item_from_section(item.id, &current_view, &current_section)
             .unwrap();
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&work.id));
         assert!(!assignments.contains_key(&urgent.id));
         assert!(assignments.contains_key(&personal.id));
+    }
+
+    #[test]
+    fn remove_from_section_honors_on_remove_side_effects() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        let urgent = category("Urgent", false);
+        let lane_marker = category("Lane Marker", false);
+        let review_flag = category("Needs Review", false);
+        for category in [&work, &urgent, &lane_marker, &review_flag] {
+            store.create_category(category).unwrap();
+        }
+
+        let item = Item::new("task".to_string());
+        store.create_item(&item).unwrap();
+        for category_id in [work.id, urgent.id, lane_marker.id, review_flag.id] {
+            store
+                .assign_item(item.id, category_id, &manual_assignment("manual:user"))
+                .unwrap();
+        }
+
+        let mut current_view = view("Work");
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
+        let mut current_section = section("Urgent");
+        current_section
+            .criteria
+            .set_criterion(CriterionMode::And, urgent.id);
+        current_section.on_insert_assign.insert(lane_marker.id);
+        current_section.on_remove_unassign.insert(review_flag.id);
+
+        agenda
+            .remove_item_from_section(item.id, &current_view, &current_section)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        assert!(!assignments.contains_key(&urgent.id));
+        assert!(!assignments.contains_key(&lane_marker.id));
+        assert!(!assignments.contains_key(&review_flag.id));
     }
 
     #[test]

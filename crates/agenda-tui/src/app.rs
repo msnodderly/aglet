@@ -631,48 +631,26 @@ impl App {
             .cloned()
             .ok_or("No active view".to_string())?;
 
-        self.remove_from_context(agenda, item_id, &view, &from_context)?;
-        self.insert_into_context(agenda, item_id, &view, &to_context)?;
+        match (
+            Self::section_for_context(&view, &from_context)?,
+            Self::section_for_context(&view, &to_context)?,
+        ) {
+            (Some(from_section), Some(to_section)) => {
+                agenda.move_item_between_sections(item_id, &view, &from_section, &to_section)?;
+            }
+            (Some(from_section), None) => {
+                agenda.remove_item_from_section(item_id, &view, &from_section)?;
+            }
+            (None, Some(to_section)) => {
+                agenda.insert_item_in_section(item_id, &view, &to_section)?;
+            }
+            (None, None) => {}
+        }
 
         self.slot_index = to_index;
         self.item_index = 0;
         self.refresh(agenda.store())?;
         self.status = "Moved item to new section".to_string();
-        Ok(())
-    }
-
-    pub(crate) fn remove_from_context(
-        &self,
-        agenda: &Agenda<'_>,
-        item_id: ItemId,
-        view: &View,
-        context: &SlotContext,
-    ) -> TuiResult<()> {
-        match context {
-            SlotContext::Section { section_index } => {
-                let section = view
-                    .sections
-                    .get(*section_index)
-                    .ok_or("Section not found".to_string())?;
-                agenda.remove_item_from_section(item_id, section)?;
-            }
-            SlotContext::GeneratedSection {
-                section_index,
-                on_insert_assign: _,
-                on_remove_unassign,
-            } => {
-                let mut temp = view
-                    .sections
-                    .get(*section_index)
-                    .cloned()
-                    .ok_or("Section not found".to_string())?;
-                temp.on_remove_unassign = on_remove_unassign.clone();
-                agenda.remove_item_from_section(item_id, &temp)?;
-            }
-            SlotContext::Unmatched => {
-                agenda.remove_item_from_unmatched(item_id, view)?;
-            }
-        }
         Ok(())
     }
 
@@ -683,33 +661,41 @@ impl App {
         view: &View,
         context: &SlotContext,
     ) -> TuiResult<()> {
-        match context {
-            SlotContext::Section { section_index } => {
-                let section = view
-                    .sections
-                    .get(*section_index)
-                    .ok_or("Section not found".to_string())?;
-                agenda.insert_item_in_section(item_id, view, section)?;
+        match Self::section_for_context(view, context)? {
+            Some(section) => {
+                agenda.insert_item_in_section(item_id, view, &section)?;
             }
+            None => {
+                agenda.insert_item_in_unmatched(item_id, view)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn section_for_context(view: &View, context: &SlotContext) -> TuiResult<Option<Section>> {
+        match context {
+            SlotContext::Section { section_index } => view
+                .sections
+                .get(*section_index)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| "Section not found".into()),
             SlotContext::GeneratedSection {
                 section_index,
                 on_insert_assign,
                 on_remove_unassign,
             } => {
-                let mut temp = view
+                let mut section = view
                     .sections
                     .get(*section_index)
                     .cloned()
                     .ok_or("Section not found".to_string())?;
-                temp.on_insert_assign = on_insert_assign.clone();
-                temp.on_remove_unassign = on_remove_unassign.clone();
-                agenda.insert_item_in_section(item_id, view, &temp)?;
+                section.on_insert_assign = on_insert_assign.clone();
+                section.on_remove_unassign = on_remove_unassign.clone();
+                Ok(Some(section))
             }
-            SlotContext::Unmatched => {
-                agenda.insert_item_in_unmatched(item_id, view)?;
-            }
+            SlotContext::Unmatched => Ok(None),
         }
-        Ok(())
     }
 
     pub(crate) fn current_slot(&self) -> Option<&Slot> {
