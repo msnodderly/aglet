@@ -12,7 +12,7 @@ impl App {
         let handled = match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
             Mode::HelpPanel
-            | Mode::ClassificationReview
+            | Mode::SuggestionReview
             | Mode::InputPanel
             | Mode::LinkWizard
             | Mode::ItemAssignPicker
@@ -40,7 +40,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
             Mode::HelpPanel => self.handle_help_panel_key(code),
-            Mode::ClassificationReview => self.handle_classification_review_key(code, agenda),
+            Mode::SuggestionReview => self.handle_suggestion_review_key(code, agenda),
             Mode::InputPanel => self.handle_input_panel_key(code, agenda),
             Mode::LinkWizard => self.handle_link_wizard_key(code, agenda),
             Mode::ItemAssignPicker => self.handle_item_assign_category_key(code, agenda),

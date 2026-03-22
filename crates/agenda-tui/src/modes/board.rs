@@ -233,21 +233,47 @@ impl App {
             .unwrap_or("")
             .trim()
             .to_ascii_lowercase();
+        // Hide reserved categories in AddItem/EditItem panels
+        let hide_reserved = self
+            .input_panel
+            .as_ref()
+            .map(|p| {
+                matches!(
+                    p.kind,
+                    input_panel::InputPanelKind::AddItem
+                        | input_panel::InputPanelKind::EditItem
+                )
+            })
+            .unwrap_or(false);
         self.category_rows
             .iter()
             .enumerate()
-            .filter(|(_, row)| query.is_empty() || row.name.to_ascii_lowercase().contains(&query))
+            .filter(|(_, row)| {
+                if hide_reserved && row.is_reserved {
+                    return false;
+                }
+                query.is_empty() || row.name.to_ascii_lowercase().contains(&query)
+            })
             .map(|(idx, _)| idx)
             .collect()
     }
 
     pub(crate) fn input_panel_selected_category_row_index(&self) -> Option<usize> {
         let visible_indices = self.input_panel_visible_category_row_indices();
+        let suggestion_len = self
+            .input_panel
+            .as_ref()
+            .map(|p| p.pending_suggestions.len())
+            .unwrap_or(0);
         let cursor = self
             .input_panel
             .as_ref()
             .map(|panel| panel.category_cursor)?;
-        visible_indices.get(cursor).copied()
+        // Suggestions occupy indices 0..suggestion_len; categories start at suggestion_len
+        if cursor < suggestion_len {
+            return None; // cursor is on a suggestion row
+        }
+        visible_indices.get(cursor - suggestion_len).copied()
     }
 
     pub(crate) fn input_panel_selected_category_row(&self) -> Option<&CategoryListRow> {
@@ -257,11 +283,17 @@ impl App {
 
     fn clamp_input_panel_category_cursor(&mut self) {
         let visible_len = self.input_panel_visible_category_row_indices().len();
+        let suggestion_len = self
+            .input_panel
+            .as_ref()
+            .map(|p| p.pending_suggestions.len())
+            .unwrap_or(0);
+        let total_len = suggestion_len + visible_len;
         if let Some(panel) = &mut self.input_panel {
-            panel.category_cursor = if visible_len == 0 {
+            panel.category_cursor = if total_len == 0 {
                 0
             } else {
-                panel.category_cursor.min(visible_len - 1)
+                panel.category_cursor.min(total_len - 1)
             };
         }
     }
@@ -2115,12 +2147,16 @@ impl App {
                     self.begin_global_search_session(agenda)?;
                     return Ok(false);
                 }
+                (NormalModePrefix::G, KeyCode::Char('?')) => {
+                    self.open_suggestion_review(agenda)?;
+                    return Ok(false);
+                }
                 (NormalModePrefix::G, KeyCode::Esc) => {
                     self.status = "Cancelled g-prefix command".to_string();
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga or g/)".to_string();
+                    self.status = "Unknown g command (use ga, g/, or g?)".to_string();
                     return Ok(false);
                 }
             }
@@ -2201,9 +2237,6 @@ impl App {
             }
             KeyCode::Char('?') => {
                 self.mode = Mode::HelpPanel;
-            }
-            KeyCode::Char('C') => {
-                self.open_classification_review();
             }
             KeyCode::Char('m') => {
                 self.toggle_current_view_section_flow(agenda)?;
@@ -2298,7 +2331,7 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status = "g-prefix: ga=All Items, g/=Global search".to_string();
+                self.status = "g-prefix: ga=All Items, g/=Global search, g?=Review suggestions".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -3913,14 +3946,28 @@ impl App {
                 }
             }
             let item_id = item.id;
-            self.input_panel = Some(input_panel::InputPanel::new_edit_item(
+            let mut panel = input_panel::InputPanel::new_edit_item(
                 item_id,
                 text,
                 note,
                 categories,
                 numeric_buffers,
                 numeric_originals,
-            ));
+            );
+            // Populate pending classification suggestions for inline review.
+            if let Some(review_item) = self
+                .classification_ui
+                .review_items
+                .iter()
+                .find(|ri| ri.item_id == item_id)
+            {
+                panel.pending_suggestions = review_item
+                    .suggestions
+                    .iter()
+                    .map(|s| (s.clone(), SuggestionDecision::Pending))
+                    .collect();
+            }
+            self.input_panel = Some(panel);
             self.input_panel_discard_confirm = false;
             self.mode = Mode::InputPanel;
             self.status =
@@ -4056,59 +4103,108 @@ impl App {
                 }
             }
             InputPanelAction::ToggleCategory => {
-                let idx = self.input_panel_selected_category_row_index();
-                let row = self.input_panel_selected_category_row().cloned();
-                if let Some(row) = row {
-                    if !row.is_reserved {
-                        let is_adding = self
-                            .input_panel
-                            .as_ref()
-                            .map(|p| !p.categories.contains(&row.id))
-                            .unwrap_or(false);
-                        let is_numeric =
-                            row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
-                        // If adding into an exclusive parent group, clear siblings first.
-                        if is_adding {
-                            if let Some(idx) = idx {
-                                let to_clear =
-                                    exclusive_siblings_to_clear(&self.category_rows, idx);
-                                if let Some(panel) = &mut self.input_panel {
-                                    for sibling_id in &to_clear {
-                                        panel.categories.remove(sibling_id);
-                                        panel.numeric_buffers.remove(sibling_id);
+                // Suggestions occupy indices 0..suggestion_len; categories start after
+                let suggestion_len = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.pending_suggestions.len())
+                    .unwrap_or(0);
+                let cursor = self.input_panel.as_ref().map(|p| p.category_cursor).unwrap_or(0);
+                let suggestion_index = if cursor < suggestion_len {
+                    Some(cursor)
+                } else {
+                    None
+                };
+
+                if let Some(si) = suggestion_index {
+                    // Toggle suggestion decision: Pending → Accept → Reject → Pending
+                    let new_status = if let Some(panel) = &mut self.input_panel {
+                        if let Some(entry) = panel.pending_suggestions.get_mut(si) {
+                            entry.1 = entry.1.next();
+                            let cat_names = category_name_map(&self.categories);
+                            let cat_name = candidate_assignment_label(
+                                &entry.0.assignment,
+                                &cat_names,
+                            );
+                            Some(format!(
+                                "Suggestion '{}': {}",
+                                cat_name,
+                                match entry.1 {
+                                    SuggestionDecision::Pending => "pending",
+                                    SuggestionDecision::Accept => "accept",
+                                    SuggestionDecision::Reject => "reject",
+                                }
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(status) = new_status {
+                        self.status = status;
+                    }
+                } else {
+                    let idx = self.input_panel_selected_category_row_index();
+                    let row = self.input_panel_selected_category_row().cloned();
+                    if let Some(row) = row {
+                        if !row.is_reserved {
+                            let is_adding = self
+                                .input_panel
+                                .as_ref()
+                                .map(|p| !p.categories.contains(&row.id))
+                                .unwrap_or(false);
+                            let is_numeric =
+                                row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
+                            // If adding into an exclusive parent group, clear siblings first.
+                            if is_adding {
+                                if let Some(idx) = idx {
+                                    let to_clear =
+                                        exclusive_siblings_to_clear(&self.category_rows, idx);
+                                    if let Some(panel) = &mut self.input_panel {
+                                        for sibling_id in &to_clear {
+                                            panel.categories.remove(sibling_id);
+                                            panel.numeric_buffers.remove(sibling_id);
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if let Some(panel) = &mut self.input_panel {
-                            panel.toggle_category(row.id);
-                            // Manage numeric buffer — keep buffer on toggle-off
-                            // so the value is preserved if user toggles back on.
-                            if is_numeric && is_adding {
-                                panel
-                                    .numeric_buffers
-                                    .entry(row.id)
-                                    .or_insert_with(crate::text_buffer::TextBuffer::empty);
+                            if let Some(panel) = &mut self.input_panel {
+                                panel.toggle_category(row.id);
+                                // Manage numeric buffer — keep buffer on toggle-off
+                                // so the value is preserved if user toggles back on.
+                                if is_numeric && is_adding {
+                                    panel
+                                        .numeric_buffers
+                                        .entry(row.id)
+                                        .or_insert_with(crate::text_buffer::TextBuffer::empty);
+                                }
                             }
+                            let selected = self
+                                .input_panel
+                                .as_ref()
+                                .map(|p| p.categories.len())
+                                .unwrap_or(0);
+                            self.status =
+                                format!("Category '{}' toggled — {} selected", row.name, selected);
+                        } else {
+                            self.status = format!("'{}' cannot be assigned here", row.name);
                         }
-                        let selected = self
-                            .input_panel
-                            .as_ref()
-                            .map(|p| p.categories.len())
-                            .unwrap_or(0);
-                        self.status =
-                            format!("Category '{}' toggled — {} selected", row.name, selected);
-                    } else {
-                        self.status = format!("'{}' cannot be assigned here", row.name);
                     }
                 }
             }
             InputPanelAction::MoveCategoryCursor(delta) => {
-                let list_len = self.input_panel_visible_category_row_indices().len();
+                let cat_len = self.input_panel_visible_category_row_indices().len();
+                let suggestion_len = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.pending_suggestions.len())
+                    .unwrap_or(0);
+                let total_len = cat_len + suggestion_len;
                 if let Some(panel) = &mut self.input_panel {
-                    if list_len > 0 {
+                    if total_len > 0 {
                         let current = panel.category_cursor as i64;
-                        let len = list_len as i64;
+                        let len = total_len as i64;
                         let new = ((current + delta as i64).rem_euclid(len)) as usize;
                         panel.category_cursor = new;
                     }
@@ -4295,7 +4391,18 @@ impl App {
         let no_note_change = item.note == updated_note;
         let no_cat_change = existing_categories == new_categories;
 
-        if no_text_change && no_note_change && no_cat_change && !has_numeric_changes {
+        let has_suggestion_decisions = panel
+            .pending_suggestions
+            .iter()
+            .any(|(_, d)| *d != SuggestionDecision::Pending);
+        let pending_suggestions = panel.pending_suggestions.clone();
+
+        if no_text_change
+            && no_note_change
+            && no_cat_change
+            && !has_numeric_changes
+            && !has_suggestion_decisions
+        {
             self.input_panel = None;
             self.mode = Mode::Normal;
             self.status = "Edit canceled: no changes".to_string();
@@ -4362,6 +4469,23 @@ impl App {
             );
         }
 
+        // Apply suggestion decisions.
+        let mut suggestion_accepted = 0usize;
+        let mut suggestion_rejected = 0usize;
+        for (suggestion, decision) in &pending_suggestions {
+            match decision {
+                SuggestionDecision::Accept => {
+                    agenda.accept_classification_suggestion(suggestion.id)?;
+                    suggestion_accepted += 1;
+                }
+                SuggestionDecision::Reject => {
+                    agenda.reject_classification_suggestion(suggestion.id)?;
+                    suggestion_rejected += 1;
+                }
+                SuggestionDecision::Pending => {}
+            }
+        }
+
         self.push_undo(UndoEntry::ItemEdited {
             item_id,
             old_text: undo_old_text,
@@ -4371,10 +4495,16 @@ impl App {
         self.set_item_selection_by_id(item_id);
         self.input_panel = None;
         self.mode = Mode::Normal;
-        self.status = "Item updated".to_string();
-        if let Some(suffix) = self.classification_pending_suffix() {
-            self.status = format!("{} | {suffix}. Press C to review.", self.status);
+        let mut status = "Item updated".to_string();
+        if suggestion_accepted + suggestion_rejected > 0 {
+            status = format!(
+                "{status} ({suggestion_accepted} accepted, {suggestion_rejected} rejected)"
+            );
         }
+        if let Some(suffix) = self.classification_pending_suffix() {
+            status = format!("{status} | {suffix}. Press g? to review.");
+        }
+        self.status = status;
         Ok(())
     }
 
@@ -4415,7 +4545,7 @@ impl App {
         }
 
         Err(format!(
-            "Could not parse date/time from '{}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional 'at 3pm'/'at 15:00'/'at noon'). 'last week' and 'next week' are not supported yet.",
+            "Could not parse '{}'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY",
             trimmed,
         ).into())
     }
@@ -5992,7 +6122,7 @@ mod tests {
             .expect_err("invalid phrase should return error");
         let err_msg = err.to_string();
         assert!(
-            err_msg.contains("Could not parse date/time"),
+            err_msg.contains("Could not parse"),
             "unexpected parse error: {err_msg}"
         );
         assert!(

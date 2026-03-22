@@ -303,8 +303,8 @@ impl App {
         if self.mode == Mode::HelpPanel {
             self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
         }
-        if self.mode == Mode::ClassificationReview {
-            self.render_classification_review(frame, centered_rect(88, 88, frame.area()));
+        if self.mode == Mode::SuggestionReview {
+            self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
         }
     }
 
@@ -1523,7 +1523,7 @@ impl App {
             Mode::ItemAssignInput => Some("Category> ".to_string()),
             Mode::Normal
             | Mode::HelpPanel
-            | Mode::ClassificationReview
+            | Mode::SuggestionReview
             | Mode::InputPanel
             | Mode::LinkWizard
             | Mode::ItemAssignPicker
@@ -2052,6 +2052,7 @@ impl App {
                             let note_cell = item_indicator_glyphs(
                                 item.is_done,
                                 self.is_item_blocked(item.id),
+                                self.pending_suggestion_count_for_item(item.id) > 0,
                                 has_note_text(item.note.as_deref()),
                             );
                             let item_cell_content =
@@ -2386,6 +2387,7 @@ impl App {
                             let note_cell = item_indicator_glyphs(
                                 item.is_done,
                                 self.is_item_blocked(item.id),
+                                self.pending_suggestion_count_for_item(item.id) > 0,
                                 has_note_text(item.note.as_deref()),
                             );
                             let item_text = board_item_label(item);
@@ -2618,6 +2620,7 @@ impl App {
                 let glyphs = item_indicator_glyphs(
                     item.is_done,
                     self.is_item_blocked(item.id),
+                    self.pending_suggestion_count_for_item(item.id) > 0,
                     has_note_text(item.note.as_deref()),
                 );
                 if !glyphs.is_empty() {
@@ -2957,228 +2960,244 @@ impl App {
             .wrap(Wrap { trim: false })
     }
 
-    fn render_classification_review(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+    fn render_suggestion_review(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(state) = &self.suggestion_review else {
+            return;
+        };
+
         frame.render_widget(Clear, area);
-        frame.render_widget(
-            Block::default()
-                .title("Classification Review")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
-            area,
-        );
-        if area.width < 12 || area.height < 12 {
+        let block = Block::default()
+            .title(" Review Suggestions ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.height < 3 || inner.width < 10 {
             return;
         }
 
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y.saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
-        };
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(4), Constraint::Min(8)])
-            .split(inner);
-        let config = &self.classification_ui.config;
-        let pending_width = 30u16.min(rows[1].width.saturating_sub(40));
-        let columns = Layout::default()
+        // Two-pane layout: item list (left) | suggestion detail (right)
+        let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(pending_width.max(24)),
-                Constraint::Min(40),
+                Constraint::Percentage(35), // item list
+                Constraint::Percentage(65), // suggestion detail
             ])
-            .split(rows[1]);
-        let detail_rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(8), Constraint::Min(6)])
-            .split(columns[1]);
+            .split(inner);
 
-        let summary_lines = vec![
-            Line::from(format!(
-                "Mode: {}",
-                modes::classification::continuous_mode_label(config.continuous_mode)
-            )),
-            Line::from(format!("Pending: {}", self.classification_pending_count())),
-            Line::from("Global mode is configured in Category Manager (`c`)."),
-            Line::from("Per-category Auto-match still controls implicit category matching."),
-        ];
-        frame.render_widget(
-            Paragraph::new(summary_lines)
-                .block(Block::default().borders(Borders::ALL).title("Summary"))
-                .wrap(Wrap { trim: true }),
-            rows[0],
-        );
+        // === Left pane: item list ===
+        let items_focused = state.focus == SuggestionReviewFocus::Items;
+        let items_border_style = if items_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        let items_title = if items_focused {
+            format!(" > Items ({}) ", state.items.len())
+        } else {
+            format!(" Items ({}) ", state.items.len())
+        };
+        let items_block = Block::default()
+            .title(items_title)
+            .borders(Borders::ALL)
+            .border_style(items_border_style);
+        let items_inner = items_block.inner(panes[0]);
+        frame.render_widget(items_block, panes[0]);
 
-        let item_rows: Vec<ListItem<'_>> = self
-            .classification_ui
-            .review_items
+        let item_lines: Vec<Line<'_>> = state
+            .items
             .iter()
-            .map(|item| {
-                let summary = truncate_board_cell(&item.item_text, 24);
-                ListItem::new(format!("{summary} ({})", item.suggestions.len()))
+            .enumerate()
+            .map(|(i, item)| {
+                let is_selected = i == state.item_index;
+                let prefix = if is_selected { "> " } else { "  " };
+                let count = item.suggestions.len();
+                if is_selected && items_focused {
+                    // Cursor row: selected_row_style (Cyan bg + Black fg)
+                    let sel = selected_row_style();
+                    Line::from(vec![
+                        Span::styled(prefix, sel),
+                        Span::styled(&*item.item_text, sel.add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("  ({count})"),
+                            Style::default().fg(Color::Black).bg(Color::Cyan),
+                        ),
+                    ])
+                } else {
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    Line::from(vec![
+                        Span::styled(prefix, style),
+                        Span::styled(&*item.item_text, style),
+                        Span::styled(
+                            format!("  ({count})"),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ])
+                }
             })
             .collect();
-        let mut item_state = Self::list_state_for(
-            columns[0],
-            if self.classification_ui.review_items.is_empty() {
-                None
-            } else {
-                Some(self.classification_ui.selected_item_index)
-            },
-        );
-        let item_count = item_rows.len();
-        frame.render_stateful_widget(
-            List::new(if item_rows.is_empty() {
-                vec![ListItem::new("(no pending suggestions)")]
-            } else {
-                item_rows
-            })
-            .highlight_symbol("> ")
-            .highlight_style(selected_row_style())
-            .block(
-                Block::default()
-                    .title(
-                        if self.classification_ui.focus == ClassificationFocus::Items {
-                            "Pending Items *"
-                        } else {
-                            "Pending Items"
-                        },
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(
-                        if self.classification_ui.focus == ClassificationFocus::Items {
-                            Style::default().fg(Color::Cyan)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-            ),
-            columns[0],
-            &mut item_state,
-        );
-        Self::render_vertical_scrollbar(frame, columns[0], item_count, item_state.offset());
-
-        let item_detail_lines = if let Some(item) = self.selected_classification_item() {
-            let mut lines = vec![
-                Line::from(item.item_text.clone()),
-                Line::from(format!("ID: {}", item.item_id)),
-                Line::from(format!(
-                    "Current: {}",
-                    if item.current_assignments.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        item.current_assignments.join(", ")
-                    }
-                )),
-            ];
-            if let Some(note) = &item.note_excerpt {
-                lines.push(Line::from(format!(
-                    "Note: {}",
-                    truncate_board_cell(note, detail_rows[0].width.saturating_sub(8) as usize)
-                )));
-            } else {
-                lines.push(Line::from("Note: (none)"));
-            }
-            lines
-        } else {
-            vec![
-                Line::from("No pending review item selected"),
-                Line::from(""),
-                Line::from("Global classification mode lives in Category Manager (`c`)."),
-            ]
-        };
+        let item_scroll =
+            list_scroll_for_selected_line(items_inner, Some(state.item_index));
         frame.render_widget(
-            Paragraph::new(item_detail_lines)
-                .block(Block::default().title("Item Context").borders(Borders::ALL))
-                .wrap(Wrap { trim: true }),
-            detail_rows[0],
+            Paragraph::new(item_lines).scroll((item_scroll, 0)),
+            items_inner,
         );
 
-        let category_names = category_name_map(&self.categories);
-        let suggestion_items: Vec<ListItem<'_>> = self
-            .selected_classification_item()
-            .map(|item| {
-                item.suggestions
-                    .iter()
-                    .map(|suggestion| {
-                        let assignment = match &suggestion.assignment {
-                            CandidateAssignment::Category(category_id) => format!(
-                                "Category: {}",
-                                category_names
-                                    .get(category_id)
-                                    .cloned()
-                                    .unwrap_or_else(|| category_id.to_string())
-                            ),
-                            CandidateAssignment::When(value) => format!("When: {value}"),
-                        };
-                        let provider = suggestion
-                            .model
-                            .as_ref()
-                            .map(|model| format!("{} / {model}", suggestion.provider_id))
-                            .unwrap_or_else(|| suggestion.provider_id.clone());
-                        let mut lines = vec![
-                            Line::from(assignment),
-                            Line::from(format!("Provider: {provider}")),
-                        ];
-                        if let Some(rationale) = &suggestion.rationale {
-                            lines.push(Line::from(format!(
-                                "Why: {}",
-                                truncate_board_cell(
-                                    rationale,
-                                    detail_rows[1].width.saturating_sub(8) as usize,
-                                )
-                            )));
-                        }
-                        ListItem::new(lines)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut suggestion_state = Self::list_state_for(
-            detail_rows[1],
-            if suggestion_items.is_empty() {
-                None
+        // === Right pane: selected item detail + suggestions ===
+        let sugg_focused = state.focus == SuggestionReviewFocus::Suggestions;
+        let sugg_border_style = if sugg_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+
+        if let Some(item) = state.items.get(state.item_index) {
+            let sugg_title = if sugg_focused {
+                " > Suggestions "
             } else {
-                Some(self.classification_ui.selected_suggestion_index)
-            },
-        );
-        let suggestion_count = suggestion_items.len();
-        frame.render_stateful_widget(
-            List::new(if suggestion_items.is_empty() {
-                vec![ListItem::new("(no suggestions for selected item)")]
-            } else {
-                suggestion_items
-            })
-            .highlight_symbol("> ")
-            .highlight_style(selected_row_style())
-            .block(
-                Block::default()
-                    .title(
-                        if self.classification_ui.focus == ClassificationFocus::Suggestions {
-                            "Suggestions *"
-                        } else {
-                            "Suggestions"
-                        },
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(
-                        if self.classification_ui.focus == ClassificationFocus::Suggestions {
-                            Style::default().fg(Color::Cyan)
+                " Suggestions "
+            };
+            let detail_block = Block::default()
+                .title(sugg_title)
+                .borders(Borders::ALL)
+                .border_style(sugg_border_style);
+            let detail_inner = detail_block.inner(panes[1]);
+            frame.render_widget(detail_block, panes[1]);
+
+            // Vertical layout: item header + suggestion list
+            let detail_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // item header
+                    Constraint::Min(1),    // suggestion list
+                ])
+                .split(detail_inner);
+
+            // Item header
+            let mut header_lines = vec![Line::from(vec![
+                Span::styled("Item: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    &*item.item_text,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])];
+            if let Some(note) = &item.note_excerpt {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Note: ", Style::default().fg(Color::Gray)),
+                    Span::styled(note.as_str(), Style::default().fg(Color::Gray)),
+                ]));
+            }
+            if !item.current_assignments.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Assigned: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        item.current_assignments.join(", "),
+                        Style::default().fg(Color::White),
+                    ),
+                ]));
+            }
+            frame.render_widget(Paragraph::new(header_lines), detail_chunks[0]);
+
+            // Suggestion list
+            let cat_names = category_name_map(&self.categories);
+            let sugg_lines: Vec<Line<'_>> = item
+                .suggestions
+                .iter()
+                .enumerate()
+                .map(|(i, review)| {
+                    let is_cursor = sugg_focused && i == state.suggestion_cursor;
+                    let marker = if review.accepted { "[x]" } else { "[ ]" };
+                    let marker_color = if review.accepted {
+                        Color::LightGreen
+                    } else {
+                        Color::LightRed
+                    };
+                    let category_name =
+                        candidate_assignment_label(&review.suggestion.assignment, &cat_names);
+                    let rationale = review
+                        .suggestion
+                        .rationale
+                        .as_deref()
+                        .unwrap_or("text match");
+
+                    if is_cursor {
+                        // Cursor row: selected_row_style (Cyan bg + Black fg)
+                        let sel = selected_row_style();
+                        let sel_marker = if review.accepted {
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()
-                        },
-                    ),
-            ),
-            detail_rows[1],
-            &mut suggestion_state,
-        );
-        Self::render_vertical_scrollbar(
-            frame,
-            detail_rows[1],
-            suggestion_count,
-            suggestion_state.offset(),
-        );
+                                .fg(Color::Red)
+                                .bg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        };
+                        Line::from(vec![
+                            Span::styled("> ", sel),
+                            Span::styled(marker, sel_marker),
+                            Span::styled(" ", sel),
+                            Span::styled(
+                                category_name,
+                                sel.add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!("  ({rationale})"),
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .bg(Color::Cyan),
+                            ),
+                        ])
+                    } else {
+                        Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(
+                                marker,
+                                Style::default().fg(marker_color),
+                            ),
+                            Span::raw(" "),
+                            Span::styled(
+                                category_name,
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!("  ({rationale})"),
+                                Style::default().fg(Color::Gray),
+                            ),
+                        ])
+                    }
+                })
+                .collect();
+            let sugg_scroll =
+                list_scroll_for_selected_line(detail_chunks[1], Some(state.suggestion_cursor));
+            frame.render_widget(
+                Paragraph::new(sugg_lines).scroll((sugg_scroll, 0)),
+                detail_chunks[1],
+            );
+        } else {
+            let detail_block = Block::default()
+                .title(" Suggestions ")
+                .borders(Borders::ALL)
+                .border_style(sugg_border_style);
+            frame.render_widget(detail_block, panes[1]);
+        }
     }
 
     pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
@@ -3337,7 +3356,7 @@ impl App {
                     self.status.clone()
                 }
             }
-            Mode::ClassificationReview => self.status.clone(),
+            Mode::SuggestionReview => self.status.clone(),
             Mode::Normal => self
                 .active_transient_status_text()
                 .map(str::to_string)
@@ -3364,11 +3383,12 @@ impl App {
     fn footer_hint_pairs(&self) -> Vec<(&'static str, &'static str)> {
         match self.mode {
             Mode::HelpPanel => vec![("Esc", "close"), ("Enter", "close"), ("?", "close")],
-            Mode::ClassificationReview => vec![
+            Mode::SuggestionReview => vec![
                 ("Tab", "pane"),
-                ("Enter", "open/accept"),
-                ("r", "reject"),
-                ("A/R", "item"),
+                ("Space", "toggle"),
+                ("Enter", "confirm"),
+                ("s", "skip"),
+                ("A", "accept all"),
                 ("Esc", "close"),
             ],
             Mode::CategoryManager => {
@@ -3887,7 +3907,76 @@ impl App {
                 );
             }
 
-            let lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
+            let mut lines: Vec<Line<'_>> = Vec::new();
+
+            // Pending suggestions at the top (before categories)
+            let suggestion_len = panel.pending_suggestions.len();
+            if suggestion_len > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "─── Suggested ",
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(
+                        "(Space: toggle) ",
+                        Style::default().fg(Color::Gray),
+                    ),
+                    Span::styled(
+                        "───",
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]));
+                let suggestion_cat_names = category_name_map(&self.categories);
+                for (si, (suggestion, decision)) in
+                    panel.pending_suggestions.iter().enumerate()
+                {
+                    let is_cursor = cat_focused && panel.category_cursor == si;
+                    let marker = decision.marker();
+                    let marker_style = match decision {
+                        SuggestionDecision::Pending => {
+                            Style::default().fg(Color::Yellow)
+                        }
+                        SuggestionDecision::Accept => {
+                            Style::default().fg(Color::LightGreen)
+                        }
+                        SuggestionDecision::Reject => {
+                            Style::default().fg(Color::LightRed)
+                        }
+                    };
+                    let marker_style = if is_cursor {
+                        marker_style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    } else {
+                        marker_style
+                    };
+                    let cat_name = candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
+                    let rationale = suggestion
+                        .rationale
+                        .as_deref()
+                        .unwrap_or("text match");
+                    let base_style = if is_cursor {
+                        Style::default().fg(Color::White).bg(Color::DarkGray)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let dim_style = if is_cursor {
+                        Style::default().fg(Color::Gray).bg(Color::DarkGray)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{marker} "), marker_style),
+                        Span::styled(cat_name.clone(), base_style),
+                        Span::styled(format!("  ({rationale})"), dim_style),
+                    ]));
+                }
+                lines.push(Line::from(Span::styled(
+                    "─────────────────",
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
+
+            // Category rows
+            let cat_lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
                 vec![Line::from(Span::styled(
                     "(no categories)",
                     Style::default().fg(MUTED_TEXT_COLOR),
@@ -3906,7 +3995,7 @@ impl App {
                         let is_assigned = panel.categories.contains(&row.id);
                         let is_numeric =
                             row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
-                        let is_cursor = cat_focused && i == panel.category_cursor;
+                        let is_cursor = cat_focused && (i + suggestion_len) == panel.category_cursor;
 
                         let check = if is_assigned && is_numeric {
                             "[#] "
@@ -3990,9 +4079,20 @@ impl App {
                     })
                     .collect()
             };
+            lines.extend(cat_lines);
 
+            // Map cursor index to visual line (accounting for separator lines)
+            let visual_cursor = if suggestion_len > 0 {
+                if panel.category_cursor < suggestion_len {
+                    panel.category_cursor + 1 // after "─── Suggested" header
+                } else {
+                    panel.category_cursor + 2 // after header + closing separator
+                }
+            } else {
+                panel.category_cursor
+            };
             let cat_scroll =
-                list_scroll_for_selected_line(cat_list_rect, Some(panel.category_cursor));
+                list_scroll_for_selected_line(cat_list_rect, Some(visual_cursor));
             let item_count = lines.len();
 
             if cat_list_rect.width > 0 && cat_list_rect.height > 0 {

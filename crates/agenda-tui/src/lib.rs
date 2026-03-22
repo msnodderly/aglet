@@ -30,7 +30,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
+    Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
     ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
@@ -202,7 +202,7 @@ enum BucketEditTarget {
 enum Mode {
     Normal,
     HelpPanel,
-    ClassificationReview,
+    SuggestionReview,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
     LinkWizard,
     ItemAssignPicker,
@@ -220,12 +220,6 @@ enum Mode {
     BoardAddColumnPicker,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ClassificationFocus {
-    Items,
-    Suggestions,
-}
-
 #[derive(Clone, Debug, Default)]
 struct ClassificationReviewItem {
     item_id: ItemId,
@@ -235,25 +229,69 @@ struct ClassificationReviewItem {
     suggestions: Vec<ClassificationSuggestion>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct ClassificationUiState {
     pending_count: usize,
     config: ClassificationConfig,
     review_items: Vec<ClassificationReviewItem>,
-    selected_item_index: usize,
-    selected_suggestion_index: usize,
-    focus: ClassificationFocus,
 }
 
-impl Default for ClassificationUiState {
-    fn default() -> Self {
-        Self {
-            pending_count: 0,
-            config: ClassificationConfig::default(),
-            review_items: Vec::new(),
-            selected_item_index: 0,
-            selected_suggestion_index: 0,
-            focus: ClassificationFocus::Items,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SuggestionReviewFocus {
+    Items,
+    Suggestions,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // item_id kept for future use (e.g. refresh after confirm)
+struct SuggestionReviewItem {
+    item_id: ItemId,
+    item_text: String,
+    note_excerpt: Option<String>,
+    current_assignments: Vec<String>,
+    suggestions: Vec<ReviewSuggestion>,
+}
+
+#[derive(Clone, Debug)]
+struct SuggestionReviewState {
+    items: Vec<SuggestionReviewItem>,
+    item_index: usize,
+    suggestion_cursor: usize,
+    focus: SuggestionReviewFocus,
+    /// How many individual suggestions have been resolved (accepted/rejected) so far.
+    resolved_count: usize,
+    /// How many items have been fully resolved in this triage session.
+    resolved_items: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ReviewSuggestion {
+    suggestion: ClassificationSuggestion,
+    /// true = accept, false = reject. Defaults to true in g? bulk triage.
+    accepted: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SuggestionDecision {
+    Pending,
+    Accept,
+    Reject,
+}
+
+impl SuggestionDecision {
+    fn next(self) -> Self {
+        match self {
+            Self::Pending => Self::Accept,
+            Self::Accept => Self::Reject,
+            Self::Reject => Self::Pending,
+        }
+    }
+
+    fn marker(self) -> &'static str {
+        match self {
+            Self::Pending => "[?]",
+            Self::Accept => "[x]",
+            Self::Reject => "[ ]",
         }
     }
 }
@@ -1090,6 +1128,7 @@ struct App {
     current_key_modifiers: KeyModifiers,
     category_assignment_counts: HashMap<CategoryId, usize>,
     classification_ui: ClassificationUiState,
+    suggestion_review: Option<SuggestionReviewState>,
     undo: UndoState,
     input_panel_discard_confirm: bool,
     pending_external_edit: Option<ExternalEditorTarget>,
@@ -1162,6 +1201,7 @@ impl Default for App {
             current_key_modifiers: KeyModifiers::NONE,
             category_assignment_counts: HashMap::new(),
             classification_ui: ClassificationUiState::default(),
+            suggestion_review: None,
             undo: UndoState::default(),
             input_panel_discard_confirm: false,
             pending_external_edit: None,
@@ -1421,7 +1461,7 @@ mod tests {
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, ClassificationFocus, Mode,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, Mode,
         NameInputContext, SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
@@ -4750,7 +4790,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
             .expect("gH should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g/)");
+        assert_eq!(app.status, "Unknown g command (use ga, g/, or g?)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -4762,7 +4802,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
             .expect("gL should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g/)");
+        assert_eq!(app.status, "Unknown g command (use ga, g/, or g?)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -7423,7 +7463,7 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_c_opens_classification_review_from_normal_mode() {
+    fn g_question_opens_suggestion_review_with_pending() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7448,16 +7488,41 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
 
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("open classification review");
+        // Simulate g? sequence
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_normal_key(KeyCode::Char('?'), &agenda)
+            .expect("open suggestion review");
 
-        assert_eq!(app.mode, Mode::ClassificationReview);
-        assert_eq!(app.classification_pending_count(), 1);
-        assert_eq!(app.classification_ui.focus, ClassificationFocus::Items);
+        assert_eq!(app.mode, Mode::SuggestionReview);
+        assert!(app.suggestion_review.is_some());
+        let state = app.suggestion_review.as_ref().unwrap();
+        assert!(!state.items.is_empty());
+        assert!(!state.items[0].suggestions.is_empty());
+        // Default to accepted in bulk triage
+        assert!(state.items[0].suggestions.iter().all(|s| s.accepted));
     }
 
     #[test]
-    fn classification_review_enter_accepts_selected_suggestion() {
+    fn g_question_with_no_pending_stays_normal() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_normal_key(KeyCode::Char('?'), &agenda)
+            .expect("open suggestion review");
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.suggestion_review.is_none());
+    }
+
+    #[test]
+    fn suggestion_review_confirm_accepts_and_advances() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7481,32 +7546,68 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("open classification review");
-        app.handle_key(KeyCode::Enter, &agenda)
-            .expect("focus suggestions");
-        app.handle_key(KeyCode::Enter, &agenda)
-            .expect("accept suggestion");
 
-        assert_eq!(app.mode, Mode::ClassificationReview);
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_normal_key(KeyCode::Char('?'), &agenda)
+            .expect("open suggestion review");
+        assert_eq!(app.mode, Mode::SuggestionReview);
+
+        // Confirm (Enter) — all suggestions default to accepted
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("confirm suggestion review");
+
+        // Should return to Normal since no more pending items
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.suggestion_review.is_none());
         assert_eq!(app.classification_pending_count(), 0);
+
         let reloaded = store.get_item(item.id).expect("reload item");
-        assert!(reloaded.when_date.is_some());
         assert!(reloaded.assignments.contains_key(&travel.id));
     }
 
     #[test]
-    fn classification_review_with_no_pending_suggestions_starts_on_items_pane() {
+    fn suggestion_review_space_toggles_and_esc_cancels() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        let cfg = ClassificationConfig {
+            continuous_mode: ContinuousMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        store
+            .set_classification_config(&cfg)
+            .expect("set classification config");
+
+        let mut travel = Category::new("Travel".to_string());
+        travel.enable_implicit_string = true;
+        store.create_category(&travel).expect("create category");
+
+        let item = Item::new("Book travel soon".to_string());
+        agenda
+            .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+            .expect("create item");
+
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        app.handle_normal_key(KeyCode::Char('C'), &agenda)
-            .expect("open classification review");
-        assert_eq!(app.classification_ui.focus, ClassificationFocus::Items);
-        assert_eq!(app.mode, Mode::ClassificationReview);
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix");
+        app.handle_normal_key(KeyCode::Char('?'), &agenda)
+            .expect("open suggestion review");
+
+        // Toggle first suggestion off
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle suggestion");
+        assert!(!app.suggestion_review.as_ref().unwrap().items[0].suggestions[0].accepted);
+
+        // Esc cancels without applying
+        app.handle_key(KeyCode::Esc, &agenda).expect("cancel");
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.suggestion_review.is_none());
+        // Suggestions should still be pending (not rejected)
+        assert!(app.classification_pending_count() > 0);
     }
 
     #[test]

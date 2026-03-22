@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use agenda_core::classification::ClassificationSuggestion;
 use agenda_core::model::{CategoryId, CategoryValueKind, ItemId};
 #[cfg(test)]
 use crossterm::event::KeyModifiers;
@@ -7,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
+use crate::SuggestionDecision;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InputPanelKind {
@@ -88,6 +90,9 @@ pub(crate) struct InputPanel {
     pub(crate) parent_label: String,
     /// Value kind selection for CategoryCreate.
     pub(crate) value_kind: CategoryValueKind,
+    /// Pending classification suggestions for the item (edit panel only).
+    /// Each entry pairs a suggestion with a three-state decision.
+    pub(crate) pending_suggestions: Vec<(ClassificationSuggestion, SuggestionDecision)>,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -115,6 +120,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            pending_suggestions: Vec::new(),
             original_text: String::new(),
             original_note: String::new(),
             original_categories: on_insert_assign.clone(),
@@ -148,6 +154,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            pending_suggestions: Vec::new(),
             original_text,
             original_note,
             original_categories,
@@ -171,6 +178,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            pending_suggestions: Vec::new(),
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -194,6 +202,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            pending_suggestions: Vec::new(),
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -217,6 +226,7 @@ impl InputPanel {
             parent_id: None,
             parent_label: String::new(),
             value_kind: CategoryValueKind::Tag,
+            pending_suggestions: Vec::new(),
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -240,6 +250,7 @@ impl InputPanel {
             parent_id,
             parent_label: parent_label.to_string(),
             value_kind: CategoryValueKind::Tag,
+            pending_suggestions: Vec::new(),
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
