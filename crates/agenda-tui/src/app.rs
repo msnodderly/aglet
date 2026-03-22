@@ -452,15 +452,6 @@ impl App {
     }
 
     fn rebuild_classification_ui(&mut self, store: &Store) -> TuiResult<()> {
-        let previous_item_id = self
-            .classification_ui
-            .review_items
-            .get(self.classification_ui.selected_item_index)
-            .map(|item| item.item_id);
-        let previous_suggestion_id = self
-            .selected_classification_suggestion()
-            .map(|suggestion| suggestion.id);
-
         let config = store.get_classification_config()?;
         let mut pending = store.list_pending_suggestions()?;
         pending.sort_by(|left, right| {
@@ -528,43 +519,6 @@ impl App {
             review_items.iter().map(|item| item.suggestions.len()).sum();
         self.classification_ui.config = config;
         self.classification_ui.review_items = review_items;
-
-        if let Some(item_id) = previous_item_id {
-            if let Some(index) = self
-                .classification_ui
-                .review_items
-                .iter()
-                .position(|item| item.item_id == item_id)
-            {
-                self.classification_ui.selected_item_index = index;
-            }
-        }
-        self.classification_ui.selected_item_index = self
-            .classification_ui
-            .selected_item_index
-            .min(self.classification_ui.review_items.len().saturating_sub(1));
-
-        let suggestion_len = self
-            .selected_classification_item()
-            .map(|item| item.suggestions.len())
-            .unwrap_or(0);
-        if let Some(suggestion_id) = previous_suggestion_id {
-            if let Some(index) = self
-                .selected_classification_item()
-                .and_then(|item| item.suggestions.iter().position(|s| s.id == suggestion_id))
-            {
-                self.classification_ui.selected_suggestion_index = index;
-            }
-        }
-        self.classification_ui.selected_suggestion_index = self
-            .classification_ui
-            .selected_suggestion_index
-            .min(suggestion_len.saturating_sub(1));
-        if self.classification_ui.pending_count == 0
-            && self.classification_ui.focus == ClassificationFocus::Suggestions
-        {
-            self.classification_ui.focus = ClassificationFocus::Items;
-        }
 
         Ok(())
     }
@@ -872,6 +826,7 @@ impl App {
             .and_then(|slot| slot.items.get(self.item_index))
     }
 
+    #[cfg(test)]
     pub(crate) fn classification_pending_count(&self) -> usize {
         self.classification_ui.pending_count
     }
@@ -890,7 +845,7 @@ impl App {
             None
         } else {
             Some(format!(
-                "{} classification suggestion{} pending",
+                "? {} pending suggestion{}",
                 self.classification_ui.pending_count,
                 if self.classification_ui.pending_count == 1 {
                     ""
@@ -899,19 +854,6 @@ impl App {
                 }
             ))
         }
-    }
-
-    pub(crate) fn selected_classification_item(&self) -> Option<&ClassificationReviewItem> {
-        self.classification_ui
-            .review_items
-            .get(self.classification_ui.selected_item_index)
-    }
-
-    pub(crate) fn selected_classification_suggestion(&self) -> Option<&ClassificationSuggestion> {
-        self.selected_classification_item().and_then(|item| {
-            item.suggestions
-                .get(self.classification_ui.selected_suggestion_index)
-        })
     }
 
     pub(crate) fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {

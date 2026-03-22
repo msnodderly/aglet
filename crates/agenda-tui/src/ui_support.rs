@@ -125,6 +125,19 @@ fn is_uuid_search_candidate(search_term: &str) -> bool {
             .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
 }
 
+pub(super) fn candidate_assignment_label(
+    assignment: &CandidateAssignment,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    match assignment {
+        CandidateAssignment::Category(category_id) => category_names
+            .get(category_id)
+            .cloned()
+            .unwrap_or_else(|| format!("Category {category_id}")),
+        CandidateAssignment::When(value) => format!("When: {value}"),
+    }
+}
+
 pub(super) fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
     categories
         .iter()
@@ -644,14 +657,23 @@ pub(super) fn with_note_marker(label: String, has_note: bool) -> String {
 
 pub(super) const DONE_MARKER_SYMBOL: &str = "✓";
 pub(super) const BLOCKED_MARKER_SYMBOL: &str = "&";
+pub(super) const SUGGESTION_MARKER_SYMBOL: &str = "?";
 
-pub(super) fn item_indicator_glyphs(is_done: bool, is_blocked: bool, has_note: bool) -> String {
+pub(super) fn item_indicator_glyphs(
+    is_done: bool,
+    is_blocked: bool,
+    has_pending: bool,
+    has_note: bool,
+) -> String {
     let mut glyphs = String::new();
     if is_done {
         glyphs.push_str(DONE_MARKER_SYMBOL);
     }
     if is_blocked {
         glyphs.push_str(BLOCKED_MARKER_SYMBOL);
+    }
+    if has_pending {
+        glyphs.push_str(SUGGESTION_MARKER_SYMBOL);
     }
     if has_note {
         glyphs.push_str(NOTE_MARKER_SYMBOL);
@@ -1508,8 +1530,8 @@ mod tests {
     }
 
     #[test]
-    fn item_indicator_glyphs_supports_all_three_indicators() {
-        let glyphs = item_indicator_glyphs(true, true, true);
-        assert_eq!(glyphs, "✓&♪");
+    fn item_indicator_glyphs_supports_all_four_indicators() {
+        let glyphs = item_indicator_glyphs(true, true, true, true);
+        assert_eq!(glyphs, "✓&?♪");
     }
 }
