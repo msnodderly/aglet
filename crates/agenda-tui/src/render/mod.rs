@@ -271,7 +271,7 @@ impl App {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
-            self.render_item_assign_picker(frame, centered_rect(72, 72, frame.area()));
+            self.render_item_assign_picker(frame, centered_rect(88, 72, frame.area()));
         }
         if self.mode == Mode::LinkWizard {
             let popup_area = centered_rect(72, 72, frame.area());
@@ -3464,12 +3464,21 @@ impl App {
                     vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
                 }
             }
-            Mode::ItemAssignPicker => vec![
-                ("Space", "apply"),
-                ("n", "new"),
-                ("Enter", "close"),
-                ("Esc", "cancel"),
-            ],
+            Mode::ItemAssignPicker => match self.item_assign_pane {
+                ItemAssignPane::Categories => vec![
+                    ("Tab", "view pane"),
+                    ("Space", "toggle"),
+                    ("n", "new"),
+                    ("Enter", "close"),
+                    ("Esc", "cancel"),
+                ],
+                ItemAssignPane::ViewSection => vec![
+                    ("Tab", "cat pane"),
+                    ("Space", "assign"),
+                    ("r", "remove"),
+                    ("Esc", "cancel"),
+                ],
+            },
             Mode::ItemAssignInput => vec![("Enter", "assign"), ("Esc", "cancel")],
             Mode::LinkWizard => vec![
                 ("Tab", "focus"),
@@ -4324,14 +4333,30 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
             .split(area);
-        frame.render_widget(
-            Paragraph::new(
-                "Edit selected item categories (Space toggles, n or / enters category text)",
-            ),
-            chunks[0],
-        );
 
-        let items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
+        // Header — changes based on which pane is active.
+        let header = match self.item_assign_pane {
+            ItemAssignPane::Categories =>
+                "Edit item categories  (Tab: switch pane  Space: toggle  n or /: type  Enter: close  Esc: cancel)",
+            ItemAssignPane::ViewSection =>
+                "Assign to view/section  (Tab: switch pane  Space: assign  r: remove from view  j/k: navigate  Esc: cancel)",
+        };
+        frame.render_widget(Paragraph::new(header), chunks[0]);
+
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[1]);
+
+        // ── Left: category pane ────────────────────────────────────────────
+        let cat_active = self.item_assign_pane == ItemAssignPane::Categories;
+        let cat_border_style = if cat_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let cat_items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
             vec![ListItem::new(Line::from("(no categories)"))]
         } else {
             self.category_rows
@@ -4354,54 +4379,135 @@ impl App {
                     };
                     let (assigned_count, total_count) =
                         self.effective_action_assignment_counts(row.id);
-                    let assigned = if total_count > 1 {
-                        if assigned_count == 0 {
-                            "[ ]".to_string()
-                        } else if assigned_count == total_count {
-                            "[x]".to_string()
-                        } else {
-                            "[~]".to_string()
-                        }
+                    let checkbox = if total_count > 1 {
+                        if assigned_count == 0 { "[ ]" }
+                        else if assigned_count == total_count { "[x]" }
+                        else { "[~]" }
                     } else if self.selected_item_has_assignment(row.id) {
-                        "[x]".to_string()
+                        "[x]"
                     } else {
-                        "[ ]".to_string()
+                        "[ ]"
                     };
+                    let to_add = self.item_assign_preview.cat_to_add.contains(&row.id);
+                    let to_remove = self.item_assign_preview.cat_to_remove.contains(&row.id);
+                    let preview_prefix = if to_add { "[+] " } else if to_remove { "[-] " } else { "    " };
                     let category_name = with_note_marker(row.name.clone(), row.has_note);
                     let text = format!(
-                        "{assigned} {}{}{}",
+                        "{preview_prefix}{checkbox} {}{}{}",
                         "  ".repeat(row.depth),
                         category_name,
                         suffix
                     );
-                    ListItem::new(Line::from(text))
+                    let style = if to_add {
+                        Style::default().fg(Color::Green)
+                    } else if to_remove {
+                        Style::default().fg(Color::Red)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(Line::styled(text, style))
                 })
                 .collect()
         };
 
-        let mut state = Self::list_state_for(
-            chunks[1],
-            if self.category_rows.is_empty() {
-                None
-            } else {
-                Some(self.item_assign_category_index)
-            },
+        let mut cat_state = Self::list_state_for(
+            panes[0],
+            if self.category_rows.is_empty() { None } else { Some(self.item_assign_category_index) },
         );
-        let item_count = items.len();
+        let cat_count = cat_items.len();
         frame.render_stateful_widget(
-            List::new(items)
+            List::new(cat_items)
                 .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
+                .highlight_style(if cat_active { selected_row_style() } else { Style::default().bg(Color::DarkGray) })
                 .block(
                     Block::default()
-                        .title("Assign Item")
+                        .title("Categories")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(cat_border_style),
                 ),
-            chunks[1],
-            &mut state,
+            panes[0],
+            &mut cat_state,
         );
-        Self::render_vertical_scrollbar(frame, chunks[1], item_count, state.offset());
+        Self::render_vertical_scrollbar(frame, panes[0], cat_count, cat_state.offset());
+
+        // ── Right: view/section pane ───────────────────────────────────────
+        let view_active = self.item_assign_pane == ItemAssignPane::ViewSection;
+        let view_border_style = if view_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let view_items: Vec<ListItem<'_>> = if self.view_assign_rows.is_empty() {
+            vec![ListItem::new(Line::from("(no views)"))  ]
+        } else {
+            self.view_assign_rows
+                .iter()
+                .enumerate()
+                .map(|(row_idx, row)| {
+                    match row {
+                        ViewAssignRow::ViewHeader { name, .. } => {
+                            ListItem::new(Line::styled(
+                                format!("  {name}"),
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ))
+                        }
+                        ViewAssignRow::SectionRow { view_idx, section_idx, label } => {
+                            let (present, total) = self.item_in_section_counts(*view_idx, *section_idx);
+                            let checkbox = if total > 1 {
+                                if present == 0 { "[ ]" }
+                                else if present == total { "[x]" }
+                                else { "[~]" }
+                            } else if present > 0 {
+                                "[x]"
+                            } else {
+                                "[ ]"
+                            };
+                            let key = (*view_idx, *section_idx);
+                            let to_gain = self.item_assign_preview.section_to_gain.contains(&key);
+                            let to_lose = self.item_assign_preview.section_to_lose.contains(&key);
+                            let preview_prefix = if to_gain { "[+] " } else if to_lose { "[-] " } else { "    " };
+                            let text = format!("{preview_prefix}{checkbox}   {label}");
+                            let is_selected = view_active && row_idx == self.item_assign_view_row_index;
+                            let style = if to_gain {
+                                Style::default().fg(Color::Green)
+                            } else if to_lose {
+                                Style::default().fg(Color::Red)
+                            } else {
+                                Style::default()
+                            };
+                            let line = if is_selected {
+                                Line::styled(format!("> {text}"), style)
+                            } else {
+                                Line::styled(format!("  {text}"), style)
+                            };
+                            ListItem::new(line)
+                        }
+                    }
+                })
+                .collect()
+        };
+
+        // Compute scroll offset so the selected row stays visible.
+        let view_selected = if view_active && !self.view_assign_rows.is_empty() {
+            Some(self.item_assign_view_row_index)
+        } else {
+            None
+        };
+        let mut view_state = Self::list_state_for(panes[1], view_selected);
+        let view_count = view_items.len();
+        frame.render_stateful_widget(
+            List::new(view_items)
+                .block(
+                    Block::default()
+                        .title("View / Section")
+                        .borders(Borders::ALL)
+                        .border_style(view_border_style),
+                ),
+            panes[1],
+            &mut view_state,
+        );
+        Self::render_vertical_scrollbar(frame, panes[1], view_count, view_state.offset());
     }
 
     pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {

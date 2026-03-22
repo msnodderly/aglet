@@ -953,6 +953,182 @@ impl App {
         (assigned, action_item_ids.len())
     }
 
+    /// Returns `(present_count, total_action_count)` — how many of the current
+    /// action items appear in the specified view section (or the unmatched slot
+    /// when `section_idx` is `None`).
+    pub(crate) fn item_in_section_counts(
+        &self,
+        view_idx: usize,
+        section_idx: Option<usize>,
+    ) -> (usize, usize) {
+        let action_ids = self.effective_action_item_ids();
+        if action_ids.is_empty() {
+            return (0, 0);
+        }
+        let Some(view) = self.views.get(view_idx) else {
+            return (0, action_ids.len());
+        };
+        let reference_date = jiff::Zoned::now().date();
+        let result = resolve_view(view, &self.all_items, &self.categories, reference_date);
+        let present_ids: HashSet<ItemId> = match section_idx {
+            Some(si) => result
+                .sections
+                .iter()
+                .find(|s| s.section_index == si)
+                .map(|s| {
+                    let mut ids: HashSet<ItemId> = s.items.iter().map(|i| i.id).collect();
+                    for sub in &s.subsections {
+                        ids.extend(sub.items.iter().map(|i| i.id));
+                    }
+                    ids
+                })
+                .unwrap_or_default(),
+            None => result
+                .unmatched
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|i| i.id)
+                .collect(),
+        };
+        let present = action_ids.iter().filter(|id| present_ids.contains(id)).count();
+        (present, action_ids.len())
+    }
+
+    /// Recompute `item_assign_preview` based on the current pane focus and
+    /// cursor position.  This is a pure read — nothing is mutated except the
+    /// preview field itself.
+    pub(crate) fn compute_assignment_preview(&mut self) {
+        self.item_assign_preview = AssignmentPreview::default();
+
+        match self.item_assign_pane {
+            // ── Right pane hovered: show which categories would change ────────
+            ItemAssignPane::ViewSection => {
+                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                else {
+                    return;
+                };
+                let ViewAssignRow::SectionRow { view_idx, section_idx, .. } = row else {
+                    return; // ViewHeader — no preview
+                };
+                let Some(view) = self.views.get(view_idx).cloned() else {
+                    return;
+                };
+                let to_section = section_idx.and_then(|si| view.sections.get(si)).cloned();
+                let reference_date = jiff::Zoned::now().date();
+                let result = resolve_view(&view, &self.all_items, &self.categories, reference_date);
+
+                // Union preview across all action items.
+                let action_ids = self.effective_action_item_ids();
+                for item_id in &action_ids {
+                    // Find where this item currently sits in the view.
+                    let from_section_idx: Option<usize> = result.sections.iter().find_map(|s| {
+                        let in_top = s.items.iter().any(|i| i.id == *item_id);
+                        let in_sub = s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
+                        if in_top || in_sub { Some(s.section_index) } else { None }
+                    });
+                    let from_section = from_section_idx.and_then(|si| view.sections.get(si));
+
+                    // Skip items already in the target section — no change.
+                    if from_section_idx == section_idx {
+                        continue;
+                    }
+
+                    let preview = agenda_core::agenda::Agenda::preview_section_move(
+                        &view,
+                        from_section,
+                        to_section.as_ref(),
+                    );
+                    self.item_assign_preview.cat_to_add.extend(preview.to_assign);
+                    self.item_assign_preview.cat_to_remove.extend(preview.to_unassign);
+                }
+            }
+
+            // ── Left pane hovered: show which view slots would change ─────────
+            ItemAssignPane::Categories => {
+                let Some(row) = self.category_rows.get(self.item_assign_category_index).cloned()
+                else {
+                    return;
+                };
+                let action_ids = self.effective_action_item_ids();
+                let reference_date = jiff::Zoned::now().date();
+
+                for item_id in &action_ids {
+                    let Some(item) = self.all_items.iter().find(|i| i.id == *item_id).cloned()
+                    else {
+                        continue;
+                    };
+                    let currently_assigned = item.assignments.contains_key(&row.id);
+
+                    // Build a hypothetical item with the category toggled.
+                    let mut hypothetical = item.clone();
+                    if currently_assigned {
+                        hypothetical.assignments.remove(&row.id);
+                    } else {
+                        hypothetical.assignments.insert(
+                            row.id,
+                            agenda_core::model::Assignment {
+                                source: agenda_core::model::AssignmentSource::Manual,
+                                assigned_at: jiff::Timestamp::now(),
+                                sticky: true,
+                                origin: None,
+                                numeric_value: None,
+                            },
+                        );
+                    }
+
+                    // Build item lists: current and hypothetical.
+                    let other_items: Vec<_> = self.all_items.iter()
+                        .filter(|i| i.id != *item_id)
+                        .cloned()
+                        .collect();
+                    let current_items: Vec<_> = other_items.iter().cloned()
+                        .chain(std::iter::once(item.clone()))
+                        .collect();
+                    let hyp_items: Vec<_> = other_items.iter().cloned()
+                        .chain(std::iter::once(hypothetical))
+                        .collect();
+
+                    for (view_idx, view) in self.views.iter().enumerate() {
+                        let cur = resolve_view(view, &current_items, &self.categories, reference_date);
+                        let hyp = resolve_view(view, &hyp_items, &self.categories, reference_date);
+
+                        // Current placement for this item.
+                        let cur_section = cur.sections.iter().find_map(|s| {
+                            let found = s.items.iter().any(|i| i.id == *item_id)
+                                || s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
+                            if found { Some(Some(s.section_index)) } else { None }
+                        }).or_else(|| {
+                            cur.unmatched.as_ref().and_then(|u| {
+                                if u.iter().any(|i| i.id == *item_id) { Some(None) } else { None }
+                            })
+                        });
+
+                        // Hypothetical placement for this item.
+                        let hyp_section = hyp.sections.iter().find_map(|s| {
+                            let found = s.items.iter().any(|i| i.id == *item_id)
+                                || s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
+                            if found { Some(Some(s.section_index)) } else { None }
+                        }).or_else(|| {
+                            hyp.unmatched.as_ref().and_then(|u| {
+                                if u.iter().any(|i| i.id == *item_id) { Some(None) } else { None }
+                            })
+                        });
+
+                        if cur_section != hyp_section {
+                            if let Some(slot) = cur_section {
+                                self.item_assign_preview.section_to_lose.insert((view_idx, slot));
+                            }
+                            if let Some(slot) = hyp_section {
+                                self.item_assign_preview.section_to_gain.insert((view_idx, slot));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn prune_selected_items_to_visible_slots(&mut self) {
         if self.selected_item_ids.is_empty() {
             return;

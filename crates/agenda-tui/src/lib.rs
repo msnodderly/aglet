@@ -174,6 +174,42 @@ struct CategoryListRow {
     value_kind: CategoryValueKind,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum ItemAssignPane {
+    #[default]
+    Categories,
+    ViewSection,
+}
+
+/// A flattened, navigable row in the View/Section pane of the assign panel.
+#[derive(Clone)]
+enum ViewAssignRow {
+    /// Non-navigable view heading — skipped during j/k navigation.
+    #[allow(dead_code)]
+    ViewHeader { view_idx: usize, name: String },
+    /// Navigable section row; `section_idx` is `None` for the "unmatched" slot.
+    SectionRow {
+        view_idx: usize,
+        section_idx: Option<usize>,
+        label: String,
+    },
+}
+
+/// Ephemeral preview computed whenever the assign-panel cursor moves.
+/// Cleared whenever the cursor leaves a navigable row or the pane loses focus.
+#[derive(Clone, Default)]
+struct AssignmentPreview {
+    /// Categories that would be assigned (shown as `[+]` in the category pane).
+    cat_to_add: HashSet<CategoryId>,
+    /// Categories that would be removed (shown as `[-]` in the category pane).
+    cat_to_remove: HashSet<CategoryId>,
+    /// View/section slots that the item would gain (shown as `[+]` in the view pane).
+    /// Encoded as `(view_idx, section_idx)` where `None` means the unmatched slot.
+    section_to_gain: HashSet<(usize, Option<usize>)>,
+    /// View/section slots that the item would lose (shown as `[-]` in the view pane).
+    section_to_lose: HashSet<(usize, Option<usize>)>,
+}
+
 #[derive(Clone)]
 struct InspectAssignmentRow {
     category_id: CategoryId,
@@ -1111,6 +1147,10 @@ struct App {
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
     item_assign_dirty: bool,
+    item_assign_pane: ItemAssignPane,
+    item_assign_view_row_index: usize,
+    view_assign_rows: Vec<ViewAssignRow>,
+    item_assign_preview: AssignmentPreview,
     input_panel: Option<input_panel::InputPanel>,
     link_wizard: Option<LinkWizardState>,
     name_input_context: Option<NameInputContext>,
@@ -1184,6 +1224,10 @@ impl Default for App {
             board_add_column: None,
             item_assign_category_index: 0,
             item_assign_dirty: false,
+            item_assign_pane: ItemAssignPane::Categories,
+            item_assign_view_row_index: 0,
+            view_assign_rows: Vec::new(),
+            item_assign_preview: AssignmentPreview::default(),
             input_panel: None,
             link_wizard: None,
             name_input_context: None,
@@ -8216,8 +8260,8 @@ mod tests {
             "assign picker status copy should describe apply/close behavior: {rendered}"
         );
         assert!(
-            rendered.contains("Space:apply  n:new  Enter:close  Esc:cancel"),
-            "assign picker footer should describe apply/close controls: {rendered}"
+            rendered.contains("Space:toggle  n:new  Enter:close  Esc:cancel"),
+            "assign picker footer should describe toggle/close controls: {rendered}"
         );
 
         app.item_assign_category_index = app
