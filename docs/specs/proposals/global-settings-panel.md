@@ -140,11 +140,11 @@ Add the GlobalSettings key binding to the Normal mode footer hint.
 
 ## Key Binding
 
-`F10` — opens GlobalSettings from any mode that supports it (Normal, CategoryManager, ViewEdit).
+Primary: `g` `s` (two-key sequence in Normal mode, vim-style) — mnemonic for "global settings".
 
-Rationale: `F10` is a conventional "application menu" key in TUI applications (midnight commander, etc.), making it discoverable. It doesn't conflict with any current binding.
+Secondary: `F10` — also opens GlobalSettings for discoverability and single-key access.
 
-Alternative: `?` — mnemonic for "settings/help", but may conflict with a future help screen.
+**Historical note:** In Lotus Agenda, `F10` was the general-purpose menu key (equivalent to a menu bar), not a settings shortcut. Global settings in Agenda lived at `F10 → File → Properties → Auto-assign settings` — two levels deep. There is no Agenda precedent for `F10` as a direct settings destination, so using it as a secondary convenience binding here is fine.
 
 ---
 
