@@ -1010,6 +1010,13 @@ impl UndoEntry {
     }
 }
 
+/// Which InputPanel buffer to open in the external editor.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ExternalEditorTarget {
+    Text,
+    Note,
+}
+
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1084,6 +1091,8 @@ struct App {
     category_assignment_counts: HashMap<CategoryId, usize>,
     classification_ui: ClassificationUiState,
     undo: UndoState,
+    input_panel_discard_confirm: bool,
+    pending_external_edit: Option<ExternalEditorTarget>,
 }
 
 impl Default for App {
@@ -1154,6 +1163,8 @@ impl Default for App {
             category_assignment_counts: HashMap::new(),
             classification_ui: ClassificationUiState::default(),
             undo: UndoState::default(),
+            input_panel_discard_confirm: false,
+            pending_external_edit: None,
         }
     }
 }
@@ -7348,6 +7359,45 @@ mod tests {
             rendered.contains("u:deps"),
             "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
         );
+    }
+
+    #[test]
+    fn edit_item_panel_footer_warns_that_esc_opens_discard_confirm() {
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            agenda_core::model::ItemId::new_v4(),
+            "Title".to_string(),
+            "Body".to_string(),
+            Default::default(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        panel.focus = input_panel::InputPanelFocus::Note;
+        let app = App {
+            mode: Mode::InputPanel,
+            status: "Editing".to_string(),
+            input_panel: Some(panel),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(220, 24);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Esc:discard?"),
+            "edit-item footer/help should warn that Esc opens discard confirm: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_external_editor_command_respects_shell_quotes() {
+        let (command, args) =
+            crate::app::parse_external_editor_command("\"/tmp/aglet editor\" --wait \"two words\"")
+                .expect("parse external editor command");
+
+        assert_eq!(command, "/tmp/aglet editor");
+        assert_eq!(args, vec!["--wait".to_string(), "two words".to_string()]);
     }
 
     #[test]

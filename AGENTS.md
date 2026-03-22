@@ -461,20 +461,23 @@ category names with this precedence:
 This avoids accidental category creation when there is a single clear match,
 while preserving exact-match and create-new behavior.
 
-## Esc One-Step Exit Semantics (Surprising)
+## Esc Exit Semantics (Updated)
 
-`Esc` now exits several editing panes in a single step and discards dirty
-changes immediately (no hidden discard-confirm sub-state):
+`Esc` behavior is now split by editing surface:
 
-- `Mode::InputPanel` (`AddItem`/`EditItem`/name/numeric/category-create panels)
-- `Mode::NoteEdit`
-- `Mode::ViewEdit`
+- Dirty `Mode::InputPanel` `EditItem` opens a discard-confirm prompt
+  (`y` discard, `n`/`Esc` keep editing)
+- `Mode::InputPanel` `AddItem`/name/numeric/category-create panels still exit in
+  one step and discard changes immediately
+- `Mode::NoteEdit` and `Mode::ViewEdit` keep their existing behavior
 
 Practical implications:
-- Do not reintroduce hidden booleans like `*_discard_confirm` for these flows.
-- Footer/status hints should reflect one-step exit behavior (no `y/n/Esc` prompt).
-- In InputPanel category-filter editing, `Esc` now closes filter editing directly
-  and keeps the typed filter text (it no longer does clear-then-exit).
+- Do not assume all InputPanel flows are one-step exit anymore; `EditItem` is
+  the exception.
+- Footer/status hints for dirty item-edit panels should advertise the
+  `y/n/Esc` discard-confirm prompt.
+- In InputPanel category-filter editing, `Esc` still closes filter editing
+  directly and keeps the typed filter text (it no longer does clear-then-exit).
 
 ## Board Table Column Spacing Budget (Surprising)
 

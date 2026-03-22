@@ -1,12 +1,23 @@
 use crate::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use agenda_core::store::DEFAULT_VIEW_NAME;
 use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
 };
+
+pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
+    let Some(parts) = shlex::split(editor) else {
+        return Err(format!("Could not parse $EDITOR value: {editor}"));
+    };
+    let Some((command, args)) = parts.split_first() else {
+        return Err("External editor command is empty".to_string());
+    };
+    Ok((command.clone(), args.to_vec()))
+}
 
 impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
@@ -181,6 +192,10 @@ impl App {
             if should_quit {
                 let _ = self.persist_last_view_name(agenda.store());
                 break;
+            }
+
+            if let Some(target) = self.pending_external_edit.take() {
+                self.run_external_editor(terminal, target)?;
             }
 
             self.maybe_run_auto_refresh(agenda.store())?;
@@ -1873,5 +1888,94 @@ impl App {
             (Some(_), None) => Ordering::Less,
             (Some(left), Some(right)) => self.compare_some_values(left, right, direction),
         }
+    }
+
+    /// Suspend the TUI, open an external editor for the given InputPanel buffer,
+    /// and resume the TUI with the edited content.
+    fn run_external_editor(
+        &mut self,
+        terminal: &mut TuiTerminal,
+        target: ExternalEditorTarget,
+    ) -> TuiResult<()> {
+        let Some(panel) = &self.input_panel else {
+            return Ok(());
+        };
+
+        let content = match target {
+            ExternalEditorTarget::Text => panel.text.text().to_string(),
+            ExternalEditorTarget::Note => panel.note.text().to_string(),
+        };
+
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vi".to_string());
+        let (command, args) = match parse_external_editor_command(&editor) {
+            Ok(parts) => parts,
+            Err(err) => {
+                self.status = err;
+                return Ok(());
+            }
+        };
+
+        // Write content to a temporary file.
+        let suffix = match target {
+            ExternalEditorTarget::Text => ".txt",
+            ExternalEditorTarget::Note => ".md",
+        };
+        let mut tmp = tempfile::Builder::new()
+            .prefix("aglet-")
+            .suffix(suffix)
+            .tempfile()
+            .map_err(|e| format!("Failed to create temp file: {e}"))?;
+        tmp.write_all(content.as_bytes())
+            .map_err(|e| format!("Failed to write temp file: {e}"))?;
+        tmp.flush()
+            .map_err(|e| format!("Failed to flush temp file: {e}"))?;
+        let tmp_path = tmp.path().to_path_buf();
+
+        // Suspend the TUI.
+        disable_raw_mode()?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
+
+        // Spawn the editor using shell-style parsing so quoted paths/args work.
+        let status = std::process::Command::new(&command)
+            .args(&args)
+            .arg(&tmp_path)
+            .status();
+
+        // Resume the TUI regardless of editor outcome.
+        enable_raw_mode()?;
+        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+        TerminalSession::try_apply_preferred_cursor_style(terminal.backend_mut());
+        terminal.clear()?;
+
+        match status {
+            Ok(exit_status) if exit_status.success() => {
+                let new_content = std::fs::read_to_string(&tmp_path)
+                    .map_err(|e| format!("Failed to read back temp file: {e}"))?;
+                // Strip a single trailing newline that editors typically add.
+                let new_content = new_content.strip_suffix('\n').unwrap_or(&new_content);
+                if let Some(panel) = &mut self.input_panel {
+                    match target {
+                        ExternalEditorTarget::Text => panel.text.set(new_content.to_string()),
+                        ExternalEditorTarget::Note => panel.note.set(new_content.to_string()),
+                    }
+                }
+                let field = match target {
+                    ExternalEditorTarget::Text => "text",
+                    ExternalEditorTarget::Note => "note",
+                };
+                self.status = format!("Updated {field} from $EDITOR");
+            }
+            Ok(_) => {
+                self.status = format!("Editor ({editor}) exited with error; content unchanged");
+            }
+            Err(e) => {
+                self.status = format!("Failed to launch editor '{editor}': {e}");
+            }
+        }
+
+        Ok(())
     }
 }
