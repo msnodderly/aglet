@@ -804,6 +804,34 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
         .collect()
 }
 
+/// Flatten `views` into the ordered list of rows used by the View/Section pane
+/// of the assign panel.  View headings are non-navigable; section rows are
+/// navigable.  The "unmatched" slot is included when `view.show_unmatched`.
+pub(super) fn build_view_assign_rows(views: &[View]) -> Vec<ViewAssignRow> {
+    let mut rows = Vec::new();
+    for (view_idx, view) in views.iter().enumerate() {
+        rows.push(ViewAssignRow::ViewHeader {
+            view_idx,
+            name: view.name.clone(),
+        });
+        for (section_idx, section) in view.sections.iter().enumerate() {
+            rows.push(ViewAssignRow::SectionRow {
+                view_idx,
+                section_idx: Some(section_idx),
+                label: section.title.clone(),
+            });
+        }
+        if view.show_unmatched {
+            rows.push(ViewAssignRow::SectionRow {
+                view_idx,
+                section_idx: None,
+                label: view.unmatched_label.clone(),
+            });
+        }
+    }
+    rows
+}
+
 pub(super) fn category_depth(
     category_id: CategoryId,
     parent_by_id: &HashMap<CategoryId, Option<CategoryId>>,

@@ -34,6 +34,16 @@ pub struct Agenda<'a> {
     date_parser: BasicDateParser,
 }
 
+/// The net category changes that would result from a section-move operation,
+/// as computed by [`Agenda::preview_section_move`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SectionMovePreview {
+    /// Categories that would be assigned.
+    pub to_assign: HashSet<CategoryId>,
+    /// Categories that would be unassigned.
+    pub to_unassign: HashSet<CategoryId>,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct LinkItemsResult {
     pub created: bool,
@@ -329,6 +339,52 @@ impl<'a> Agenda<'a> {
         self.unassign_categories(item_id, &to_unassign)?;
         self.assign_manual_categories(item_id, &to_assign, "edit:section.move")?;
         self.reprocess_existing_item(item_id)
+    }
+
+    /// Compute the net category changes that would result from moving an item
+    /// to a different view placement, without touching the store.
+    ///
+    /// * `from_section` — the section the item currently occupies in `view`,
+    ///   or `None` if the item is unmatched / not present in the view.
+    /// * `to_section`   — the target section, or `None` for the unmatched slot.
+    ///
+    /// Returns a [`SectionMovePreview`] describing which categories would be
+    /// assigned and which would be unassigned. Categories that appear in both
+    /// sets cancel out and are excluded from the result.
+    pub fn preview_section_move(
+        view: &View,
+        from_section: Option<&Section>,
+        to_section: Option<&Section>,
+    ) -> SectionMovePreview {
+        let (mut to_assign, mut to_unassign) = match (from_section, to_section) {
+            (Some(from), Some(to)) => {
+                let mut unassign = Self::section_structural_targets(from);
+                let preserve = Self::section_insert_targets(view, to);
+                unassign.retain(|id| !preserve.contains(id));
+                unassign.extend(from.on_remove_unassign.iter().copied());
+                let assign = Self::section_insert_targets(view, to);
+                (assign, unassign)
+            }
+            (None, Some(to)) => {
+                let assign = Self::section_insert_targets(view, to);
+                (assign, HashSet::new())
+            }
+            (Some(from), None) => {
+                let unassign = Self::section_remove_targets(view, from);
+                (HashSet::new(), unassign)
+            }
+            (None, None) => (HashSet::new(), HashSet::new()),
+        };
+
+        // Categories that are both assigned and unassigned cancel out.
+        let overlap: HashSet<_> = to_assign.intersection(&to_unassign).copied().collect();
+        to_assign.retain(|id| !overlap.contains(id));
+        to_unassign.retain(|id| !overlap.contains(id));
+
+        SectionMovePreview {
+            to_assign,
+            to_unassign,
+        }
     }
 
     pub fn remove_item_from_view(&self, item_id: ItemId, view: &View) -> Result<ProcessItemResult> {
@@ -990,14 +1046,14 @@ impl<'a> Agenda<'a> {
         Ok(())
     }
 
-    fn section_insert_targets(view: &View, section: &Section) -> HashSet<CategoryId> {
+    pub fn section_insert_targets(view: &View, section: &Section) -> HashSet<CategoryId> {
         let mut targets = section.on_insert_assign.clone();
         targets.extend(section.criteria.and_category_ids());
         targets.extend(view.criteria.and_category_ids());
         targets
     }
 
-    fn section_remove_targets(view: &View, section: &Section) -> HashSet<CategoryId> {
+    pub fn section_remove_targets(view: &View, section: &Section) -> HashSet<CategoryId> {
         let mut targets = Self::section_structural_targets(section);
         let preserve: HashSet<CategoryId> = view.criteria.and_category_ids().collect();
         targets.retain(|category_id| !preserve.contains(category_id));
@@ -3456,6 +3512,150 @@ mod tests {
         assert!(
             agenda.ensure_depends_on_no_cycle(c, a).is_ok(),
             "non-cyclic dependency should be accepted"
+        );
+    }
+
+    // ── preview_section_move ──────────────────────────────────────────────────
+
+    /// Build a simple two-section view used across preview tests.
+    ///
+    /// View criteria: requires `view_cat`.
+    /// Section A criteria: requires `cat_a`.
+    /// Section B criteria: requires `cat_b`, on_insert_assign: `extra`.
+    fn preview_test_setup() -> (View, Section, Section, CategoryId, CategoryId, CategoryId, CategoryId) {
+        let view_cat_id = CategoryId::new_v4();
+        let cat_a_id = CategoryId::new_v4();
+        let cat_b_id = CategoryId::new_v4();
+        let extra_id = CategoryId::new_v4();
+
+        let mut v = view("Board");
+        v.criteria.set_criterion(CriterionMode::And, view_cat_id);
+
+        let mut sec_a = section("A");
+        sec_a.criteria.set_criterion(CriterionMode::And, cat_a_id);
+
+        let mut sec_b = section("B");
+        sec_b.criteria.set_criterion(CriterionMode::And, cat_b_id);
+        sec_b.on_insert_assign.insert(extra_id);
+
+        (v, sec_a, sec_b, view_cat_id, cat_a_id, cat_b_id, extra_id)
+    }
+
+    #[test]
+    fn preview_section_move_none_to_none_is_empty() {
+        let v = view("Empty");
+        let preview = Agenda::preview_section_move(&v, None, None);
+        assert!(preview.to_assign.is_empty());
+        assert!(preview.to_unassign.is_empty());
+    }
+
+    #[test]
+    fn preview_section_move_none_to_section_assigns_insert_targets() {
+        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) =
+            preview_test_setup();
+
+        let preview = Agenda::preview_section_move(&v, None, Some(&sec_a));
+
+        // Moving from unmatched → section A should assign section A's criteria
+        // (cat_a) plus the view's criteria (view_cat).
+        assert!(preview.to_assign.contains(&cat_a_id), "should assign cat_a");
+        assert!(
+            preview.to_assign.contains(&view_cat_id),
+            "should assign view_cat"
+        );
+        assert!(preview.to_unassign.is_empty(), "nothing to unassign");
+    }
+
+    #[test]
+    fn preview_section_move_section_to_none_unassigns_remove_targets() {
+        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) =
+            preview_test_setup();
+
+        let preview = Agenda::preview_section_move(&v, Some(&sec_a), None);
+
+        // section_remove_targets for sec_a: structural targets (cat_a) minus
+        // view criteria (view_cat) — so only cat_a is unassigned.
+        assert!(
+            preview.to_unassign.contains(&cat_a_id),
+            "should unassign cat_a"
+        );
+        // view_cat is preserved because it belongs to the view criteria.
+        assert!(
+            !preview.to_unassign.contains(&view_cat_id),
+            "view_cat should be preserved"
+        );
+        assert!(preview.to_assign.is_empty(), "nothing to assign");
+    }
+
+    #[test]
+    fn preview_section_move_between_sections_net_change() {
+        let (v, sec_a, sec_b, view_cat_id, cat_a_id, cat_b_id, extra_id) =
+            preview_test_setup();
+
+        let preview = Agenda::preview_section_move(&v, Some(&sec_a), Some(&sec_b));
+
+        // Moving A → B:
+        //   to_assign  = section_insert_targets(view, sec_b) = {cat_b, extra, view_cat}
+        //   to_unassign = section_structural_targets(sec_a)  = {cat_a}
+        //                 minus preserve (insert targets of B, which doesn't include cat_a)
+        //                 → {cat_a}
+        // view_cat is NOT in to_unassign (structural targets only covers the source
+        // section's own categories, not the view's), so there is no cancellation.
+        assert!(preview.to_assign.contains(&cat_b_id), "should assign cat_b");
+        assert!(
+            preview.to_assign.contains(&extra_id),
+            "should assign on_insert_assign extra"
+        );
+        assert!(
+            preview.to_assign.contains(&view_cat_id),
+            "view_cat included in insert targets"
+        );
+        assert!(
+            preview.to_unassign.contains(&cat_a_id),
+            "should unassign cat_a"
+        );
+        assert!(
+            !preview.to_unassign.contains(&view_cat_id),
+            "view_cat should not be in to_unassign"
+        );
+    }
+
+    #[test]
+    fn preview_section_move_same_section_to_unassign_is_empty() {
+        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) = preview_test_setup();
+
+        // Moving to the same section: the preserve set (= insert targets of the
+        // target) covers all of the structural targets of the source, so nothing
+        // is unassigned.  The insert targets are still returned in to_assign
+        // (they would be re-applied, which is a no-op when already assigned).
+        let preview = Agenda::preview_section_move(&v, Some(&sec_a), Some(&sec_a));
+        assert!(
+            preview.to_unassign.is_empty(),
+            "to_unassign should be empty when target is same section"
+        );
+        assert!(
+            preview.to_assign.contains(&cat_a_id),
+            "cat_a appears in to_assign (re-apply is safe)"
+        );
+        assert!(
+            preview.to_assign.contains(&view_cat_id),
+            "view_cat appears in to_assign"
+        );
+    }
+
+    #[test]
+    fn preview_section_move_on_remove_unassign_included() {
+        let v = view("Board");
+        let extra_remove_id = CategoryId::new_v4();
+
+        let mut sec = section("WithExtra");
+        sec.on_remove_unassign.insert(extra_remove_id);
+
+        let preview = Agenda::preview_section_move(&v, Some(&sec), None);
+
+        assert!(
+            preview.to_unassign.contains(&extra_remove_id),
+            "on_remove_unassign should appear in to_unassign"
         );
     }
 }

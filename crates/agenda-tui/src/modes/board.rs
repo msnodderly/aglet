@@ -2321,6 +2321,11 @@ impl App {
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
                     self.item_assign_dirty = false;
+                    self.item_assign_pane = ItemAssignPane::Categories;
+                    self.view_assign_rows = build_view_assign_rows(&self.views);
+                    self.item_assign_view_row_index = 0;
+                    self.item_assign_preview = AssignmentPreview::default();
+                    self.compute_assignment_preview();
                     self.clear_input();
                     self.status = if self.has_selected_items() {
                         let selected_count = self.selected_count();
@@ -4891,7 +4896,23 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> TuiResult<bool> {
+        // Route to view/section pane handler when that pane is active.
+        if self.item_assign_pane == ItemAssignPane::ViewSection {
+            return self.handle_item_assign_view_key(code, agenda);
+        }
+
         match code {
+            KeyCode::Tab => {
+                self.item_assign_pane = ItemAssignPane::ViewSection;
+                // Advance past any leading ViewHeader rows.
+                self.item_assign_view_row_index = self
+                    .view_assign_rows
+                    .iter()
+                    .position(|r| matches!(r, ViewAssignRow::SectionRow { .. }))
+                    .unwrap_or(0);
+                self.item_assign_preview = AssignmentPreview::default();
+                self.compute_assignment_preview();
+            }
             KeyCode::Esc => {
                 let clear_selection = self.item_assign_dirty && self.has_selected_items();
                 self.mode = Mode::Normal;
@@ -4899,6 +4920,7 @@ impl App {
                     self.clear_selected_items();
                 }
                 self.item_assign_dirty = false;
+                self.item_assign_preview = AssignmentPreview::default();
                 self.clear_input();
                 if !clear_selection {
                     self.status = "Assign canceled".to_string();
@@ -4908,6 +4930,7 @@ impl App {
                 if !self.category_rows.is_empty() {
                     self.item_assign_category_index =
                         next_index(self.item_assign_category_index, self.category_rows.len(), 1);
+                    self.compute_assignment_preview();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -4917,6 +4940,7 @@ impl App {
                         self.category_rows.len(),
                         -1,
                     );
+                    self.compute_assignment_preview();
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('/') => {
@@ -5075,6 +5099,231 @@ impl App {
                 self.clear_input();
                 if !clear_selection {
                     self.status = "Category edit saved".to_string();
+                }
+            }
+            _ => {}
+        }
+
+        Ok(false)
+    }
+
+    /// Handle key input when the View/Section pane is active inside the assign panel.
+    fn handle_item_assign_view_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        // Helper: advance view_row_index by `delta`, skipping ViewHeader rows.
+        fn next_section_row(rows: &[ViewAssignRow], current: usize, delta: i32) -> usize {
+            let navigable: Vec<usize> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| matches!(r, ViewAssignRow::SectionRow { .. }))
+                .map(|(i, _)| i)
+                .collect();
+            if navigable.is_empty() {
+                return current;
+            }
+            let pos = navigable.iter().position(|&i| i == current).unwrap_or(0);
+            let next_pos = next_index(pos, navigable.len(), delta);
+            navigable[next_pos]
+        }
+
+        match code {
+            KeyCode::Tab => {
+                // Switch back to Categories pane.
+                self.item_assign_pane = ItemAssignPane::Categories;
+                self.item_assign_preview = AssignmentPreview::default();
+                self.compute_assignment_preview();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.item_assign_view_row_index = next_section_row(
+                    &self.view_assign_rows,
+                    self.item_assign_view_row_index,
+                    1,
+                );
+                self.compute_assignment_preview();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.item_assign_view_row_index = next_section_row(
+                    &self.view_assign_rows,
+                    self.item_assign_view_row_index,
+                    -1,
+                );
+                self.compute_assignment_preview();
+            }
+            KeyCode::Char(' ') => {
+                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                else {
+                    return Ok(false);
+                };
+                let ViewAssignRow::SectionRow { view_idx, section_idx, .. } = row else {
+                    return Ok(false);
+                };
+                let Some(view) = self.views.get(view_idx).cloned() else {
+                    return Ok(false);
+                };
+                let to_section = section_idx.and_then(|si| view.sections.get(si)).cloned();
+                let action_ids = self.effective_action_item_ids();
+                if action_ids.is_empty() {
+                    return Ok(false);
+                }
+                let focused_item_id = match self.selected_item_id() {
+                    Some(id) => id,
+                    None => return Ok(false),
+                };
+                let reference_date = jiff::Zoned::now().date();
+                let result = resolve_view(&view, &self.all_items, &self.categories, reference_date);
+
+                let mut changed = 0usize;
+                let mut first_error: Option<String> = None;
+
+                for item_id in &action_ids {
+                    let current_placement = Self::item_membership_in_view_result(*item_id, &result);
+
+                    let (res, did_change) = match current_placement {
+                        Some(Some(from_section_idx)) => match section_idx {
+                            Some(target_section_idx) if from_section_idx == target_section_idx => {
+                                (Ok(()), false)
+                            }
+                            Some(_) => {
+                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                let to_sec = to_section.as_ref().unwrap();
+                                (
+                                    agenda
+                                        .move_item_between_sections(*item_id, &view, &from_sec, to_sec)
+                                        .map(|_| ()),
+                                    true,
+                                )
+                            }
+                            None => {
+                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                (
+                                    agenda
+                                        .remove_item_from_section(*item_id, &view, &from_sec)
+                                        .map(|_| ()),
+                                    true,
+                                )
+                            }
+                        },
+                        Some(None) => match section_idx {
+                            Some(_) => {
+                                let to_sec = to_section.as_ref().unwrap();
+                                (
+                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    true,
+                                )
+                            }
+                            None => (Ok(()), false),
+                        },
+                        None => match section_idx {
+                            Some(_) => {
+                                let to_sec = to_section.as_ref().unwrap();
+                                (
+                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    true,
+                                )
+                            }
+                            None => (
+                                agenda.insert_item_in_unmatched(*item_id, &view).map(|_| ()),
+                                true,
+                            ),
+                        },
+                    };
+
+                    match res {
+                        Ok(()) => {
+                            if did_change {
+                                changed += 1;
+                            }
+                        }
+                        Err(err) => {
+                            if first_error.is_none() {
+                                first_error = Some(err.to_string());
+                            }
+                        }
+                    }
+                }
+
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(focused_item_id);
+                self.view_assign_rows = build_view_assign_rows(&self.views);
+                self.item_assign_dirty = true;
+                self.compute_assignment_preview();
+
+                self.status = match first_error {
+                    None => format!("Moved {changed} item(s) to section"),
+                    Some(err) => format!("Partial move ({changed} ok): {err}"),
+                };
+            }
+            KeyCode::Char('r') => {
+                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                else {
+                    return Ok(false);
+                };
+                let ViewAssignRow::SectionRow { view_idx, .. } = row else {
+                    return Ok(false);
+                };
+                let Some(view) = self.views.get(view_idx).cloned() else {
+                    return Ok(false);
+                };
+                let action_ids = self.effective_action_item_ids();
+                let focused_item_id = match self.selected_item_id() {
+                    Some(id) => id,
+                    None => return Ok(false),
+                };
+                let reference_date = jiff::Zoned::now().date();
+                let result = resolve_view(&view, &self.all_items, &self.categories, reference_date);
+                let mut changed = 0usize;
+                let mut first_error: Option<String> = None;
+                for item_id in &action_ids {
+                    if Self::item_membership_in_view_result(*item_id, &result).is_none() {
+                        continue;
+                    }
+
+                    match agenda.remove_item_from_view(*item_id, &view) {
+                        Ok(_) => changed += 1,
+                        Err(err) => {
+                            if first_error.is_none() {
+                                first_error = Some(err.to_string());
+                            }
+                        }
+                    }
+                }
+                self.refresh(agenda.store())?;
+                self.set_item_selection_by_id(focused_item_id);
+                self.view_assign_rows = build_view_assign_rows(&self.views);
+                self.item_assign_dirty = true;
+                self.compute_assignment_preview();
+                self.status = match first_error {
+                    None => format!("Removed {changed} item(s) from view"),
+                    Some(err) => format!("Partial remove ({changed} ok): {err}"),
+                };
+            }
+            KeyCode::Enter => {
+                let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                self.mode = Mode::Normal;
+                if clear_selection {
+                    self.clear_selected_items();
+                }
+                self.item_assign_dirty = false;
+                self.item_assign_preview = AssignmentPreview::default();
+                self.clear_input();
+                if !clear_selection {
+                    self.status = "Section assignment saved".to_string();
+                }
+            }
+            KeyCode::Esc => {
+                let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                self.mode = Mode::Normal;
+                if clear_selection {
+                    self.clear_selected_items();
+                }
+                self.item_assign_dirty = false;
+                self.item_assign_preview = AssignmentPreview::default();
+                self.clear_input();
+                if !clear_selection {
+                    self.status = "Assign canceled".to_string();
                 }
             }
             _ => {}

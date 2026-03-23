@@ -175,6 +175,42 @@ struct CategoryListRow {
     value_kind: CategoryValueKind,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum ItemAssignPane {
+    #[default]
+    Categories,
+    ViewSection,
+}
+
+/// A flattened, navigable row in the View/Section pane of the assign panel.
+#[derive(Clone)]
+enum ViewAssignRow {
+    /// Non-navigable view heading — skipped during j/k navigation.
+    #[allow(dead_code)]
+    ViewHeader { view_idx: usize, name: String },
+    /// Navigable section row; `section_idx` is `None` for the "unmatched" slot.
+    SectionRow {
+        view_idx: usize,
+        section_idx: Option<usize>,
+        label: String,
+    },
+}
+
+/// Ephemeral preview computed whenever the assign-panel cursor moves.
+/// Cleared whenever the cursor leaves a navigable row or the pane loses focus.
+#[derive(Clone, Default)]
+struct AssignmentPreview {
+    /// Categories that would be assigned (shown as `[+]` in the category pane).
+    cat_to_add: HashSet<CategoryId>,
+    /// Categories that would be removed (shown as `[-]` in the category pane).
+    cat_to_remove: HashSet<CategoryId>,
+    /// View/section slots that the item would gain (shown as `[+]` in the view pane).
+    /// Encoded as `(view_idx, section_idx)` where `None` means the unmatched slot.
+    section_to_gain: HashSet<(usize, Option<usize>)>,
+    /// View/section slots that the item would lose (shown as `[-]` in the view pane).
+    section_to_lose: HashSet<(usize, Option<usize>)>,
+}
+
 #[derive(Clone)]
 struct InspectAssignmentRow {
     category_id: CategoryId,
@@ -1115,6 +1151,10 @@ struct App {
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
     item_assign_dirty: bool,
+    item_assign_pane: ItemAssignPane,
+    item_assign_view_row_index: usize,
+    view_assign_rows: Vec<ViewAssignRow>,
+    item_assign_preview: AssignmentPreview,
     input_panel: Option<input_panel::InputPanel>,
     link_wizard: Option<LinkWizardState>,
     name_input_context: Option<NameInputContext>,
@@ -1188,6 +1228,10 @@ impl Default for App {
             board_add_column: None,
             item_assign_category_index: 0,
             item_assign_dirty: false,
+            item_assign_pane: ItemAssignPane::Categories,
+            item_assign_view_row_index: 0,
+            view_assign_rows: Vec::new(),
+            item_assign_preview: AssignmentPreview::default(),
             input_panel: None,
             link_wizard: None,
             name_input_context: None,
@@ -8261,8 +8305,8 @@ mod tests {
             "assign picker status copy should describe apply/close behavior: {rendered}"
         );
         assert!(
-            rendered.contains("Space:apply  n:new  Enter:close  Esc:cancel"),
-            "assign picker footer should describe apply/close controls: {rendered}"
+            rendered.contains("Space:toggle  n:new  Enter:close  Esc:cancel"),
+            "assign picker footer should describe toggle/close controls: {rendered}"
         );
 
         app.item_assign_category_index = app
@@ -8451,6 +8495,114 @@ mod tests {
             .expect("reload second")
             .assignments
             .contains_key(&work.id));
+    }
+
+    #[test]
+    fn assign_picker_view_unmatched_row_inserts_item_into_view() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut work_view = View::new("Work Board".to_string());
+        work_view.criteria.set_criterion(CriterionMode::And, work.id);
+        store.create_view(&work_view).expect("create work view");
+
+        let item = Item::new("Cross-view insert target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Tab, &agenda)
+            .expect("switch to view pane");
+        app.item_assign_view_row_index = app
+            .view_assign_rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    super::ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx: None,
+                        ..
+                    } if app.views[*view_idx].name == "Work Board"
+                )
+            })
+            .expect("work board unmatched row should exist");
+        app.compute_assignment_preview();
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("assign to unmatched row");
+
+        let updated = store.get_item(item.id).expect("reload item");
+        assert!(
+            updated.assignments.contains_key(&work.id),
+            "assigning to a view's unmatched row should apply the view criteria"
+        );
+    }
+
+    #[test]
+    fn assign_picker_view_remove_skips_items_absent_from_target_view() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let cleanup = Category::new("Cleanup".to_string());
+        store.create_category(&work).expect("create work");
+        store.create_category(&cleanup).expect("create cleanup");
+
+        let mut work_view = View::new("Work Board".to_string());
+        work_view.criteria.set_criterion(CriterionMode::And, work.id);
+        work_view.remove_from_view_unassign.insert(cleanup.id);
+        store.create_view(&work_view).expect("create work view");
+
+        let item = Item::new("Cross-view remove target".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, cleanup.id, Some("manual:test".to_string()))
+            .expect("assign cleanup");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Tab, &agenda)
+            .expect("switch to view pane");
+        app.item_assign_view_row_index = app
+            .view_assign_rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    super::ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx: None,
+                        ..
+                    } if app.views[*view_idx].name == "Work Board"
+                )
+            })
+            .expect("work board unmatched row should exist");
+        app.compute_assignment_preview();
+
+        app.handle_item_assign_category_key(KeyCode::Char('r'), &agenda)
+            .expect("remove from target view");
+
+        let updated = store.get_item(item.id).expect("reload item");
+        assert!(
+            updated.assignments.contains_key(&cleanup.id),
+            "removing from a view should not strip remove-from-view categories from an item that is absent from that view"
+        );
     }
 
     #[test]
