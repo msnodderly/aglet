@@ -995,6 +995,41 @@ impl App {
         (present, action_ids.len())
     }
 
+    /// Returns the item's placement within a resolved view result.
+    ///
+    /// `None` means the item is absent from the view entirely.
+    /// `Some(None)` means the item is present in the unmatched slot.
+    /// `Some(Some(section_idx))` means the item is present in a concrete section.
+    pub(crate) fn item_membership_in_view_result(
+        item_id: ItemId,
+        result: &agenda_core::query::ViewResult,
+    ) -> Option<Option<usize>> {
+        if let Some(section_idx) = result.sections.iter().find_map(|section| {
+            let in_top = section.items.iter().any(|item| item.id == item_id);
+            let in_sub = section
+                .subsections
+                .iter()
+                .any(|subsection| subsection.items.iter().any(|item| item.id == item_id));
+            if in_top || in_sub {
+                Some(section.section_index)
+            } else {
+                None
+            }
+        }) {
+            return Some(Some(section_idx));
+        }
+
+        if result
+            .unmatched
+            .as_ref()
+            .is_some_and(|items| items.iter().any(|item| item.id == item_id))
+        {
+            return Some(None);
+        }
+
+        None
+    }
+
     /// Recompute `item_assign_preview` based on the current pane focus and
     /// cursor position.  This is a pure read — nothing is mutated except the
     /// preview field itself.
@@ -1021,24 +1056,26 @@ impl App {
                 // Union preview across all action items.
                 let action_ids = self.effective_action_item_ids();
                 for item_id in &action_ids {
-                    // Find where this item currently sits in the view.
-                    let from_section_idx: Option<usize> = result.sections.iter().find_map(|s| {
-                        let in_top = s.items.iter().any(|i| i.id == *item_id);
-                        let in_sub = s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
-                        if in_top || in_sub { Some(s.section_index) } else { None }
-                    });
-                    let from_section = from_section_idx.and_then(|si| view.sections.get(si));
+                    let current_placement = Self::item_membership_in_view_result(*item_id, &result);
 
-                    // Skip items already in the target section — no change.
-                    if from_section_idx == section_idx {
+                    // Skip items already in the target slot — no change.
+                    if current_placement == Some(section_idx) {
                         continue;
                     }
 
-                    let preview = agenda_core::agenda::Agenda::preview_section_move(
-                        &view,
-                        from_section,
-                        to_section.as_ref(),
-                    );
+                    if current_placement.is_none() && section_idx.is_none() {
+                        self.item_assign_preview
+                            .cat_to_add
+                            .extend(view.criteria.and_category_ids());
+                        continue;
+                    }
+
+                    let from_section = current_placement
+                        .and_then(|current_section_idx| current_section_idx)
+                        .and_then(|current_section_idx| view.sections.get(current_section_idx));
+
+                    let preview =
+                        agenda_core::agenda::Agenda::preview_section_move(&view, from_section, to_section.as_ref());
                     self.item_assign_preview.cat_to_add.extend(preview.to_assign);
                     self.item_assign_preview.cat_to_remove.extend(preview.to_unassign);
                 }
@@ -1092,28 +1129,8 @@ impl App {
                     for (view_idx, view) in self.views.iter().enumerate() {
                         let cur = resolve_view(view, &current_items, &self.categories, reference_date);
                         let hyp = resolve_view(view, &hyp_items, &self.categories, reference_date);
-
-                        // Current placement for this item.
-                        let cur_section = cur.sections.iter().find_map(|s| {
-                            let found = s.items.iter().any(|i| i.id == *item_id)
-                                || s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
-                            if found { Some(Some(s.section_index)) } else { None }
-                        }).or_else(|| {
-                            cur.unmatched.as_ref().and_then(|u| {
-                                if u.iter().any(|i| i.id == *item_id) { Some(None) } else { None }
-                            })
-                        });
-
-                        // Hypothetical placement for this item.
-                        let hyp_section = hyp.sections.iter().find_map(|s| {
-                            let found = s.items.iter().any(|i| i.id == *item_id)
-                                || s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
-                            if found { Some(Some(s.section_index)) } else { None }
-                        }).or_else(|| {
-                            hyp.unmatched.as_ref().and_then(|u| {
-                                if u.iter().any(|i| i.id == *item_id) { Some(None) } else { None }
-                            })
-                        });
+                        let cur_section = Self::item_membership_in_view_result(*item_id, &cur);
+                        let hyp_section = Self::item_membership_in_view_result(*item_id, &hyp);
 
                         if cur_section != hyp_section {
                             if let Some(slot) = cur_section {

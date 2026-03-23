@@ -5168,33 +5168,64 @@ impl App {
                 let mut first_error: Option<String> = None;
 
                 for item_id in &action_ids {
-                    let from_section_idx: Option<usize> = result.sections.iter().find_map(|s| {
-                        let found = s.items.iter().any(|i| i.id == *item_id)
-                            || s.subsections.iter().any(|sub| sub.items.iter().any(|i| i.id == *item_id));
-                        if found { Some(s.section_index) } else { None }
-                    });
+                    let current_placement = Self::item_membership_in_view_result(*item_id, &result);
 
-                    let res = match (from_section_idx, section_idx) {
-                        (Some(fi), Some(ti)) if fi == ti => Ok(()), // already there
-                        (Some(fi), Some(_ti)) => {
-                            let from_sec = view.sections.get(fi).cloned().unwrap();
-                            let to_sec = to_section.as_ref().unwrap();
-                            agenda.move_item_between_sections(*item_id, &view, &from_sec, to_sec)
-                                .map(|_| ())
-                        }
-                        (None, Some(_)) => {
-                            let to_sec = to_section.as_ref().unwrap();
-                            agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ())
-                        }
-                        (Some(fi), None) => {
-                            let from_sec = view.sections.get(fi).cloned().unwrap();
-                            agenda.remove_item_from_section(*item_id, &view, &from_sec).map(|_| ())
-                        }
-                        (None, None) => Ok(()), // already unmatched
+                    let (res, did_change) = match current_placement {
+                        Some(Some(from_section_idx)) => match section_idx {
+                            Some(target_section_idx) if from_section_idx == target_section_idx => {
+                                (Ok(()), false)
+                            }
+                            Some(_) => {
+                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                let to_sec = to_section.as_ref().unwrap();
+                                (
+                                    agenda
+                                        .move_item_between_sections(*item_id, &view, &from_sec, to_sec)
+                                        .map(|_| ()),
+                                    true,
+                                )
+                            }
+                            None => {
+                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                (
+                                    agenda
+                                        .remove_item_from_section(*item_id, &view, &from_sec)
+                                        .map(|_| ()),
+                                    true,
+                                )
+                            }
+                        },
+                        Some(None) => match section_idx {
+                            Some(_) => {
+                                let to_sec = to_section.as_ref().unwrap();
+                                (
+                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    true,
+                                )
+                            }
+                            None => (Ok(()), false),
+                        },
+                        None => match section_idx {
+                            Some(_) => {
+                                let to_sec = to_section.as_ref().unwrap();
+                                (
+                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    true,
+                                )
+                            }
+                            None => (
+                                agenda.insert_item_in_unmatched(*item_id, &view).map(|_| ()),
+                                true,
+                            ),
+                        },
                     };
 
                     match res {
-                        Ok(()) => changed += 1,
+                        Ok(()) => {
+                            if did_change {
+                                changed += 1;
+                            }
+                        }
                         Err(err) => {
                             if first_error.is_none() {
                                 first_error = Some(err.to_string());
@@ -5230,9 +5261,15 @@ impl App {
                     Some(id) => id,
                     None => return Ok(false),
                 };
+                let reference_date = jiff::Zoned::now().date();
+                let result = resolve_view(&view, &self.all_items, &self.categories, reference_date);
                 let mut changed = 0usize;
                 let mut first_error: Option<String> = None;
                 for item_id in &action_ids {
+                    if Self::item_membership_in_view_result(*item_id, &result).is_none() {
+                        continue;
+                    }
+
                     match agenda.remove_item_from_view(*item_id, &view) {
                         Ok(_) => changed += 1,
                         Err(err) => {

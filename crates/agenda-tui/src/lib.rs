@@ -8453,6 +8453,114 @@ mod tests {
     }
 
     #[test]
+    fn assign_picker_view_unmatched_row_inserts_item_into_view() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut work_view = View::new("Work Board".to_string());
+        work_view.criteria.set_criterion(CriterionMode::And, work.id);
+        store.create_view(&work_view).expect("create work view");
+
+        let item = Item::new("Cross-view insert target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Tab, &agenda)
+            .expect("switch to view pane");
+        app.item_assign_view_row_index = app
+            .view_assign_rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    super::ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx: None,
+                        ..
+                    } if app.views[*view_idx].name == "Work Board"
+                )
+            })
+            .expect("work board unmatched row should exist");
+        app.compute_assignment_preview();
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("assign to unmatched row");
+
+        let updated = store.get_item(item.id).expect("reload item");
+        assert!(
+            updated.assignments.contains_key(&work.id),
+            "assigning to a view's unmatched row should apply the view criteria"
+        );
+    }
+
+    #[test]
+    fn assign_picker_view_remove_skips_items_absent_from_target_view() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let cleanup = Category::new("Cleanup".to_string());
+        store.create_category(&work).expect("create work");
+        store.create_category(&cleanup).expect("create cleanup");
+
+        let mut work_view = View::new("Work Board".to_string());
+        work_view.criteria.set_criterion(CriterionMode::And, work.id);
+        work_view.remove_from_view_unassign.insert(cleanup.id);
+        store.create_view(&work_view).expect("create work view");
+
+        let item = Item::new("Cross-view remove target".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, cleanup.id, Some("manual:test".to_string()))
+            .expect("assign cleanup");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Tab, &agenda)
+            .expect("switch to view pane");
+        app.item_assign_view_row_index = app
+            .view_assign_rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    super::ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx: None,
+                        ..
+                    } if app.views[*view_idx].name == "Work Board"
+                )
+            })
+            .expect("work board unmatched row should exist");
+        app.compute_assignment_preview();
+
+        app.handle_item_assign_category_key(KeyCode::Char('r'), &agenda)
+            .expect("remove from target view");
+
+        let updated = store.get_item(item.id).expect("reload item");
+        assert!(
+            updated.assignments.contains_key(&cleanup.id),
+            "removing from a view should not strip remove-from-view categories from an item that is absent from that view"
+        );
+    }
+
+    #[test]
     fn normal_mode_x_with_selection_opens_batch_delete_confirm() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
