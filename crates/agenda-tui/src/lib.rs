@@ -1151,6 +1151,8 @@ struct App {
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
     item_assign_dirty: bool,
+    item_assign_anchor_item_id: Option<ItemId>,
+    item_assign_target_item_ids: Vec<ItemId>,
     item_assign_pane: ItemAssignPane,
     item_assign_view_row_index: usize,
     view_assign_rows: Vec<ViewAssignRow>,
@@ -1228,6 +1230,8 @@ impl Default for App {
             board_add_column: None,
             item_assign_category_index: 0,
             item_assign_dirty: false,
+            item_assign_anchor_item_id: None,
+            item_assign_target_item_ids: Vec::new(),
             item_assign_pane: ItemAssignPane::Categories,
             item_assign_view_row_index: 0,
             view_assign_rows: Vec::new(),
@@ -8791,6 +8795,111 @@ mod tests {
         assert!(
             updated.assignments.contains_key(&work.id),
             "assigning to a view's unmatched row should apply the view criteria"
+        );
+    }
+
+    #[test]
+    fn assign_picker_view_repeated_space_keeps_operating_on_original_item() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let aglet = Category::new("Aglet".to_string());
+        let neonv = Category::new("NeoNV".to_string());
+        store.create_category(&aglet).expect("create aglet");
+        store.create_category(&neonv).expect("create neonv");
+
+        let mut current_view = View::new("Aglet Board".to_string());
+        current_view
+            .criteria
+            .set_criterion(CriterionMode::And, aglet.id);
+        store
+            .create_view(&current_view)
+            .expect("create current view");
+
+        let mut target_view = View::new("NeoNV Board".to_string());
+        target_view
+            .criteria
+            .set_criterion(CriterionMode::And, neonv.id);
+        store.create_view(&target_view).expect("create target view");
+
+        let first = Item::new("First target".to_string());
+        let second = Item::new("Second visible item".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+        agenda
+            .assign_item_manual(first.id, aglet.id, Some("manual:test".to_string()))
+            .expect("assign first to current view");
+        agenda
+            .assign_item_manual(second.id, aglet.id, Some("manual:test".to_string()))
+            .expect("assign second to current view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Aglet Board");
+        app.refresh(&store).expect("refresh current view");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(first.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Tab, &agenda)
+            .expect("switch to view pane");
+
+        let target_row_index = app
+            .view_assign_rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    super::ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx: None,
+                        ..
+                    } if app.views[*view_idx].name == "NeoNV Board"
+                )
+            })
+            .expect("target unmatched row should exist");
+        app.item_assign_view_row_index = target_row_index;
+        app.compute_assignment_preview(&agenda);
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("first space applies target view");
+
+        let first_updated = store.get_item(first.id).expect("reload first");
+        let second_updated = store.get_item(second.id).expect("reload second");
+        assert!(
+            first_updated.assignments.contains_key(&neonv.id),
+            "first item should be inserted into the target view"
+        );
+        assert!(
+            !second_updated.assignments.contains_key(&neonv.id),
+            "second item should remain untouched after the first space"
+        );
+
+        let (present_count, total_count) = match app.view_assign_rows.get(target_row_index) {
+            Some(super::ViewAssignRow::SectionRow {
+                view_idx,
+                section_idx,
+                ..
+            }) => app.item_in_section_counts(*view_idx, *section_idx),
+            _ => panic!("target row should still be a section row"),
+        };
+        assert_eq!(
+            (present_count, total_count),
+            (1, 1),
+            "the target row should keep showing the original item as assigned"
+        );
+
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("second space should be a no-op for the same target item");
+
+        let first_updated = store.get_item(first.id).expect("reload first again");
+        let second_updated = store.get_item(second.id).expect("reload second again");
+        assert!(first_updated.assignments.contains_key(&neonv.id));
+        assert!(
+            !second_updated.assignments.contains_key(&neonv.id),
+            "repeated space must not drift to a different visible item"
         );
     }
 

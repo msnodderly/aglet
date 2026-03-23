@@ -2318,9 +2318,9 @@ impl App {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignPicker;
+                    self.start_item_assign_session();
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
-                    self.item_assign_dirty = false;
                     self.item_assign_pane = ItemAssignPane::Categories;
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
@@ -4919,9 +4919,7 @@ impl App {
                 if clear_selection {
                     self.clear_selected_items();
                 }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
+                self.clear_item_assign_session();
                 if !clear_selection {
                     self.status = "Assign canceled".to_string();
                 }
@@ -4952,8 +4950,12 @@ impl App {
             KeyCode::Char(' ') => {
                 let batch_mode = self.has_selected_items();
                 let action_item_ids = self.effective_action_item_ids();
-                let Some(item_id) = self.selected_item_id() else {
+                let Some(item_id) = self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                else {
                     self.mode = Mode::Normal;
+                    self.clear_item_assign_session();
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -5097,9 +5099,7 @@ impl App {
                     if clear_selection {
                         self.clear_selected_items();
                     }
-                    self.item_assign_dirty = false;
-                    self.item_assign_preview = AssignmentPreview::default();
-                    self.clear_input();
+                    self.clear_item_assign_session();
                 }
             }
             _ => {}
@@ -5171,7 +5171,10 @@ impl App {
                 if action_ids.is_empty() {
                     return Ok(false);
                 }
-                let focused_item_id = match self.selected_item_id() {
+                let focused_item_id = match self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                {
                     Some(id) => id,
                     None => return Ok(false),
                 };
@@ -5282,7 +5285,10 @@ impl App {
                     return Ok(false);
                 };
                 let action_ids = self.effective_action_item_ids();
-                let focused_item_id = match self.selected_item_id() {
+                let focused_item_id = match self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                {
                     Some(id) => id,
                     None => return Ok(false),
                 };
@@ -5322,9 +5328,7 @@ impl App {
                     if clear_selection {
                         self.clear_selected_items();
                     }
-                    self.item_assign_dirty = false;
-                    self.item_assign_preview = AssignmentPreview::default();
-                    self.clear_input();
+                    self.clear_item_assign_session();
                 }
             }
             KeyCode::Esc => {
@@ -5333,9 +5337,7 @@ impl App {
                 if clear_selection {
                     self.clear_selected_items();
                 }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
+                self.clear_item_assign_session();
                 if !clear_selection {
                     self.status = "Assign canceled".to_string();
                 }
@@ -5359,9 +5361,12 @@ impl App {
             }
             KeyCode::Enter => {
                 let action_item_ids = self.effective_action_item_ids();
-                let Some(item_id) = self.selected_item_id() else {
+                let Some(item_id) = self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                else {
                     self.mode = Mode::Normal;
-                    self.clear_input();
+                    self.clear_item_assign_session();
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };

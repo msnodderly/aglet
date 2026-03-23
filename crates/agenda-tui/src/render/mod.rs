@@ -4410,7 +4410,8 @@ impl App {
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
         let item_context = self
-            .selected_item_id()
+            .item_assign_anchor_id()
+            .or_else(|| self.selected_item_id())
             .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
             .map(board_item_label)
             .unwrap_or_else(|| "(no selected item)".to_string());

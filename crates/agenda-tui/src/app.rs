@@ -843,7 +843,9 @@ impl App {
     }
 
     pub(crate) fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {
-        self.selected_item()
+        self.item_assign_anchor_id()
+            .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
+            .or_else(|| self.selected_item())
             .map(|item| item.assignments.contains_key(&category_id))
             .unwrap_or(false)
     }
@@ -927,7 +929,41 @@ impl App {
         ordered
     }
 
+    pub(crate) fn item_assign_anchor_id(&self) -> Option<ItemId> {
+        if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput)
+            && self.item_assign_anchor_item_id.is_some()
+        {
+            self.item_assign_anchor_item_id
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn start_item_assign_session(&mut self) {
+        let anchor_item_id = self.selected_item_id();
+        let selected_item_ids = self.selected_item_ids_in_view_order();
+        self.item_assign_anchor_item_id = anchor_item_id;
+        self.item_assign_target_item_ids = if !selected_item_ids.is_empty() {
+            selected_item_ids
+        } else {
+            anchor_item_id.into_iter().collect()
+        };
+    }
+
+    pub(crate) fn clear_item_assign_session(&mut self) {
+        self.item_assign_dirty = false;
+        self.item_assign_anchor_item_id = None;
+        self.item_assign_target_item_ids.clear();
+        self.item_assign_preview = AssignmentPreview::default();
+        self.clear_input();
+    }
+
     pub(crate) fn effective_action_item_ids(&self) -> Vec<ItemId> {
+        if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput)
+            && !self.item_assign_target_item_ids.is_empty()
+        {
+            return self.item_assign_target_item_ids.clone();
+        }
         let selected = self.selected_item_ids_in_view_order();
         if !selected.is_empty() {
             selected
