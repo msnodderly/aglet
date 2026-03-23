@@ -810,6 +810,9 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
 pub(super) fn build_view_assign_rows(views: &[View]) -> Vec<ViewAssignRow> {
     let mut rows = Vec::new();
     for (view_idx, view) in views.iter().enumerate() {
+        if agenda_core::store::is_system_view_name(&view.name) {
+            continue;
+        }
         rows.push(ViewAssignRow::ViewHeader {
             view_idx,
             name: view.name.clone(),

@@ -8652,6 +8652,64 @@ mod tests {
     }
 
     #[test]
+    fn assign_picker_hides_system_views_from_assignment_targets() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+
+        let mut project_view = View::new("Project Board".to_string());
+        project_view.sections.push(Section {
+            title: "Backlog".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&project_view).expect("create project view");
+
+        let item = Item::new("Hide system views target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Tab, &agenda)
+            .expect("switch to view pane");
+
+        let labels: Vec<String> = app
+            .view_assign_rows
+            .iter()
+            .map(|row| match row {
+                super::ViewAssignRow::ViewHeader { name, .. } => name.clone(),
+                super::ViewAssignRow::SectionRow { label, .. } => label.clone(),
+            })
+            .collect();
+
+        assert!(
+            labels.iter().any(|label| label == "Project Board"),
+            "normal mutable views should still appear in the assignment target list"
+        );
+        assert!(
+            !labels.iter().any(|label| label == "All Items"),
+            "All Items should be hidden from assignment targets"
+        );
+        assert!(
+            !labels.iter().any(|label| label == agenda_core::workflow::READY_QUEUE_VIEW_NAME),
+            "Ready Queue should be hidden from assignment targets"
+        );
+    }
+
+    #[test]
     fn normal_mode_x_with_selection_opens_batch_delete_confirm() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
