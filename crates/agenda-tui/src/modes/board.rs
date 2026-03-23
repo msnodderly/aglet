@@ -2325,16 +2325,16 @@ impl App {
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
                     self.item_assign_preview = AssignmentPreview::default();
-                    self.compute_assignment_preview();
+                    self.compute_assignment_preview(agenda);
                     self.clear_input();
                     self.status = if self.has_selected_items() {
                         let selected_count = self.selected_count();
                         let item_suffix = if selected_count == 1 { "" } else { "s" };
                         format!(
-                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
+                            "Batch categories for {selected_count} selected item{item_suffix}: j/k select, Space apply, n or / type category, Enter apply+close, Esc cancel"
                         )
                     } else {
-                        "Item categories: j/k select, Space apply, n or / type category, Enter close, Esc cancel"
+                        "Item categories: j/k select, Space apply, n or / type category, Enter apply+close, Esc cancel"
                             .to_string()
                     };
                 }
@@ -4911,7 +4911,7 @@ impl App {
                     .position(|r| matches!(r, ViewAssignRow::SectionRow { .. }))
                     .unwrap_or(0);
                 self.item_assign_preview = AssignmentPreview::default();
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Esc => {
                 let clear_selection = self.item_assign_dirty && self.has_selected_items();
@@ -4930,7 +4930,7 @@ impl App {
                 if !self.category_rows.is_empty() {
                     self.item_assign_category_index =
                         next_index(self.item_assign_category_index, self.category_rows.len(), 1);
-                    self.compute_assignment_preview();
+                    self.compute_assignment_preview(agenda);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -4940,7 +4940,7 @@ impl App {
                         self.category_rows.len(),
                         -1,
                     );
-                    self.compute_assignment_preview();
+                    self.compute_assignment_preview(agenda);
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('/') => {
@@ -5090,15 +5090,16 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                self.mode = Mode::Normal;
-                if clear_selection {
-                    self.clear_selected_items();
-                }
-                self.item_assign_dirty = false;
-                self.clear_input();
-                if !clear_selection {
-                    self.status = "Category edit saved".to_string();
+                self.handle_item_assign_category_key(KeyCode::Char(' '), agenda)?;
+                if self.mode == Mode::ItemAssignPicker {
+                    let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                    self.mode = Mode::Normal;
+                    if clear_selection {
+                        self.clear_selected_items();
+                    }
+                    self.item_assign_dirty = false;
+                    self.item_assign_preview = AssignmentPreview::default();
+                    self.clear_input();
                 }
             }
             _ => {}
@@ -5134,30 +5135,32 @@ impl App {
                 // Switch back to Categories pane.
                 self.item_assign_pane = ItemAssignPane::Categories;
                 self.item_assign_preview = AssignmentPreview::default();
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.item_assign_view_row_index = next_section_row(
-                    &self.view_assign_rows,
-                    self.item_assign_view_row_index,
-                    1,
-                );
-                self.compute_assignment_preview();
+                self.item_assign_view_row_index =
+                    next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, 1);
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.item_assign_view_row_index = next_section_row(
-                    &self.view_assign_rows,
-                    self.item_assign_view_row_index,
-                    -1,
-                );
-                self.compute_assignment_preview();
+                self.item_assign_view_row_index =
+                    next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, -1);
+                self.compute_assignment_preview(agenda);
             }
             KeyCode::Char(' ') => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                let Some(row) = self
+                    .view_assign_rows
+                    .get(self.item_assign_view_row_index)
+                    .cloned()
                 else {
                     return Ok(false);
                 };
-                let ViewAssignRow::SectionRow { view_idx, section_idx, .. } = row else {
+                let ViewAssignRow::SectionRow {
+                    view_idx,
+                    section_idx,
+                    ..
+                } = row
+                else {
                     return Ok(false);
                 };
                 let Some(view) = self.views.get(view_idx).cloned() else {
@@ -5187,17 +5190,21 @@ impl App {
                                 (Ok(()), false)
                             }
                             Some(_) => {
-                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                let from_sec =
+                                    view.sections.get(from_section_idx).cloned().unwrap();
                                 let to_sec = to_section.as_ref().unwrap();
                                 (
                                     agenda
-                                        .move_item_between_sections(*item_id, &view, &from_sec, to_sec)
+                                        .move_item_between_sections(
+                                            *item_id, &view, &from_sec, to_sec,
+                                        )
                                         .map(|_| ()),
                                     true,
                                 )
                             }
                             None => {
-                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                let from_sec =
+                                    view.sections.get(from_section_idx).cloned().unwrap();
                                 (
                                     agenda
                                         .remove_item_from_section(*item_id, &view, &from_sec)
@@ -5210,7 +5217,9 @@ impl App {
                             Some(_) => {
                                 let to_sec = to_section.as_ref().unwrap();
                                 (
-                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    agenda
+                                        .insert_item_in_section(*item_id, &view, to_sec)
+                                        .map(|_| ()),
                                     true,
                                 )
                             }
@@ -5220,7 +5229,9 @@ impl App {
                             Some(_) => {
                                 let to_sec = to_section.as_ref().unwrap();
                                 (
-                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    agenda
+                                        .insert_item_in_section(*item_id, &view, to_sec)
+                                        .map(|_| ()),
                                     true,
                                 )
                             }
@@ -5249,7 +5260,7 @@ impl App {
                 self.set_item_selection_by_id(focused_item_id);
                 self.view_assign_rows = build_view_assign_rows(&self.views);
                 self.item_assign_dirty = true;
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
 
                 self.status = match first_error {
                     None => format!("Moved {changed} item(s) to section"),
@@ -5257,7 +5268,10 @@ impl App {
                 };
             }
             KeyCode::Char('r') => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                let Some(row) = self
+                    .view_assign_rows
+                    .get(self.item_assign_view_row_index)
+                    .cloned()
                 else {
                     return Ok(false);
                 };
@@ -5294,23 +5308,23 @@ impl App {
                 self.set_item_selection_by_id(focused_item_id);
                 self.view_assign_rows = build_view_assign_rows(&self.views);
                 self.item_assign_dirty = true;
-                self.compute_assignment_preview();
+                self.compute_assignment_preview(agenda);
                 self.status = match first_error {
                     None => format!("Removed {changed} item(s) from view"),
                     Some(err) => format!("Partial remove ({changed} ok): {err}"),
                 };
             }
             KeyCode::Enter => {
-                let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                self.mode = Mode::Normal;
-                if clear_selection {
-                    self.clear_selected_items();
-                }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
-                if !clear_selection {
-                    self.status = "Section assignment saved".to_string();
+                self.handle_item_assign_view_key(KeyCode::Char(' '), agenda)?;
+                if self.mode == Mode::ItemAssignPicker {
+                    let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                    self.mode = Mode::Normal;
+                    if clear_selection {
+                        self.clear_selected_items();
+                    }
+                    self.item_assign_dirty = false;
+                    self.item_assign_preview = AssignmentPreview::default();
+                    self.clear_input();
                 }
             }
             KeyCode::Esc => {

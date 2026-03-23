@@ -1516,8 +1516,8 @@ mod tests {
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, Mode, NameInputContext,
-        SlotSortDirection, ViewEditPaneFocus, ViewEditRegion,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, ItemAssignPane, Mode, NameInputContext,
+        SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{ClassificationConfig, ContinuousMode};
@@ -8126,11 +8126,63 @@ mod tests {
             "status should summarize batch result: {}",
             app.status
         );
+    }
 
+    #[test]
+    fn batch_assign_picker_enter_assigns_existing_category_and_closes() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "All".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let first = Item::new("First assign target".to_string());
+        let second = Item::new("Second assign target".to_string());
+        store.create_item(&first).expect("create first");
+        store.create_item(&second).expect("create second");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select first");
+        app.handle_normal_key(KeyCode::Char('j'), &agenda)
+            .expect("focus second");
+        app.handle_normal_key(KeyCode::Char(' '), &agenda)
+            .expect("select second");
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open batch assign picker");
         app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
-            .expect("close assign picker");
+            .expect("enter should apply and close");
+
+        let first_updated = store.get_item(first.id).expect("reload first");
+        let second_updated = store.get_item(second.id).expect("reload second");
+        assert!(first_updated.assignments.contains_key(&work.id));
+        assert!(second_updated.assignments.contains_key(&work.id));
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.selected_count(), 0);
+        assert!(
+            app.status.contains("Applied category Work to 2 items"),
+            "status should preserve apply summary after closing: {}",
+            app.status
+        );
     }
 
     #[test]
@@ -8305,7 +8357,7 @@ mod tests {
             "assign picker should render an outer modal title/border: {rendered}"
         );
         assert!(
-            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:close  Esc:cancel"),
+            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:apply+back  Esc:cancel"),
             "assign picker footer should advertise forward/backward pane switching: {rendered}"
         );
         assert!(
@@ -8375,6 +8427,152 @@ mod tests {
         app.handle_item_assign_category_key(KeyCode::BackTab, &agenda)
             .expect("backtab should move back to category pane");
         assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
+    }
+
+    #[test]
+    fn item_assign_view_pane_enter_applies_and_closes() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let backlog = Category::new("Backlog".to_string());
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&backlog).expect("create backlog");
+        store.create_category(&ready).expect("create ready");
+
+        let mut backlog_section = Section {
+            title: "Backlog".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        backlog_section
+            .criteria
+            .set_criterion(CriterionMode::And, backlog.id);
+
+        let mut ready_section = Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        ready_section
+            .criteria
+            .set_criterion(CriterionMode::And, ready.id);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(backlog_section);
+        view.sections.push(ready_section);
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Move me".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, backlog.id, Some("manual:test".to_string()))
+            .expect("assign backlog");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.set_item_selection_by_id(item.id);
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.item_assign_pane = ItemAssignPane::ViewSection;
+        app.item_assign_view_row_index = app
+            .view_assign_rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    ViewAssignRow::SectionRow { label, .. } if label == "Ready"
+                )
+            })
+            .expect("ready section row should exist");
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("enter should move item and close");
+
+        let updated = store.get_item(item.id).expect("reload item");
+        assert!(updated.assignments.contains_key(&ready.id));
+        assert!(
+            !updated.assignments.contains_key(&backlog.id),
+            "moving sections should remove the old section assignment"
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("Moved 1 item(s) to section"),
+            "status should preserve section move summary after closing: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn item_assign_preview_matches_subsumption_driven_section_membership() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create work");
+        let mut project = Category::new("Project Y".to_string());
+        project.parent = Some(work.id);
+        store.create_category(&project).expect("create project");
+
+        let mut view = View::new("Board".to_string());
+        let mut work_section = Section {
+            title: "Work".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        };
+        work_section
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
+        view.sections.push(work_section);
+        store.create_view(&view).expect("create board view");
+
+        let item = Item::new("Preview me".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_pane = ItemAssignPane::Categories;
+        app.item_assign_category_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.id == project.id)
+            .expect("project row should exist");
+
+        app.compute_assignment_preview(&agenda);
+
+        let board_view_index = app
+            .views
+            .iter()
+            .position(|candidate| candidate.name == "Board")
+            .expect("board view should be loaded");
+        assert!(
+            app.item_assign_preview
+                .section_to_gain
+                .contains(&(board_view_index, Some(0))),
+            "preview should show the item entering the Work section via subsumption"
+        );
     }
 
     #[test]
@@ -8553,7 +8751,9 @@ mod tests {
         store.create_category(&work).expect("create category");
 
         let mut work_view = View::new("Work Board".to_string());
-        work_view.criteria.set_criterion(CriterionMode::And, work.id);
+        work_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
         store.create_view(&work_view).expect("create work view");
 
         let item = Item::new("Cross-view insert target".to_string());
@@ -8582,7 +8782,7 @@ mod tests {
                 )
             })
             .expect("work board unmatched row should exist");
-        app.compute_assignment_preview();
+        app.compute_assignment_preview(&agenda);
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
             .expect("assign to unmatched row");
@@ -8606,7 +8806,9 @@ mod tests {
         store.create_category(&cleanup).expect("create cleanup");
 
         let mut work_view = View::new("Work Board".to_string());
-        work_view.criteria.set_criterion(CriterionMode::And, work.id);
+        work_view
+            .criteria
+            .set_criterion(CriterionMode::And, work.id);
         work_view.remove_from_view_unassign.insert(cleanup.id);
         store.create_view(&work_view).expect("create work view");
 
@@ -8639,7 +8841,7 @@ mod tests {
                 )
             })
             .expect("work board unmatched row should exist");
-        app.compute_assignment_preview();
+        app.compute_assignment_preview(&agenda);
 
         app.handle_item_assign_category_key(KeyCode::Char('r'), &agenda)
             .expect("remove from target view");
@@ -8671,7 +8873,9 @@ mod tests {
             show_children: false,
             board_display_mode_override: None,
         });
-        store.create_view(&project_view).expect("create project view");
+        store
+            .create_view(&project_view)
+            .expect("create project view");
 
         let item = Item::new("Hide system views target".to_string());
         store.create_item(&item).expect("create item");
@@ -8704,7 +8908,9 @@ mod tests {
             "All Items should be hidden from assignment targets"
         );
         assert!(
-            !labels.iter().any(|label| label == agenda_core::workflow::READY_QUEUE_VIEW_NAME),
+            !labels
+                .iter()
+                .any(|label| label == agenda_core::workflow::READY_QUEUE_VIEW_NAME),
             "Ready Queue should be hidden from assignment targets"
         );
     }
@@ -13585,7 +13791,8 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
         app.set_view_selection_by_name("TestView");
-        app.refresh(&store).expect("refresh with test view selected");
+        app.refresh(&store)
+            .expect("refresh with test view selected");
 
         app.handle_key(KeyCode::Char('v'), &agenda)
             .expect("open view picker");
