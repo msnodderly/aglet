@@ -3294,7 +3294,7 @@ impl App {
             }
             Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
             Mode::ItemAssignPicker => {
-                "Assign categories (Space applies; Enter/Esc close)".to_string()
+                "Assign categories (Enter applies+closes; Space applies; Esc cancels)".to_string()
             }
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
@@ -3510,12 +3510,13 @@ impl App {
                     ("Tab/S-Tab", "pane"),
                     ("Space", "toggle"),
                     ("n", "new"),
-                    ("Enter", "close"),
+                    ("Enter", "apply+back"),
                     ("Esc", "cancel"),
                 ],
                 ItemAssignPane::ViewSection => vec![
                     ("Tab/S-Tab", "pane"),
                     ("Space", "assign"),
+                    ("Enter", "apply+back"),
                     ("r", "remove"),
                     ("Esc", "cancel"),
                 ],
@@ -4392,15 +4393,19 @@ impl App {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
             .split(inner);
 
         // Header — changes based on which pane is active.
         let header = match self.item_assign_pane {
             ItemAssignPane::Categories =>
-                "Edit item categories  (Tab/S-Tab: switch pane  Space: toggle  n or /: type  Enter: close  Esc: cancel)",
+                "Edit item categories  (Tab/S-Tab: switch pane  Space: toggle  n or /: type  Enter: apply+close  Esc: cancel)",
             ItemAssignPane::ViewSection =>
-                "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  r: remove from view  j/k: navigate  Esc: cancel)",
+                "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: cancel)",
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
@@ -4424,10 +4429,7 @@ impl App {
             Span::styled(item_context, Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(batch_suffix, Style::default().fg(MUTED_TEXT_COLOR)),
         ]);
-        frame.render_widget(
-            Paragraph::new(context_line),
-            chunks[1],
-        );
+        frame.render_widget(Paragraph::new(context_line), chunks[1]);
 
         let panes = Layout::default()
             .direction(Direction::Horizontal)
@@ -4466,9 +4468,13 @@ impl App {
                     let (assigned_count, total_count) =
                         self.effective_action_assignment_counts(row.id);
                     let checkbox = if total_count > 1 {
-                        if assigned_count == 0 { "[ ]" }
-                        else if assigned_count == total_count { "[x]" }
-                        else { "[~]" }
+                        if assigned_count == 0 {
+                            "[ ]"
+                        } else if assigned_count == total_count {
+                            "[x]"
+                        } else {
+                            "[~]"
+                        }
                     } else if self.selected_item_has_assignment(row.id) {
                         "[x]"
                     } else {
@@ -4476,7 +4482,13 @@ impl App {
                     };
                     let to_add = self.item_assign_preview.cat_to_add.contains(&row.id);
                     let to_remove = self.item_assign_preview.cat_to_remove.contains(&row.id);
-                    let preview_prefix = if to_add { "[+] " } else if to_remove { "[-] " } else { "    " };
+                    let preview_prefix = if to_add {
+                        "[+] "
+                    } else if to_remove {
+                        "[-] "
+                    } else {
+                        "    "
+                    };
                     let category_name = with_note_marker(row.name.clone(), row.has_note);
                     let text = format!(
                         "{preview_prefix}{checkbox} {}{}{}",
@@ -4498,13 +4510,21 @@ impl App {
 
         let mut cat_state = Self::list_state_for(
             panes[0],
-            if self.category_rows.is_empty() { None } else { Some(self.item_assign_category_index) },
+            if self.category_rows.is_empty() {
+                None
+            } else {
+                Some(self.item_assign_category_index)
+            },
         );
         let cat_count = cat_items.len();
         frame.render_stateful_widget(
             List::new(cat_items)
                 .highlight_symbol("> ")
-                .highlight_style(if cat_active { selected_row_style() } else { Style::default().bg(Color::DarkGray) })
+                .highlight_style(if cat_active {
+                    selected_row_style()
+                } else {
+                    Style::default().bg(Color::DarkGray)
+                })
                 .block(
                     Block::default()
                         .title("Categories")
@@ -4525,50 +4545,60 @@ impl App {
         };
 
         let view_items: Vec<ListItem<'_>> = if self.view_assign_rows.is_empty() {
-            vec![ListItem::new(Line::from("(no views)"))  ]
+            vec![ListItem::new(Line::from("(no views)"))]
         } else {
             self.view_assign_rows
                 .iter()
                 .enumerate()
-                .map(|(row_idx, row)| {
-                    match row {
-                        ViewAssignRow::ViewHeader { name, .. } => {
-                            ListItem::new(Line::styled(
-                                format!("  {name}"),
-                                Style::default().add_modifier(Modifier::BOLD),
-                            ))
-                        }
-                        ViewAssignRow::SectionRow { view_idx, section_idx, label } => {
-                            let (present, total) = self.item_in_section_counts(*view_idx, *section_idx);
-                            let checkbox = if total > 1 {
-                                if present == 0 { "[ ]" }
-                                else if present == total { "[x]" }
-                                else { "[~]" }
-                            } else if present > 0 {
+                .map(|(row_idx, row)| match row {
+                    ViewAssignRow::ViewHeader { name, .. } => ListItem::new(Line::styled(
+                        format!("  {name}"),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx,
+                        label,
+                    } => {
+                        let (present, total) = self.item_in_section_counts(*view_idx, *section_idx);
+                        let checkbox = if total > 1 {
+                            if present == 0 {
+                                "[ ]"
+                            } else if present == total {
                                 "[x]"
                             } else {
-                                "[ ]"
-                            };
-                            let key = (*view_idx, *section_idx);
-                            let to_gain = self.item_assign_preview.section_to_gain.contains(&key);
-                            let to_lose = self.item_assign_preview.section_to_lose.contains(&key);
-                            let preview_prefix = if to_gain { "[+] " } else if to_lose { "[-] " } else { "    " };
-                            let text = format!("{preview_prefix}{checkbox}   {label}");
-                            let is_selected = view_active && row_idx == self.item_assign_view_row_index;
-                            let style = if to_gain {
-                                Style::default().fg(Color::Green)
-                            } else if to_lose {
-                                Style::default().fg(Color::Red)
-                            } else {
-                                Style::default()
-                            };
-                            let line = if is_selected {
-                                Line::styled(format!("> {text}"), style)
-                            } else {
-                                Line::styled(format!("  {text}"), style)
-                            };
-                            ListItem::new(line)
-                        }
+                                "[~]"
+                            }
+                        } else if present > 0 {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        let key = (*view_idx, *section_idx);
+                        let to_gain = self.item_assign_preview.section_to_gain.contains(&key);
+                        let to_lose = self.item_assign_preview.section_to_lose.contains(&key);
+                        let preview_prefix = if to_gain {
+                            "[+] "
+                        } else if to_lose {
+                            "[-] "
+                        } else {
+                            "    "
+                        };
+                        let text = format!("{preview_prefix}{checkbox}   {label}");
+                        let is_selected = view_active && row_idx == self.item_assign_view_row_index;
+                        let style = if to_gain {
+                            Style::default().fg(Color::Green)
+                        } else if to_lose {
+                            Style::default().fg(Color::Red)
+                        } else {
+                            Style::default()
+                        };
+                        let line = if is_selected {
+                            Line::styled(format!("> {text}"), style)
+                        } else {
+                            Line::styled(format!("  {text}"), style)
+                        };
+                        ListItem::new(line)
                     }
                 })
                 .collect()
@@ -4583,13 +4613,12 @@ impl App {
         let mut view_state = Self::list_state_for(panes[1], view_selected);
         let view_count = view_items.len();
         frame.render_stateful_widget(
-            List::new(view_items)
-                .block(
-                    Block::default()
-                        .title("View / Section")
-                        .borders(Borders::ALL)
-                        .border_style(view_border_style),
-                ),
+            List::new(view_items).block(
+                Block::default()
+                    .title("View / Section")
+                    .borders(Borders::ALL)
+                    .border_style(view_border_style),
+            ),
             panes[1],
             &mut view_state,
         );

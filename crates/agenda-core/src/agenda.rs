@@ -18,8 +18,8 @@ use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
     origin as origin_const, Action, Assignment, AssignmentSource, Category, CategoryId,
-    CategoryValueKind, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section, View,
-    RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
+    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section,
+    View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -392,6 +392,55 @@ impl<'a> Agenda<'a> {
         self.reprocess_existing_item(item_id)
     }
 
+    pub fn preview_manual_category_toggle(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<Item> {
+        let source_item = self.store.get_item(item_id)?;
+        let preview_store = Store::open_memory()?;
+        preview_store.set_classification_config(&self.store.get_classification_config()?)?;
+
+        let source_categories = self.store.get_hierarchy()?;
+        let id_map = Self::copy_preview_categories(&preview_store, &source_categories)?;
+
+        let mut preview_item = source_item.clone();
+        preview_item.assignments.clear();
+        preview_store.create_item(&preview_item)?;
+        for (assigned_category_id, assignment) in &source_item.assignments {
+            if let Some(preview_category_id) = id_map.get(assigned_category_id) {
+                preview_store.assign_item(item_id, *preview_category_id, assignment)?;
+            }
+        }
+
+        let preview_agenda = Agenda::new(&preview_store, self.classifier);
+        let preview_category_id =
+            Self::mapped_category_id(category_id, &id_map, "preview toggle category")?;
+
+        if source_item.assignments.contains_key(&category_id) {
+            preview_agenda.unassign_item_manual(item_id, preview_category_id)?;
+        } else {
+            preview_agenda.assign_item_manual(
+                item_id,
+                preview_category_id,
+                Some("preview:tui.assign".to_string()),
+            )?;
+        }
+
+        let mut preview_result = preview_store.get_item(item_id)?;
+        preview_result.assignments = preview_result
+            .assignments
+            .into_iter()
+            .map(|(preview_id, assignment)| {
+                let source_id =
+                    Self::source_category_id(preview_id, &id_map, "preview result assignment")
+                        .expect("preview category mapping should round-trip");
+                (source_id, assignment)
+            })
+            .collect();
+        Ok(preview_result)
+    }
+
     pub fn remove_item_from_unmatched(
         &self,
         item_id: ItemId,
@@ -712,6 +761,161 @@ impl<'a> Agenda<'a> {
 
     fn process_cascades(&self, item_id: ItemId) -> Result<ProcessItemResult> {
         self.reprocess_with_implicit(item_id, false)
+    }
+
+    fn copy_preview_categories(
+        preview_store: &Store,
+        source_categories: &[Category],
+    ) -> Result<HashMap<CategoryId, CategoryId>> {
+        let preview_reserved: HashMap<String, CategoryId> = preview_store
+            .get_hierarchy()?
+            .into_iter()
+            .filter(|category| Self::is_reserved_category_name(&category.name))
+            .map(|category| (category.name.to_ascii_lowercase(), category.id))
+            .collect();
+
+        let mut id_map = HashMap::new();
+        for category in source_categories {
+            let preview_id = if Self::is_reserved_category_name(&category.name) {
+                *preview_reserved
+                    .get(&category.name.to_ascii_lowercase())
+                    .ok_or_else(|| AgendaError::InvalidOperation {
+                        message: format!("missing preview reserved category '{}'", category.name),
+                    })?
+            } else {
+                category.id
+            };
+            id_map.insert(category.id, preview_id);
+        }
+
+        for category in source_categories {
+            let preview_category = Self::remap_category_for_preview(category, &id_map)?;
+            if Self::is_reserved_category_name(&category.name) {
+                preview_store.update_category(&preview_category)?;
+            } else {
+                preview_store.create_category(&preview_category)?;
+            }
+        }
+
+        Ok(id_map)
+    }
+
+    fn remap_category_for_preview(
+        category: &Category,
+        id_map: &HashMap<CategoryId, CategoryId>,
+    ) -> Result<Category> {
+        let mut preview_category = category.clone();
+        preview_category.id = Self::mapped_category_id(category.id, id_map, "preview category id")?;
+        preview_category.parent = category
+            .parent
+            .map(|parent_id| Self::mapped_category_id(parent_id, id_map, "preview parent id"))
+            .transpose()?;
+        preview_category.children.clear();
+        preview_category.conditions = category
+            .conditions
+            .iter()
+            .map(|condition| Self::remap_condition_for_preview(condition, id_map))
+            .collect::<Result<Vec<_>>>()?;
+        preview_category.actions = category
+            .actions
+            .iter()
+            .map(|action| Self::remap_action_for_preview(action, id_map))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(preview_category)
+    }
+
+    fn remap_condition_for_preview(
+        condition: &Condition,
+        id_map: &HashMap<CategoryId, CategoryId>,
+    ) -> Result<Condition> {
+        match condition {
+            Condition::ImplicitString => Ok(Condition::ImplicitString),
+            Condition::Profile { criteria } => Ok(Condition::Profile {
+                criteria: Box::new(Self::remap_query_for_preview(criteria, id_map)?),
+            }),
+        }
+    }
+
+    fn remap_action_for_preview(
+        action: &Action,
+        id_map: &HashMap<CategoryId, CategoryId>,
+    ) -> Result<Action> {
+        let remap_targets = |targets: &HashSet<CategoryId>| -> Result<HashSet<CategoryId>> {
+            targets
+                .iter()
+                .map(|target_id| Self::mapped_category_id(*target_id, id_map, "preview action"))
+                .collect()
+        };
+
+        match action {
+            Action::Assign { targets } => Ok(Action::Assign {
+                targets: remap_targets(targets)?,
+            }),
+            Action::Remove { targets } => Ok(Action::Remove {
+                targets: remap_targets(targets)?,
+            }),
+        }
+    }
+
+    fn remap_query_for_preview(
+        query: &crate::model::Query,
+        id_map: &HashMap<CategoryId, CategoryId>,
+    ) -> Result<crate::model::Query> {
+        Ok(crate::model::Query {
+            criteria: query
+                .criteria
+                .iter()
+                .map(|criterion| {
+                    Ok(crate::model::Criterion {
+                        mode: criterion.mode,
+                        category_id: Self::mapped_category_id(
+                            criterion.category_id,
+                            id_map,
+                            "preview query criterion",
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+            virtual_include: query.virtual_include.clone(),
+            virtual_exclude: query.virtual_exclude.clone(),
+            text_search: query.text_search.clone(),
+        })
+    }
+
+    fn mapped_category_id(
+        source_id: CategoryId,
+        id_map: &HashMap<CategoryId, CategoryId>,
+        context: &str,
+    ) -> Result<CategoryId> {
+        id_map
+            .get(&source_id)
+            .copied()
+            .ok_or_else(|| AgendaError::InvalidOperation {
+                message: format!("missing category mapping for {context}: {source_id}"),
+            })
+    }
+
+    fn source_category_id(
+        preview_id: CategoryId,
+        id_map: &HashMap<CategoryId, CategoryId>,
+        context: &str,
+    ) -> Result<CategoryId> {
+        id_map
+            .iter()
+            .find_map(|(source_id, mapped_id)| (*mapped_id == preview_id).then_some(*source_id))
+            .ok_or_else(|| AgendaError::InvalidOperation {
+                message: format!("missing reverse category mapping for {context}: {preview_id}"),
+            })
+    }
+
+    fn is_reserved_category_name(name: &str) -> bool {
+        [
+            RESERVED_CATEGORY_NAME_WHEN,
+            RESERVED_CATEGORY_NAME_ENTRY,
+            RESERVED_CATEGORY_NAME_DONE,
+        ]
+        .iter()
+        .any(|reserved_name| reserved_name.eq_ignore_ascii_case(name))
     }
 
     fn reprocess_with_implicit(
@@ -1885,6 +2089,48 @@ mod tests {
                 .get(&work.id)
                 .map(|assignment| assignment.source),
             Some(AssignmentSource::Subsumption)
+        );
+    }
+
+    #[test]
+    fn preview_manual_category_toggle_uses_reprocessed_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+
+        let item = Item::new("Talk to Sarah".to_string());
+        store.create_item(&item).unwrap();
+
+        let preview = agenda
+            .preview_manual_category_toggle(item.id, project_y.id)
+            .unwrap();
+
+        assert_eq!(
+            preview
+                .assignments
+                .get(&project_y.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Manual)
+        );
+        assert_eq!(
+            preview
+                .assignments
+                .get(&work.id)
+                .map(|assignment| assignment.source),
+            Some(AssignmentSource::Subsumption),
+            "preview should include the same subsumption ancestor the real assign path creates"
+        );
+        assert!(
+            !store
+                .get_assignments_for_item(item.id)
+                .unwrap()
+                .contains_key(&work.id),
+            "preview should not mutate the real store"
         );
     }
 
@@ -3522,7 +3768,15 @@ mod tests {
     /// View criteria: requires `view_cat`.
     /// Section A criteria: requires `cat_a`.
     /// Section B criteria: requires `cat_b`, on_insert_assign: `extra`.
-    fn preview_test_setup() -> (View, Section, Section, CategoryId, CategoryId, CategoryId, CategoryId) {
+    fn preview_test_setup() -> (
+        View,
+        Section,
+        Section,
+        CategoryId,
+        CategoryId,
+        CategoryId,
+        CategoryId,
+    ) {
         let view_cat_id = CategoryId::new_v4();
         let cat_a_id = CategoryId::new_v4();
         let cat_b_id = CategoryId::new_v4();
@@ -3551,8 +3805,7 @@ mod tests {
 
     #[test]
     fn preview_section_move_none_to_section_assigns_insert_targets() {
-        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) =
-            preview_test_setup();
+        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) = preview_test_setup();
 
         let preview = Agenda::preview_section_move(&v, None, Some(&sec_a));
 
@@ -3568,8 +3821,7 @@ mod tests {
 
     #[test]
     fn preview_section_move_section_to_none_unassigns_remove_targets() {
-        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) =
-            preview_test_setup();
+        let (v, sec_a, _, view_cat_id, cat_a_id, _, _) = preview_test_setup();
 
         let preview = Agenda::preview_section_move(&v, Some(&sec_a), None);
 
@@ -3589,8 +3841,7 @@ mod tests {
 
     #[test]
     fn preview_section_move_between_sections_net_change() {
-        let (v, sec_a, sec_b, view_cat_id, cat_a_id, cat_b_id, extra_id) =
-            preview_test_setup();
+        let (v, sec_a, sec_b, view_cat_id, cat_a_id, cat_b_id, extra_id) = preview_test_setup();
 
         let preview = Agenda::preview_section_move(&v, Some(&sec_a), Some(&sec_b));
 
