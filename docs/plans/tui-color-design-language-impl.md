@@ -208,15 +208,33 @@ Affected sites: lines 4994, 4998, 5046, 5050
 - [ ] Lines 4998, 5050: `Yellow` bg text area → `style_edit_area()` (full
   input boxes)
 
-### 2.11 `render_view_edit_screen` (lines 5466–6448)
+### 2.11 Overlay pickers/popups that should remain normal focus surfaces
 
-Affected sites: lines 5502, 5556, 5581, 5871
+Affected sites: lines 4333, 4420
+
+- [ ] Line 4333: View Palette currently uses `Color::Magenta` border. Replace
+  with `style_focus_border()` because this is a normal picker, not a special
+  app mode.
+- [ ] Line 4420: Assign Item popup should also use `style_focus_border()` for
+  consistency with the shared focus language.
+
+### 2.12 `render_view_edit_screen` (lines 5466–6448)
+
+Affected sites: lines 5502, 5556, 5581, 5871, plus remaining
+`Modifier::REVERSED` selection paths in the same screen
 
 - [ ] Line 5502: `let inactive_border = Color::Blue` → `COLOR_IDLE`
 - [ ] Line 5556: `inactive_border` usage propagates from above fix
 - [ ] Lines 5581, 5871: `DarkGray` separator → `style_text_muted()`
+- [ ] Replace ViewEdit detail-field selection from `Modifier::REVERSED` with
+  theme-backed selection styling so focused rows use the shared palette.
+- [ ] Replace inline-edit and section-row reverse-video highlights with
+  `style_selected_row()` or an equivalent theme-backed focused-row style.
+- [ ] Replace overlay picker reverse-video highlights in ViewEdit with
+  theme-backed selection styling so the pickers do not depend on terminal
+  defaults.
 
-### 2.12 Picker border group (lines 6448–6549)
+### 2.13 Picker border group (lines 6448–6549)
 
 Affected sites: lines 6448, 6481, 6511, 6542
 
@@ -258,6 +276,9 @@ Exercise each affected view and confirm:
 - [ ] Preview pane: focused = Cyan border, unfocused = DarkGray border
 - [ ] Help panel key labels readable; descriptions in secondary gray
 - [ ] Category manager edit areas use dark amber (not bright yellow)
+- [ ] View Palette uses the standard focus border, not magenta
+- [ ] ViewEdit highlighted rows/pickers use theme colors rather than reverse
+  video
 
 ### 3.4 PR
 

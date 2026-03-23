@@ -31,6 +31,11 @@ TUI.
 **Rule:** A pane border is `COLOR_FOCUS` when it receives keyboard input,
 `COLOR_IDLE` otherwise. Never Yellow for a focused border.
 
+**Rule:** Normal picker/pop-up surfaces (for example View Palette, Assign Item,
+Link Wizard) are not "special modes" and must use the same focus/idle border
+language as the rest of the app. Reserve `COLOR_SPECIAL_MODE` for genuinely
+unusual or modal app states.
+
 ---
 
 ### Selection & Editing
@@ -47,6 +52,11 @@ typing here" with warmth that signals pending input, while avoiding the
 optical harshness of black-on-bright-yellow across a full input widget.
 Black-on-Yellow is reserved for small single-cell cursors where the high
 contrast is an asset.
+
+**Rule:** Do not use `Modifier::REVERSED` as the primary selection treatment in
+rendered lists, editors, or pickers. Reverse video delegates color choice to
+the terminal palette and breaks the guarantee that focused selection uses the
+shared cyan/dark-gray language.
 
 ---
 
@@ -183,3 +193,8 @@ Magenta     → special/modal mode
   replace with `style_focus_border()` or `style_idle_border()`.
 - The `Modifier::REVERSED` usages for selection should be replaced with
   `style_selected_row()` for consistency.
+- Specifically audit normal popups/pickers so none of them keep a magenta
+  border just because they are transient overlays.
+- Specifically audit ViewEdit list/detail/overlay selection paths so the editor
+  does not retain terminal-dependent reverse-video highlighting after the theme
+  migration.

@@ -709,8 +709,6 @@ impl App {
             .borders(Borders::ALL)
             .border_style(if state.focus == LinkWizardFocus::Target {
                 style_focus_border()
-            } else if !action.requires_target() {
-                style_idle_border()
             } else {
                 style_idle_border()
             });
