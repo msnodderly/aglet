@@ -2318,9 +2318,9 @@ impl App {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignPicker;
+                    self.start_item_assign_session();
                     self.item_assign_category_index =
                         first_non_reserved_category_index(&self.category_rows);
-                    self.item_assign_dirty = false;
                     self.item_assign_pane = ItemAssignPane::Categories;
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
@@ -4919,9 +4919,7 @@ impl App {
                 if clear_selection {
                     self.clear_selected_items();
                 }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
+                self.clear_item_assign_session();
                 if !clear_selection {
                     self.status = "Assign canceled".to_string();
                 }
@@ -4952,8 +4950,12 @@ impl App {
             KeyCode::Char(' ') => {
                 let batch_mode = self.has_selected_items();
                 let action_item_ids = self.effective_action_item_ids();
-                let Some(item_id) = self.selected_item_id() else {
+                let Some(item_id) = self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                else {
                     self.mode = Mode::Normal;
+                    self.clear_item_assign_session();
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
@@ -5095,8 +5097,7 @@ impl App {
                 if clear_selection {
                     self.clear_selected_items();
                 }
-                self.item_assign_dirty = false;
-                self.clear_input();
+                self.clear_item_assign_session();
                 if !clear_selection {
                     self.status = "Category edit saved".to_string();
                 }
@@ -5137,27 +5138,29 @@ impl App {
                 self.compute_assignment_preview();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.item_assign_view_row_index = next_section_row(
-                    &self.view_assign_rows,
-                    self.item_assign_view_row_index,
-                    1,
-                );
+                self.item_assign_view_row_index =
+                    next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, 1);
                 self.compute_assignment_preview();
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.item_assign_view_row_index = next_section_row(
-                    &self.view_assign_rows,
-                    self.item_assign_view_row_index,
-                    -1,
-                );
+                self.item_assign_view_row_index =
+                    next_section_row(&self.view_assign_rows, self.item_assign_view_row_index, -1);
                 self.compute_assignment_preview();
             }
             KeyCode::Char(' ') => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                let Some(row) = self
+                    .view_assign_rows
+                    .get(self.item_assign_view_row_index)
+                    .cloned()
                 else {
                     return Ok(false);
                 };
-                let ViewAssignRow::SectionRow { view_idx, section_idx, .. } = row else {
+                let ViewAssignRow::SectionRow {
+                    view_idx,
+                    section_idx,
+                    ..
+                } = row
+                else {
                     return Ok(false);
                 };
                 let Some(view) = self.views.get(view_idx).cloned() else {
@@ -5168,7 +5171,10 @@ impl App {
                 if action_ids.is_empty() {
                     return Ok(false);
                 }
-                let focused_item_id = match self.selected_item_id() {
+                let focused_item_id = match self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                {
                     Some(id) => id,
                     None => return Ok(false),
                 };
@@ -5187,17 +5193,21 @@ impl App {
                                 (Ok(()), false)
                             }
                             Some(_) => {
-                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                let from_sec =
+                                    view.sections.get(from_section_idx).cloned().unwrap();
                                 let to_sec = to_section.as_ref().unwrap();
                                 (
                                     agenda
-                                        .move_item_between_sections(*item_id, &view, &from_sec, to_sec)
+                                        .move_item_between_sections(
+                                            *item_id, &view, &from_sec, to_sec,
+                                        )
                                         .map(|_| ()),
                                     true,
                                 )
                             }
                             None => {
-                                let from_sec = view.sections.get(from_section_idx).cloned().unwrap();
+                                let from_sec =
+                                    view.sections.get(from_section_idx).cloned().unwrap();
                                 (
                                     agenda
                                         .remove_item_from_section(*item_id, &view, &from_sec)
@@ -5210,7 +5220,9 @@ impl App {
                             Some(_) => {
                                 let to_sec = to_section.as_ref().unwrap();
                                 (
-                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    agenda
+                                        .insert_item_in_section(*item_id, &view, to_sec)
+                                        .map(|_| ()),
                                     true,
                                 )
                             }
@@ -5220,7 +5232,9 @@ impl App {
                             Some(_) => {
                                 let to_sec = to_section.as_ref().unwrap();
                                 (
-                                    agenda.insert_item_in_section(*item_id, &view, to_sec).map(|_| ()),
+                                    agenda
+                                        .insert_item_in_section(*item_id, &view, to_sec)
+                                        .map(|_| ()),
                                     true,
                                 )
                             }
@@ -5257,7 +5271,10 @@ impl App {
                 };
             }
             KeyCode::Char('r') => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                let Some(row) = self
+                    .view_assign_rows
+                    .get(self.item_assign_view_row_index)
+                    .cloned()
                 else {
                     return Ok(false);
                 };
@@ -5268,7 +5285,10 @@ impl App {
                     return Ok(false);
                 };
                 let action_ids = self.effective_action_item_ids();
-                let focused_item_id = match self.selected_item_id() {
+                let focused_item_id = match self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                {
                     Some(id) => id,
                     None => return Ok(false),
                 };
@@ -5306,9 +5326,7 @@ impl App {
                 if clear_selection {
                     self.clear_selected_items();
                 }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
+                self.clear_item_assign_session();
                 if !clear_selection {
                     self.status = "Section assignment saved".to_string();
                 }
@@ -5319,9 +5337,7 @@ impl App {
                 if clear_selection {
                     self.clear_selected_items();
                 }
-                self.item_assign_dirty = false;
-                self.item_assign_preview = AssignmentPreview::default();
-                self.clear_input();
+                self.clear_item_assign_session();
                 if !clear_selection {
                     self.status = "Assign canceled".to_string();
                 }
@@ -5345,9 +5361,12 @@ impl App {
             }
             KeyCode::Enter => {
                 let action_item_ids = self.effective_action_item_ids();
-                let Some(item_id) = self.selected_item_id() else {
+                let Some(item_id) = self
+                    .item_assign_anchor_id()
+                    .or_else(|| self.selected_item_id())
+                else {
                     self.mode = Mode::Normal;
-                    self.clear_input();
+                    self.clear_item_assign_session();
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };

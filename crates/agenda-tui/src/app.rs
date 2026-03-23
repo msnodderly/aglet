@@ -843,7 +843,9 @@ impl App {
     }
 
     pub(crate) fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {
-        self.selected_item()
+        self.item_assign_anchor_id()
+            .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
+            .or_else(|| self.selected_item())
             .map(|item| item.assignments.contains_key(&category_id))
             .unwrap_or(false)
     }
@@ -927,7 +929,41 @@ impl App {
         ordered
     }
 
+    pub(crate) fn item_assign_anchor_id(&self) -> Option<ItemId> {
+        if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput)
+            && self.item_assign_anchor_item_id.is_some()
+        {
+            self.item_assign_anchor_item_id
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn start_item_assign_session(&mut self) {
+        let anchor_item_id = self.selected_item_id();
+        let selected_item_ids = self.selected_item_ids_in_view_order();
+        self.item_assign_anchor_item_id = anchor_item_id;
+        self.item_assign_target_item_ids = if !selected_item_ids.is_empty() {
+            selected_item_ids
+        } else {
+            anchor_item_id.into_iter().collect()
+        };
+    }
+
+    pub(crate) fn clear_item_assign_session(&mut self) {
+        self.item_assign_dirty = false;
+        self.item_assign_anchor_item_id = None;
+        self.item_assign_target_item_ids.clear();
+        self.item_assign_preview = AssignmentPreview::default();
+        self.clear_input();
+    }
+
     pub(crate) fn effective_action_item_ids(&self) -> Vec<ItemId> {
+        if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput)
+            && !self.item_assign_target_item_ids.is_empty()
+        {
+            return self.item_assign_target_item_ids.clone();
+        }
         let selected = self.selected_item_ids_in_view_order();
         if !selected.is_empty() {
             selected
@@ -991,7 +1027,10 @@ impl App {
                 .map(|i| i.id)
                 .collect(),
         };
-        let present = action_ids.iter().filter(|id| present_ids.contains(id)).count();
+        let present = action_ids
+            .iter()
+            .filter(|id| present_ids.contains(id))
+            .count();
         (present, action_ids.len())
     }
 
@@ -1039,11 +1078,19 @@ impl App {
         match self.item_assign_pane {
             // ── Right pane hovered: show which categories would change ────────
             ItemAssignPane::ViewSection => {
-                let Some(row) = self.view_assign_rows.get(self.item_assign_view_row_index).cloned()
+                let Some(row) = self
+                    .view_assign_rows
+                    .get(self.item_assign_view_row_index)
+                    .cloned()
                 else {
                     return;
                 };
-                let ViewAssignRow::SectionRow { view_idx, section_idx, .. } = row else {
+                let ViewAssignRow::SectionRow {
+                    view_idx,
+                    section_idx,
+                    ..
+                } = row
+                else {
                     return; // ViewHeader — no preview
                 };
                 let Some(view) = self.views.get(view_idx).cloned() else {
@@ -1074,16 +1121,26 @@ impl App {
                         .and_then(|current_section_idx| current_section_idx)
                         .and_then(|current_section_idx| view.sections.get(current_section_idx));
 
-                    let preview =
-                        agenda_core::agenda::Agenda::preview_section_move(&view, from_section, to_section.as_ref());
-                    self.item_assign_preview.cat_to_add.extend(preview.to_assign);
-                    self.item_assign_preview.cat_to_remove.extend(preview.to_unassign);
+                    let preview = agenda_core::agenda::Agenda::preview_section_move(
+                        &view,
+                        from_section,
+                        to_section.as_ref(),
+                    );
+                    self.item_assign_preview
+                        .cat_to_add
+                        .extend(preview.to_assign);
+                    self.item_assign_preview
+                        .cat_to_remove
+                        .extend(preview.to_unassign);
                 }
             }
 
             // ── Left pane hovered: show which view slots would change ─────────
             ItemAssignPane::Categories => {
-                let Some(row) = self.category_rows.get(self.item_assign_category_index).cloned()
+                let Some(row) = self
+                    .category_rows
+                    .get(self.item_assign_category_index)
+                    .cloned()
                 else {
                     return;
                 };
@@ -1115,29 +1172,40 @@ impl App {
                     }
 
                     // Build item lists: current and hypothetical.
-                    let other_items: Vec<_> = self.all_items.iter()
+                    let other_items: Vec<_> = self
+                        .all_items
+                        .iter()
                         .filter(|i| i.id != *item_id)
                         .cloned()
                         .collect();
-                    let current_items: Vec<_> = other_items.iter().cloned()
+                    let current_items: Vec<_> = other_items
+                        .iter()
+                        .cloned()
                         .chain(std::iter::once(item.clone()))
                         .collect();
-                    let hyp_items: Vec<_> = other_items.iter().cloned()
+                    let hyp_items: Vec<_> = other_items
+                        .iter()
+                        .cloned()
                         .chain(std::iter::once(hypothetical))
                         .collect();
 
                     for (view_idx, view) in self.views.iter().enumerate() {
-                        let cur = resolve_view(view, &current_items, &self.categories, reference_date);
+                        let cur =
+                            resolve_view(view, &current_items, &self.categories, reference_date);
                         let hyp = resolve_view(view, &hyp_items, &self.categories, reference_date);
                         let cur_section = Self::item_membership_in_view_result(*item_id, &cur);
                         let hyp_section = Self::item_membership_in_view_result(*item_id, &hyp);
 
                         if cur_section != hyp_section {
                             if let Some(slot) = cur_section {
-                                self.item_assign_preview.section_to_lose.insert((view_idx, slot));
+                                self.item_assign_preview
+                                    .section_to_lose
+                                    .insert((view_idx, slot));
                             }
                             if let Some(slot) = hyp_section {
-                                self.item_assign_preview.section_to_gain.insert((view_idx, slot));
+                                self.item_assign_preview
+                                    .section_to_gain
+                                    .insert((view_idx, slot));
                             }
                         }
                     }
