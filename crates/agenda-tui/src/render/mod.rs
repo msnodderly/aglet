@@ -4379,7 +4379,7 @@ impl App {
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
         );
-        if area.width < 6 || area.height < 6 {
+        if area.width < 6 || area.height < 7 {
             return;
         }
 
@@ -4392,7 +4392,7 @@ impl App {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
             .split(inner);
 
         // Header — changes based on which pane is active.
@@ -4404,10 +4404,35 @@ impl App {
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
+        let item_context = self
+            .selected_item_id()
+            .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
+            .map(board_item_label)
+            .unwrap_or_else(|| "(no selected item)".to_string());
+        let batch_suffix = if self.selected_count() > 1 {
+            format!("  Batch: {} items", self.selected_count())
+        } else {
+            String::new()
+        };
+        let item_label_width = chunks[1]
+            .width
+            .saturating_sub((format!("Target: {batch_suffix}").chars().count() as u16) + 1)
+            as usize;
+        let item_context = truncate_board_cell(&item_context, item_label_width.max(8));
+        let context_line = Line::from(vec![
+            Span::styled("Target: ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled(item_context, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(batch_suffix, Style::default().fg(MUTED_TEXT_COLOR)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(context_line),
+            chunks[1],
+        );
+
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[1]);
+            .split(chunks[2]);
 
         // ── Left: category pane ────────────────────────────────────────────
         let cat_active = self.item_assign_pane == ItemAssignPane::Categories;

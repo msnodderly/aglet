@@ -8308,6 +8308,10 @@ mod tests {
             rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:close  Esc:cancel"),
             "assign picker footer should advertise forward/backward pane switching: {rendered}"
         );
+        assert!(
+            rendered.contains("Target: Plain  Batch: 2 items"),
+            "assign picker should show focused target context inside the modal: {rendered}"
+        );
 
         app.item_assign_category_index = app
             .category_rows
