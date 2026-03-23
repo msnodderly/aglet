@@ -4902,7 +4902,7 @@ impl App {
         }
 
         match code {
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::BackTab => {
                 self.item_assign_pane = ItemAssignPane::ViewSection;
                 // Advance past any leading ViewHeader rows.
                 self.item_assign_view_row_index = self
@@ -5130,7 +5130,7 @@ impl App {
         }
 
         match code {
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::BackTab => {
                 // Switch back to Categories pane.
                 self.item_assign_pane = ItemAssignPane::Categories;
                 self.item_assign_preview = AssignmentPreview::default();

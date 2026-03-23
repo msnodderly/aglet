@@ -8301,12 +8301,12 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render app");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
-            rendered.contains("Assign categories (Space applies; Enter/Esc close)"),
-            "assign picker status copy should describe apply/close behavior: {rendered}"
+            rendered.contains("Assign Item"),
+            "assign picker should render an outer modal title/border: {rendered}"
         );
         assert!(
-            rendered.contains("Space:toggle  n:new  Enter:close  Esc:cancel"),
-            "assign picker footer should describe toggle/close controls: {rendered}"
+            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:close  Esc:cancel"),
+            "assign picker footer should advertise forward/backward pane switching: {rendered}"
         );
 
         app.item_assign_category_index = app
@@ -8329,6 +8329,48 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_picker_backtab_cycles_between_panes() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create board view");
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+        let item = Item::new("Pane switch target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::Normal;
+        app.set_item_selection_by_id(item.id);
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
+
+        app.handle_item_assign_category_key(KeyCode::BackTab, &agenda)
+            .expect("backtab should move to view pane");
+        assert_eq!(app.item_assign_pane, super::ItemAssignPane::ViewSection);
+
+        app.handle_item_assign_category_key(KeyCode::BackTab, &agenda)
+            .expect("backtab should move back to category pane");
+        assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
     }
 
     #[test]
