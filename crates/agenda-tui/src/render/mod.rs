@@ -3507,14 +3507,14 @@ impl App {
             }
             Mode::ItemAssignPicker => match self.item_assign_pane {
                 ItemAssignPane::Categories => vec![
-                    ("Tab", "view pane"),
+                    ("Tab/S-Tab", "pane"),
                     ("Space", "toggle"),
                     ("n", "new"),
                     ("Enter", "close"),
                     ("Esc", "cancel"),
                 ],
                 ItemAssignPane::ViewSection => vec![
-                    ("Tab", "cat pane"),
+                    ("Tab/S-Tab", "pane"),
                     ("Space", "assign"),
                     ("r", "remove"),
                     ("Esc", "cancel"),
@@ -4372,18 +4372,35 @@ impl App {
 
     pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Assign Item")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 6 || area.height < 6 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(area);
+            .split(inner);
 
         // Header — changes based on which pane is active.
         let header = match self.item_assign_pane {
             ItemAssignPane::Categories =>
-                "Edit item categories  (Tab: switch pane  Space: toggle  n or /: type  Enter: close  Esc: cancel)",
+                "Edit item categories  (Tab/S-Tab: switch pane  Space: toggle  n or /: type  Enter: close  Esc: cancel)",
             ItemAssignPane::ViewSection =>
-                "Assign to view/section  (Tab: switch pane  Space: assign  r: remove from view  j/k: navigate  Esc: cancel)",
+                "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  r: remove from view  j/k: navigate  Esc: cancel)",
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
