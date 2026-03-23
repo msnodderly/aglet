@@ -5,6 +5,15 @@ fn is_immutable_view(view: &View) -> bool {
 }
 
 impl App {
+    fn selected_view_from_picker(&mut self) -> Option<View> {
+        if self.views.is_empty() {
+            return None;
+        }
+        let clamped_index = self.picker_index.min(self.views.len().saturating_sub(1));
+        self.picker_index = clamped_index;
+        self.views.get(clamped_index).cloned()
+    }
+
     pub(crate) fn handle_view_picker_key(
         &mut self,
         code: KeyCode,
@@ -45,7 +54,7 @@ impl App {
                     "Create view: type name, Tab/Save to confirm, Esc to cancel".to_string();
             }
             KeyCode::Char('r') => {
-                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                if let Some(view) = self.selected_view_from_picker() {
                     if is_immutable_view(&view) {
                         self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
@@ -67,7 +76,7 @@ impl App {
                 }
             }
             KeyCode::Char('e') | KeyCode::Char('E') => {
-                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                if let Some(view) = self.selected_view_from_picker() {
                     if is_immutable_view(&view) {
                         self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
@@ -78,7 +87,7 @@ impl App {
                 }
             }
             KeyCode::Char('V') => {
-                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                if let Some(view) = self.selected_view_from_picker() {
                     if is_immutable_view(&view) {
                         self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
@@ -89,7 +98,7 @@ impl App {
                 }
             }
             KeyCode::Char('c') => {
-                if let Some(view) = self.views.get(self.picker_index).cloned() {
+                if let Some(view) = self.selected_view_from_picker() {
                     if is_immutable_view(&view) {
                         self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
@@ -111,8 +120,8 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                if let Some(view) = self.views.get(self.picker_index) {
-                    if is_immutable_view(view) {
+                if let Some(view) = self.selected_view_from_picker() {
+                    if is_immutable_view(&view) {
                         self.status = format!("{} view is immutable", view.name);
                         return Ok(false);
                     }

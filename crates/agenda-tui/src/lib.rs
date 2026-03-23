@@ -13519,6 +13519,50 @@ mod tests {
     }
 
     #[test]
+    fn normal_v_then_e_opens_view_edit_for_active_view() {
+        let (store, db_path) = make_test_store_with_view("normal-v-then-e");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh with test view selected");
+
+        app.handle_key(KeyCode::Char('v'), &agenda)
+            .expect("open view picker");
+        assert_eq!(app.mode, Mode::ViewPicker);
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("edit selected view from picker");
+
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.is_some());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn view_picker_e_clamps_stale_picker_index_before_editing() {
+        let (store, db_path) = make_test_store_with_view("picker-stale-index");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.mode = Mode::ViewPicker;
+        app.picker_index = usize::MAX;
+
+        app.handle_view_picker_key(KeyCode::Char('e'), &agenda)
+            .expect("edit with stale picker index");
+
+        assert_eq!(app.mode, Mode::ViewEdit);
+        assert!(app.view_edit_state.is_some());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn view_edit_criteria_rows_render_in_draft_order_and_space_toggles_selected_row() {
         let (store, db_path) = make_test_store_with_view("criteria-order-render");
 
