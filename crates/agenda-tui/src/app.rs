@@ -989,6 +989,89 @@ impl App {
         (assigned, action_item_ids.len())
     }
 
+    pub(crate) fn item_assign_visible_category_row_indices(&self) -> Vec<usize> {
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| !row.is_reserved)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    pub(crate) fn item_assign_selected_category_row_index(&self) -> Option<usize> {
+        let visible_indices = self.item_assign_visible_category_row_indices();
+        visible_indices
+            .iter()
+            .position(|row_index| *row_index == self.item_assign_category_index)
+    }
+
+    pub(crate) fn item_assign_selected_category_row(&self) -> Option<&CategoryListRow> {
+        let row_index = self
+            .item_assign_visible_category_row_indices()
+            .get(self.item_assign_selected_category_row_index()?)
+            .copied()?;
+        self.category_rows.get(row_index)
+    }
+
+    pub(crate) fn clamp_item_assign_category_index(&mut self) {
+        let visible_indices = self.item_assign_visible_category_row_indices();
+        if visible_indices.is_empty() {
+            self.item_assign_category_index = 0;
+            return;
+        }
+
+        if let Some(visible_index) = visible_indices
+            .iter()
+            .position(|row_index| *row_index == self.item_assign_category_index)
+        {
+            self.item_assign_category_index = visible_indices[visible_index];
+        } else {
+            self.item_assign_category_index = visible_indices[0];
+        }
+    }
+
+    pub(crate) fn set_item_assign_category_visible_selection(&mut self, visible_index: usize) {
+        let visible_indices = self.item_assign_visible_category_row_indices();
+        if visible_indices.is_empty() {
+            self.item_assign_category_index = 0;
+            return;
+        }
+        let next_visible = visible_index.min(visible_indices.len() - 1);
+        self.item_assign_category_index = visible_indices[next_visible];
+    }
+
+    pub(crate) fn set_item_assign_category_selection_by_id(&mut self, category_id: CategoryId) {
+        if let Some(row_index) = self
+            .item_assign_visible_category_row_indices()
+            .into_iter()
+            .find(|row_index| {
+                self.category_rows
+                    .get(*row_index)
+                    .map(|row| row.id == category_id)
+                    .unwrap_or(false)
+            })
+        {
+            self.item_assign_category_index = row_index;
+        } else {
+            self.clamp_item_assign_category_index();
+        }
+    }
+
+    pub(crate) fn focused_numeric_board_column(&self) -> bool {
+        match self.current_slot_sort_column() {
+            Some(SlotSortColumn::SectionColumn {
+                heading,
+                kind: ColumnKind::Standard,
+            }) => self
+                .categories
+                .iter()
+                .find(|category| category.id == heading)
+                .map(|category| category.value_kind == CategoryValueKind::Numeric)
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
     /// Returns `(present_count, total_action_count)` — how many of the current
     /// action items appear in the specified view section (or the unmatched slot
     /// when `section_idx` is `None`).
@@ -1137,11 +1220,7 @@ impl App {
 
             // ── Left pane hovered: show which view slots would change ─────────
             ItemAssignPane::Categories => {
-                let Some(row) = self
-                    .category_rows
-                    .get(self.item_assign_category_index)
-                    .cloned()
-                else {
+                let Some(row) = self.item_assign_selected_category_row().cloned() else {
                     return;
                 };
                 let action_ids = self.effective_action_item_ids();

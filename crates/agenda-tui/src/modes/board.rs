@@ -2314,13 +2314,12 @@ impl App {
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
                     self.status = "No selected item to edit categories".to_string();
-                } else if self.category_rows.is_empty() {
+                } else if self.item_assign_visible_category_row_indices().is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignPicker;
                     self.start_item_assign_session();
-                    self.item_assign_category_index =
-                        first_non_reserved_category_index(&self.category_rows);
+                    self.clamp_item_assign_category_index();
                     self.item_assign_pane = ItemAssignPane::Categories;
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
@@ -4925,19 +4924,28 @@ impl App {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !self.category_rows.is_empty() {
-                    self.item_assign_category_index =
-                        next_index(self.item_assign_category_index, self.category_rows.len(), 1);
+                let visible_len = self.item_assign_visible_category_row_indices().len();
+                if visible_len > 0 {
+                    let current_visible_index =
+                        self.item_assign_selected_category_row_index().unwrap_or(0);
+                    self.set_item_assign_category_visible_selection(next_index(
+                        current_visible_index,
+                        visible_len,
+                        1,
+                    ));
                     self.compute_assignment_preview(agenda);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if !self.category_rows.is_empty() {
-                    self.item_assign_category_index = next_index(
-                        self.item_assign_category_index,
-                        self.category_rows.len(),
+                let visible_len = self.item_assign_visible_category_row_indices().len();
+                if visible_len > 0 {
+                    let current_visible_index =
+                        self.item_assign_selected_category_row_index().unwrap_or(0);
+                    self.set_item_assign_category_visible_selection(next_index(
+                        current_visible_index,
+                        visible_len,
                         -1,
-                    );
+                    ));
                     self.compute_assignment_preview(agenda);
                 }
             }
@@ -4959,11 +4967,7 @@ impl App {
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
-                let Some(row) = self
-                    .category_rows
-                    .get(self.item_assign_category_index)
-                    .cloned()
-                else {
+                let Some(row) = self.item_assign_selected_category_row().cloned() else {
                     self.status = "Assign failed: no category selected".to_string();
                     return Ok(false);
                 };
@@ -5383,11 +5387,23 @@ impl App {
                     .iter()
                     .find(|category| category.name.eq_ignore_ascii_case(&name))
                     .map(|category| (category.id, category.name.clone()));
+                if exact_match.as_ref().is_some_and(|(_, category_name)| {
+                    is_reserved_category_name(category_name)
+                }) {
+                    self.mode = Mode::ItemAssignPicker;
+                    self.clear_input();
+                    self.status = format!(
+                        "Reserved category '{}' cannot be assigned from this menu",
+                        name
+                    );
+                    return Ok(false);
+                }
                 let single_visible_match = if exact_match.is_none() {
                     let query = name.to_ascii_lowercase();
                     let mut matching_rows = self
-                        .category_rows
-                        .iter()
+                        .item_assign_visible_category_row_indices()
+                        .into_iter()
+                        .filter_map(|row_index| self.category_rows.get(row_index))
                         .filter(|row| row.name.to_ascii_lowercase().contains(&query));
                     match (matching_rows.next(), matching_rows.next()) {
                         (Some(row), None) => Some((row.id, row.name.clone())),
@@ -5404,6 +5420,15 @@ impl App {
                     } else if let Some((category_id, category_name)) = single_visible_match {
                         (category_id, category_name)
                     } else {
+                        if is_reserved_category_name(&name) {
+                            self.mode = Mode::ItemAssignPicker;
+                            self.clear_input();
+                            self.status = format!(
+                                "Reserved category '{}' cannot be created or assigned here",
+                                name
+                            );
+                            return Ok(false);
+                        }
                         let mut category = Category::new(name.clone());
                         category.enable_implicit_string = true;
                         let category_id = category.id;
@@ -5440,13 +5465,7 @@ impl App {
 
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
-                if let Some(index) = self
-                    .category_rows
-                    .iter()
-                    .position(|row| row.id == category_id)
-                {
-                    self.item_assign_category_index = index;
-                }
+                self.set_item_assign_category_selection_by_id(category_id);
                 self.set_item_selection_by_id(item_id);
                 self.mode = Mode::ItemAssignPicker;
                 if assigned > 0 && failed == 0 {
