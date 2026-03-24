@@ -491,6 +491,17 @@ category names with this precedence:
 This avoids accidental category creation when there is a single clear match,
 while preserving exact-match and create-new behavior.
 
+## Item Assign Picker Enter Must Not Re-Toggle Dirty Selection (Surprising)
+
+In `Mode::ItemAssignPicker`, `Space` applies the category/view toggle
+immediately. If the session is already dirty, `Enter` should close the picker,
+not replay the current toggle a second time.
+
+Practical implications:
+- `Space` then `Enter` should keep the applied assignment and close the picker.
+- Reusing `Enter` as "call the Space handler, then close" will accidentally
+  undo the just-applied assignment for single-item category toggles.
+
 ## Esc Exit Semantics (Updated)
 
 `Esc` behavior is now split by editing surface:

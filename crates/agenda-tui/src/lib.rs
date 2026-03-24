@@ -8997,6 +8997,46 @@ mod tests {
     }
 
     #[test]
+    fn assign_picker_space_then_enter_keeps_single_item_assignment() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let item = Item::new("Assign target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle assignment with space");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+
+        let after_space = store.get_item(item.id).expect("reload after space");
+        assert!(
+            after_space.assignments.contains_key(&work.id),
+            "space should assign the category immediately"
+        );
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("enter should close without undoing prior toggle");
+
+        let after_enter = store.get_item(item.id).expect("reload after enter");
+        assert!(
+            after_enter.assignments.contains_key(&work.id),
+            "enter after a prior space toggle should not remove the assignment"
+        );
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
     fn item_assign_view_pane_enter_applies_and_closes() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;

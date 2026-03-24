@@ -5226,6 +5226,7 @@ impl App {
                                     old_assignment: assignment,
                                 });
                             }
+                            self.item_assign_dirty = true;
                             self.refresh(agenda.store())?;
                             self.set_item_selection_by_id(item_id);
                             self.status = format!("Removed category {}", row.name);
@@ -5244,6 +5245,7 @@ impl App {
                         item_id,
                         category_id: row.id,
                     });
+                    self.item_assign_dirty = true;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
                     self.status = format!(
@@ -5254,14 +5256,23 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.handle_item_assign_category_key(KeyCode::Char(' '), agenda)?;
-                if self.mode == Mode::ItemAssignPicker {
-                    let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                if self.item_assign_dirty {
+                    let clear_selection = self.has_selected_items();
                     self.mode = Mode::Normal;
                     if clear_selection {
                         self.clear_selected_items();
                     }
                     self.clear_item_assign_session();
+                } else {
+                    self.handle_item_assign_category_key(KeyCode::Char(' '), agenda)?;
+                    if self.mode == Mode::ItemAssignPicker {
+                        let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                        self.mode = Mode::Normal;
+                        if clear_selection {
+                            self.clear_selected_items();
+                        }
+                        self.clear_item_assign_session();
+                    }
                 }
             }
             _ => {}
@@ -5483,14 +5494,23 @@ impl App {
                 };
             }
             KeyCode::Enter => {
-                self.handle_item_assign_view_key(KeyCode::Char(' '), agenda)?;
-                if self.mode == Mode::ItemAssignPicker {
-                    let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                if self.item_assign_dirty {
+                    let clear_selection = self.has_selected_items();
                     self.mode = Mode::Normal;
                     if clear_selection {
                         self.clear_selected_items();
                     }
                     self.clear_item_assign_session();
+                } else {
+                    self.handle_item_assign_view_key(KeyCode::Char(' '), agenda)?;
+                    if self.mode == Mode::ItemAssignPicker {
+                        let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                        self.mode = Mode::Normal;
+                        if clear_selection {
+                            self.clear_selected_items();
+                        }
+                        self.clear_item_assign_session();
+                    }
                 }
             }
             KeyCode::Esc => {
