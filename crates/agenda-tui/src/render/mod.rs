@@ -117,6 +117,32 @@ impl App {
         }
     }
 
+    fn stable_list_offset(
+        area: Rect,
+        selected_line: Option<usize>,
+        preferred_offset: usize,
+        item_count: usize,
+    ) -> usize {
+        if item_count == 0 {
+            return 0;
+        }
+        let clamped_preferred = preferred_offset.min(item_count.saturating_sub(1));
+        let Some(selected_line) = selected_line else {
+            return clamped_preferred;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 {
+            return 0;
+        }
+        let selected_visible = selected_line >= clamped_preferred
+            && selected_line < clamped_preferred.saturating_add(viewport_rows);
+        if selected_visible {
+            clamped_preferred
+        } else {
+            list_scroll_for_selected_line(area, Some(selected_line)) as usize
+        }
+    }
+
     fn effective_board_display_mode_for_slot(&self, slot: &Slot) -> BoardDisplayMode {
         let current_view = self.current_view();
         match (&slot.context, current_view) {
@@ -216,9 +242,11 @@ impl App {
     }
 
     pub(crate) fn draw(&self, frame: &mut ratatui::Frame<'_>) {
-        let show_search_bar = !(matches!(self.mode, Mode::ViewEdit | Mode::CategoryManager)
-            || self.mode == Mode::InputPanel
-                && self.name_input_context == Some(NameInputContext::CategoryCreate));
+        let show_search_bar = !(matches!(
+            self.mode,
+            Mode::ViewEdit | Mode::CategoryManager | Mode::GlobalSettings
+        ) || self.mode == Mode::InputPanel
+            && self.name_input_context == Some(NameInputContext::CategoryCreate));
 
         let layout = if show_search_bar {
             Layout::default()
@@ -1523,6 +1551,7 @@ impl App {
             Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
             Mode::ItemAssignInput => Some("Category> ".to_string()),
             Mode::Normal
+            | Mode::GlobalSettings
             | Mode::HelpPanel
             | Mode::SuggestionReview
             | Mode::InputPanel
@@ -1792,6 +1821,10 @@ impl App {
     pub(crate) fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         if self.mode == Mode::ViewEdit {
             self.render_view_edit_screen(frame, area);
+            return;
+        }
+        if self.mode == Mode::GlobalSettings {
+            self.render_global_settings(frame, area);
             return;
         }
         let category_create_panel_open = self.mode == Mode::InputPanel
@@ -3347,7 +3380,7 @@ impl App {
                     self.status.clone()
                 }
             }
-            Mode::SuggestionReview => self.status.clone(),
+            Mode::SuggestionReview | Mode::GlobalSettings => self.status.clone(),
             Mode::Normal => self
                 .active_transient_status_text()
                 .map(str::to_string)
@@ -3382,6 +3415,28 @@ impl App {
                 ("A", "accept all"),
                 ("Esc", "close"),
             ],
+            Mode::GlobalSettings => {
+                if self
+                    .workflow_role_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
+                {
+                    vec![
+                        ("j/k", "pick"),
+                        ("Enter", "assign"),
+                        ("x", "clear"),
+                        ("Esc", "back"),
+                    ]
+                } else {
+                    vec![
+                        ("j/k", "move"),
+                        ("←/→", "cycle"),
+                        ("Space", "cycle"),
+                        ("Enter", "pick"),
+                        ("Esc", "close"),
+                    ]
+                }
+            }
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
                     vec![
@@ -3447,8 +3502,6 @@ impl App {
                         ("x", "delete"),
                         ("S-\u{2191}/\u{2193}", "move"),
                         ("H/L", "level"),
-                        ("m", "auto"),
-                        ("w", "queues"),
                         ("/", "filter"),
                         ("Tab", "details"),
                         ("Esc", "close"),
@@ -3670,16 +3723,15 @@ impl App {
                         ("u", "deps"),
                         ("C", "classify"),
                         ("g/", "global"),
+                        ("g s", "settings"),
+                        ("F10", "settings"),
                         ("z", "cards"),
                     ]);
                     if self.section_filters.iter().any(|f| f.is_some()) {
-                        hints.push(("Esc", "clear search"));
+                        let insert_pos = hints.len().min(5);
+                        hints.insert(insert_pos, ("Esc", "clear search"));
                     }
-                    hints.extend_from_slice(&[
-                        ("Ctrl-L", "reload"),
-                        ("Ctrl-R", "auto-refresh"),
-                        ("q", "quit"),
-                    ]);
+                    hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
                 }
                 if self.undo.has_undo() {
                     // Insert undo hint near the front (after primary action keys)
@@ -3772,11 +3824,11 @@ impl App {
             Line::from(Span::styled("GLOBAL", header)),
             help_entry("C", "Open classification review"),
             help_entry("ga", "Jump to All Items view"),
+            help_entry("g s / F10", "Open Global Settings"),
             help_entry("c / F9", "Open the category manager"),
             help_entry("u", "Toggle hide-dependent-items filter"),
             help_entry("Ctrl-G", "Open $EDITOR for text/note (in item editor)"),
             help_entry("Ctrl-L", "Reload data from disk"),
-            help_entry("Ctrl-R", "Toggle auto-refresh interval"),
             help_entry("Ctrl-Z", "Undo"),
             help_entry("C-S-Z", "Redo"),
             help_entry("?", "Toggle this help panel"),
@@ -4624,6 +4676,247 @@ impl App {
         Self::render_vertical_scrollbar(frame, panes[1], view_count, view_state.offset());
     }
 
+    pub(crate) fn render_global_settings(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        self.render_board_columns(frame, area);
+
+        let popup_area = centered_rect(62, 55, area);
+        frame.render_widget(Clear, popup_area);
+
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(4),
+                Constraint::Length(1),
+            ])
+            .split(
+                Block::default()
+                    .title(" Global Settings ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                    .inner(popup_area),
+            );
+
+        frame.render_widget(
+            Block::default()
+                .title(" Global Settings ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+            popup_area,
+        );
+
+        let ready_name = self
+            .workflow_config
+            .ready_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+        let claim_name = self
+            .workflow_config
+            .claim_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "Settings apply immediately.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+                Line::from(Span::styled(
+                    "Open workflow rows with Enter to choose or clear categories.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+            ]),
+            outer[0],
+        );
+
+        let selected_row = self.global_settings_selected_row();
+        let rows = vec![
+            ListItem::new(Line::from(format!(
+                "Auto-refresh        < {} >",
+                self.auto_refresh_mode_label()
+            ))),
+            ListItem::new(Line::from(format!(
+                "Classification mode < {} >",
+                modes::classification::continuous_mode_label(
+                    self.classification_ui.config.continuous_mode
+                )
+            ))),
+            ListItem::new(Line::from(format!("Ready category       {ready_name}"))),
+            ListItem::new(Line::from(format!("Claim category       {claim_name}"))),
+        ];
+        let mut list_state = Self::list_state_for(outer[1], Some(selected_row));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(" Settings ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                ),
+            outer[1],
+            &mut list_state,
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "j/k:move  Space/←/→:cycle  Enter:pick  Esc:close",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            outer[2],
+        );
+
+        if self
+            .workflow_role_picker
+            .as_ref()
+            .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
+        {
+            self.render_workflow_role_picker_overlay(frame, area);
+        }
+    }
+
+    fn render_workflow_role_picker_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(picker) = &self.workflow_role_picker else {
+            return;
+        };
+        let row_indices = self.workflow_role_picker_row_indices();
+        let role_label = if picker.role_index == 0 {
+            "Ready Queue"
+        } else {
+            "Claim Result"
+        };
+        let current_name = if picker.role_index == 0 {
+            self.workflow_config
+                .ready_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)")
+        } else {
+            self.workflow_config
+                .claim_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)")
+        };
+        let w = area.width.min(64);
+        let h = area.height.min(22);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Min(8),
+                Constraint::Length(1),
+            ])
+            .split(overlay_area);
+
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    format!("Choose the category used as {role_label}."),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+                Line::from(Span::styled(
+                    format!("Current: {current_name}"),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Only normal tag categories can be used here.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+            ])
+            .block(
+                Block::default()
+                    .title(format!(" Pick {role_label} "))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+            )
+            .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+
+        let items: Vec<ListItem<'_>> = if row_indices.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "(no eligible categories)",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            )))]
+        } else {
+            row_indices
+                .iter()
+                .filter_map(|row_index| self.category_rows.get(*row_index))
+                .map(|row| {
+                    let mut suffixes = Vec::new();
+                    if row.is_exclusive {
+                        suffixes.push("exclusive");
+                    }
+                    if self.workflow_config.ready_category_id == Some(row.id) {
+                        suffixes.push("ready");
+                    }
+                    if self.workflow_config.claim_category_id == Some(row.id) {
+                        suffixes.push("claim");
+                    }
+                    let suffix = if suffixes.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", suffixes.join(","))
+                    };
+                    let text = format!(
+                        "{}{}{}",
+                        "  ".repeat(row.depth),
+                        with_note_marker(row.name.clone(), row.has_note),
+                        suffix
+                    );
+                    ListItem::new(Line::from(text))
+                })
+                .collect()
+        };
+
+        let selected_row = if row_indices.is_empty() {
+            None
+        } else {
+            Some(picker.row_index.min(row_indices.len().saturating_sub(1)))
+        };
+        let mut state = ListState::default().with_selected(selected_row);
+        let stable_offset = Self::stable_list_offset(
+            chunks[1],
+            selected_row,
+            picker.scroll_offset.get(),
+            items.len(),
+        );
+        picker.scroll_offset.set(stable_offset);
+        *state.offset_mut() = stable_offset;
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                ),
+            chunks[1],
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, chunks[1], row_indices.len(), state.offset());
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "j/k:select  Enter:assign  x:clear  Esc:back",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            chunks[2],
+        );
+    }
+
     pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
@@ -4671,7 +4964,6 @@ impl App {
                 classification_mode,
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" (m)", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
@@ -4680,7 +4972,6 @@ impl App {
             Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" (w)", Style::default().fg(MUTED_TEXT_COLOR)),
         ]);
         frame.render_widget(
             Paragraph::new(summary_line)
@@ -4724,7 +5015,7 @@ impl App {
             {
                 format!("Filter: {}", filter_text)
             } else if filter_text.trim().is_empty() {
-                "Press / to filter. m: auto-classification  w: ready/claim queues.".to_string()
+                "Press / to filter categories. Use g s or F10 for Global Settings.".to_string()
             } else {
                 format!("Filter: {}", filter_text)
             })
@@ -5153,6 +5444,10 @@ impl App {
                             Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
                         )));
                         lines.push(Line::from(Span::styled(
+                            "  Configured in Global Settings (g s / F10)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                        lines.push(Line::from(Span::styled(
                             "  (items need this to be claimable)",
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )));
@@ -5161,6 +5456,10 @@ impl App {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Claim Result",
                             Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  Configured in Global Settings (g s / F10)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
                         )));
                         lines.push(Line::from(Span::styled(
                             "  (assigned by the CLI claim workflow)",
@@ -5503,133 +5802,8 @@ impl App {
             );
         }
 
-        if let Some(picker) = &self.workflow_role_picker {
-            let row_indices = self.workflow_role_picker_row_indices();
-            let role_label = if picker.role_index == 0 {
-                "Ready Queue"
-            } else {
-                "Claim Result"
-            };
-            let current_name = if picker.role_index == 0 {
-                self.workflow_config
-                    .ready_category_id
-                    .and_then(|id| self.categories.iter().find(|c| c.id == id))
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("(unset)")
-            } else {
-                self.workflow_config
-                    .claim_category_id
-                    .and_then(|id| self.categories.iter().find(|c| c.id == id))
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("(unset)")
-            };
-            let w = area.width.min(64);
-            let h = area.height.min(22);
-            let x = area.x + area.width.saturating_sub(w) / 2;
-            let y = area.y + area.height.saturating_sub(h) / 2;
-            let overlay_area = Rect::new(x, y, w, h);
-            frame.render_widget(Clear, overlay_area);
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(5),
-                    Constraint::Min(8),
-                    Constraint::Length(1),
-                ])
-                .split(overlay_area);
-
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(Span::styled(
-                        format!("Choose the category used as {role_label}."),
-                        Style::default().fg(MUTED_TEXT_COLOR),
-                    )),
-                    Line::from(Span::styled(
-                        format!("Current: {current_name}"),
-                        Style::default().fg(MUTED_TEXT_COLOR),
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "Only normal tag categories can be used here.",
-                        Style::default().fg(MUTED_TEXT_COLOR),
-                    )),
-                ])
-                .block(
-                    Block::default()
-                        .title(format!(" Pick {role_label} "))
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
-                )
-                .wrap(Wrap { trim: false }),
-                chunks[0],
-            );
-
-            let items: Vec<ListItem<'_>> = if row_indices.is_empty() {
-                vec![ListItem::new(Line::from(Span::styled(
-                    "(no eligible categories)",
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                )))]
-            } else {
-                row_indices
-                    .iter()
-                    .filter_map(|row_index| self.category_rows.get(*row_index))
-                    .map(|row| {
-                        let mut suffixes = Vec::new();
-                        if row.is_exclusive {
-                            suffixes.push("exclusive");
-                        }
-                        if self.workflow_config.ready_category_id == Some(row.id) {
-                            suffixes.push("ready");
-                        }
-                        if self.workflow_config.claim_category_id == Some(row.id) {
-                            suffixes.push("claim");
-                        }
-                        let suffix = if suffixes.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [{}]", suffixes.join(","))
-                        };
-                        let text = format!(
-                            "{}{}{}",
-                            "  ".repeat(row.depth),
-                            with_note_marker(row.name.clone(), row.has_note),
-                            suffix
-                        );
-                        ListItem::new(Line::from(text))
-                    })
-                    .collect()
-            };
-
-            let mut state = Self::list_state_for(
-                chunks[1],
-                if row_indices.is_empty() {
-                    None
-                } else {
-                    Some(picker.row_index.min(row_indices.len().saturating_sub(1)))
-                },
-            );
-            frame.render_stateful_widget(
-                List::new(items)
-                    .highlight_symbol("> ")
-                    .highlight_style(selected_row_style())
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
-                    ),
-                chunks[1],
-                &mut state,
-            );
-            Self::render_vertical_scrollbar(frame, chunks[1], row_indices.len(), state.offset());
-
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "j/k:select  Enter:assign  Esc:back",
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                ))),
-                chunks[2],
-            );
+        if self.workflow_role_picker.is_some() {
+            self.render_workflow_role_picker_overlay(frame, area);
         }
 
         if self.classification_mode_picker_open {

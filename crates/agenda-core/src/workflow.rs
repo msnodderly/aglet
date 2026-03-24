@@ -50,7 +50,7 @@ impl Claimability {
 }
 
 pub fn workflow_setup_error_message() -> &'static str {
-    "workflow is not configured: set Ready Queue and Claim Target categories in the TUI Category Manager"
+    "workflow is not configured: set Ready Queue and Claim Target categories in TUI Global Settings"
 }
 
 pub fn resolve_workflow_config(store: &Store) -> Result<Option<ResolvedWorkflowConfig>> {
@@ -73,13 +73,13 @@ pub fn resolve_workflow_config(store: &Store) -> Result<Option<ResolvedWorkflowC
         Ok(category) => category,
         Err(_) => return Ok(None),
     };
-    if RESERVED_CATEGORY_NAMES
-        .iter()
-        .any(|name| name.eq_ignore_ascii_case(&ready.name) || name.eq_ignore_ascii_case(&claim.name))
-    {
+    if RESERVED_CATEGORY_NAMES.iter().any(|name| {
+        name.eq_ignore_ascii_case(&ready.name) || name.eq_ignore_ascii_case(&claim.name)
+    }) {
         return Ok(None);
     }
-    if ready.value_kind == CategoryValueKind::Numeric || claim.value_kind == CategoryValueKind::Numeric
+    if ready.value_kind == CategoryValueKind::Numeric
+        || claim.value_kind == CategoryValueKind::Numeric
     {
         return Ok(None);
     }
@@ -149,4 +149,17 @@ pub fn build_ready_queue_view(store: &Store, config: ResolvedWorkflowConfig) -> 
         board_display_mode_override: None,
     });
     Ok(view)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::workflow_setup_error_message;
+
+    #[test]
+    fn workflow_setup_error_message_points_to_global_settings() {
+        assert_eq!(
+            workflow_setup_error_message(),
+            "workflow is not configured: set Ready Queue and Claim Target categories in TUI Global Settings"
+        );
+    }
 }

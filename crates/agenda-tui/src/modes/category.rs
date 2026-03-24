@@ -94,24 +94,24 @@ impl App {
     fn workflow_setup_cross_role_conflict_status(
         &self,
         agenda: &Agenda<'_>,
+        role_index: usize,
         selected_category_id: CategoryId,
     ) -> TuiResult<Option<String>> {
-        let (role_label, current_role_id, other_role_label, other_role_id) =
-            if self.workflow_setup_focus == 0 {
-                (
-                    "Ready Queue",
-                    self.workflow_config.ready_category_id,
-                    "Claim Result",
-                    self.workflow_config.claim_category_id,
-                )
-            } else {
-                (
-                    "Claim Result",
-                    self.workflow_config.claim_category_id,
-                    "Ready Queue",
-                    self.workflow_config.ready_category_id,
-                )
-            };
+        let (role_label, current_role_id, other_role_label, other_role_id) = if role_index == 0 {
+            (
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+                "Claim Result",
+                self.workflow_config.claim_category_id,
+            )
+        } else {
+            (
+                "Claim Result",
+                self.workflow_config.claim_category_id,
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+            )
+        };
 
         if other_role_id != Some(selected_category_id)
             || current_role_id == Some(selected_category_id)
@@ -1268,7 +1268,10 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Enter => {
-                self.open_workflow_role_picker(self.workflow_setup_focus);
+                self.open_workflow_role_picker_with_origin(
+                    self.workflow_setup_focus,
+                    WorkflowRolePickerOrigin::CategoryManager,
+                );
                 return Ok(true);
             }
             _ => {}
@@ -1290,7 +1293,11 @@ impl App {
             .collect()
     }
 
-    fn open_workflow_role_picker(&mut self, role_index: usize) {
+    pub(crate) fn open_workflow_role_picker_with_origin(
+        &mut self,
+        role_index: usize,
+        origin: WorkflowRolePickerOrigin,
+    ) {
         let row_indices = self.workflow_role_picker_row_indices();
         if row_indices.is_empty() {
             self.status = "No eligible categories available for workflow roles".to_string();
@@ -1314,6 +1321,8 @@ impl App {
         self.workflow_role_picker = Some(WorkflowRolePickerState {
             role_index,
             row_index,
+            origin,
+            scroll_offset: ScrollCell::new(0),
         });
         let role_label = if role_index == 0 {
             "Ready Queue"
@@ -1323,7 +1332,7 @@ impl App {
         self.status = format!("{role_label} picker: j/k select category, Enter assign, Esc back");
     }
 
-    fn handle_workflow_role_picker_key(
+    pub(crate) fn handle_workflow_role_picker_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
@@ -1367,9 +1376,11 @@ impl App {
                     return Ok(true);
                 };
                 let preserved_selection = self.selected_category_id();
-                if let Some(status) =
-                    self.workflow_setup_cross_role_conflict_status(agenda, row.id)?
-                {
+                if let Some(status) = self.workflow_setup_cross_role_conflict_status(
+                    agenda,
+                    picker.role_index,
+                    row.id,
+                )? {
                     self.status = status;
                     return Ok(true);
                 }
@@ -1404,20 +1415,8 @@ impl App {
         if let Some(category_id) = selected_category_id {
             self.set_category_selection_by_id(category_id);
         }
-        self.mode = Mode::CategoryManager;
-        self.workflow_setup_open = true;
-        self.workflow_role_picker = None;
-        self.workflow_setup_focus = role_index.min(1);
         self.status = format!("Cleared {role_label} category ({cleared_name})");
         Ok(())
-    }
-
-    fn open_classification_mode_picker(&mut self) {
-        self.classification_mode_picker_open = true;
-        self.classification_mode_picker_focus = modes::classification::continuous_mode_index(
-            self.classification_ui.config.continuous_mode,
-        );
-        self.status = "Classification mode: j/k select, Enter apply, Esc close".to_string();
     }
 
     fn handle_classification_mode_picker_key(
@@ -1663,15 +1662,14 @@ impl App {
                 }
             }
             KeyCode::Char('w') => {
-                self.workflow_setup_open = true;
-                self.workflow_setup_focus = 0;
-                self.workflow_role_picker = None;
                 self.status =
-                    "Workflow setup: j/k select role, Enter choose category, x clear, Esc close"
+                    "Workflow roles moved to Global Settings (return to Normal and use g s or F10)"
                         .to_string();
             }
             KeyCode::Char('m') => {
-                self.open_classification_mode_picker();
+                self.status =
+                    "Classification mode moved to Global Settings (return to Normal and use g s or F10)"
+                        .to_string();
             }
             KeyCode::Enter => {
                 self.set_category_manager_focus(CategoryManagerFocus::Details);

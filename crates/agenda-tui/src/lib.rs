@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell as ScrollCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
@@ -238,6 +238,7 @@ enum BucketEditTarget {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
+    GlobalSettings,
     HelpPanel,
     SuggestionReview,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
@@ -648,6 +649,8 @@ struct CategorySuggestState {
 struct WorkflowRolePickerState {
     role_index: usize,
     row_index: usize,
+    origin: WorkflowRolePickerOrigin,
+    scroll_offset: ScrollCell<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -661,6 +664,40 @@ enum AddColumnDirection {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NormalModePrefix {
     G,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WorkflowRolePickerOrigin {
+    CategoryManager,
+    GlobalSettings,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GlobalSettingsRow {
+    AutoRefresh,
+    ClassificationMode,
+    WorkflowReady,
+    WorkflowClaim,
+}
+
+impl GlobalSettingsRow {
+    fn count() -> usize {
+        4
+    }
+
+    fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::AutoRefresh,
+            1 => Self::ClassificationMode,
+            2 => Self::WorkflowReady,
+            _ => Self::WorkflowClaim,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct GlobalSettingsState {
+    selected_row: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -912,6 +949,14 @@ impl AutoRefreshInterval {
         }
     }
 
+    fn prev(self) -> Self {
+        match self {
+            Self::Off => Self::FiveSeconds,
+            Self::OneSecond => Self::Off,
+            Self::FiveSeconds => Self::OneSecond,
+        }
+    }
+
     fn as_duration(self) -> Option<Duration> {
         match self {
             Self::Off => None,
@@ -1143,6 +1188,7 @@ struct App {
     workflow_role_picker: Option<WorkflowRolePickerState>,
     classification_mode_picker_open: bool,
     classification_mode_picker_focus: usize,
+    global_settings: Option<GlobalSettingsState>,
     category_manager: Option<CategoryManagerState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
@@ -1222,6 +1268,7 @@ impl Default for App {
             workflow_role_picker: None,
             classification_mode_picker_open: false,
             classification_mode_picker_focus: 1,
+            global_settings: None,
             category_manager: None,
             category_suggest: None,
             category_direct_edit: None,
@@ -1520,8 +1567,9 @@ mod tests {
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, ItemAssignPane, Mode, NameInputContext,
-        SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
+        NameInputContext, SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
+        WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{ClassificationConfig, ContinuousMode};
@@ -4837,7 +4885,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
             .expect("gH should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g/)");
+        assert_eq!(app.status, "Unknown g command (use ga, g/, or gs)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -4849,7 +4897,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
             .expect("gL should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g/)");
+        assert_eq!(app.status, "Unknown g command (use ga, g/, or gs)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -7094,7 +7142,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_ctrl_r_cycles_auto_refresh_interval() {
+    fn global_settings_auto_refresh_row_cycles_interval_with_keys() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7104,29 +7152,30 @@ mod tests {
 
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
 
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r -> 1s");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("enter -> 1s");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
         assert_eq!(app.auto_refresh_mode_label(), "1s");
 
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r -> 5s");
+        app.handle_key(KeyCode::Right, &agenda)
+            .expect("right -> 5s");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
         assert_eq!(app.auto_refresh_mode_label(), "5s");
 
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r -> off");
-        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
-        assert_eq!(app.auto_refresh_mode_label(), "off");
+        app.handle_key(KeyCode::Left, &agenda).expect("left -> 1s");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
+        assert_eq!(app.auto_refresh_mode_label(), "1s");
+
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("space -> 5s");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
+        assert_eq!(app.auto_refresh_mode_label(), "5s");
     }
 
     #[test]
@@ -7145,11 +7194,12 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r should persist 1s interval");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("enter should persist 1s interval");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
 
         let mut reopened_app = App::default();
@@ -7188,7 +7238,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_refresh_status_toast_clears_on_next_non_ctrl_r_key() {
+    fn auto_refresh_status_toast_clears_on_next_key() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7199,11 +7249,7 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r shows transient status");
+        app.set_auto_refresh_interval(AutoRefreshInterval::OneSecond);
         let backend = TestBackend::new(100, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal.draw(|frame| app.draw(frame)).expect("render app");
@@ -7224,7 +7270,7 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
             !rendered.contains("Auto-refresh interval:"),
-            "toast should clear on next non-ctrl-r key: {rendered}"
+            "toast should clear on next key: {rendered}"
         );
         assert!(
             rendered.contains("Ready | Auto-refresh:1s"),
@@ -7239,7 +7285,7 @@ mod tests {
             mode: Mode::Normal,
             ..App::default()
         };
-        app.cycle_auto_refresh_interval();
+        app.set_auto_refresh_interval(AutoRefreshInterval::OneSecond);
         app.transient_status
             .as_mut()
             .expect("transient status")
@@ -7398,19 +7444,27 @@ mod tests {
 
     #[test]
     fn normal_mode_footer_hints_include_preview_shortcut() {
-        let mut app = App {
+        let app = App {
             mode: Mode::Normal,
             status: "Ready".to_string(),
             ..App::default()
         };
 
-        let backend = TestBackend::new(220, 18);
+        let backend = TestBackend::new(280, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal.draw(|frame| app.draw(frame)).expect("render app");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
             rendered.contains("p:preview"),
             "normal footer hints should include preview shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("g s:settings"),
+            "normal footer hints should include global settings shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("F10:settings"),
+            "normal footer hints should include F10 settings shortcut: {rendered}"
         );
         assert!(
             rendered.contains("?:help"),
@@ -7436,9 +7490,14 @@ mod tests {
             !rendered.contains("F:col summary"),
             "normal footer hints should hide numeric-only summary shortcut without numeric focus: {rendered}"
         );
+        assert!(
+            !rendered.contains("Ctrl-R"),
+            "normal footer hints should no longer advertise Ctrl-R: {rendered}"
+        );
 
+        let mut app = app;
         app.section_filters = vec![Some("ready".to_string())];
-        let backend = TestBackend::new(220, 18);
+        let backend = TestBackend::new(280, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal.draw(|frame| app.draw(frame)).expect("render app");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
@@ -7473,6 +7532,10 @@ mod tests {
         assert!(
             !rendered.contains("F:col summary"),
             "filtered footer hints should still hide numeric-only summary shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ctrl-R"),
+            "filtered footer hints should no longer advertise Ctrl-R: {rendered}"
         );
     }
 
@@ -7771,7 +7834,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_m_opens_picker_and_enter_applies_classification_mode() {
+    fn global_settings_classification_mode_row_applies_selection() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7781,22 +7844,24 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
 
-        app.handle_category_manager_key(KeyCode::Char('m'), &agenda)
-            .expect("open classification mode picker");
-        assert!(app.classification_mode_picker_open);
-
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("move picker to suggest/review");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("move to classification mode row");
+        assert_eq!(
+            app.global_settings_selected_kind(),
+            GlobalSettingsRow::ClassificationMode
+        );
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("apply classification mode");
 
         let reloaded = store.get_classification_config().expect("reload config");
         assert_eq!(reloaded.continuous_mode, ContinuousMode::SuggestReview);
-        assert_eq!(app.mode, Mode::CategoryManager);
-        assert!(!app.classification_mode_picker_open);
+        assert_eq!(app.mode, Mode::GlobalSettings);
         assert!(
             app.status.contains("Classification mode: Suggest/Review"),
             "expected classification mode status, got: {}",
@@ -7834,6 +7899,69 @@ mod tests {
         assert!(
             rendered.contains("Claim result: (unset)"),
             "category manager should show claim summary: {rendered}"
+        );
+        assert!(
+            !rendered.contains("(m)"),
+            "category manager should no longer advertise classification edit affordance: {rendered}"
+        );
+        assert!(
+            !rendered.contains("(w)"),
+            "category manager should no longer advertise workflow edit affordance: {rendered}"
+        );
+        assert!(
+            rendered.contains("Use g s or F10 for Global Settings"),
+            "category manager should redirect users to global settings: {rendered}"
+        );
+    }
+
+    #[test]
+    fn category_manager_details_note_workflow_roles_are_configured_in_global_settings() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let claim = Category::new("In Progress".to_string());
+        store.create_category(&ready).expect("create ready");
+        store.create_category(&claim).expect("create claim");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(claim.id),
+            })
+            .expect("set workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        app.set_category_selection_by_id(ready.id);
+        let backend = TestBackend::new(160, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw ready");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Workflow: Ready Queue"),
+            "category manager should show ready workflow note: {rendered}"
+        );
+        assert!(
+            rendered.contains("Configured in Global Settings (g s / F10)"),
+            "ready role note should point back to global settings: {rendered}"
+        );
+
+        app.set_category_selection_by_id(claim.id);
+        let backend = TestBackend::new(160, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw claim");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Workflow: Claim Result"),
+            "category manager should show claim workflow note: {rendered}"
+        );
+        assert!(
+            rendered.contains("Configured in Global Settings (g s / F10)"),
+            "claim role note should point back to global settings: {rendered}"
         );
     }
 
@@ -7943,8 +8071,16 @@ mod tests {
             "help panel should include global search description: {rendered}"
         );
         assert!(
+            rendered.contains("Open Global Settings"),
+            "help panel should include global settings shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("Assign categories to current item or selection"),
             "help panel should include updated assign description: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ctrl-R"),
+            "help panel should no longer advertise Ctrl-R: {rendered}"
         );
     }
 
@@ -11788,6 +11924,47 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
+    fn open_global_settings_for_test(app: &mut App, agenda: &Agenda<'_>) {
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('g'), agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+    }
+
+    fn select_global_settings_row_for_test(
+        app: &mut App,
+        agenda: &Agenda<'_>,
+        target: GlobalSettingsRow,
+    ) {
+        while app.global_settings_selected_kind() != target {
+            app.handle_key(KeyCode::Char('j'), agenda)
+                .expect("move global settings selection");
+        }
+    }
+
+    fn select_workflow_picker_category_for_test(
+        app: &mut App,
+        agenda: &Agenda<'_>,
+        target_name: &str,
+    ) {
+        let visible_count = app.workflow_role_picker_row_indices().len();
+        for _ in 0..visible_count {
+            let picker = app
+                .workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should be open");
+            let row_idx = app.workflow_role_picker_row_indices()[picker.row_index];
+            if app.category_rows[row_idx].name == target_name {
+                return;
+            }
+            app.handle_key(KeyCode::Char('j'), agenda)
+                .expect("move workflow picker selection");
+        }
+        panic!("workflow picker row not found: {target_name}");
+    }
+
     #[test]
     fn workflow_ready_role_assignment_disables_implicit_match() {
         let nanos = SystemTime::now()
@@ -11806,17 +11983,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -11846,17 +12019,12 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(claim.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowClaim);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("focus claim target");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open claim result picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign claim target role");
 
         let updated = store.get_category(claim.id).expect("load claim target");
@@ -11886,20 +12054,18 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
-        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("reopen ready queue picker");
+        app.handle_key(KeyCode::Char('x'), &agenda)
             .expect("remove ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -11912,7 +12078,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_picker_assignment_ignores_tree_selection() {
+    fn global_settings_workflow_picker_opens_and_closes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -11931,15 +12097,10 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(claim.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowClaim);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("focus claim result");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open claim result picker");
         assert_eq!(
             app.workflow_role_picker
@@ -11948,17 +12109,80 @@ mod tests {
                 .row_index,
             0
         );
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick claim category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("assign from picker");
+        assert_eq!(
+            app.workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should be open")
+                .origin,
+            WorkflowRolePickerOrigin::GlobalSettings
+        );
 
-        assert_eq!(app.workflow_config.ready_category_id, None);
-        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
-        assert_eq!(app.selected_category_id(), Some(claim.id));
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("close workflow picker");
+        assert!(app.workflow_role_picker.is_none());
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert_eq!(app.status, "Workflow category picker closed");
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn global_settings_workflow_picker_scroll_offset_stays_stable_while_selection_is_visible() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        for idx in 0..24 {
+            store
+                .create_category(&Category::new(format!("Category {idx:02}")))
+                .expect("create category");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        let mut first_scrolled_offset = None;
+        for _ in 0..24 {
+            terminal.draw(|frame| app.draw(frame)).expect("draw picker");
+            let offset = app
+                .workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should stay open")
+                .scroll_offset
+                .get();
+            if offset > 0 {
+                first_scrolled_offset = Some(offset);
+                break;
+            }
+            app.handle_key(KeyCode::Char('j'), &agenda)
+                .expect("move picker selection");
+        }
+
+        let first_scrolled_offset =
+            first_scrolled_offset.expect("picker should scroll once selection reaches lower edge");
+
+        app.handle_key(KeyCode::Char('k'), &agenda)
+            .expect("move within visible scrolled window");
+        terminal.draw(|frame| app.draw(frame)).expect("draw picker");
+        let next_offset = app
+            .workflow_role_picker
+            .as_ref()
+            .expect("workflow role picker should stay open")
+            .scroll_offset
+            .get();
+
+        assert_eq!(
+            next_offset, first_scrolled_offset,
+            "scroll offset should remain stable while the next selection is still visible"
+        );
     }
 
     #[test]
@@ -11987,17 +12211,14 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready_b.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
+        app.handle_key(KeyCode::Char('j'), &agenda)
             .expect("pick replacement ready role");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("replace ready role");
 
         let updated_a = store.get_category(ready_a.id).expect("load ready a");
@@ -12032,17 +12253,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -12079,17 +12296,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -12128,17 +12341,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -12185,15 +12394,12 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         assert!(
@@ -12206,6 +12412,85 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn global_settings_workflow_picker_filters_reserved_and_numeric_categories() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let assignable = Category::new("Assignable".to_string());
+        let mut estimate = Category::new("Estimate".to_string());
+        estimate.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&assignable)
+            .expect("create assignable category");
+        store
+            .create_category(&estimate)
+            .expect("create numeric category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        let visible_names: Vec<String> = app
+            .workflow_role_picker_row_indices()
+            .into_iter()
+            .map(|idx| app.category_rows[idx].name.clone())
+            .collect();
+
+        assert!(
+            visible_names.iter().any(|name| name == "Assignable"),
+            "regular categories should remain eligible: {visible_names:?}"
+        );
+        assert!(
+            !visible_names.iter().any(|name| name == "Estimate"),
+            "numeric categories should be filtered out: {visible_names:?}"
+        );
+        assert!(
+            !visible_names
+                .iter()
+                .any(|name| name == "Done" || name == "When" || name == "Entry"),
+            "reserved categories should be filtered out: {visible_names:?}"
+        );
+    }
+
+    #[test]
+    fn global_settings_workflow_picker_blocks_cross_role_conflicts() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: None,
+            })
+            .expect("seed workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowClaim);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open claim result picker");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt conflicting claim assignment");
+
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert_eq!(app.workflow_config.claim_category_id, None);
+        assert!(
+            app.status.contains("already the Ready Queue category"),
+            "expected cross-role conflict warning, got: {}",
+            app.status
+        );
     }
 
     #[test]
@@ -12658,6 +12943,61 @@ mod tests {
         );
 
         drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_gs_opens_global_settings_and_esc_returns_to_normal() {
+        let (store, db_path) = make_two_section_store("g-settings-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert_eq!(
+            app.global_settings_selected_kind(),
+            GlobalSettingsRow::AutoRefresh
+        );
+
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("Esc should close global settings");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.status, "Closed Global Settings");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_f10_opens_global_settings() {
+        let (store, db_path) = make_two_section_store("f10-settings-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::F(10), &agenda)
+            .expect("F10 should open global settings");
+
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert!(
+            app.status.contains("Global settings"),
+            "expected global settings status, got: {}",
+            app.status
+        );
+
         let _ = std::fs::remove_file(&db_path);
     }
 

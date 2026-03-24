@@ -2123,12 +2123,16 @@ impl App {
                     self.begin_global_search_session(agenda)?;
                     return Ok(false);
                 }
+                (NormalModePrefix::G, KeyCode::Char('s')) => {
+                    self.open_global_settings(agenda.store())?;
+                    return Ok(false);
+                }
                 (NormalModePrefix::G, KeyCode::Esc) => {
                     self.status = "Cancelled g-prefix command".to_string();
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga or g/)".to_string();
+                    self.status = "Unknown g command (use ga, g/, or gs)".to_string();
                     return Ok(false);
                 }
             }
@@ -2290,6 +2294,9 @@ impl App {
                     "View palette: Enter switch, n create, r rename, x delete, e edit view, Esc cancel"
                         .to_string();
             }
+            KeyCode::F(10) => {
+                self.open_global_settings(agenda.store())?;
+            }
             KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
                 self.open_category_manager_session();
@@ -2309,7 +2316,8 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status = "g-prefix: ga=All Items, g/=Global search".to_string();
+                self.status =
+                    "g-prefix: ga=All Items, g/=Global search, gs=Global Settings".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
@@ -3598,11 +3606,6 @@ impl App {
                 KeyCode::Char('l') | KeyCode::Char('L') => {
                     self.refresh(agenda.store())?;
                     self.status = "Reloaded view from store".to_string();
-                    return Ok(false);
-                }
-                KeyCode::Char('r') | KeyCode::Char('R') => {
-                    self.cycle_auto_refresh_interval();
-                    self.persist_auto_refresh_interval(agenda.store())?;
                     return Ok(false);
                 }
                 KeyCode::Char('z') => {

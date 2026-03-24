@@ -24,11 +24,6 @@ impl App {
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
     const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
 
-    fn is_auto_refresh_cycle_key(key: KeyEvent) -> bool {
-        key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
-    }
-
     pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
         self.transient_status.as_ref().and_then(|transient| {
             if Instant::now() < transient.expires_at {
@@ -49,8 +44,8 @@ impl App {
         }
     }
 
-    pub(crate) fn clear_transient_status_on_key(&mut self, key: KeyEvent) {
-        if self.transient_status.is_some() && !Self::is_auto_refresh_cycle_key(key) {
+    pub(crate) fn clear_transient_status_on_key(&mut self, _key: KeyEvent) {
+        if self.transient_status.is_some() {
             self.transient_status = None;
         }
     }
@@ -66,8 +61,8 @@ impl App {
         self.auto_refresh_interval.label()
     }
 
-    pub(crate) fn cycle_auto_refresh_interval(&mut self) {
-        self.auto_refresh_interval = self.auto_refresh_interval.next();
+    pub(crate) fn set_auto_refresh_interval(&mut self, interval: AutoRefreshInterval) {
+        self.auto_refresh_interval = interval;
         self.auto_refresh_last_tick = Instant::now();
         self.transient_status = Some(TransientStatus {
             message: format!("Auto-refresh interval: {}", self.auto_refresh_mode_label()),
@@ -111,6 +106,16 @@ impl App {
         if let Some(view_name) = &self.active_view_name {
             store.set_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY, view_name)?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn open_global_settings(&mut self, store: &Store) -> TuiResult<()> {
+        self.refresh(store)?;
+        self.load_auto_refresh_interval(store)?;
+        self.global_settings = Some(GlobalSettingsState::default());
+        self.mode = Mode::GlobalSettings;
+        self.status =
+            "Global settings: j/k move, Space or ←/→ cycle, Enter pick, Esc close".to_string();
         Ok(())
     }
 
