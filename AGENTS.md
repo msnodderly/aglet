@@ -455,8 +455,10 @@ CategoryCreate (`Mode::InputPanel` with `NameInputContext::CategoryCreate`) no
 longer has a parent-picker menu.
 
 Practical implications:
-- Parent is set when opening CategoryCreate (`n` uses selected category as the
-  default parent when allowed, otherwise root).
+- Parent is set when opening CategoryCreate:
+  `n` creates at the selected category's level (same parent, or root for
+  top-level categories), while `N` creates a child of the selected category
+  when allowed.
 - InputPanel focus cycle for CategoryCreate is now `Text -> Type -> Save ->
   Cancel` (no Parent focus row).
 - To change hierarchy after create, use Category Manager structural moves

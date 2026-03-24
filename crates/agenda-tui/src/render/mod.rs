@@ -3145,12 +3145,12 @@ impl App {
 
             // Suggestion list
             let cat_names = category_name_map(&self.categories);
-            let sugg_lines: Vec<Line<'_>> = item
-                .suggestions
-                .iter()
-                .enumerate()
-                .map(|(i, review)| {
-                    let is_cursor = sugg_focused && i == state.suggestion_cursor;
+            let reason_width = detail_chunks[1].width.saturating_sub(10) as usize;
+            let mut sugg_lines: Vec<Line<'_>> = Vec::new();
+            let mut selected_suggestion_line = Some(0usize);
+            for (i, review) in item.suggestions.iter().enumerate() {
+                    let is_selected_suggestion = i == state.suggestion_cursor;
+                    let is_cursor = sugg_focused && is_selected_suggestion;
                     let marker = if review.accepted { "[x]" } else { "[ ]" };
                     let marker_color = if review.accepted {
                         Color::LightGreen
@@ -3159,12 +3159,27 @@ impl App {
                     };
                     let category_name =
                         candidate_assignment_label(&review.suggestion.assignment, &cat_names);
+                    let provider_label = review
+                        .suggestion
+                        .model
+                        .as_ref()
+                        .map(|model| format!("{}:{model}", review.suggestion.provider_id))
+                        .unwrap_or_else(|| review.suggestion.provider_id.clone());
+                    let confidence_label = review
+                        .suggestion
+                        .confidence
+                        .map(|value| format!("{:.0}%", value * 100.0))
+                        .unwrap_or_else(|| "-".to_string());
                     let rationale = review
                         .suggestion
                         .rationale
                         .as_deref()
                         .unwrap_or("text match");
+                    let meta = format!("{provider_label} {confidence_label}");
 
+                    if is_selected_suggestion {
+                        selected_suggestion_line = Some(sugg_lines.len());
+                    }
                     if is_cursor {
                         // Cursor row: selected_row_style (Cyan bg + Black fg)
                         let sel = selected_row_style();
@@ -3179,18 +3194,18 @@ impl App {
                                 .bg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD)
                         };
-                        Line::from(vec![
+                        sugg_lines.push(Line::from(vec![
                             Span::styled("> ", sel),
                             Span::styled(marker, sel_marker),
                             Span::styled(" ", sel),
                             Span::styled(category_name, sel.add_modifier(Modifier::BOLD)),
                             Span::styled(
-                                format!("  ({rationale})"),
+                                format!("  [{meta}]"),
                                 Style::default().fg(Color::DarkGray).bg(Color::Cyan),
                             ),
-                        ])
+                        ]));
                     } else {
-                        Line::from(vec![
+                        sugg_lines.push(Line::from(vec![
                             Span::raw("  "),
                             Span::styled(marker, Style::default().fg(marker_color)),
                             Span::raw(" "),
@@ -3201,15 +3216,29 @@ impl App {
                                     .add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(
-                                format!("  ({rationale})"),
+                                format!("  [{meta}]"),
                                 Style::default().fg(Color::Gray),
                             ),
-                        ])
+                        ]));
                     }
-                })
-                .collect();
-            let sugg_scroll =
-                list_scroll_for_selected_line(detail_chunks[1], Some(state.suggestion_cursor));
+                    if is_selected_suggestion {
+                        let reason_prefix = if is_cursor { "    Reason: " } else { "      " };
+                        let wrapped_reason = wrap_text_for_board_cell(rationale, reason_width.max(12));
+                        for (line_index, line) in wrapped_reason.into_iter().enumerate() {
+                            let prefix = if line_index == 0 { reason_prefix } else { "            " };
+                            let style = if is_cursor {
+                                Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                            } else {
+                                Style::default().fg(Color::Gray)
+                            };
+                            sugg_lines.push(Line::from(Span::styled(
+                                format!("{prefix}{line}"),
+                                style,
+                            )));
+                        }
+                    }
+            }
+            let sugg_scroll = list_scroll_for_selected_line(detail_chunks[1], selected_suggestion_line);
             frame.render_widget(
                 Paragraph::new(sugg_lines).scroll((sugg_scroll, 0)),
                 detail_chunks[1],
@@ -3497,7 +3526,8 @@ impl App {
                     ]
                 } else {
                     vec![
-                        ("n", "new"),
+                        ("n", "new sibling"),
+                        ("N", "new child"),
                         ("r", "rename"),
                         ("x", "delete"),
                         ("S-\u{2191}/\u{2193}", "move"),
@@ -4085,6 +4115,15 @@ impl App {
                     };
                     let cat_name =
                         candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
+                    let provider_label = suggestion
+                        .model
+                        .as_ref()
+                        .map(|model| format!("{}:{model}", suggestion.provider_id))
+                        .unwrap_or_else(|| suggestion.provider_id.clone());
+                    let confidence_label = suggestion
+                        .confidence
+                        .map(|value| format!("{:.0}%", value * 100.0))
+                        .unwrap_or_else(|| "-".to_string());
                     let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
                     let base_style = if is_cursor {
                         Style::default().fg(Color::White).bg(Color::DarkGray)
@@ -4099,7 +4138,10 @@ impl App {
                     lines.push(Line::from(vec![
                         Span::styled(format!("{marker} "), marker_style),
                         Span::styled(cat_name.clone(), base_style),
-                        Span::styled(format!("  ({rationale})"), dim_style),
+                        Span::styled(
+                            format!("  [{provider_label} {confidence_label}] ({rationale})"),
+                            dim_style,
+                        ),
                     ]));
                 }
                 lines.push(Line::from(Span::styled(
@@ -4737,10 +4779,32 @@ impl App {
                 self.auto_refresh_mode_label()
             ))),
             ListItem::new(Line::from(format!(
-                "Classification mode < {} >",
-                modes::classification::continuous_mode_label(
-                    self.classification_ui.config.continuous_mode
+                "Literal classify    < {} >",
+                modes::classification::literal_mode_label(
+                    self.classification_ui.config.literal_mode
                 )
+            ))),
+            ListItem::new(Line::from(format!(
+                "Semantic classify   < {} >",
+                modes::classification::semantic_mode_label(
+                    self.classification_ui.config.semantic_mode
+                )
+            ))),
+            ListItem::new(Line::from(format!(
+                "Ollama enabled      < {} >",
+                if self.classification_ui.config.ollama.enabled {
+                    "On"
+                } else {
+                    "Off"
+                }
+            ))),
+            ListItem::new(Line::from(format!(
+                "Ollama base URL     {}",
+                self.classification_ui.config.ollama.base_url
+            ))),
+            ListItem::new(Line::from(format!(
+                "Ollama model        {}",
+                self.classification_ui.config.ollama.model
             ))),
             ListItem::new(Line::from(format!("Ready category       {ready_name}"))),
             ListItem::new(Line::from(format!("Claim category       {claim_name}"))),
@@ -4762,7 +4826,7 @@ impl App {
 
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "j/k:move  Space/←/→:cycle  Enter:pick  Esc:close",
+                "j/k:move  Space/←/→:cycle/toggle  Enter:pick/edit  Esc:close",
                 Style::default().fg(MUTED_TEXT_COLOR),
             ))),
             outer[2],
@@ -4940,9 +5004,10 @@ impl App {
                     format!("Delete '{}'? y:confirm Esc:cancel", category_name)
                 }
             });
-        let classification_mode = modes::classification::continuous_mode_label(
-            self.classification_ui.config.continuous_mode,
-        );
+        let literal_mode =
+            modes::classification::literal_mode_label(self.classification_ui.config.literal_mode);
+        let semantic_mode =
+            modes::classification::semantic_mode_label(self.classification_ui.config.semantic_mode);
         let ready_name = self
             .workflow_config
             .ready_category_id
@@ -4956,12 +5021,13 @@ impl App {
             .map(|c| c.name.as_str())
             .unwrap_or("(unset)");
         let summary_line = Line::from(vec![
-            Span::styled("Auto classification", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Literal", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
-            Span::styled(
-                classification_mode,
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(literal_mode, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Semantic", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(semantic_mode, Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
@@ -5430,6 +5496,11 @@ impl App {
                             row.enable_implicit_string,
                         ),
                         flag_line(
+                            details_focus == CategoryManagerDetailsFocus::SemanticMatch,
+                            "Semantic Match",
+                            row.enable_semantic_classification,
+                        ),
+                        flag_line(
                             details_focus == CategoryManagerDetailsFocus::MatchCategoryName,
                             "Match category name",
                             row.match_category_name,
@@ -5648,6 +5719,9 @@ impl App {
                         CategoryManagerDetailsFocus::AutoMatch => {
                             "Enable fallback text matching for this category"
                         }
+                        CategoryManagerDetailsFocus::SemanticMatch => {
+                            "Enable LLM-backed category suggestions for this category"
+                        }
                         CategoryManagerDetailsFocus::MatchCategoryName => {
                             "Include the literal category name alongside also-match terms"
                         }
@@ -5818,8 +5892,8 @@ impl App {
                 }
             };
             let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
-            let current_mode = modes::classification::continuous_mode_label(
-                self.classification_ui.config.continuous_mode,
+            let current_mode = modes::classification::literal_mode_label(
+                self.classification_ui.config.literal_mode,
             );
             let w = area.width.min(54);
             let h = 15u16;

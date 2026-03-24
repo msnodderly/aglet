@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use jiff::Timestamp;
 use rust_decimal::Decimal;
@@ -6,8 +7,9 @@ use uuid::Uuid;
 
 use crate::classification::{
     ClassificationCandidate, ClassificationConfig, ClassificationService, ClassificationSuggestion,
-    ContinuousMode, ImplicitStringProvider, SuggestionStatus, WhenParserProvider,
-    PROVIDER_ID_WHEN_PARSER,
+    ImplicitStringProvider, LiteralClassificationMode, OllamaProvider, OllamaTransport,
+    ReqwestOllamaTransport, SemanticClassificationMode, SuggestionStatus, WhenParserProvider,
+    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
 use crate::engine::{
@@ -32,6 +34,7 @@ pub struct Agenda<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
+    ollama_transport: Arc<dyn OllamaTransport>,
 }
 
 /// The net category changes that would result from a section-move operation,
@@ -49,12 +52,28 @@ pub struct LinkItemsResult {
     pub created: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateDisposition {
+    Skip,
+    AutoApply,
+    QueueReview,
+}
+
 impl<'a> Agenda<'a> {
     pub fn new(store: &'a Store, classifier: &'a dyn Classifier) -> Self {
+        Self::with_ollama_transport(store, classifier, Arc::new(ReqwestOllamaTransport))
+    }
+
+    pub fn with_ollama_transport(
+        store: &'a Store,
+        classifier: &'a dyn Classifier,
+        ollama_transport: Arc<dyn OllamaTransport>,
+    ) -> Self {
         Self {
             store,
             classifier,
             date_parser: BasicDateParser::default(),
+            ollama_transport,
         }
     }
 
@@ -648,10 +667,34 @@ impl<'a> Agenda<'a> {
         self.store
             .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
 
-        match cfg.continuous_mode {
-            ContinuousMode::Off => {}
-            ContinuousMode::AutoApply => {
-                for candidate in candidates {
+        for candidate in candidates {
+            if matches!(
+                candidate.assignment,
+                crate::classification::CandidateAssignment::When(_)
+            ) {
+                let suggestion = ClassificationSuggestion::from_candidate(
+                    &candidate,
+                    item_revision_hash.clone(),
+                    SuggestionStatus::Accepted,
+                );
+                if self
+                    .store
+                    .get_classification_suggestion(suggestion.id)?
+                    .is_some_and(|existing| existing.status == SuggestionStatus::Rejected)
+                {
+                    continue;
+                }
+                self.store.upsert_suggestion(&suggestion)?;
+                merge_process_results(
+                    &mut result,
+                    self.apply_auto_classification_candidate(item_id, &candidate)?,
+                );
+                continue;
+            }
+
+            match self.candidate_status_for_config(&cfg, &candidate) {
+                CandidateDisposition::Skip => {}
+                CandidateDisposition::AutoApply => {
                     let suggestion = ClassificationSuggestion::from_candidate(
                         &candidate,
                         item_revision_hash.clone(),
@@ -670,30 +713,8 @@ impl<'a> Agenda<'a> {
                         self.apply_auto_classification_candidate(item_id, &candidate)?,
                     );
                 }
-            }
-            ContinuousMode::SuggestReview => {
-                for candidate in candidates {
-                    if matches!(
-                        candidate.assignment,
-                        crate::classification::CandidateAssignment::When(_)
-                    ) {
-                        let suggestion = ClassificationSuggestion::from_candidate(
-                            &candidate,
-                            item_revision_hash.clone(),
-                            SuggestionStatus::Accepted,
-                        );
-                        if self
-                            .store
-                            .get_classification_suggestion(suggestion.id)?
-                            .is_some_and(|existing| existing.status == SuggestionStatus::Rejected)
-                        {
-                            continue;
-                        }
-                        self.store.upsert_suggestion(&suggestion)?;
-                        merge_process_results(
-                            &mut result,
-                            self.apply_auto_classification_candidate(item_id, &candidate)?,
-                        );
+                CandidateDisposition::QueueReview => {
+                    if self.candidate_assignment_already_present(item_id, &candidate)? {
                         continue;
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
@@ -720,11 +741,29 @@ impl<'a> Agenda<'a> {
         Ok(result)
     }
 
+    fn candidate_assignment_already_present(
+        &self,
+        item_id: ItemId,
+        candidate: &ClassificationCandidate,
+    ) -> Result<bool> {
+        match candidate.assignment {
+            crate::classification::CandidateAssignment::Category(category_id) => Ok(self
+                .store
+                .get_assignments_for_item(item_id)?
+                .contains_key(&category_id)),
+            crate::classification::CandidateAssignment::When(when_date) => Ok(self
+                .store
+                .get_item(item_id)?
+                .when_date
+                .is_some_and(|current| current == when_date)),
+        }
+    }
+
     fn process_category_change(&self, category_id: CategoryId) -> Result<EvaluateAllItemsResult> {
         let cfg = self.store.get_classification_config()?;
         let enable_implicit_string = cfg.should_run_continuously()
             && cfg.run_on_category_change
-            && cfg.continuous_mode == ContinuousMode::AutoApply;
+            && cfg.literal_mode == LiteralClassificationMode::AutoApply;
         evaluate_all_items_with_options(
             self.store,
             self.classifier,
@@ -735,20 +774,36 @@ impl<'a> Agenda<'a> {
         )
     }
 
-    fn classification_service(
-        &self,
+    fn classification_service<'b>(
+        &'b self,
         reference_date: jiff::civil::Date,
-        _cfg: &ClassificationConfig,
+        cfg: &'b ClassificationConfig,
         allow_when_parser: bool,
-    ) -> ClassificationService<'_> {
+    ) -> ClassificationService<'b> {
         let mut providers = Vec::new();
-        providers.push(Box::new(ImplicitStringProvider {
-            classifier: self.classifier,
-        }) as _);
-        if allow_when_parser {
+        if cfg.literal_mode != LiteralClassificationMode::Off
+            && cfg.provider_enabled(PROVIDER_ID_IMPLICIT_STRING)
+        {
+            providers.push(Box::new(ImplicitStringProvider {
+                classifier: self.classifier,
+            }) as _);
+        }
+        if allow_when_parser
+            && cfg.literal_mode != LiteralClassificationMode::Off
+            && cfg.provider_enabled(PROVIDER_ID_WHEN_PARSER)
+        {
             providers.push(Box::new(WhenParserProvider {
                 parser: self.date_parser,
                 reference_date,
+            }) as _);
+        }
+        if cfg.semantic_mode == SemanticClassificationMode::SuggestReview
+            && cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
+            && cfg.ollama.enabled
+        {
+            providers.push(Box::new(OllamaProvider {
+                settings: &cfg.ollama,
+                transport: self.ollama_transport.as_ref(),
             }) as _);
         }
         ClassificationService::new(self.store, providers)
@@ -934,7 +989,26 @@ impl<'a> Agenda<'a> {
     }
 
     fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {
-        cfg.should_run_continuously() && cfg.continuous_mode == ContinuousMode::AutoApply
+        cfg.should_run_continuously() && cfg.literal_mode == LiteralClassificationMode::AutoApply
+    }
+
+    fn candidate_status_for_config(
+        &self,
+        cfg: &ClassificationConfig,
+        candidate: &ClassificationCandidate,
+    ) -> CandidateDisposition {
+        match candidate.provider.as_str() {
+            PROVIDER_ID_IMPLICIT_STRING => match cfg.literal_mode {
+                LiteralClassificationMode::Off => CandidateDisposition::Skip,
+                LiteralClassificationMode::AutoApply => CandidateDisposition::AutoApply,
+                LiteralClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
+            },
+            PROVIDER_ID_OLLAMA_OPENAI_COMPAT => match cfg.semantic_mode {
+                SemanticClassificationMode::Off => CandidateDisposition::Skip,
+                SemanticClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
+            },
+            _ => CandidateDisposition::Skip,
+        }
     }
 
     fn apply_auto_classification_candidate(
@@ -1471,7 +1545,11 @@ mod tests {
     use rust_decimal::Decimal;
 
     use super::Agenda;
-    use crate::classification::{ClassificationConfig, ContinuousMode};
+    use crate::classification::{
+        ClassificationConfig, LiteralClassificationMode, OllamaProviderSettings, OllamaTransport,
+        SemanticClassificationMode, SuggestionStatus, PROVIDER_ID_IMPLICIT_STRING,
+        PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
+    };
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
@@ -1559,6 +1637,22 @@ mod tests {
         id
     }
 
+    #[derive(Default)]
+    struct FakeOllamaTransport {
+        response: Option<String>,
+    }
+
+    impl OllamaTransport for FakeOllamaTransport {
+        fn complete(
+            &self,
+            _settings: &OllamaProviderSettings,
+            _system_prompt: &str,
+            _user_prompt: &str,
+        ) -> crate::error::Result<Option<String>> {
+            Ok(self.response.clone())
+        }
+    }
+
     #[test]
     fn create_item_triggers_classification() {
         let store = Store::open_memory().unwrap();
@@ -1639,7 +1733,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -1700,6 +1795,359 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(!assignments.contains_key(&travel.id));
+    }
+
+    #[test]
+    fn literal_auto_apply_and_semantic_off_keeps_current_deterministic_behavior() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::Off,
+            ..ClassificationConfig::default()
+        };
+        store.set_classification_config(&cfg).unwrap();
+
+        let work = category("Work", true);
+        store.create_category(&work).unwrap();
+
+        let item = Item::new("Work trip planning".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn literal_auto_apply_and_semantic_review_can_run_together() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Travel","confidence":0.9,"rationale":"trip planning"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let work = category("Work", true);
+        let travel = category("Travel", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Work trip planning".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&work.id));
+        assert!(!assignments.contains_key(&travel.id));
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].provider_id, PROVIDER_ID_OLLAMA_OPENAI_COMPAT);
+        assert!(matches!(
+            pending[0].assignment,
+            crate::classification::CandidateAssignment::Category(category_id)
+                if category_id == travel.id
+        ));
+    }
+
+    #[test]
+    fn semantic_review_does_not_queue_duplicate_for_already_assigned_category() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Travel","confidence":0.95,"rationale":"travel intent"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let travel = category("Travel", true);
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Conference travel planning".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&travel.id));
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert!(
+            pending.is_empty(),
+            "should not queue semantic duplicate for already-assigned category"
+        );
+    }
+
+    #[test]
+    fn semantic_mode_can_run_without_literal_matching() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Travel","confidence":0.7,"rationale":"travel intent"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::Off,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let travel = category("Travel", true);
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Plan a trip soon".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&travel.id));
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn literal_and_semantic_suggest_review_queue_both_category_suggestions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Travel","confidence":0.88,"rationale":"trip planning"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let work = category("Work", true);
+        let travel = category("Travel", false);
+        store.create_category(&work).unwrap();
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Work trip planning".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&work.id));
+        assert!(!assignments.contains_key(&travel.id));
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().any(|suggestion| {
+            suggestion.provider_id == PROVIDER_ID_IMPLICIT_STRING
+                && matches!(
+                    suggestion.assignment,
+                    crate::classification::CandidateAssignment::Category(category_id)
+                        if category_id == work.id
+                )
+        }));
+        assert!(pending.iter().any(|suggestion| {
+            suggestion.provider_id == PROVIDER_ID_OLLAMA_OPENAI_COMPAT
+                && matches!(
+                    suggestion.assignment,
+                    crate::classification::CandidateAssignment::Category(category_id)
+                        if category_id == travel.id
+                )
+        }));
+    }
+
+    #[test]
+    fn semantic_matching_is_independent_from_implicit_matching() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Travel","confidence":0.85,"rationale":"trip intent"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::Off,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let mut travel = category("Travel", false);
+        travel.enable_semantic_classification = true;
+        store.create_category(&travel).unwrap();
+
+        let item = Item::new("Need flights and a hotel".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(matches!(
+            pending[0].assignment,
+            crate::classification::CandidateAssignment::Category(category_id)
+                if category_id == travel.id
+        ));
+    }
+
+    #[test]
+    fn when_parser_follows_literal_policy_and_is_skipped_when_literal_mode_is_off() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::Off,
+            semantic_mode: SemanticClassificationMode::Off,
+            ..ClassificationConfig::default()
+        };
+        store.set_classification_config(&cfg).unwrap();
+
+        let item = Item::new("Book travel next Tuesday".to_string());
+        let result = agenda
+            .create_item_with_reference_date(&item, date(2026, 3, 20))
+            .unwrap();
+        assert!(result.new_assignments.is_empty());
+
+        let when_id = store
+            .get_hierarchy()
+            .expect("load hierarchy")
+            .into_iter()
+            .find(|category| category.name == RESERVED_CATEGORY_NAME_WHEN)
+            .expect("reserved When category present")
+            .id;
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&when_id));
+    }
+
+    #[test]
+    #[ignore = "requires local Ollama with a mistral-compatible model running"]
+    fn local_ollama_smoke_test_current_item_review_flow() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.ollama.base_url = "http://127.0.0.1:11434/v1".to_string();
+        cfg.ollama.model = "mistral".to_string();
+        cfg.ollama.timeout_secs = 30;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let mut work = category("Work", true);
+        work.enable_semantic_classification = false;
+        let mut travel = category("Travel", false);
+        travel.enable_semantic_classification = true;
+        store.create_category(&work).unwrap();
+        store.create_category(&travel).unwrap();
+
+        let mut item = Item::new("Work trip planning for conference travel".to_string());
+        item.note = Some("Book flights, hotel, and local transport".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&work.id),
+            "expected literal Work assignment to auto-apply"
+        );
+        assert!(
+            !assignments.contains_key(&travel.id),
+            "semantic Travel should queue for review before acceptance"
+        );
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert!(
+            pending.iter().any(|suggestion| {
+                suggestion.provider_id == PROVIDER_ID_OLLAMA_OPENAI_COMPAT
+                    && matches!(
+                        suggestion.assignment,
+                        crate::classification::CandidateAssignment::Category(category_id)
+                            if category_id == travel.id
+                    )
+            }),
+            "expected a pending Ollama travel suggestion, got: {pending:?}"
+        );
+
+        let travel_suggestion = pending
+            .iter()
+            .find(|suggestion| {
+                matches!(
+                    suggestion.assignment,
+                    crate::classification::CandidateAssignment::Category(category_id)
+                        if category_id == travel.id
+                )
+            })
+            .expect("travel suggestion present");
+
+        agenda
+            .accept_classification_suggestion(travel_suggestion.id)
+            .unwrap();
+
+        let reloaded_assignments = store.get_assignments_for_item(item.id).unwrap();
+        let travel_assignment = reloaded_assignments
+            .get(&travel.id)
+            .expect("travel assignment should exist after acceptance");
+        assert_eq!(travel_assignment.source, AssignmentSource::SuggestionAccepted);
+
+        let reloaded_suggestion = store
+            .get_classification_suggestion(travel_suggestion.id)
+            .unwrap()
+            .expect("accepted suggestion exists");
+        assert_eq!(reloaded_suggestion.status, SuggestionStatus::Accepted);
     }
 
     #[test]

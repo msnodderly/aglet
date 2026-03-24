@@ -4539,6 +4539,9 @@ impl App {
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
+            Some(NameInputContext::OllamaBaseUrl) | Some(NameInputContext::OllamaModel) => {
+                Mode::GlobalSettings
+            }
             None => Mode::Normal,
         }
     }
@@ -4822,6 +4825,34 @@ impl App {
                 self.name_input_context = None;
                 self.mode = Mode::CategoryManager;
                 self.status = "Unexpected save dispatch for CategoryCreate".to_string();
+            }
+            Some(NameInputContext::OllamaBaseUrl) => {
+                if input_text.is_empty() {
+                    self.status = "Ollama base URL cannot be empty".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.base_url = input_text.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("Ollama base URL set to '{}'", input_text);
+            }
+            Some(NameInputContext::OllamaModel) => {
+                if input_text.is_empty() {
+                    self.status = "Ollama model cannot be empty".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.model = input_text.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("Ollama model set to '{}'", input_text);
             }
             None => {
                 self.input_panel = None;
@@ -5712,6 +5743,7 @@ mod tests {
             is_exclusive,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         }

@@ -37,27 +37,89 @@ impl App {
         Ok(())
     }
 
-    fn cycle_global_settings_classification_mode(
+    fn cycle_global_settings_literal_mode(
         &mut self,
         agenda: &Agenda<'_>,
         forward: bool,
     ) -> TuiResult<()> {
-        let current_index = modes::classification::continuous_mode_index(
-            self.classification_ui.config.continuous_mode,
-        );
+        let current_index =
+            modes::classification::literal_mode_index(self.classification_ui.config.literal_mode);
         let next_index = next_index(current_index, 3, if forward { 1 } else { -1 });
-        let mode = modes::classification::continuous_mode_from_index(next_index);
+        let mode = modes::classification::literal_mode_from_index(next_index);
 
         let mut config = self.classification_ui.config.clone();
-        config.continuous_mode = mode;
-        config.enabled = config.continuous_mode != ContinuousMode::Off;
+        config.literal_mode = mode;
+        config.sync_enabled_flag();
         agenda.store().set_classification_config(&config)?;
         self.refresh(agenda.store())?;
         self.status = format!(
-            "Classification mode: {}",
-            modes::classification::continuous_mode_label(mode)
+            "Literal classification: {}",
+            modes::classification::literal_mode_label(mode)
         );
         Ok(())
+    }
+
+    fn cycle_global_settings_semantic_mode(
+        &mut self,
+        agenda: &Agenda<'_>,
+        forward: bool,
+    ) -> TuiResult<()> {
+        let current_index =
+            modes::classification::semantic_mode_index(self.classification_ui.config.semantic_mode);
+        let next_index = next_index(current_index, 2, if forward { 1 } else { -1 });
+        let mode = modes::classification::semantic_mode_from_index(next_index);
+
+        let mut config = self.classification_ui.config.clone();
+        config.semantic_mode = mode;
+        config.sync_enabled_flag();
+        agenda.store().set_classification_config(&config)?;
+        self.refresh(agenda.store())?;
+        self.status = format!(
+            "Semantic classification: {}",
+            modes::classification::semantic_mode_label(mode)
+        );
+        Ok(())
+    }
+
+    fn toggle_global_settings_ollama_enabled(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let mut config = self.classification_ui.config.clone();
+        config.ollama.enabled = !config.ollama.enabled;
+        config.set_provider_enabled(
+            agenda_core::classification::PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
+            config.ollama.enabled,
+        );
+        agenda.store().set_classification_config(&config)?;
+        self.refresh(agenda.store())?;
+        self.status = format!(
+            "Ollama {}",
+            if self.classification_ui.config.ollama.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        Ok(())
+    }
+
+    fn open_global_settings_ollama_text_input(&mut self, context: NameInputContext) {
+        let (current_value, label) = match context {
+            NameInputContext::OllamaBaseUrl => (
+                self.classification_ui.config.ollama.base_url.clone(),
+                "Ollama base URL",
+            ),
+            NameInputContext::OllamaModel => (
+                self.classification_ui.config.ollama.model.clone(),
+                "Ollama model",
+            ),
+            _ => return,
+        };
+        self.input_panel = Some(input_panel::InputPanel::new_name_input(
+            &current_value,
+            label,
+        ));
+        self.name_input_context = Some(context);
+        self.mode = Mode::InputPanel;
+        self.status = format!("{label}: edit text and press Enter to save");
     }
 
     fn open_global_settings_workflow_picker(&mut self) {
@@ -114,27 +176,57 @@ impl App {
                     GlobalSettingsRow::AutoRefresh => {
                         self.cycle_global_settings_auto_refresh(agenda, true)?;
                     }
-                    GlobalSettingsRow::ClassificationMode => {
-                        self.cycle_global_settings_classification_mode(agenda, true)?;
+                    GlobalSettingsRow::LiteralClassificationMode => {
+                        self.cycle_global_settings_literal_mode(agenda, true)?;
                     }
-                    GlobalSettingsRow::WorkflowReady | GlobalSettingsRow::WorkflowClaim => {}
+                    GlobalSettingsRow::SemanticClassificationMode => {
+                        self.cycle_global_settings_semantic_mode(agenda, true)?;
+                    }
+                    GlobalSettingsRow::OllamaEnabled => {
+                        self.toggle_global_settings_ollama_enabled(agenda)?;
+                    }
+                    GlobalSettingsRow::OllamaBaseUrl
+                    | GlobalSettingsRow::OllamaModel
+                    | GlobalSettingsRow::WorkflowReady
+                    | GlobalSettingsRow::WorkflowClaim => {}
                 }
             }
             KeyCode::Left | KeyCode::Char('h') => match self.global_settings_selected_kind() {
                 GlobalSettingsRow::AutoRefresh => {
                     self.cycle_global_settings_auto_refresh(agenda, false)?;
                 }
-                GlobalSettingsRow::ClassificationMode => {
-                    self.cycle_global_settings_classification_mode(agenda, false)?;
+                GlobalSettingsRow::LiteralClassificationMode => {
+                    self.cycle_global_settings_literal_mode(agenda, false)?;
                 }
-                GlobalSettingsRow::WorkflowReady | GlobalSettingsRow::WorkflowClaim => {}
+                GlobalSettingsRow::SemanticClassificationMode => {
+                    self.cycle_global_settings_semantic_mode(agenda, false)?;
+                }
+                GlobalSettingsRow::OllamaEnabled => {
+                    self.toggle_global_settings_ollama_enabled(agenda)?;
+                }
+                GlobalSettingsRow::OllamaBaseUrl
+                | GlobalSettingsRow::OllamaModel
+                | GlobalSettingsRow::WorkflowReady
+                | GlobalSettingsRow::WorkflowClaim => {}
             },
             KeyCode::Enter => match self.global_settings_selected_kind() {
                 GlobalSettingsRow::AutoRefresh => {
                     self.cycle_global_settings_auto_refresh(agenda, true)?;
                 }
-                GlobalSettingsRow::ClassificationMode => {
-                    self.cycle_global_settings_classification_mode(agenda, true)?;
+                GlobalSettingsRow::LiteralClassificationMode => {
+                    self.cycle_global_settings_literal_mode(agenda, true)?;
+                }
+                GlobalSettingsRow::SemanticClassificationMode => {
+                    self.cycle_global_settings_semantic_mode(agenda, true)?;
+                }
+                GlobalSettingsRow::OllamaEnabled => {
+                    self.toggle_global_settings_ollama_enabled(agenda)?;
+                }
+                GlobalSettingsRow::OllamaBaseUrl => {
+                    self.open_global_settings_ollama_text_input(NameInputContext::OllamaBaseUrl);
+                }
+                GlobalSettingsRow::OllamaModel => {
+                    self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
                 }
                 GlobalSettingsRow::WorkflowReady | GlobalSettingsRow::WorkflowClaim => {
                     self.open_global_settings_workflow_picker();

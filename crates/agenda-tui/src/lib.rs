@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
-    CandidateAssignment, ClassificationConfig, ClassificationSuggestion, ContinuousMode,
+    CandidateAssignment, ClassificationConfig, ClassificationSuggestion, LiteralClassificationMode,
+    SemanticClassificationMode,
 };
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
@@ -171,6 +172,7 @@ struct CategoryListRow {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
+    enable_semantic_classification: bool,
     match_category_name: bool,
     value_kind: CategoryValueKind,
 }
@@ -440,6 +442,10 @@ enum NameInputContext {
     WhenDateEdit,
     /// Creating a new category via InputPanel.
     CategoryCreate,
+    /// Editing the Ollama base URL from Global Settings.
+    OllamaBaseUrl,
+    /// Editing the Ollama model from Global Settings.
+    OllamaModel,
 }
 
 /// Pending state for an in-flight numeric cell edit.
@@ -520,6 +526,7 @@ enum CategoryManagerFocus {
 enum CategoryManagerDetailsFocus {
     Exclusive,
     AutoMatch,
+    SemanticMatch,
     MatchCategoryName,
     Actionable,
     AlsoMatch,
@@ -550,7 +557,8 @@ impl CategoryManagerDetailsFocus {
         } else {
             match self {
                 Self::Exclusive => Self::AutoMatch,
-                Self::AutoMatch => Self::MatchCategoryName,
+                Self::AutoMatch => Self::SemanticMatch,
+                Self::SemanticMatch => Self::MatchCategoryName,
                 Self::MatchCategoryName => Self::Actionable,
                 Self::Actionable => Self::AlsoMatch,
                 Self::AlsoMatch => Self::Note,
@@ -580,7 +588,8 @@ impl CategoryManagerDetailsFocus {
             match self {
                 Self::Exclusive => Self::Note,
                 Self::AutoMatch => Self::Exclusive,
-                Self::MatchCategoryName => Self::AutoMatch,
+                Self::SemanticMatch => Self::AutoMatch,
+                Self::MatchCategoryName => Self::SemanticMatch,
                 Self::Actionable => Self::MatchCategoryName,
                 Self::AlsoMatch => Self::Actionable,
                 Self::Note => Self::AlsoMatch,
@@ -675,21 +684,29 @@ enum WorkflowRolePickerOrigin {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum GlobalSettingsRow {
     AutoRefresh,
-    ClassificationMode,
+    LiteralClassificationMode,
+    SemanticClassificationMode,
+    OllamaEnabled,
+    OllamaBaseUrl,
+    OllamaModel,
     WorkflowReady,
     WorkflowClaim,
 }
 
 impl GlobalSettingsRow {
     fn count() -> usize {
-        4
+        8
     }
 
     fn from_index(index: usize) -> Self {
         match index {
             0 => Self::AutoRefresh,
-            1 => Self::ClassificationMode,
-            2 => Self::WorkflowReady,
+            1 => Self::LiteralClassificationMode,
+            2 => Self::SemanticClassificationMode,
+            3 => Self::OllamaEnabled,
+            4 => Self::OllamaBaseUrl,
+            5 => Self::OllamaModel,
+            6 => Self::WorkflowReady,
             _ => Self::WorkflowClaim,
         }
     }
@@ -1572,7 +1589,10 @@ mod tests {
         WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
-    use agenda_core::classification::{ClassificationConfig, ContinuousMode};
+    use agenda_core::classification::{
+        CandidateAssignment, ClassificationConfig, ClassificationSuggestion,
+        LiteralClassificationMode, SemanticClassificationMode, SuggestionStatus,
+    };
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
@@ -1581,10 +1601,11 @@ mod tests {
     };
     use agenda_core::store::Store;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use jiff::civil::Date;
+    use jiff::{civil::Date, Timestamp};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::Terminal;
+    use uuid::Uuid;
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
         rows.iter().map(|row| (row.id, row.depth)).collect()
@@ -5098,6 +5119,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5110,6 +5132,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            enable_semantic_classification: true,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5131,6 +5154,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5143,6 +5167,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -7701,7 +7726,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -7755,7 +7781,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -7798,7 +7825,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -7834,7 +7862,7 @@ mod tests {
     }
 
     #[test]
-    fn global_settings_classification_mode_row_applies_selection() {
+    fn global_settings_literal_classification_row_applies_selection() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7854,18 +7882,135 @@ mod tests {
             .expect("move to classification mode row");
         assert_eq!(
             app.global_settings_selected_kind(),
-            GlobalSettingsRow::ClassificationMode
+            GlobalSettingsRow::LiteralClassificationMode
         );
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("apply classification mode");
 
         let reloaded = store.get_classification_config().expect("reload config");
-        assert_eq!(reloaded.continuous_mode, ContinuousMode::SuggestReview);
+        assert_eq!(
+            reloaded.literal_mode,
+            LiteralClassificationMode::SuggestReview
+        );
         assert_eq!(app.mode, Mode::GlobalSettings);
         assert!(
-            app.status.contains("Classification mode: Suggest/Review"),
+            app.status
+                .contains("Literal classification: Suggest/Review"),
             "expected classification mode status, got: {}",
             app.status
+        );
+    }
+
+    #[test]
+    fn global_settings_ollama_text_rows_persist_updates() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut config = ClassificationConfig::default();
+        config.ollama.base_url = "old".to_string();
+        config.ollama.model = "oldmodel".to_string();
+        store
+            .set_classification_config(&config)
+            .expect("persist initial config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        open_global_settings_for_test(&mut app, &agenda);
+
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::OllamaBaseUrl);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ollama base url input");
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::OllamaBaseUrl));
+        for _ in 0.."old".len() {
+            app.handle_key(KeyCode::Backspace, &agenda)
+                .expect("clear old base url");
+        }
+        for ch in "http://localhost:11434/v1".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type new base url");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save ollama base url");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert!(app.status.contains("Ollama base URL set to"));
+
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::OllamaModel);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ollama model input");
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::OllamaModel));
+        for _ in 0.."oldmodel".len() {
+            app.handle_key(KeyCode::Backspace, &agenda)
+                .expect("clear old model");
+        }
+        for ch in "mistral".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type new model");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save ollama model");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert!(app.status.contains("Ollama model set to 'mistral'"));
+
+        let reloaded = store.get_classification_config().expect("reload config");
+        assert_eq!(reloaded.ollama.base_url, "http://localhost:11434/v1");
+        assert_eq!(reloaded.ollama.model, "mistral");
+    }
+
+    #[test]
+    fn suggestion_review_render_shows_provider_model_confidence_and_full_reasoning() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Travel".to_string());
+        store.create_category(&category).expect("create category");
+        let item = Item::new("Book flights".to_string());
+        store.create_item(&item).expect("create item");
+
+        store
+            .upsert_suggestion(&ClassificationSuggestion {
+                id: Uuid::new_v4(),
+                item_id: item.id,
+                assignment: CandidateAssignment::Category(category.id),
+                provider_id: "ollama_openai_compat".to_string(),
+                model: Some("mistral".to_string()),
+                confidence: Some(0.9),
+                rationale: Some(
+                    "trip planning because the item involves flights hotel local transport and an away from home conference stay END-OF-RATIONALE".to_string(),
+                ),
+                status: SuggestionStatus::Pending,
+                context_hash: "ctx".to_string(),
+                item_revision_hash: "rev".to_string(),
+                created_at: Timestamp::now(),
+                decided_at: None,
+            })
+            .expect("persist suggestion");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("open suggestion review");
+        assert_eq!(app.mode, Mode::SuggestionReview);
+
+        let backend = TestBackend::new(180, 32);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("ollama_openai_compat:mistral 90%"),
+            "review overlay should show provider/model/confidence metadata: {rendered}"
+        );
+        assert!(
+            rendered.contains("Reason:"),
+            "review overlay should label the full rationale block: {rendered}"
+        );
+        assert!(
+            rendered.contains("END-OF-RATIONALE"),
+            "review overlay should show rationale: {rendered}"
         );
     }
 
@@ -7889,7 +8034,7 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Auto classification: Auto-apply"),
+            rendered.contains("Literal: Auto-apply"),
             "category manager should show classification summary: {rendered}"
         );
         assert!(
@@ -9972,7 +10117,7 @@ mod tests {
     }
 
     #[test]
-    fn category_create_panel_child_creates_under_selected_parent() {
+    fn category_create_panel_n_creates_sibling_under_selected_parent() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -9986,34 +10131,37 @@ mod tests {
         let parent = Category::new("Parent".to_string());
         store.create_category(&parent).expect("create parent");
 
+        let mut selected = Category::new("Selected".to_string());
+        selected.parent = Some(parent.id);
+        store.create_category(&selected).expect("create selected");
+
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
-        app.set_category_selection_by_id(parent.id);
+        app.set_category_selection_by_id(selected.id);
 
         app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
             .expect("open create panel");
         assert_eq!(app.mode, Mode::InputPanel);
-        // Panel should have parent pre-filled
         assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(parent.id));
+        assert!(app.status.contains("same level as Selected"));
 
-        for c in "Child".chars() {
+        for c in "Sibling".chars() {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
-                .expect("type child name");
+                .expect("type sibling name");
         }
-        // Tab to Parent, then Tab to TypePicker, then S to save
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to parent");
+            .expect("tab to type picker");
         app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save category");
 
-        let child = app
+        let sibling = app
             .categories
             .iter()
-            .find(|c| c.name == "Child")
-            .expect("child created");
-        assert_eq!(child.parent, Some(parent.id));
+            .find(|c| c.name == "Sibling")
+            .expect("sibling created");
+        assert_eq!(sibling.parent, Some(parent.id));
         assert_eq!(app.mode, Mode::CategoryManager);
 
         drop(store);
@@ -10021,13 +10169,13 @@ mod tests {
     }
 
     #[test]
-    fn category_create_panel_tab_cycles_without_parent_picker_and_keeps_default_parent() {
+    fn category_create_panel_upper_n_creates_child_of_selected_category() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-create-panel-no-parent-picker-{nanos}.ag"
+            "agenda-tui-category-create-panel-uppercase-child-{nanos}.ag"
         ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
@@ -10042,8 +10190,9 @@ mod tests {
             .expect("open category manager");
         app.set_category_selection_by_id(alpha.id);
 
-        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+        app.handle_category_manager_key(KeyCode::Char('N'), &agenda)
             .expect("open create panel");
+        assert!(app.status.contains("child category under Alpha"));
         for c in "Child".chars() {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type child name");
@@ -10067,6 +10216,53 @@ mod tests {
             .find(|category| category.name == "Child")
             .expect("child should be created");
         assert_eq!(child.parent, Some(alpha.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_n_on_root_selection_creates_top_level_sibling() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-root-sibling-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        store.create_category(&alpha).expect("create alpha");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(alpha.id);
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+        assert_eq!(app.input_panel.as_ref().unwrap().parent_id, None);
+        assert!(app.status.contains("same level as Alpha"));
+
+        for c in "Beta".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type sibling name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to type picker");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category");
+
+        let beta = app
+            .categories
+            .iter()
+            .find(|category| category.name == "Beta")
+            .expect("beta should be created");
+        assert_eq!(beta.parent, None);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -11918,6 +12114,44 @@ mod tests {
 
         let loaded = store.get_category(category.id).expect("load category");
         assert!(!loaded.enable_implicit_string);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_semantic_match_toggle_persists() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-semantic-toggle-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::SemanticMatch);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle semantic match and leave details");
+
+        let loaded = store.get_category(category.id).expect("load category");
+        assert!(!loaded.enable_semantic_classification);
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Tree)
