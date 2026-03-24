@@ -894,6 +894,38 @@ impl App {
         }
     }
 
+    pub(crate) fn classification_feedback_for_saved_item(
+        &self,
+        item_id: ItemId,
+        result: &agenda_core::engine::ProcessItemResult,
+    ) -> Option<(String, bool)> {
+        let pending_for_item = self.pending_suggestion_count_for_item(item_id);
+        if pending_for_item > 0 {
+            return Some((
+                format!(
+                    "? {pending_for_item} pending suggestion{} for this item",
+                    if pending_for_item == 1 { "" } else { "s" }
+                ),
+                true,
+            ));
+        }
+
+        if result.semantic_candidates_seen > 0 {
+            if result.semantic_candidates_skipped_already_assigned == result.semantic_candidates_seen
+            {
+                return Some((
+                    "semantic ran; no new review suggestions (all already assigned)".to_string(),
+                    false,
+                ));
+            }
+            if result.semantic_candidates_queued_review == 0 {
+                return Some(("semantic ran; no new review suggestions".to_string(), false));
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {
         self.item_assign_anchor_id()
             .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))

@@ -1604,6 +1604,7 @@ mod tests {
         LiteralClassificationMode, SemanticClassificationMode, SuggestionStatus,
         PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
     };
+    use agenda_core::engine::ProcessItemResult;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
@@ -5774,6 +5775,26 @@ mod tests {
             Some("Saving item and classifying...")
         );
         assert_eq!(app.mode, Mode::InputPanel);
+    }
+
+    #[test]
+    fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
+        let item_id = ItemId::new_v4();
+        let app = App::default();
+        let result = ProcessItemResult {
+            semantic_candidates_seen: 2,
+            semantic_candidates_queued_review: 0,
+            semantic_candidates_skipped_already_assigned: 2,
+            ..ProcessItemResult::default()
+        };
+
+        assert_eq!(
+            app.classification_feedback_for_saved_item(item_id, &result),
+            Some((
+                "semantic ran; no new review suggestions (all already assigned)".to_string(),
+                false
+            ))
+        );
     }
 
     #[test]

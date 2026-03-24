@@ -4394,14 +4394,25 @@ impl App {
         // Create item (parses When, applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
         let reference_date = jiff::Zoned::now().date();
-        agenda.create_item_with_reference_date(&item, reference_date)?;
+        let mut process_result = agenda.create_item_with_reference_date(&item, reference_date)?;
 
         // Set note if provided.
         if note.is_some() {
             let mut loaded = agenda.store().get_item(item.id)?;
             loaded.note = note;
             loaded.modified_at = Timestamp::now();
-            agenda.update_item_with_reference_date(&loaded, reference_date)?;
+            let note_update_result = agenda.update_item_with_reference_date(&loaded, reference_date)?;
+            process_result
+                .new_assignments
+                .extend(note_update_result.new_assignments);
+            process_result
+                .deferred_removals
+                .extend(note_update_result.deferred_removals);
+            process_result.semantic_candidates_seen += note_update_result.semantic_candidates_seen;
+            process_result.semantic_candidates_queued_review +=
+                note_update_result.semantic_candidates_queued_review;
+            process_result.semantic_candidates_skipped_already_assigned +=
+                note_update_result.semantic_candidates_skipped_already_assigned;
         }
 
         // Assign explicitly selected categories.
@@ -4451,8 +4462,14 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         self.status = add_capture_status_message(created.when_date, &unknown_hashtags);
-        if let Some(suffix) = self.classification_pending_suffix() {
-            self.status = format!("{} | {suffix}. Press C to review.", self.status);
+        if let Some((suffix, show_review_hint)) =
+            self.classification_feedback_for_saved_item(item.id, &process_result)
+        {
+            self.status = if show_review_hint {
+                format!("{} | {suffix}. Press C to review.", self.status)
+            } else {
+                format!("{} | {suffix}.", self.status)
+            };
         }
         Ok(())
     }
@@ -4573,7 +4590,7 @@ impl App {
         item.note = updated_note;
         item.modified_at = Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
-        agenda.update_item_with_reference_date(&item, reference_date)?;
+        let process_result = agenda.update_item_with_reference_date(&item, reference_date)?;
 
         // Apply when-date change.
         if let Some(new_when) = parsed_when {
@@ -4647,8 +4664,14 @@ impl App {
                 "{status} ({suggestion_accepted} accepted, {suggestion_rejected} rejected)"
             );
         }
-        if let Some(suffix) = self.classification_pending_suffix() {
-            status = format!("{status} | {suffix}. Press C to review.");
+        if let Some((suffix, show_review_hint)) =
+            self.classification_feedback_for_saved_item(item_id, &process_result)
+        {
+            status = if show_review_hint {
+                format!("{status} | {suffix}. Press C to review.")
+            } else {
+                format!("{status} | {suffix}.")
+            };
         }
         self.status = status;
         Ok(())

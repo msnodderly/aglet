@@ -668,6 +668,10 @@ impl<'a> Agenda<'a> {
             .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
 
         for candidate in candidates {
+            let is_semantic = candidate.provider == PROVIDER_ID_OLLAMA_OPENAI_COMPAT;
+            if is_semantic {
+                result.semantic_candidates_seen += 1;
+            }
             if matches!(
                 candidate.assignment,
                 crate::classification::CandidateAssignment::When(_)
@@ -715,6 +719,9 @@ impl<'a> Agenda<'a> {
                 }
                 CandidateDisposition::QueueReview => {
                     if self.candidate_assignment_already_present(item_id, &candidate)? {
+                        if is_semantic {
+                            result.semantic_candidates_skipped_already_assigned += 1;
+                        }
                         continue;
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
@@ -733,6 +740,9 @@ impl<'a> Agenda<'a> {
                         continue;
                     }
                     self.store.upsert_suggestion(&suggestion)?;
+                    if is_semantic {
+                        result.semantic_candidates_queued_review += 1;
+                    }
                 }
             }
         }
@@ -1531,6 +1541,10 @@ impl<'a> Agenda<'a> {
 fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemResult) {
     target.new_assignments.extend(incoming.new_assignments);
     target.deferred_removals.extend(incoming.deferred_removals);
+    target.semantic_candidates_seen += incoming.semantic_candidates_seen;
+    target.semantic_candidates_queued_review += incoming.semantic_candidates_queued_review;
+    target.semantic_candidates_skipped_already_assigned +=
+        incoming.semantic_candidates_skipped_already_assigned;
 }
 
 #[cfg(test)]
@@ -1894,10 +1908,13 @@ mod tests {
         store.create_category(&travel).unwrap();
 
         let item = Item::new("Conference travel planning".to_string());
-        agenda.create_item(&item).unwrap();
+        let result = agenda.create_item(&item).unwrap();
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&travel.id));
+        assert_eq!(result.semantic_candidates_seen, 1);
+        assert_eq!(result.semantic_candidates_queued_review, 0);
+        assert_eq!(result.semantic_candidates_skipped_already_assigned, 1);
 
         let pending = agenda
             .list_pending_classification_suggestions_for_item(item.id)
