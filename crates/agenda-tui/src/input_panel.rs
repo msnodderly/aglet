@@ -31,7 +31,6 @@ pub(crate) enum InputPanelFocus {
     Text,
     When,
     Note,
-    Details,
     Categories,
     /// Tag/Numeric toggle (CategoryCreate only).
     TypePicker,
@@ -56,8 +55,6 @@ pub(crate) enum InputPanelAction {
     Cancel,
     /// Toggle the value kind between Tag/Numeric (CategoryCreate).
     ToggleType,
-    /// Scroll the read-only details pane in EditItem.
-    ScrollDetails(i32),
     /// A text key was consumed internally.
     Handled,
     /// The key was not consumed.
@@ -99,8 +96,10 @@ pub(crate) struct InputPanel {
     pub(crate) pending_suggestions: Vec<(ClassificationSuggestion, SuggestionDecision)>,
     /// When-date editor buffer (AddItem/EditItem only).
     pub(crate) when_buffer: TextBuffer,
-    /// Scroll offset for the read-only details pane (EditItem only).
+    /// Scroll offset for the EditItem details popup.
     pub(crate) details_scroll: usize,
+    /// Whether the EditItem details popup is currently open.
+    pub(crate) details_popup_open: bool,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -132,6 +131,7 @@ impl InputPanel {
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
             details_scroll: 0,
+            details_popup_open: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: on_insert_assign.clone(),
@@ -171,6 +171,7 @@ impl InputPanel {
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::new(when_value),
             details_scroll: 0,
+            details_popup_open: false,
             original_text,
             original_note,
             original_categories,
@@ -198,6 +199,7 @@ impl InputPanel {
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
             details_scroll: 0,
+            details_popup_open: false,
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -225,6 +227,7 @@ impl InputPanel {
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
             details_scroll: 0,
+            details_popup_open: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -252,6 +255,7 @@ impl InputPanel {
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
             details_scroll: 0,
+            details_popup_open: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -279,6 +283,7 @@ impl InputPanel {
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
             details_scroll: 0,
+            details_popup_open: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -340,7 +345,6 @@ impl InputPanel {
                     InputPanelAction::Unhandled
                 }
             }
-            InputPanelFocus::Details => self.handle_details_focus(code),
             InputPanelFocus::Categories => {
                 self.handle_categories_focus(code, current_row_is_assigned_numeric)
             }
@@ -438,18 +442,6 @@ impl InputPanel {
         }
     }
 
-    fn handle_details_focus(&mut self, code: KeyCode) -> InputPanelAction {
-        match code {
-            KeyCode::Down | KeyCode::Char('j') => InputPanelAction::ScrollDetails(1),
-            KeyCode::Up | KeyCode::Char('k') => InputPanelAction::ScrollDetails(-1),
-            KeyCode::PageDown => InputPanelAction::ScrollDetails(8),
-            KeyCode::PageUp => InputPanelAction::ScrollDetails(-8),
-            KeyCode::Home => InputPanelAction::ScrollDetails(i32::MIN),
-            KeyCode::End => InputPanelAction::ScrollDetails(i32::MAX),
-            _ => InputPanelAction::Unhandled,
-        }
-    }
-
     fn handle_save_button(&self, code: KeyCode) -> InputPanelAction {
         match code {
             KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::Save,
@@ -494,11 +486,7 @@ impl InputPanel {
                 InputPanelKind::AddItem | InputPanelKind::EditItem => InputPanelFocus::When,
             },
             InputPanelFocus::When => InputPanelFocus::Note,
-            InputPanelFocus::Note => match self.kind {
-                InputPanelKind::EditItem => InputPanelFocus::Details,
-                _ => InputPanelFocus::Categories,
-            },
-            InputPanelFocus::Details => InputPanelFocus::Categories,
+            InputPanelFocus::Note => InputPanelFocus::Categories,
             InputPanelFocus::Categories => InputPanelFocus::SaveButton,
             InputPanelFocus::TypePicker => InputPanelFocus::SaveButton,
             InputPanelFocus::SaveButton => InputPanelFocus::CancelButton,
@@ -511,11 +499,7 @@ impl InputPanel {
             InputPanelFocus::Text => InputPanelFocus::CancelButton,
             InputPanelFocus::When => InputPanelFocus::Text,
             InputPanelFocus::Note => InputPanelFocus::When,
-            InputPanelFocus::Details => InputPanelFocus::Note,
-            InputPanelFocus::Categories => match self.kind {
-                InputPanelKind::EditItem => InputPanelFocus::Details,
-                _ => InputPanelFocus::Note,
-            },
+            InputPanelFocus::Categories => InputPanelFocus::Note,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
             InputPanelFocus::SaveButton => match self.kind {
                 InputPanelKind::NameInput
@@ -910,10 +894,11 @@ mod tests {
         assert_eq!(p.categories, cats);
         assert_eq!(p.item_id, Some(id));
         assert_eq!(p.details_scroll, 0);
+        assert!(!p.details_popup_open);
     }
 
     #[test]
-    fn edit_item_tab_cycles_through_details_pane() {
+    fn edit_item_tab_cycles_directly_to_categories() {
         let mut p = InputPanel::new_edit_item(
             ItemId::new_v4(),
             "My item".into(),
@@ -930,13 +915,11 @@ mod tests {
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
         p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::Details);
-        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Categories);
     }
 
     #[test]
-    fn edit_item_backtab_returns_from_categories_to_details() {
+    fn edit_item_backtab_returns_from_categories_to_note() {
         let mut p = InputPanel::new_edit_item(
             ItemId::new_v4(),
             "My item".into(),
@@ -948,31 +931,7 @@ mod tests {
         );
         p.focus = InputPanelFocus::Categories;
         p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::Details);
-        p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
-    }
-
-    #[test]
-    fn details_focus_maps_scroll_keys() {
-        let mut p = InputPanel::new_edit_item(
-            ItemId::new_v4(),
-            "My item".into(),
-            "My note".into(),
-            String::new(),
-            HashSet::new(),
-            HashMap::new(),
-            HashMap::new(),
-        );
-        p.focus = InputPanelFocus::Details;
-        assert_eq!(
-            p.handle_key(KeyCode::Char('j'), false),
-            InputPanelAction::ScrollDetails(1)
-        );
-        assert_eq!(
-            p.handle_key(KeyCode::PageUp, false),
-            InputPanelAction::ScrollDetails(-8)
-        );
     }
 
     #[test]

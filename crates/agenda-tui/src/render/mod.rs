@@ -262,7 +262,13 @@ impl App {
             if let Some(ref panel) = self.input_panel {
                 let popup_area = input_panel_popup_area(frame.area(), panel.kind);
                 self.render_input_panel(frame, popup_area, panel);
-                if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
+                if panel.details_popup_open {
+                    self.render_input_panel_details_popup(
+                        frame,
+                        centered_rect(58, 68, frame.area()),
+                        panel,
+                    );
+                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
                     frame.set_cursor_position((x, y));
                 }
             }
@@ -1636,7 +1642,6 @@ impl App {
                     .min(max_y);
                 Some((cursor_x, cursor_y))
             }
-            InputPanelFocus::Details => None,
             InputPanelFocus::Categories => {
                 if panel.category_filter_editing {
                     let filter_rect = regions.categories_filter?;
@@ -2855,27 +2860,13 @@ impl App {
         panel: &input_panel::InputPanel,
     ) -> Vec<Line<'static>> {
         let Some(item_id) = panel.item_id else {
-            return vec![
-                Line::from("Details"),
-                Line::from("PgUp/PgDn scroll"),
-                Line::from(""),
-                Line::from("(missing item)"),
-            ];
+            return vec![Line::from("(missing item)")];
         };
         let Some(item) = self.all_items.iter().find(|item| item.id == item_id) else {
-            return vec![
-                Line::from("Details"),
-                Line::from("PgUp/PgDn scroll"),
-                Line::from(""),
-                Line::from("(missing item)"),
-            ];
+            return vec![Line::from("(missing item)")];
         };
 
-        let mut lines = vec![
-            Line::from("Details"),
-            Line::from("PgUp/PgDn scroll"),
-            Line::from(""),
-        ];
+        let mut lines = Vec::new();
 
         let mut info_lines = self.item_info_header_lines_for_item(item);
         if info_lines.len() >= 2 {
@@ -2883,19 +2874,6 @@ impl App {
         }
         for line in info_lines.into_iter().skip(3) {
             lines.push(Line::from(line));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from("Draft Preview"));
-        lines.push(Line::from(format!("  Title: {}", panel.text.text())));
-        lines.push(Line::from("  Note:"));
-        let note_text = panel.note.text();
-        if note_text.is_empty() {
-            lines.push(Line::from("    (none)"));
-        } else {
-            for line in note_text.lines() {
-                lines.push(Line::from(format!("    {line}")));
-            }
         }
 
         lines.push(Line::from(""));
@@ -2919,6 +2897,51 @@ impl App {
         panel: &input_panel::InputPanel,
     ) -> usize {
         self.input_panel_edit_details_lines(panel).len().max(1)
+    }
+
+    pub(crate) fn render_input_panel_details_popup(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        panel: &input_panel::InputPanel,
+    ) {
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title("Item Details")
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.width < 3 || inner.height < 3 {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(self.input_panel_edit_details_lines(panel))
+                .scroll((panel.details_scroll.min(u16::MAX as usize) as u16, 0))
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            chunks[0],
+            self.input_panel_edit_details_line_count(panel),
+            panel.details_scroll,
+        );
+        frame.render_widget(
+            Paragraph::new("Esc/I close | j/k or PgUp/PgDn scroll")
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
     }
 
     pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
@@ -3409,7 +3432,6 @@ impl App {
                             InputPanelFocus::Text => "Text",
                             InputPanelFocus::When => "When",
                             InputPanelFocus::Note => "Note",
-                            InputPanelFocus::Details => "Details",
                             InputPanelFocus::Categories => "Categories",
                             InputPanelFocus::TypePicker => "Type",
                             InputPanelFocus::SaveButton => "Save",
@@ -4036,39 +4058,6 @@ impl App {
             );
         }
 
-        if let Some(details_rect) = regions.details {
-            let details_focused = panel.focus == InputPanelFocus::Details;
-            let details_border_style = if details_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Cyan)
-            };
-            frame.render_widget(
-                Paragraph::new(self.input_panel_edit_details_lines(panel))
-                    .block(
-                        Block::default()
-                            .title(if details_focused {
-                                "> Details"
-                            } else {
-                                "Details"
-                            })
-                            .borders(Borders::ALL)
-                            .border_style(details_border_style),
-                    )
-                    .scroll((panel.details_scroll.min(u16::MAX as usize) as u16, 0))
-                    .wrap(Wrap { trim: false }),
-                details_rect,
-            );
-            Self::render_vertical_scrollbar(
-                frame,
-                details_rect,
-                self.input_panel_edit_details_line_count(panel),
-                panel.details_scroll,
-            );
-        }
-
         // Inline categories list (bordered, scrollable)
         if let Some(cat_rect) = regions.categories {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
@@ -4382,22 +4371,29 @@ impl App {
                 },
                 InputPanelFocus::Note => {
                     if panel.kind == InputPanelKind::EditItem {
-                        "Type note  Enter:new line  Tab:details  S:save  Esc:discard?"
+                        "Type note  Enter:new line  Tab:categories  S:save  Esc:discard?"
                     } else {
                         "Type note  Enter:new line  Tab:categories  S:save  Esc:cancel"
                     }
-                }
-                InputPanelFocus::Details => {
-                    "PgUp/PgDn or j/k scroll details  Tab:categories  Shift-Tab:note  S:save"
                 }
                 InputPanelFocus::Categories if panel.category_filter_editing => {
                     "Type filter  Enter:keep  Esc:done  Tab:next"
                 }
                 InputPanelFocus::Categories => {
-                    "j/k:move  Space:toggle  /:filter  Tab:actions  S:save"
+                    if panel.kind == InputPanelKind::EditItem {
+                        "j/k:move  Space:toggle  /:filter  I:details  Tab:actions  S:save"
+                    } else {
+                        "j/k:move  Space:toggle  /:filter  Tab:actions  S:save"
+                    }
                 }
                 InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:actions",
-                InputPanelFocus::SaveButton => "Enter save  Tab:cancel  Shift-Tab:categories",
+                InputPanelFocus::SaveButton => {
+                    if panel.kind == InputPanelKind::EditItem {
+                        "Enter save  I:details  Tab:cancel  Shift-Tab:categories"
+                    } else {
+                        "Enter save  Tab:cancel  Shift-Tab:categories"
+                    }
+                }
                 InputPanelFocus::When => {
                     if panel.kind == InputPanelKind::EditItem {
                         "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:discard?"
@@ -4405,7 +4401,13 @@ impl App {
                         "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:cancel"
                     }
                 }
-                InputPanelFocus::CancelButton => "Enter cancel  Tab:text  Shift-Tab:save",
+                InputPanelFocus::CancelButton => {
+                    if panel.kind == InputPanelKind::EditItem {
+                        "Enter cancel  I:details  Tab:text  Shift-Tab:save"
+                    } else {
+                        "Enter cancel  Tab:text  Shift-Tab:save"
+                    }
+                }
             }
         };
         let mut help_style = Style::default();

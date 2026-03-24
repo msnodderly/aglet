@@ -5250,7 +5250,7 @@ mod tests {
     }
 
     #[test]
-    fn input_panel_cursor_position_is_none_for_details_focus() {
+    fn input_panel_cursor_position_stays_available_for_edit_item_categories_focus() {
         let screen = Rect::new(0, 0, 120, 40);
         let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
         let mut panel = input_panel::InputPanel::new_edit_item(
@@ -5262,7 +5262,7 @@ mod tests {
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
         );
-        panel.focus = input_panel::InputPanelFocus::Details;
+        panel.focus = input_panel::InputPanelFocus::Categories;
         let app = App {
             mode: Mode::InputPanel,
             input_panel: Some(panel),
@@ -5274,7 +5274,10 @@ mod tests {
         } else {
             None
         };
-        assert_eq!(pos, None, "details pane should not place a text cursor");
+        assert_eq!(
+            pos, None,
+            "categories focus without numeric edit should not place a text cursor"
+        );
     }
 
     #[test]
@@ -5420,9 +5423,7 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
-        // Tab → Details, Tab → Categories, Tab → SaveButton
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus details");
+        // Tab -> Categories, Tab -> SaveButton
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus categories");
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
@@ -5559,9 +5560,7 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note line2");
         }
-        // Tab → Details, Tab → Categories, Tab → Save, Enter → save
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus details");
+        // Tab -> Categories, Tab -> Save, Enter -> save
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus categories");
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
@@ -9582,7 +9581,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_item_details_lines_include_metadata_preview_and_provenance() {
+    fn edit_item_details_lines_include_metadata_and_provenance_without_note() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -9620,18 +9619,22 @@ mod tests {
             })
             .collect();
 
-        assert!(plain.iter().any(|line| line.contains("Details")));
         assert!(plain.iter().any(|line| line.contains("ID:")));
         assert!(plain.iter().any(|line| line.contains("Created:")));
         assert!(plain.iter().any(|line| line.contains("Modified:")));
-        assert!(plain.iter().any(|line| line.contains("Draft Preview")));
-        assert!(plain.iter().any(|line| line.contains("Draft title")));
-        assert!(plain.iter().any(|line| line.contains("Draft line one")));
         assert!(plain
             .iter()
             .any(|line| line.contains("Assignment Provenance")));
         assert!(plain.iter().any(|line| line.contains("source=Manual")));
         assert!(plain.iter().any(|line| line.contains("origin=manual:test")));
+        assert!(
+            !plain.iter().any(|line| line.contains("Draft Preview")),
+            "details popup should not duplicate note preview"
+        );
+        assert!(
+            !plain.iter().any(|line| line.contains("Draft line one")),
+            "details popup should not duplicate note lines"
+        );
     }
 
     #[test]
@@ -18489,8 +18492,7 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> When -> Note -> Details -> Categories
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        // Tab to Categories: Text -> When -> Note -> Categories
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
@@ -18556,8 +18558,7 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> When -> Note -> Details -> Categories
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        // Tab to Categories: Text -> When -> Note -> Categories
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
@@ -18633,7 +18634,7 @@ mod tests {
         let panel = app.input_panel.as_ref().unwrap();
         assert!(panel.numeric_buffers.is_empty());
 
-        // Tab cycle: Text -> When -> Note -> Details -> Categories -> Save
+        // Tab cycle: Text -> When -> Note -> Categories -> Save
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
@@ -18643,11 +18644,6 @@ mod tests {
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
             input_panel::InputPanelFocus::Note
-        );
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
-        assert_eq!(
-            app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Details
         );
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
@@ -18662,7 +18658,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_item_details_focus_scrolls_preview_region() {
+    fn edit_item_details_popup_opens_and_scrolls() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -18701,16 +18697,22 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Details
+            input_panel::InputPanelFocus::Categories
         );
+        app.handle_key(KeyCode::Char('I'), &agenda)
+            .expect("open details popup");
+        assert!(app.input_panel.as_ref().unwrap().details_popup_open);
         assert_eq!(app.input_panel.as_ref().unwrap().details_scroll, 0);
 
         app.handle_key(KeyCode::PageDown, &agenda)
             .expect("scroll details");
         assert!(
             app.input_panel.as_ref().unwrap().details_scroll > 0,
-            "details pane should scroll"
+            "details popup should scroll"
         );
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("close details popup");
+        assert!(!app.input_panel.as_ref().unwrap().details_popup_open);
     }
 
     #[test]

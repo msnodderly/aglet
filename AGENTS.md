@@ -646,19 +646,22 @@ Practical implications:
 - If you edit normal footer hints, preserve preview discoverability and update
   rendering tests that assert `p:preview` is visible.
 
-## Edit Item Details Pane Adds A Focus Stop (Current)
+## Edit Item Inspector Is Popup-Only (Current)
 
-`Mode::InputPanel` for `EditItem` now includes a read-only `Details` pane between
-`Note` and `Categories` in the focus order.
+`Mode::InputPanel` for `EditItem` no longer keeps an always-visible `Details`
+pane in the main edit layout. Instead, `I` opens a separate read-only inspector
+popup from non-text edit focus states.
 
 Practical implications:
-- Edit-item tab cycle is now `Text -> When -> Note -> Details -> Categories -> Save -> Cancel`
-- `Shift-Tab` from `Categories` returns to `Details`, not directly to `Note`
-- Details-pane scrolling uses `j/k`, `PgUp/PgDn`, `Home`, and `End` while the
-  pane is focused
-- If you add another `InputPanelFocus` variant later, update the mode label
-  rendering (`App::status_context_label`) and edit-panel tests that assume a
-  specific focus sequence
+- Edit-item tab cycle is back to `Text -> When -> Note -> Categories -> Save -> Cancel`
+- The inspector popup omits note text and note preview; keep note editing in the
+  main edit panel and reserve the popup for metadata, links, and assignment
+  provenance
+- While the popup is open, `Esc` and `I` close it, and `j/k`, `PgUp/PgDn`,
+  `Home`, and `End` scroll it
+- If you change popup-open eligibility or footer hints, update
+  `handle_input_panel_key`, edit-panel help text, and tests that cover the
+  inspector flow
 
 ## Global Search `g/` Uses Temporary All-Items Session (Behavior)
 
