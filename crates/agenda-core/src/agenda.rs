@@ -663,7 +663,9 @@ impl<'a> Agenda<'a> {
             return self.process_cascades(item_id);
         }
 
-        let (_item, item_revision_hash, candidates) = service.collect_candidates(item_id)?;
+        let (_item, item_revision_hash, candidates, debug_summaries) =
+            service.collect_candidates(item_id)?;
+        result.semantic_debug_messages.extend(debug_summaries);
         self.store
             .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
 
@@ -1545,6 +1547,9 @@ fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemRe
     target.semantic_candidates_queued_review += incoming.semantic_candidates_queued_review;
     target.semantic_candidates_skipped_already_assigned +=
         incoming.semantic_candidates_skipped_already_assigned;
+    target
+        .semantic_debug_messages
+        .extend(incoming.semantic_debug_messages);
 }
 
 #[cfg(test)]

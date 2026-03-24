@@ -5785,13 +5785,17 @@ mod tests {
             semantic_candidates_seen: 2,
             semantic_candidates_queued_review: 0,
             semantic_candidates_skipped_already_assigned: 2,
+            semantic_debug_messages: vec![
+                "semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0"
+                    .to_string(),
+            ],
             ..ProcessItemResult::default()
         };
 
         assert_eq!(
             app.classification_feedback_for_saved_item(item_id, &result),
             Some((
-                "semantic ran; no new review suggestions (all already assigned)".to_string(),
+                "semantic ran; no new review suggestions (all already assigned) | semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0".to_string(),
                 false
             ))
         );

@@ -391,10 +391,16 @@ impl ClassificationSuggestion {
 
 pub trait ClassificationProvider: Send + Sync {
     fn id(&self) -> &'static str;
-    fn classify(&self, request: &ClassificationRequest) -> Result<Vec<ClassificationCandidate>>;
+    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult>;
     fn is_cheap(&self) -> bool {
         false
     }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ProviderClassificationResult {
+    pub candidates: Vec<ClassificationCandidate>,
+    pub debug_summary: Option<String>,
 }
 
 pub trait OllamaTransport: Send + Sync {
@@ -489,7 +495,7 @@ impl ClassificationProvider for ImplicitStringProvider<'_> {
         true
     }
 
-    fn classify(&self, request: &ClassificationRequest) -> Result<Vec<ClassificationCandidate>> {
+    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
         let match_text = request.match_text();
         let mut out = Vec::new();
         for category in &request.literal_candidate_categories {
@@ -519,7 +525,10 @@ impl ClassificationProvider for ImplicitStringProvider<'_> {
                 context_hash: "request:v1".to_string(),
             });
         }
-        Ok(out)
+        Ok(ProviderClassificationResult {
+            candidates: out,
+            debug_summary: None,
+        })
     }
 }
 
@@ -537,9 +546,9 @@ impl ClassificationProvider for WhenParserProvider {
         true
     }
 
-    fn classify(&self, request: &ClassificationRequest) -> Result<Vec<ClassificationCandidate>> {
+    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
         let Some(parsed) = self.parser.parse(&request.text, self.reference_date) else {
-            return Ok(Vec::new());
+            return Ok(ProviderClassificationResult::default());
         };
         let matched_text = request
             .text
@@ -547,15 +556,18 @@ impl ClassificationProvider for WhenParserProvider {
             .unwrap_or("")
             .to_string();
 
-        Ok(vec![ClassificationCandidate {
-            item_id: request.item_id,
-            assignment: CandidateAssignment::When(parsed.datetime),
-            provider: self.id().to_string(),
-            model: None,
-            confidence: Some(1.0),
-            rationale: Some(format!("parsed date expression '{}'", matched_text)),
-            context_hash: "request:v1".to_string(),
-        }])
+        Ok(ProviderClassificationResult {
+            candidates: vec![ClassificationCandidate {
+                item_id: request.item_id,
+                assignment: CandidateAssignment::When(parsed.datetime),
+                provider: self.id().to_string(),
+                model: None,
+                confidence: Some(1.0),
+                rationale: Some(format!("parsed date expression '{}'", matched_text)),
+                context_hash: "request:v1".to_string(),
+            }],
+            debug_summary: None,
+        })
     }
 }
 
@@ -569,13 +581,13 @@ impl ClassificationProvider for OllamaProvider<'_> {
         PROVIDER_ID_OLLAMA_OPENAI_COMPAT
     }
 
-    fn classify(&self, request: &ClassificationRequest) -> Result<Vec<ClassificationCandidate>> {
+    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
         if !self.settings.enabled
             || self.settings.model.trim().is_empty()
             || self.settings.base_url.trim().is_empty()
             || request.semantic_candidate_categories.is_empty()
         {
-            return Ok(Vec::new());
+            return Ok(ProviderClassificationResult::default());
         }
 
         let system_prompt = "You classify a single item into existing categories. Return strict JSON only with shape {\"suggestions\":[{\"category\":\"Exact Category Name\",\"confidence\":0.0,\"rationale\":\"short reason\"}]}. Use only exact category names from the provided list. Any category name not exactly present in the allowed list is invalid and will be discarded. Do not invent, expand, paraphrase, or rewrite category names. If nothing applies, return {\"suggestions\":[]}. Suggest at most 3 categories.";
@@ -585,10 +597,21 @@ impl ClassificationProvider for OllamaProvider<'_> {
             .complete(self.settings, system_prompt, &user_prompt)
         {
             Ok(content) => content,
-            Err(_) => return Ok(Vec::new()),
+            Err(_) => {
+                return Ok(ProviderClassificationResult {
+                    candidates: Vec::new(),
+                    debug_summary: Some(format!(
+                        "semantic[{}]: transport error",
+                        self.settings.model
+                    )),
+                });
+            }
         };
         let Some(content) = content else {
-            return Ok(Vec::new());
+            return Ok(ProviderClassificationResult {
+                candidates: Vec::new(),
+                debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
+            });
         };
 
         Ok(parse_ollama_suggestions(
@@ -679,9 +702,12 @@ fn parse_ollama_suggestions(
     content: &str,
     model: &str,
     provider_id: &str,
-) -> Vec<ClassificationCandidate> {
+) -> ProviderClassificationResult {
     let Ok(parsed) = serde_json::from_str::<OllamaSuggestionEnvelope>(content) else {
-        return Vec::new();
+        return ProviderClassificationResult {
+            candidates: Vec::new(),
+            debug_summary: Some(format!("semantic[{model}]: malformed JSON response")),
+        };
     };
     let category_map: HashMap<String, &CategoryDescriptor> = request
         .semantic_candidate_categories
@@ -690,13 +716,18 @@ fn parse_ollama_suggestions(
         .collect();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
+    let raw_count = parsed.suggestions.len();
+    let mut dropped_unknown = 0usize;
+    let mut dropped_duplicate = 0usize;
 
     for suggestion in parsed.suggestions.into_iter().take(3) {
         let key = suggestion.category.trim().to_ascii_lowercase();
         let Some(category) = category_map.get(&key) else {
+            dropped_unknown += 1;
             continue;
         };
         if !seen.insert(category.id) {
+            dropped_duplicate += 1;
             continue;
         }
         let confidence = suggestion.confidence.map(|value| value.clamp(0.0, 1.0));
@@ -715,7 +746,15 @@ fn parse_ollama_suggestions(
         });
     }
 
-    out
+    ProviderClassificationResult {
+        candidates: out.clone(),
+        debug_summary: Some(format!(
+            "semantic[{model}]: raw={raw_count} kept={} dropped_unknown={} dropped_duplicate={}",
+            out.len(),
+            dropped_unknown,
+            dropped_duplicate
+        )),
+    }
 }
 
 pub struct ClassificationService<'a> {
@@ -735,14 +774,19 @@ impl<'a> ClassificationService<'a> {
     pub fn collect_candidates(
         &self,
         item_id: ItemId,
-    ) -> Result<(Item, String, Vec<ClassificationCandidate>)> {
+    ) -> Result<(Item, String, Vec<ClassificationCandidate>, Vec<String>)> {
         let item = self.store.get_item(item_id)?;
         let request = self.build_request(&item)?;
         let item_revision_hash = item_revision_hash(&item);
         let mut candidates = Vec::new();
+        let mut debug_summaries = Vec::new();
 
         for provider in &self.providers {
-            candidates.extend(provider.classify(&request)?);
+            let result = provider.classify(&request)?;
+            candidates.extend(result.candidates);
+            if let Some(summary) = result.debug_summary {
+                debug_summaries.push(summary);
+            }
         }
 
         candidates.sort_by(|left, right| {
@@ -757,7 +801,7 @@ impl<'a> ClassificationService<'a> {
                 && left.assignment.stable_key() == right.assignment.stable_key()
         });
 
-        Ok((item, item_revision_hash, candidates))
+        Ok((item, item_revision_hash, candidates, debug_summaries))
     }
 
     fn build_request(&self, item: &Item) -> Result<ClassificationRequest> {
@@ -946,10 +990,14 @@ mod tests {
             "mistral",
             PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
         );
-        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed.candidates.len(), 1);
         assert_eq!(
-            parsed[0].assignment,
+            parsed.candidates[0].assignment,
             CandidateAssignment::Category(category_a.id)
+        );
+        assert_eq!(
+            parsed.debug_summary.as_deref(),
+            Some("semantic[mistral]: raw=3 kept=1 dropped_unknown=1 dropped_duplicate=1")
         );
     }
 
@@ -988,7 +1036,11 @@ mod tests {
         };
 
         let out = provider.classify(&request).expect("classify");
-        assert!(out.is_empty());
+        assert!(out.candidates.is_empty());
+        assert_eq!(
+            out.debug_summary.as_deref(),
+            Some("semantic[mistral]: malformed JSON response")
+        );
     }
 
     #[test]
@@ -1031,14 +1083,21 @@ mod tests {
         };
 
         let out = provider.classify(&request).expect("classify");
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].assignment, CandidateAssignment::Category(travel.id));
-        assert_eq!(out[0].provider, PROVIDER_ID_OLLAMA_OPENAI_COMPAT);
-        assert_eq!(out[0].model.as_deref(), Some("mistral"));
-        assert_eq!(out[0].confidence, Some(0.91));
+        assert_eq!(out.candidates.len(), 1);
         assert_eq!(
-            out[0].rationale.as_deref(),
+            out.candidates[0].assignment,
+            CandidateAssignment::Category(travel.id)
+        );
+        assert_eq!(out.candidates[0].provider, PROVIDER_ID_OLLAMA_OPENAI_COMPAT);
+        assert_eq!(out.candidates[0].model.as_deref(), Some("mistral"));
+        assert_eq!(out.candidates[0].confidence, Some(0.91));
+        assert_eq!(
+            out.candidates[0].rationale.as_deref(),
             Some("travel planning task")
+        );
+        assert_eq!(
+            out.debug_summary.as_deref(),
+            Some("semantic[mistral]: raw=1 kept=1 dropped_unknown=0 dropped_duplicate=0")
         );
     }
 
@@ -1076,8 +1135,14 @@ mod tests {
             transport: &transport,
         };
 
-        let out = provider.classify(&request).expect("transport errors should be swallowed");
-        assert!(out.is_empty());
+        let out = provider
+            .classify(&request)
+            .expect("transport errors should be swallowed");
+        assert!(out.candidates.is_empty());
+        assert_eq!(
+            out.debug_summary.as_deref(),
+            Some("semantic[mistral]: transport error")
+        );
     }
 
     #[test]

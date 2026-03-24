@@ -4413,6 +4413,9 @@ impl App {
                 note_update_result.semantic_candidates_queued_review;
             process_result.semantic_candidates_skipped_already_assigned +=
                 note_update_result.semantic_candidates_skipped_already_assigned;
+            process_result
+                .semantic_debug_messages
+                .extend(note_update_result.semantic_debug_messages);
         }
 
         // Assign explicitly selected categories.

@@ -899,13 +899,30 @@ impl App {
         item_id: ItemId,
         result: &agenda_core::engine::ProcessItemResult,
     ) -> Option<(String, bool)> {
+        let semantic_debug = if result.semantic_debug_messages.is_empty() {
+            None
+        } else {
+            let mut unique = Vec::new();
+            for msg in &result.semantic_debug_messages {
+                if !unique.contains(msg) {
+                    unique.push(msg.clone());
+                }
+            }
+            Some(unique.join("; "))
+        };
         let pending_for_item = self.pending_suggestion_count_for_item(item_id);
         if pending_for_item > 0 {
             return Some((
-                format!(
+                match semantic_debug {
+                    Some(debug) => format!(
+                        "? {pending_for_item} pending suggestion{} for this item | {debug}",
+                        if pending_for_item == 1 { "" } else { "s" }
+                    ),
+                    None => format!(
                     "? {pending_for_item} pending suggestion{} for this item",
                     if pending_for_item == 1 { "" } else { "s" }
-                ),
+                    ),
+                },
                 true,
             ));
         }
@@ -914,12 +931,28 @@ impl App {
             if result.semantic_candidates_skipped_already_assigned == result.semantic_candidates_seen
             {
                 return Some((
-                    "semantic ran; no new review suggestions (all already assigned)".to_string(),
+                    match semantic_debug {
+                        Some(debug) => format!(
+                            "semantic ran; no new review suggestions (all already assigned) | {debug}"
+                        ),
+                        None => {
+                            "semantic ran; no new review suggestions (all already assigned)"
+                                .to_string()
+                        }
+                    },
                     false,
                 ));
             }
             if result.semantic_candidates_queued_review == 0 {
-                return Some(("semantic ran; no new review suggestions".to_string(), false));
+                return Some((
+                    match semantic_debug {
+                        Some(debug) => {
+                            format!("semantic ran; no new review suggestions | {debug}")
+                        }
+                        None => "semantic ran; no new review suggestions".to_string(),
+                    },
+                    false,
+                ));
             }
         }
 
