@@ -5390,9 +5390,10 @@ impl App {
                     .iter()
                     .find(|category| category.name.eq_ignore_ascii_case(&name))
                     .map(|category| (category.id, category.name.clone()));
-                if exact_match.as_ref().is_some_and(|(_, category_name)| {
-                    is_reserved_category_name(category_name)
-                }) {
+                if exact_match
+                    .as_ref()
+                    .is_some_and(|(_, category_name)| is_reserved_category_name(category_name))
+                {
                     self.mode = Mode::ItemAssignPicker;
                     self.clear_input();
                     self.status = format!(

@@ -4563,10 +4563,8 @@ impl App {
                 .collect()
         };
 
-        let mut cat_state = Self::list_state_for(
-            panes[0],
-            self.item_assign_selected_category_row_index(),
-        );
+        let mut cat_state =
+            Self::list_state_for(panes[0], self.item_assign_selected_category_row_index());
         let cat_count = cat_items.len();
         frame.render_stateful_widget(
             List::new(cat_items)
@@ -5363,7 +5361,11 @@ impl App {
                         Style::default()
                     };
                     vec![
-                        flag_line(integer_focused && !is_reserved_category, "Integer", integer_mode),
+                        flag_line(
+                            integer_focused && !is_reserved_category,
+                            "Integer",
+                            integer_mode,
+                        ),
                         Line::from(Span::styled(
                             format!(
                                 "{}Decimal places: {}",

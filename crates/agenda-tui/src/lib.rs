@@ -8707,7 +8707,10 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render app");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
-        assert!(rendered.contains("[ ] Work"), "work row should render: {rendered}");
+        assert!(
+            rendered.contains("[ ] Work"),
+            "work row should render: {rendered}"
+        );
         assert!(
             !rendered.contains("[ ] Done"),
             "reserved Done should not render in assign picker: {rendered}"
