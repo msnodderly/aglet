@@ -1164,6 +1164,12 @@ enum ExternalEditorTarget {
     Note,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PendingBlockingUiAction {
+    SaveInputPanelAdd,
+    SaveInputPanelEdit,
+}
+
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1248,6 +1254,8 @@ struct App {
     undo: UndoState,
     input_panel_discard_confirm: bool,
     pending_external_edit: Option<ExternalEditorTarget>,
+    pending_blocking_ui_action: Option<PendingBlockingUiAction>,
+    blocking_overlay_message: Option<String>,
 }
 
 impl Default for App {
@@ -1328,6 +1336,8 @@ impl Default for App {
             undo: UndoState::default(),
             input_panel_discard_confirm: false,
             pending_external_edit: None,
+            pending_blocking_ui_action: None,
+            blocking_overlay_message: None,
         }
     }
 }
@@ -1585,8 +1595,8 @@ mod tests {
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
         CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
-        NameInputContext, SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
-        WorkflowRolePickerOrigin,
+        NameInputContext, PendingBlockingUiAction, SlotSortDirection, ViewAssignRow,
+        ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{
@@ -5725,6 +5735,34 @@ mod tests {
     }
 
     #[test]
+    fn add_item_save_queues_blocking_classification_action() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new());
+        panel.text.set("Plan travel".to_string());
+        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("queue blocking save");
+
+        assert_eq!(
+            app.pending_blocking_ui_action,
+            Some(PendingBlockingUiAction::SaveInputPanelAdd)
+        );
+        assert_eq!(
+            app.blocking_overlay_message.as_deref(),
+            Some("Saving item and classifying...")
+        );
+        assert_eq!(app.mode, Mode::InputPanel);
+    }
+
+    #[test]
     fn list_scroll_keeps_selected_line_visible() {
         let area = Rect::new(0, 0, 50, 10);
         assert_eq!(list_scroll_for_selected_line(area, None), 0);
@@ -8011,6 +8049,28 @@ mod tests {
         assert!(
             rendered.contains("END-OF-RATIONALE"),
             "review overlay should show rationale: {rendered}"
+        );
+    }
+
+    #[test]
+    fn blocking_overlay_renders_working_message() {
+        let app = App {
+            blocking_overlay_message: Some("Saving item and classifying...".to_string()),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Working"),
+            "working overlay should render title: {rendered}"
+        );
+        assert!(
+            rendered.contains("Saving item and classifying..."),
+            "working overlay should render message: {rendered}"
         );
     }
 

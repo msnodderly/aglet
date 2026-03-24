@@ -4073,10 +4073,24 @@ impl App {
                     .unwrap_or(input_panel::InputPanelKind::AddItem);
                 match kind {
                     input_panel::InputPanelKind::AddItem => {
-                        self.save_input_panel_add(agenda)?;
+                        if self.classification_runs_on_item_save() {
+                            self.queue_blocking_ui_action(
+                                PendingBlockingUiAction::SaveInputPanelAdd,
+                                "Saving item and classifying...",
+                            );
+                        } else {
+                            self.save_input_panel_add(agenda)?;
+                        }
                     }
                     input_panel::InputPanelKind::EditItem => {
-                        self.save_input_panel_edit(agenda)?;
+                        if self.classification_runs_on_item_save() {
+                            self.queue_blocking_ui_action(
+                                PendingBlockingUiAction::SaveInputPanelEdit,
+                                "Updating item and classifying...",
+                            );
+                        } else {
+                            self.save_input_panel_edit(agenda)?;
+                        }
                     }
                     input_panel::InputPanelKind::NameInput => {
                         self.save_input_panel_name(agenda)?;
@@ -4249,7 +4263,7 @@ impl App {
     }
 
     /// Save an InputPanel(AddItem) to the store.
-    fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    pub(crate) fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
             return Ok(());
@@ -4334,7 +4348,7 @@ impl App {
     }
 
     /// Save an InputPanel(EditItem) to the store (text, note, and category diff).
-    fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    pub(crate) fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
             return Ok(());

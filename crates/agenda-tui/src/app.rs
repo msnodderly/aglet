@@ -119,6 +119,31 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn classification_runs_on_item_save(&self) -> bool {
+        self.classification_ui.config.should_run_continuously()
+            && self.classification_ui.config.run_on_item_save
+    }
+
+    pub(crate) fn queue_blocking_ui_action(
+        &mut self,
+        action: PendingBlockingUiAction,
+        message: impl Into<String>,
+    ) {
+        self.pending_blocking_ui_action = Some(action);
+        self.blocking_overlay_message = Some(message.into());
+    }
+
+    fn execute_pending_blocking_ui_action(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(action) = self.pending_blocking_ui_action.take() else {
+            return Ok(());
+        };
+        self.blocking_overlay_message = None;
+        match action {
+            PendingBlockingUiAction::SaveInputPanelAdd => self.save_input_panel_add(agenda),
+            PendingBlockingUiAction::SaveInputPanelEdit => self.save_input_panel_edit(agenda),
+        }
+    }
+
     pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> TuiResult<()> {
         if self.should_auto_refresh_now() {
             self.refresh(store)?;
@@ -173,6 +198,17 @@ impl App {
             self.clear_expired_transient_status();
             terminal.draw(|frame| self.draw(frame))?;
 
+            if self.pending_blocking_ui_action.is_some() {
+                if let Err(err) = self.execute_pending_blocking_ui_action(agenda) {
+                    self.blocking_overlay_message = None;
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.status = format!("Error: {err}");
+                }
+                self.maybe_run_auto_refresh(agenda.store())?;
+                continue;
+            }
+
             if !event::poll(std::time::Duration::from_millis(200))? {
                 self.maybe_run_auto_refresh(agenda.store())?;
                 continue;
@@ -188,6 +224,8 @@ impl App {
             let should_quit = match self.handle_key_event(key, agenda) {
                 Ok(value) => value,
                 Err(err) => {
+                    self.blocking_overlay_message = None;
+                    self.pending_blocking_ui_action = None;
                     self.mode = Mode::Normal;
                     self.clear_input();
                     self.status = format!("Error: {err}");

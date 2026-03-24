@@ -335,6 +335,44 @@ impl App {
         if self.mode == Mode::SuggestionReview {
             self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
         }
+        if let Some(message) = self.blocking_overlay_message.as_deref() {
+            self.render_blocking_overlay(frame, centered_rect(36, 18, frame.area()), message);
+        }
+    }
+
+    fn render_blocking_overlay(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        message: &str,
+    ) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    message,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "This can take a few seconds with local models.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+            ])
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(
+                Block::default()
+                    .title(" Working ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
