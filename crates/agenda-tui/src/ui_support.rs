@@ -991,6 +991,8 @@ pub(super) struct InputPanelPopupRegions {
     pub(super) when: Option<Rect>,
     /// Present for AddItem / EditItem; absent for NameInput.
     pub(super) note: Option<Rect>,
+    /// Read-only details region for EditItem.
+    pub(super) details: Option<Rect>,
     /// Bordered multi-line region for the inline category list.
     pub(super) categories: Option<Rect>,
     pub(super) categories_inner: Option<Rect>,
@@ -1045,6 +1047,7 @@ pub(super) fn input_panel_popup_regions(
                 text: chunks[0],
                 when: None,
                 note: None,
+                details: None,
                 categories: None,
                 categories_inner: None,
                 categories_filter: None,
@@ -1075,6 +1078,7 @@ pub(super) fn input_panel_popup_regions(
                 text: chunks[1],
                 when: None,
                 note: None,
+                details: None,
                 categories: None,
                 categories_inner: None,
                 categories_filter: None,
@@ -1106,6 +1110,7 @@ pub(super) fn input_panel_popup_regions(
                 text: chunks[1],
                 when: None,
                 note: None,
+                details: None,
                 categories: None,
                 categories_inner: None,
                 categories_filter: None,
@@ -1136,6 +1141,7 @@ pub(super) fn input_panel_popup_regions(
                 text: chunks[0],
                 when: None,
                 note: None,
+                details: None,
                 categories: None,
                 categories_inner: None,
                 type_picker: Some(chunks[1]),
@@ -1146,7 +1152,7 @@ pub(super) fn input_panel_popup_regions(
                 categories_list: None,
             })
         }
-        InputPanelKind::AddItem | InputPanelKind::EditItem => {
+        InputPanelKind::AddItem => {
             // text + when + context + [note | categories] (horizontal split) + buttons + help
             // Minimum: text(1) + when(1) + context(1) + middle(3) + buttons(1) + help(1) = 8
             if inner.height < 8 {
@@ -1207,6 +1213,87 @@ pub(super) fn input_panel_popup_regions(
                 text: chunks[0],
                 when: Some(chunks[1]),
                 note: Some(note),
+                details: None,
+                categories: Some(cat),
+                categories_inner: Some(cat_inner),
+                categories_filter: cat_filter,
+                categories_list: cat_list,
+                type_picker: None,
+                buttons: chunks[4],
+                help: chunks[5],
+                help2: None,
+            })
+        }
+        InputPanelKind::EditItem => {
+            // text + when + context + middle split + buttons + help = 8 minimum
+            if inner.height < 8 {
+                return None;
+            }
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // text
+                    Constraint::Length(1), // when-date input
+                    Constraint::Length(1), // static context
+                    Constraint::Min(3),    // middle: note | details+categories
+                    Constraint::Length(1), // buttons
+                    Constraint::Length(1), // help
+                ])
+                .split(inner);
+
+            let middle = chunks[3];
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(58), // note
+                    Constraint::Percentage(42), // right stack
+                ])
+                .split(middle);
+            let note = panes[0];
+            let right = panes[1];
+            let right_split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(62), // details
+                    Constraint::Percentage(38), // categories
+                ])
+                .split(right);
+
+            let details = right_split[0];
+            let cat = right_split[1];
+            let cat_inner = Rect {
+                x: cat.x.saturating_add(1),
+                y: cat.y.saturating_add(1),
+                width: cat.width.saturating_sub(2),
+                height: cat.height.saturating_sub(2),
+            };
+            let cat_filter = if cat_inner.width > 0 && cat_inner.height > 0 {
+                Some(Rect {
+                    x: cat_inner.x,
+                    y: cat_inner.y,
+                    width: cat_inner.width,
+                    height: 1,
+                })
+            } else {
+                None
+            };
+            let cat_list = if cat_inner.width > 0 && cat_inner.height > 1 {
+                Some(Rect {
+                    x: cat_inner.x,
+                    y: cat_inner.y.saturating_add(1),
+                    width: cat_inner.width,
+                    height: cat_inner.height.saturating_sub(1),
+                })
+            } else {
+                None
+            };
+
+            Some(InputPanelPopupRegions {
+                context: Some(chunks[2]),
+                text: chunks[0],
+                when: Some(chunks[1]),
+                note: Some(note),
+                details: Some(details),
                 categories: Some(cat),
                 categories_inner: Some(cat_inner),
                 categories_filter: cat_filter,
@@ -1357,6 +1444,35 @@ mod tests {
     fn wrap_text_for_board_cell_clamped_adds_ellipsis_on_last_line() {
         let lines = wrap_text_for_board_cell_clamped("alpha beta gamma delta", 10, 2);
         assert_eq!(lines, vec!["alpha beta", "gamma..."]);
+    }
+
+    #[test]
+    fn edit_item_popup_regions_include_details_pane() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = input_panel_popup_regions(area, crate::input_panel::InputPanelKind::EditItem)
+            .expect("regions");
+
+        assert!(regions.note.is_some(), "edit popup should keep note pane");
+        assert!(
+            regions.details.is_some(),
+            "edit popup should include details pane"
+        );
+        assert!(
+            regions.categories.is_some(),
+            "edit popup should keep categories pane"
+        );
+
+        let note = regions.note.expect("note");
+        let details = regions.details.expect("details");
+        let categories = regions.categories.expect("categories");
+        assert!(
+            details.x >= note.x + note.width,
+            "details should be right of note"
+        );
+        assert!(
+            categories.y >= details.y + details.height,
+            "categories should stack below details"
+        );
     }
 
     #[test]

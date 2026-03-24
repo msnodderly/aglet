@@ -4199,6 +4199,29 @@ impl App {
                     }
                 }
             }
+            InputPanelAction::ScrollDetails(delta) => {
+                let max_scroll = self
+                    .input_panel
+                    .as_ref()
+                    .map(|panel| self.input_panel_edit_details_line_count(panel))
+                    .unwrap_or(1);
+                if let Some(panel) = &mut self.input_panel {
+                    if delta == i32::MIN {
+                        panel.details_scroll = 0;
+                    } else if delta == i32::MAX {
+                        panel.details_scroll = max_scroll.saturating_sub(1);
+                    } else if delta >= 0 {
+                        panel.details_scroll = panel
+                            .details_scroll
+                            .saturating_add(delta as usize)
+                            .min(max_scroll.saturating_sub(1));
+                    } else {
+                        panel.details_scroll = panel
+                            .details_scroll
+                            .saturating_sub(delta.unsigned_abs() as usize);
+                    }
+                }
+            }
             InputPanelAction::Handled => {
                 // If we're on Categories focus and the row is an assigned numeric,
                 // route the key to the numeric buffer.
@@ -5387,9 +5410,10 @@ impl App {
                     .iter()
                     .find(|category| category.name.eq_ignore_ascii_case(&name))
                     .map(|category| (category.id, category.name.clone()));
-                if exact_match.as_ref().is_some_and(|(_, category_name)| {
-                    is_reserved_category_name(category_name)
-                }) {
+                if exact_match
+                    .as_ref()
+                    .is_some_and(|(_, category_name)| is_reserved_category_name(category_name))
+                {
                     self.mode = Mode::ItemAssignPicker;
                     self.clear_input();
                     self.status = format!(

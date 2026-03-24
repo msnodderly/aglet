@@ -646,6 +646,20 @@ Practical implications:
 - If you edit normal footer hints, preserve preview discoverability and update
   rendering tests that assert `p:preview` is visible.
 
+## Edit Item Details Pane Adds A Focus Stop (Current)
+
+`Mode::InputPanel` for `EditItem` now includes a read-only `Details` pane between
+`Note` and `Categories` in the focus order.
+
+Practical implications:
+- Edit-item tab cycle is now `Text -> When -> Note -> Details -> Categories -> Save -> Cancel`
+- `Shift-Tab` from `Categories` returns to `Details`, not directly to `Note`
+- Details-pane scrolling uses `j/k`, `PgUp/PgDn`, `Home`, and `End` while the
+  pane is focused
+- If you add another `InputPanelFocus` variant later, update the mode label
+  rendering (`App::status_context_label`) and edit-panel tests that assume a
+  specific focus sequence
+
 ## Global Search `g/` Uses Temporary All-Items Session (Behavior)
 
 In `Mode::Normal`, `g/` now starts a temporary global search session:
