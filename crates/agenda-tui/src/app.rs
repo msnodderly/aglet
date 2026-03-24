@@ -8,6 +8,7 @@ use agenda_core::store::DEFAULT_VIEW_NAME;
 use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
 };
+use agenda_core::classification::PROVIDER_ID_OLLAMA_OPENAI_COMPAT;
 
 pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
     let Some(parts) = shlex::split(editor) else {
@@ -119,9 +120,17 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn classification_runs_on_item_save(&self) -> bool {
-        self.classification_ui.config.should_run_continuously()
+    pub(crate) fn should_show_blocking_classification_overlay(&self) -> bool {
+        self.classification_ui.config.semantic_mode == SemanticClassificationMode::SuggestReview
+            && self.classification_ui.config.should_run_continuously()
             && self.classification_ui.config.run_on_item_save
+            && self.classification_ui.config.ollama.enabled
+            && !self.classification_ui.config.ollama.base_url.trim().is_empty()
+            && !self.classification_ui.config.ollama.model.trim().is_empty()
+            && self
+                .classification_ui
+                .config
+                .provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
     }
 
     pub(crate) fn queue_blocking_ui_action(

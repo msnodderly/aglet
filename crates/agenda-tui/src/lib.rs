@@ -1602,6 +1602,7 @@ mod tests {
     use agenda_core::classification::{
         CandidateAssignment, ClassificationConfig, ClassificationSuggestion,
         LiteralClassificationMode, SemanticClassificationMode, SuggestionStatus,
+        PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
     };
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
@@ -5740,6 +5741,19 @@ mod tests {
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        let mut config = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        config.ollama.enabled = true;
+        config.ollama.base_url = "http://127.0.0.1:11434/v1".to_string();
+        config.ollama.model = "mistral".to_string();
+        config.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store
+            .set_classification_config(&config)
+            .expect("set classification config");
+
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
         let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new());
@@ -5760,6 +5774,58 @@ mod tests {
             Some("Saving item and classifying...")
         );
         assert_eq!(app.mode, Mode::InputPanel);
+    }
+
+    #[test]
+    fn edit_item_invalid_when_does_not_queue_blocking_classification_action() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut config = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        config.ollama.enabled = true;
+        config.ollama.base_url = "http://127.0.0.1:11434/v1".to_string();
+        config.ollama.model = "mistral".to_string();
+        config.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store
+            .set_classification_config(&config)
+            .expect("set classification config");
+
+        let item = Item::new("Plan travel".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            item.id,
+            "Plan travel".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        panel.when_buffer.set("next weem".to_string());
+        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("attempt edit save");
+
+        assert_eq!(app.pending_blocking_ui_action, None);
+        assert_eq!(app.blocking_overlay_message, None);
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(
+            app.status.contains("Could not parse when date"),
+            "expected validation error status, got: {}",
+            app.status
+        );
+        assert!(app.input_panel.is_some());
     }
 
     #[test]

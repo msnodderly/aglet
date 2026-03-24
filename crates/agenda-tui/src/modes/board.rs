@@ -4073,7 +4073,9 @@ impl App {
                     .unwrap_or(input_panel::InputPanelKind::AddItem);
                 match kind {
                     input_panel::InputPanelKind::AddItem => {
-                        if self.classification_runs_on_item_save() {
+                        if self.should_show_blocking_classification_overlay()
+                            && self.validate_input_panel_add_before_blocking_save()
+                        {
                             self.queue_blocking_ui_action(
                                 PendingBlockingUiAction::SaveInputPanelAdd,
                                 "Saving item and classifying...",
@@ -4083,7 +4085,9 @@ impl App {
                         }
                     }
                     input_panel::InputPanelKind::EditItem => {
-                        if self.classification_runs_on_item_save() {
+                        if self.should_show_blocking_classification_overlay()
+                            && self.validate_input_panel_edit_before_blocking_save(agenda)?
+                        {
                             self.queue_blocking_ui_action(
                                 PendingBlockingUiAction::SaveInputPanelEdit,
                                 "Updating item and classifying...",
@@ -4260,6 +4264,112 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// Save an InputPanel(AddItem) to the store.
+    fn validate_input_panel_add_before_blocking_save(&mut self) -> bool {
+        let Some(panel) = &self.input_panel else {
+            self.mode = Mode::Normal;
+            return false;
+        };
+        let text = panel.text.trimmed().to_string();
+        if text.is_empty() {
+            self.status = "Cannot save: text cannot be empty".to_string();
+            return false;
+        }
+        true
+    }
+
+    fn validate_input_panel_edit_before_blocking_save(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        let Some(panel) = &self.input_panel else {
+            self.mode = Mode::Normal;
+            return Ok(false);
+        };
+        let Some(item_id) = panel.item_id else {
+            self.input_panel = None;
+            self.mode = Mode::Normal;
+            self.status = "Edit failed: no item ID".to_string();
+            return Ok(false);
+        };
+        let updated_text = panel.text.trimmed().to_string();
+        if updated_text.is_empty() {
+            self.status = "Cannot save: text cannot be empty".to_string();
+            return Ok(false);
+        }
+
+        let item = agenda.store().get_item(item_id)?;
+        let existing_categories: HashSet<_> = item.assignments.keys().copied().collect();
+        let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
+        let numeric_buffers = panel.numeric_buffers.clone();
+        let numeric_originals = panel.numeric_originals.clone();
+        let has_numeric_changes = numeric_buffers.iter().any(|(cat_id, buf)| {
+            let trimmed = buf.trimmed();
+            if trimmed.is_empty() {
+                return false;
+            }
+            let original = numeric_originals.get(cat_id).copied().flatten();
+            match trimmed.replace(',', "").parse::<rust_decimal::Decimal>() {
+                Ok(new_val) => original != Some(new_val),
+                Err(_) => true,
+            }
+        });
+        let no_text_change = item.text == updated_text;
+        let no_note_change = item.note
+            == if panel.note.trimmed().is_empty() {
+                None
+            } else {
+                Some(panel.note.text().to_string())
+            };
+        let no_cat_change = existing_categories == new_categories;
+        let when_text = panel.when_buffer.trimmed().to_string();
+        let no_when_change = when_text == panel.original_when;
+        let has_suggestion_decisions = panel
+            .pending_suggestions
+            .iter()
+            .any(|(_, d)| *d != SuggestionDecision::Pending);
+
+        if no_text_change
+            && no_note_change
+            && no_cat_change
+            && no_when_change
+            && !has_numeric_changes
+            && !has_suggestion_decisions
+        {
+            return Ok(false);
+        }
+
+        if !no_when_change && !when_text.is_empty() {
+            if let Err(err) = Self::parse_when_datetime_input(&when_text) {
+                self.status = format!("Could not parse when date: {err}");
+                return Ok(false);
+            }
+        }
+
+        for (cat_id, buf) in &numeric_buffers {
+            let trimmed = buf.trimmed();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed
+                .replace(',', "")
+                .parse::<rust_decimal::Decimal>()
+                .is_err()
+            {
+                let cat_name = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == *cat_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("?");
+                self.status = format!("Invalid numeric value for '{}': '{}'", cat_name, trimmed);
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 
     /// Save an InputPanel(AddItem) to the store.

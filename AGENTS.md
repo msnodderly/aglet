@@ -449,6 +449,20 @@ Practical implications:
 - If you only style the `tui-textarea` cursor but do not set terminal cursor
   position, cursor visibility can appear inconsistent across text-entry panes.
 
+## Blocking Save Overlay Must Queue After Validation (Surprising)
+
+The TUI "Working" popup for synchronous classification should only be queued
+when semantic/Ollama classification is actually enabled **and** the current
+input-panel contents have already passed local validation.
+
+Practical implications:
+- If you queue the blocking overlay before validating edit/add input, users can
+  see a fast yellow flash and then remain in the editor with no obvious save.
+- Preflight checks should cover at least empty item text and edit-panel `When` /
+  numeric parse errors before scheduling the blocking UI action.
+- Deterministic-only saves should not show the blocking overlay; reserve it for
+  real semantic/Ollama work.
+
 ## Category Create Parent Defaults (Surprising)
 
 CategoryCreate (`Mode::InputPanel` with `NameInputContext::CategoryCreate`) no
