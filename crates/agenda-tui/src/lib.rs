@@ -7428,6 +7428,14 @@ mod tests {
             rendered.contains("u:deps"),
             "normal footer hints should include hide-dependent toggle shortcut: {rendered}"
         );
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "normal footer hints should hide numeric-only format shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "normal footer hints should hide numeric-only summary shortcut without numeric focus: {rendered}"
+        );
 
         app.section_filters = vec![Some("ready".to_string())];
         let backend = TestBackend::new(220, 18);
@@ -7457,6 +7465,107 @@ mod tests {
         assert!(
             rendered.contains("u:deps"),
             "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "filtered footer hints should still hide numeric-only format shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "filtered footer hints should still hide numeric-only summary shortcut without numeric focus: {rendered}"
+        );
+    }
+
+    #[test]
+    fn normal_mode_footer_hints_show_numeric_shortcuts_only_for_numeric_column_focus() {
+        let (store, classifier, _cost_id, _item_id, db_path) =
+            setup_numeric_column_board("footer-numeric-hints");
+        let _agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 1; // numeric Cost column
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("f:col fmt"),
+            "numeric column focus should show format shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("F:col summary"),
+            "numeric column focus should show summary shortcut: {rendered}"
+        );
+
+        app.column_index = 0; // item column
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "item-column focus should hide format shortcut: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "item-column focus should hide summary shortcut: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_footer_hints_hide_numeric_shortcuts_for_non_numeric_column_focus() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let _agenda = Agenda::new(&store, &classifier);
+
+        let priority = Category::new("Priority".to_string());
+        store.create_category(&priority).expect("create priority");
+
+        let item = Item::new("Footer hint target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: priority.id,
+                width: 12,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1; // non-numeric standard column
+
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "non-numeric column focus should hide format shortcut: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "non-numeric column focus should hide summary shortcut: {rendered}"
         );
     }
 
@@ -8030,6 +8139,9 @@ mod tests {
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
         let mut view = View::new("Board".to_string());
         view.sections.push(Section {
             title: "All".to_string(),
@@ -8314,7 +8426,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_picker_and_done_confirm_render_updated_footer_copy() {
+    fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -8369,22 +8481,9 @@ mod tests {
             "assign picker should show focused target context inside the modal: {rendered}"
         );
 
-        app.item_assign_category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.name.eq_ignore_ascii_case("Done"))
-            .expect("Done category row should exist");
-        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open batch done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
-
-        terminal
-            .draw(|frame| app.draw(frame))
-            .expect("render confirm");
-        let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
-            rendered.contains("y:remove links + done  n:done only  Esc:cancel"),
-            "done confirm footer should use compact batch wording: {rendered}"
+            !rendered.contains("[ ] Done"),
+            "assign picker should hide reserved Done category: {rendered}"
         );
 
         drop(store);
@@ -8431,6 +8530,60 @@ mod tests {
         app.handle_item_assign_category_key(KeyCode::BackTab, &agenda)
             .expect("backtab should move back to category pane");
         assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
+    }
+
+    #[test]
+    fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let item = Item::new("Assign target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(
+            app.item_assign_selected_category_row().map(|row| row.id),
+            Some(work.id),
+            "assign picker should select the first non-reserved category"
+        );
+        assert!(
+            app.item_assign_visible_category_row_indices()
+                .iter()
+                .filter_map(|row_index| app.category_rows.get(*row_index))
+                .all(|row| !row.is_reserved),
+            "assign picker visible rows should exclude reserved categories"
+        );
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(rendered.contains("[ ] Work"), "work row should render: {rendered}");
+        assert!(
+            !rendered.contains("[ ] Done"),
+            "reserved Done should not render in assign picker: {rendered}"
+        );
+        assert!(
+            !rendered.contains("[ ] When"),
+            "reserved When should not render in assign picker: {rendered}"
+        );
+        assert!(
+            !rendered.contains("[ ] Entry"),
+            "reserved Entry should not render in assign picker: {rendered}"
+        );
     }
 
     #[test]
@@ -8632,6 +8785,62 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_input_rejects_reserved_category_names() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let item = Item::new("Reserved assign target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let initial_category_count = app.categories.len();
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+
+        for reserved_name in ["Done", "When", "Entry"] {
+            app.mode = Mode::ItemAssignInput;
+            app.input.set(reserved_name.to_string());
+            app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+                .expect("submit reserved category");
+
+            assert_eq!(
+                app.mode,
+                Mode::ItemAssignPicker,
+                "reserved category input should return to picker"
+            );
+            assert!(
+                app.status.contains("Reserved category"),
+                "status should explain reserved categories are blocked: {}",
+                app.status
+            );
+        }
+
+        app.refresh(&store).expect("refresh after reserved rejects");
+        let categories_after = app.categories.len();
+        assert_eq!(
+            categories_after, initial_category_count,
+            "reserved-name input should not create categories"
+        );
+
+        let saved_item = store.get_item(item.id).expect("reload item");
+        assert!(
+            !saved_item.is_done,
+            "rejecting reserved Done should not mark the item done"
+        );
+        assert!(
+            saved_item.when_date.is_none(),
+            "rejecting reserved When should not set a date"
+        );
     }
 
     #[test]
@@ -9429,6 +9638,54 @@ mod tests {
         );
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_manager_reserved_details_render_as_read_only() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        let reserved_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.is_reserved)
+            .expect("reserved row should exist");
+        app.category_index = reserved_index;
+        app.sync_category_manager_state_from_selection();
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("[reserved]"),
+            "reserved category badge should remain visible in tree: {rendered}"
+        );
+        assert!(
+            rendered.contains("Note (read-only)"),
+            "reserved categories should render note pane as read-only: {rendered}"
+        );
+        assert!(
+            rendered.contains("Also Match (read-only)"),
+            "reserved categories should render also-match pane as read-only: {rendered}"
+        );
+        assert!(
+            rendered.contains("Reserved categories are built-in and read-only"),
+            "reserved categories should show an explicit read-only hint: {rendered}"
+        );
+        assert!(
+            !rendered.contains("> Note (read-only)"),
+            "reserved read-only note pane should not render as actively editable: {rendered}"
+        );
     }
 
     #[test]
@@ -13043,7 +13300,7 @@ mod tests {
     }
 
     #[test]
-    fn item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+    fn item_assign_hidden_reserved_done_does_not_open_confirm_or_change_item() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -13077,12 +13334,13 @@ mod tests {
             .expect("Done category row should exist");
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
-
-        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
-            .expect("Esc should cancel done prompt");
+            .expect("space on hidden reserved category should no-op");
         assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert!(
+            app.status.contains("no category selected"),
+            "hidden reserved Done should not be assignable: {}",
+            app.status
+        );
         assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
         assert_eq!(
             agenda
@@ -13097,7 +13355,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+    fn batch_item_assign_hidden_reserved_done_keeps_picker_and_selection() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -13140,13 +13398,14 @@ mod tests {
             .expect("Done category row should exist");
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open batch done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
-
-        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
-            .expect("Esc should cancel batch done prompt");
+            .expect("space on hidden reserved category should no-op");
         assert_eq!(app.mode, Mode::ItemAssignPicker);
         assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status.contains("no category selected"),
+            "hidden reserved Done should not open batch-done flow: {}",
+            app.status
+        );
         assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
         assert!(!store.get_item(plain.id).expect("load plain").is_done);
         assert_eq!(
@@ -13162,7 +13421,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_item_assign_done_prompt_n_marks_selected_done_and_clears_selection() {
+    fn batch_item_assign_hidden_reserved_done_does_not_mark_selected_items_done() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -13205,14 +13464,10 @@ mod tests {
             .expect("Done category row should exist");
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open batch done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
+            .expect("space on hidden reserved category should no-op");
 
-        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
-            .expect("n should mark selected items done");
-
-        assert!(store.get_item(blocker.id).expect("load blocker").is_done);
-        assert!(store.get_item(plain.id).expect("load plain").is_done);
+        assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
+        assert!(!store.get_item(plain.id).expect("load plain").is_done);
         assert_eq!(
             agenda
                 .immediate_dependent_ids(blocker.id)
@@ -13220,11 +13475,11 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(app.selected_count(), 0);
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.selected_count(), 2);
         assert!(
-            app.status.contains("Marked 2 selected items done"),
-            "status should summarize batch done result: {}",
+            app.status.contains("no category selected"),
+            "status should explain hidden reserved Done was not assignable: {}",
             app.status
         );
 

@@ -3661,8 +3661,11 @@ impl App {
                         ("v", "views"),
                         ("m", "lanes"),
                         ("s", "sort"),
-                        ("f", "col fmt"),
-                        ("F", "col summary"),
+                    ]);
+                    if self.focused_numeric_board_column() {
+                        hints.extend_from_slice(&[("f", "col fmt"), ("F", "col summary")]);
+                    }
+                    hints.extend_from_slice(&[
                         ("p", "preview"),
                         ("u", "deps"),
                         ("C", "classify"),
@@ -4444,17 +4447,16 @@ impl App {
         } else {
             Style::default().fg(Color::DarkGray)
         };
+        let visible_category_indices = self.item_assign_visible_category_row_indices();
 
-        let cat_items: Vec<ListItem<'_>> = if self.category_rows.is_empty() {
+        let cat_items: Vec<ListItem<'_>> = if visible_category_indices.is_empty() {
             vec![ListItem::new(Line::from("(no categories)"))]
         } else {
-            self.category_rows
+            visible_category_indices
                 .iter()
+                .filter_map(|row_index| self.category_rows.get(*row_index))
                 .map(|row| {
                     let mut flags = Vec::new();
-                    if row.is_reserved {
-                        flags.push("reserved");
-                    }
                     if row.value_kind == agenda_core::model::CategoryValueKind::Numeric {
                         flags.push("numeric");
                     }
@@ -4511,11 +4513,7 @@ impl App {
 
         let mut cat_state = Self::list_state_for(
             panes[0],
-            if self.category_rows.is_empty() {
-                None
-            } else {
-                Some(self.item_assign_category_index)
-            },
+            self.item_assign_selected_category_row_index(),
         );
         let cat_count = cat_items.len();
         frame.render_stateful_widget(
@@ -4800,10 +4798,21 @@ impl App {
                                 .join(" "),
                         );
                     }
-                    Row::new(vec![Cell::from(label)])
+                    let row_style = if row.is_reserved {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default()
+                    };
+                    Row::new(vec![Cell::from(label)]).style(row_style)
                 })
                 .collect()
         };
+        let selected_tree_row_is_reserved = self
+            .selected_category_row()
+            .map(|row| row.is_reserved)
+            .unwrap_or(false);
         let row_count = rows.len();
         let mut state = Self::table_state_for(
             table_area,
@@ -4824,7 +4833,14 @@ impl App {
                         .style(Style::default().add_modifier(Modifier::BOLD)),
                 )
                 .highlight_symbol("> ")
-                .row_highlight_style(selected_row_style())
+                .row_highlight_style(if selected_tree_row_is_reserved {
+                    Style::default()
+                        .fg(MUTED_TEXT_COLOR)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM)
+                } else {
+                    selected_row_style()
+                })
                 .block(
                     Block::default()
                         .title(if manager_focus == CategoryManagerFocus::Tree {
@@ -4873,6 +4889,7 @@ impl App {
                 let details_focus = self
                     .category_manager_details_focus()
                     .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
+                let is_reserved_category = row.is_reserved;
                 let note_editing = self.category_manager_details_note_editing();
                 let note_dirty = self.category_manager_details_note_dirty();
                 let also_match_editing = self.category_manager_details_also_match_editing();
@@ -4984,7 +5001,11 @@ impl App {
 
                 let focus_prefix = |active: bool| if active { "> " } else { "  " };
                 let flag_line = |active: bool, label: &str, on: bool| {
-                    let style = if active {
+                    let style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if active {
                         focused_cell_style()
                     } else {
                         Style::default()
@@ -4992,7 +5013,7 @@ impl App {
                     Line::from(Span::styled(
                         format!(
                             "{}{} {}",
-                            focus_prefix(active),
+                            focus_prefix(active && !is_reserved_category),
                             if on { "[x]" } else { "[ ]" },
                             label
                         ),
@@ -5023,7 +5044,7 @@ impl App {
                         .unwrap_or_else(|| {
                             numeric_format.currency_symbol.clone().unwrap_or_default()
                         });
-                    let decimal_style = if integer_mode {
+                    let decimal_style = if integer_mode || is_reserved_category {
                         Style::default()
                             .fg(MUTED_TEXT_COLOR)
                             .add_modifier(Modifier::DIM)
@@ -5032,22 +5053,34 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    let currency_style = if currency_focused {
+                    let currency_style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if currency_focused {
                         focused_cell_style()
                     } else {
                         Style::default()
                     };
-                    let thousands_style = if thousands_focused {
+                    let thousands_style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if thousands_focused {
                         focused_cell_style()
                     } else {
                         Style::default()
                     };
                     vec![
-                        flag_line(integer_focused, "Integer", integer_mode),
+                        flag_line(integer_focused && !is_reserved_category, "Integer", integer_mode),
                         Line::from(Span::styled(
                             format!(
                                 "{}Decimal places: {}",
-                                if decimal_focused { "> " } else { "  " },
+                                if decimal_focused && !is_reserved_category {
+                                    "> "
+                                } else {
+                                    "  "
+                                },
                                 if integer_mode {
                                     "(disabled in Integer mode)".to_string()
                                 } else if decimal_value.is_empty() {
@@ -5061,7 +5094,11 @@ impl App {
                         Line::from(Span::styled(
                             format!(
                                 "{}Currency symbol: {}",
-                                if currency_focused { "> " } else { "  " },
+                                if currency_focused && !is_reserved_category {
+                                    "> "
+                                } else {
+                                    "  "
+                                },
                                 if currency_value.is_empty() {
                                     "(none)".to_string()
                                 } else {
@@ -5073,7 +5110,11 @@ impl App {
                         Line::from(Span::styled(
                             format!(
                                 "{}{} Thousands separator",
-                                if thousands_focused { "> " } else { "  " },
+                                if thousands_focused && !is_reserved_category {
+                                    "> "
+                                } else {
+                                    "  "
+                                },
                                 if numeric_format.use_thousands_separator {
                                     "[x]"
                                 } else {
@@ -5133,10 +5174,11 @@ impl App {
                 } else {
                     "Flags"
                 };
-                let flags_border_focused = !matches!(
-                    details_focus,
-                    CategoryManagerDetailsFocus::Note | CategoryManagerDetailsFocus::AlsoMatch
-                );
+                let flags_border_focused = !is_reserved_category
+                    && !matches!(
+                        details_focus,
+                        CategoryManagerDetailsFocus::Note | CategoryManagerDetailsFocus::AlsoMatch
+                    );
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
@@ -5152,9 +5194,11 @@ impl App {
                 );
 
                 if !is_numeric_category {
-                    let also_match_block_focus =
-                        details_focus == CategoryManagerDetailsFocus::AlsoMatch;
-                    let also_match_title = if also_match_editing {
+                    let also_match_block_focus = !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::AlsoMatch;
+                    let also_match_title = if is_reserved_category {
+                        "Also Match (read-only)"
+                    } else if also_match_editing {
                         "Also Match (editing)"
                     } else if also_match_dirty {
                         "Also Match (unsaved)"
@@ -5167,7 +5211,14 @@ impl App {
                         also_match_widget.set_placeholder_text(ALSO_MATCH_PLACEHOLDER_TEXT);
                         also_match_widget
                             .set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
-                        if also_match_editing {
+                        also_match_widget.set_style(if is_reserved_category {
+                            Style::default()
+                                .fg(MUTED_TEXT_COLOR)
+                                .add_modifier(Modifier::DIM)
+                        } else {
+                            Style::default()
+                        });
+                        if also_match_editing && !is_reserved_category {
                             also_match_widget
                                 .set_cursor_line_style(Style::default().bg(Color::DarkGray));
                             also_match_widget.set_cursor_style(
@@ -5185,7 +5236,9 @@ impl App {
                                     also_match_title.to_string()
                                 })
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(if also_match_editing {
+                                .border_style(Style::default().fg(if is_reserved_category {
+                                    pane_idle
+                                } else if also_match_editing {
                                     CATEGORY_MANAGER_EDIT_FOCUS
                                 } else if also_match_block_focus {
                                     CATEGORY_MANAGER_PANE_FOCUS
@@ -5207,8 +5260,11 @@ impl App {
                     }
                 }
 
-                let note_block_focus = details_focus == CategoryManagerDetailsFocus::Note;
-                let note_title = if note_editing {
+                let note_block_focus =
+                    !is_reserved_category && details_focus == CategoryManagerDetailsFocus::Note;
+                let note_title = if is_reserved_category {
+                    "Note (read-only)"
+                } else if note_editing {
                     "Note (editing)"
                 } else if note_dirty {
                     "Note (unsaved)"
@@ -5220,7 +5276,14 @@ impl App {
                     let mut note_widget = state.details_note.widget().clone();
                     note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
                     note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
-                    if note_editing {
+                    note_widget.set_style(if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default()
+                    });
+                    if note_editing && !is_reserved_category {
                         note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
                         note_widget.set_cursor_style(
                             Style::default()
@@ -5237,7 +5300,9 @@ impl App {
                                 note_title.to_string()
                             })
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(if note_editing {
+                            .border_style(Style::default().fg(if is_reserved_category {
+                                pane_idle
+                            } else if note_editing {
                                 CATEGORY_MANAGER_EDIT_FOCUS
                             } else if note_block_focus {
                                 CATEGORY_MANAGER_PANE_FOCUS
@@ -5268,7 +5333,9 @@ impl App {
                     );
                 }
 
-                let details_hint = if note_editing {
+                let details_hint = if is_reserved_category {
+                    "Reserved categories are built-in and read-only here."
+                } else if note_editing {
                     "Type to edit  Esc:stop editing  Tab:leave (warn if unsaved)"
                 } else if also_match_editing {
                     "Type terms line-by-line  Enter:new line  Esc:stop editing  Tab:leave"
