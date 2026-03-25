@@ -5824,17 +5824,18 @@ mod tests {
         let result = ProcessItemResult {
             semantic_candidates_seen: 0,
             semantic_debug_messages: vec![
-                "semantic[mistral]: transport error".to_string(),
+                "Ollama not reachable at http://127.0.0.1:11434/v1 — is it running?".to_string(),
             ],
             ..ProcessItemResult::default()
         };
 
-        assert_eq!(
-            app.classification_feedback_for_saved_item(item_id, &result),
-            Some((
-                "semantic[mistral]: transport error".to_string(),
-                false
-            ))
+        let feedback = app
+            .classification_feedback_for_saved_item(item_id, &result);
+        assert!(feedback.is_some());
+        let (msg, _) = feedback.unwrap();
+        assert!(
+            msg.contains("Ollama not reachable"),
+            "feedback should surface transport error: {msg}"
         );
     }
 

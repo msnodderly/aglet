@@ -272,6 +272,10 @@ pub struct ClassificationRequest {
     pub numeric_values: Vec<(CategoryId, Decimal)>,
     pub literal_candidate_categories: Vec<CategoryDescriptor>,
     pub semantic_candidate_categories: Vec<CategoryDescriptor>,
+    /// Name lookup for all categories (including assigned ones excluded from
+    /// semantic candidates). Used to resolve UUIDs to human-readable names in
+    /// the Ollama prompt.
+    pub all_category_names: HashMap<CategoryId, String>,
 }
 
 impl ClassificationRequest {
@@ -666,13 +670,26 @@ impl ClassificationProvider for OllamaProvider<'_> {
         {
             Ok(content) => content,
             Err(err) => {
-                dbg(&format!("transport error: {err}"));
+                let err_str = format!("{err}");
+                dbg(&format!("transport error: {err_str}"));
+                let detail = if err_str.contains("timed out") || err_str.contains("Timeout") {
+                    format!(
+                        "Ollama timed out ({}s) — try a smaller model or increase timeout in Global Settings",
+                        self.settings.timeout_secs
+                    )
+                } else if err_str.contains("Connection refused")
+                    || err_str.contains("connection refused")
+                {
+                    format!(
+                        "Ollama not reachable at {} — is it running?",
+                        self.settings.base_url
+                    )
+                } else {
+                    format!("Ollama error: {err_str}")
+                };
                 return Ok(ProviderClassificationResult {
                     candidates: Vec::new(),
-                    debug_summary: Some(format!(
-                        "semantic[{}]: transport error",
-                        self.settings.model
-                    )),
+                    debug_summary: Some(detail),
                 });
             }
         };
@@ -702,12 +719,8 @@ impl ClassificationProvider for OllamaProvider<'_> {
 }
 
 fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
-    // Build a name lookup for resolving parent IDs to human-readable names.
-    let name_map: HashMap<CategoryId, &str> = request
-        .semantic_candidate_categories
-        .iter()
-        .map(|cat| (cat.id, cat.name.as_str()))
-        .collect();
+    // Use the full category name map for resolving IDs to human-readable names.
+    let name_map = &request.all_category_names;
 
     // Identify which categories are parents (have children in the list).
     let parent_ids: HashSet<CategoryId> = request
@@ -779,7 +792,7 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
         };
         let parent_annotation = match category.parent_id {
             Some(pid) => {
-                let parent_name = name_map.get(&pid).copied().unwrap_or("?");
+                let parent_name = name_map.get(&pid).map(|s| s.as_str()).unwrap_or("?");
                 format!(" (child of \"{}\")", parent_name)
             }
             None => String::new(),
@@ -960,6 +973,11 @@ impl<'a> ClassificationService<'a> {
             })
             .collect();
 
+        let all_category_names: HashMap<CategoryId, String> = categories
+            .iter()
+            .map(|cat| (cat.id, cat.name.clone()))
+            .collect();
+
         let mut literal_candidate_categories = Vec::new();
         let mut semantic_candidate_categories = Vec::new();
         for category in categories {
@@ -1001,6 +1019,7 @@ impl<'a> ClassificationService<'a> {
             numeric_values,
             literal_candidate_categories,
             semantic_candidate_categories,
+            all_category_names,
         })
     }
 }
@@ -1122,6 +1141,7 @@ mod tests {
             numeric_values: Vec::new(),
             literal_candidate_categories: Vec::new(),
             semantic_candidate_categories: vec![category_a.clone(), category_b.clone()],
+            all_category_names: HashMap::new(),
         };
 
         let parsed = parse_ollama_suggestions(
@@ -1182,6 +1202,7 @@ mod tests {
                 child_bug.clone(),
                 child_feature.clone(),
             ],
+            all_category_names: HashMap::new(),
         };
 
         // Model suggests the group parent — should be dropped.
@@ -1222,6 +1243,7 @@ mod tests {
                 parent_id: None,
                 value_kind: CategoryValueKind::Tag,
             }],
+            all_category_names: HashMap::new(),
         };
         let settings = OllamaProviderSettings {
             enabled: true,
@@ -1266,6 +1288,7 @@ mod tests {
             numeric_values: Vec::new(),
             literal_candidate_categories: Vec::new(),
             semantic_candidate_categories: vec![travel.clone()],
+            all_category_names: HashMap::new(),
         };
         let settings = OllamaProviderSettings {
             enabled: true,
@@ -1324,6 +1347,7 @@ mod tests {
                 parent_id: None,
                 value_kind: CategoryValueKind::Tag,
             }],
+            all_category_names: HashMap::new(),
         };
         let settings = OllamaProviderSettings {
             enabled: true,
@@ -1343,9 +1367,13 @@ mod tests {
             .classify(&request)
             .expect("transport errors should be swallowed");
         assert!(out.candidates.is_empty());
-        assert_eq!(
-            out.debug_summary.as_deref(),
-            Some("semantic[mistral]: transport error")
+        assert!(
+            out.debug_summary
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("Ollama error:"),
+            "transport error should surface as user-facing message: {:?}",
+            out.debug_summary
         );
     }
 
