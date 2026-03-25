@@ -661,7 +661,7 @@ impl ClassificationProvider for OllamaProvider<'_> {
             return Ok(ProviderClassificationResult::default());
         }
 
-        let system_prompt = "Classify an item into categories. Return JSON: {\"suggestions\":[{\"category\":\"EXACT NAME\",\"confidence\":0.0-1.0,\"rationale\":\"brief\"}]}\nRules:\n- Use ONLY exact names from the allowed list. Never invent names.\n- Suggest 1-3 categories. Only include confident matches (>0.7).\n- If nothing fits, return {\"suggestions\":[]}.\n- NEVER suggest [group] categories. Pick their children instead.\n- Aliases (aka:) hint at scope but always return the exact category name.";
+        let system_prompt = "Classify an item into categories. Return JSON: {\"suggestions\":[{\"category\":\"EXACT NAME\",\"confidence\":0.0-1.0,\"rationale\":\"brief\"}]}\nRules:\n- ONLY use names from the \"Allowed categories\" list. Copy the name exactly.\n- FORBIDDEN names are marked [group]. NEVER return a [group] name. Return one of its children instead.\n  Example: Do NOT return \"Priority\". Return \"High\" or \"Normal\" instead.\n  Example: Do NOT return \"Issue type\". Return \"Bug\" or \"Feature request\" instead.\n- Suggest 1-3 categories. Only include confident matches (>0.7).\n- If nothing fits, return {\"suggestions\":[]}.\n- Aliases (aka:) hint at scope but always return the exact category name.";
         let user_prompt = build_ollama_user_prompt(request);
         dbg(&format!("user_prompt:\n{user_prompt}"));
         let content = match self
@@ -790,10 +790,10 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
         leaf_lines.push(format!("  {}{parent}{aliases}", category.name));
     }
     if !group_lines.is_empty() {
-        lines.push("Groups (context only, do NOT suggest):".to_string());
+        lines.push("FORBIDDEN groups (do NOT return these names):".to_string());
         lines.extend(group_lines);
     }
-    lines.push("Allowed categories:".to_string());
+    lines.push("Allowed categories (ONLY return names from this list):".to_string());
     lines.extend(leaf_lines);
     lines.join("\n")
 }
