@@ -2367,10 +2367,10 @@ impl App {
             KeyCode::Char('i') => self.toggle_preview_mode(),
             KeyCode::Char('o') => self.toggle_preview_mode(),
             KeyCode::Char('J') => {
-                self.scroll_preview(1);
+                self.move_selected_item_between_slots(1, agenda)?;
             }
             KeyCode::Char('K') => {
-                self.scroll_preview(-1);
+                self.move_selected_item_between_slots(-1, agenda)?;
             }
             KeyCode::Char('r') => {
                 if let Some(item_id) = self.selected_item_id() {
