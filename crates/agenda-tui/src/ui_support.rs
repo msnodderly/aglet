@@ -798,6 +798,7 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
             is_exclusive: category.is_exclusive,
             is_actionable: category.is_actionable,
             enable_implicit_string: category.enable_implicit_string,
+            enable_semantic_classification: category.enable_semantic_classification,
             match_category_name: category.match_category_name,
             value_kind: category.value_kind,
         })
@@ -1253,6 +1254,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             also_match: Vec::new(),
             note: None,

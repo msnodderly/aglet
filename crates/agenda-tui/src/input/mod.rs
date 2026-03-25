@@ -11,7 +11,8 @@ impl App {
         self.current_key_modifiers = key.modifiers;
         let handled = match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
-            Mode::HelpPanel
+            Mode::GlobalSettings
+            | Mode::HelpPanel
             | Mode::SuggestionReview
             | Mode::InputPanel
             | Mode::LinkWizard
@@ -39,6 +40,7 @@ impl App {
     pub(crate) fn handle_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> TuiResult<bool> {
         match self.mode {
             Mode::Normal => self.handle_normal_key(code, agenda),
+            Mode::GlobalSettings => self.handle_global_settings_key(code, agenda),
             Mode::HelpPanel => self.handle_help_panel_key(code),
             Mode::SuggestionReview => self.handle_suggestion_review_key(code, agenda),
             Mode::InputPanel => self.handle_input_panel_key(code, agenda),

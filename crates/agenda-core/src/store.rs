@@ -21,7 +21,7 @@ use crate::model::{
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 13;
+const SCHEMA_VERSION: i32 = 14;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS categories (
     is_exclusive           INTEGER NOT NULL DEFAULT 0,
     is_actionable          INTEGER NOT NULL DEFAULT 1,
     enable_implicit_string INTEGER NOT NULL DEFAULT 1,
+    enable_semantic_classification INTEGER NOT NULL DEFAULT 1,
     match_category_name    INTEGER NOT NULL DEFAULT 1,
     also_match_json        TEXT NOT NULL DEFAULT '[]',
     note                   TEXT,
@@ -633,9 +634,10 @@ impl Store {
             .execute(
                 "INSERT INTO categories (
                     id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
-                    match_category_name, also_match_json, note, created_at, modified_at,
-                    sort_order, conditions_json, actions_json, value_kind, numeric_format_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                    enable_semantic_classification, match_category_name, also_match_json, note,
+                    created_at, modified_at, sort_order, conditions_json, actions_json,
+                    value_kind, numeric_format_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     category.id.to_string(),
                     category.name,
@@ -643,6 +645,7 @@ impl Store {
                     category.is_exclusive as i32,
                     category.is_actionable as i32,
                     category.enable_implicit_string as i32,
+                    category.enable_semantic_classification as i32,
                     category.match_category_name as i32,
                     also_match_json,
                     category.note,
@@ -663,8 +666,9 @@ impl Store {
     pub fn get_category(&self, id: CategoryId) -> Result<Category> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
-                    match_category_name, also_match_json, note, created_at, modified_at,
-                    conditions_json, actions_json, sort_order, value_kind, numeric_format_json
+                    enable_semantic_classification, match_category_name, also_match_json, note,
+                    created_at, modified_at, conditions_json, actions_json, sort_order,
+                    value_kind, numeric_format_json
              FROM categories WHERE id = ?1",
         )?;
         let (mut category, _) = stmt
@@ -744,21 +748,23 @@ impl Store {
                      is_exclusive = ?3,
                      is_actionable = ?4,
                      enable_implicit_string = ?5,
-                     match_category_name = ?6,
-                     also_match_json = ?7,
-                     note = ?8,
-                     modified_at = ?9,
-                     conditions_json = ?10,
-                     actions_json = ?11,
-                     value_kind = ?12,
-                     numeric_format_json = ?13
-                 WHERE id = ?14",
+                     enable_semantic_classification = ?6,
+                     match_category_name = ?7,
+                     also_match_json = ?8,
+                     note = ?9,
+                     modified_at = ?10,
+                     conditions_json = ?11,
+                     actions_json = ?12,
+                     value_kind = ?13,
+                     numeric_format_json = ?14
+                 WHERE id = ?15",
                 params![
                     category.name,
                     category.parent.map(|id| id.to_string()),
                     category.is_exclusive as i32,
                     category.is_actionable as i32,
                     category.enable_implicit_string as i32,
+                    category.enable_semantic_classification as i32,
                     category.match_category_name as i32,
                     also_match_json,
                     category.note,
@@ -891,8 +897,9 @@ impl Store {
     pub fn get_hierarchy(&self) -> Result<Vec<Category>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
-                    match_category_name, also_match_json, note, created_at, modified_at,
-                    conditions_json, actions_json, sort_order, value_kind, numeric_format_json
+                    enable_semantic_classification, match_category_name, also_match_json, note,
+                    created_at, modified_at, conditions_json, actions_json, sort_order,
+                    value_kind, numeric_format_json
              FROM categories
              ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
         )?;
@@ -1587,15 +1594,16 @@ impl Store {
         let is_exclusive: i32 = row.get(3)?;
         let is_actionable: i32 = row.get(4)?;
         let enable_implicit_string: i32 = row.get(5)?;
-        let match_category_name: i32 = row.get(6)?;
-        let also_match_json: String = row.get(7)?;
-        let created_str: String = row.get(9)?;
-        let modified_str: String = row.get(10)?;
-        let conditions_json: String = row.get(11)?;
-        let actions_json: String = row.get(12)?;
-        let sort_order: i64 = row.get(13)?;
-        let value_kind_str: String = row.get(14)?;
-        let numeric_format_json: String = row.get(15)?;
+        let enable_semantic_classification: i32 = row.get(6)?;
+        let match_category_name: i32 = row.get(7)?;
+        let also_match_json: String = row.get(8)?;
+        let created_str: String = row.get(10)?;
+        let modified_str: String = row.get(11)?;
+        let conditions_json: String = row.get(12)?;
+        let actions_json: String = row.get(13)?;
+        let sort_order: i64 = row.get(14)?;
+        let value_kind_str: String = row.get(15)?;
+        let numeric_format_json: String = row.get(16)?;
 
         // Corrupt or legacy category row: fall back to no conditions/actions
         // so the category still loads without its rules rather than failing.
@@ -1615,9 +1623,10 @@ impl Store {
                 is_exclusive: is_exclusive != 0,
                 is_actionable: is_actionable != 0,
                 enable_implicit_string: enable_implicit_string != 0,
+                enable_semantic_classification: enable_semantic_classification != 0,
                 match_category_name: match_category_name != 0,
                 also_match,
-                note: row.get(8)?,
+                note: row.get(9)?,
                 created_at: created_str.parse::<Timestamp>().unwrap_or_default(),
                 modified_at: modified_str.parse::<Timestamp>().unwrap_or_default(),
                 conditions,
@@ -2099,6 +2108,11 @@ impl Store {
         if !self.column_exists("categories", "match_category_name")? {
             self.conn.execute_batch(
                 "ALTER TABLE categories ADD COLUMN match_category_name INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
+        if !self.column_exists("categories", "enable_semantic_classification")? {
+            self.conn.execute_batch(
+                "ALTER TABLE categories ADD COLUMN enable_semantic_classification INTEGER NOT NULL DEFAULT 1;",
             )?;
         }
         if !self.column_exists("assignments", "numeric_value")? {
@@ -2723,7 +2737,6 @@ mod tests {
     fn test_classification_config_roundtrip() {
         let store = Store::open_memory().expect("open store");
         let config = ClassificationConfig {
-            enabled: false,
             run_on_category_change: false,
             ..ClassificationConfig::default()
         };
@@ -2736,6 +2749,64 @@ mod tests {
             .get_classification_config()
             .expect("reload classification config");
         assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn test_upgrade_from_v13_adds_enable_semantic_classification_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE categories (
+                id                     TEXT PRIMARY KEY,
+                name                   TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                parent_id              TEXT REFERENCES categories(id),
+                is_exclusive           INTEGER NOT NULL DEFAULT 0,
+                is_actionable          INTEGER NOT NULL DEFAULT 1,
+                enable_implicit_string INTEGER NOT NULL DEFAULT 1,
+                match_category_name    INTEGER NOT NULL DEFAULT 1,
+                also_match_json        TEXT NOT NULL DEFAULT '[]',
+                note                   TEXT,
+                created_at             TEXT NOT NULL,
+                modified_at            TEXT NOT NULL,
+                sort_order             INTEGER NOT NULL DEFAULT 0,
+                conditions_json        TEXT NOT NULL DEFAULT '[]',
+                actions_json           TEXT NOT NULL DEFAULT '[]',
+                value_kind             TEXT NOT NULL DEFAULT 'Tag',
+                numeric_format_json    TEXT NOT NULL DEFAULT 'null'
+            );
+            "#,
+        )
+        .unwrap();
+        let category_id = Uuid::new_v4();
+        let now = Timestamp::now().to_string();
+        conn.execute(
+            "INSERT INTO categories (
+                id, name, parent_id, is_exclusive, is_actionable,
+                enable_implicit_string, match_category_name, also_match_json, note,
+                created_at, modified_at, sort_order, conditions_json, actions_json,
+                value_kind, numeric_format_json
+            ) VALUES (?1, 'Legacy', NULL, 0, 1, 1, 1, '[]', NULL, ?2, ?2, 0, '[]', '[]', 'Tag', 'null')",
+            params![category_id.to_string(), now],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 13).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        let semantic_column_exists = store
+            .column_exists("categories", "enable_semantic_classification")
+            .unwrap();
+        assert!(
+            semantic_column_exists,
+            "migration should add enable_semantic_classification column"
+        );
+
+        let legacy = store.get_category(category_id).expect("legacy category loads");
+        assert!(
+            legacy.enable_semantic_classification,
+            "legacy rows should default semantic matching on after migration"
+        );
     }
 
     #[test]

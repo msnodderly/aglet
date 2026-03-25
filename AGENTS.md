@@ -449,14 +449,30 @@ Practical implications:
 - If you only style the `tui-textarea` cursor but do not set terminal cursor
   position, cursor visibility can appear inconsistent across text-entry panes.
 
+## Blocking Save Overlay Must Queue After Validation (Surprising)
+
+The TUI "Working" popup for synchronous classification should only be queued
+when semantic/Ollama classification is actually enabled **and** the current
+input-panel contents have already passed local validation.
+
+Practical implications:
+- If you queue the blocking overlay before validating edit/add input, users can
+  see a fast yellow flash and then remain in the editor with no obvious save.
+- Preflight checks should cover at least empty item text and edit-panel `When` /
+  numeric parse errors before scheduling the blocking UI action.
+- Deterministic-only saves should not show the blocking overlay; reserve it for
+  real semantic/Ollama work.
+
 ## Category Create Parent Defaults (Surprising)
 
 CategoryCreate (`Mode::InputPanel` with `NameInputContext::CategoryCreate`) no
 longer has a parent-picker menu.
 
 Practical implications:
-- Parent is set when opening CategoryCreate (`n` uses selected category as the
-  default parent when allowed, otherwise root).
+- Parent is set when opening CategoryCreate:
+  `n` creates at the selected category's level (same parent, or root for
+  top-level categories), while `N` creates a child of the selected category
+  when allowed.
 - InputPanel focus cycle for CategoryCreate is now `Text -> Type -> Save ->
   Cancel` (no Parent focus row).
 - To change hierarchy after create, use Category Manager structural moves
@@ -474,6 +490,17 @@ category names with this precedence:
 
 This avoids accidental category creation when there is a single clear match,
 while preserving exact-match and create-new behavior.
+
+## Item Assign Picker Enter Must Not Re-Toggle Dirty Selection (Surprising)
+
+In `Mode::ItemAssignPicker`, `Space` applies the category/view toggle
+immediately. If the session is already dirty, `Enter` should close the picker,
+not replay the current toggle a second time.
+
+Practical implications:
+- `Space` then `Enter` should keep the applied assignment and close the picker.
+- Reusing `Enter` as "call the Space handler, then close" will accidentally
+  undo the just-applied assignment for single-item category toggles.
 
 ## Esc Exit Semantics (Updated)
 

@@ -83,8 +83,7 @@ impl App {
                             if let Some(item) = state.items.get(state.item_index) {
                                 let len = item.suggestions.len();
                                 if len > 0 {
-                                    state.suggestion_cursor =
-                                        (state.suggestion_cursor + 1) % len;
+                                    state.suggestion_cursor = (state.suggestion_cursor + 1) % len;
                                 }
                             }
                         }
@@ -97,8 +96,7 @@ impl App {
                         SuggestionReviewFocus::Items => {
                             let len = state.items.len();
                             if len > 0 {
-                                state.item_index =
-                                    (state.item_index + len - 1) % len;
+                                state.item_index = (state.item_index + len - 1) % len;
                                 state.suggestion_cursor = 0;
                             }
                         }
@@ -191,7 +189,13 @@ impl App {
             if state.items.is_empty() {
                 let resolved_count = state.resolved_count;
                 let resolved_items = state.resolved_items;
-                Some((resolved_count, resolved_items, accepted_count, rejected_count, true))
+                Some((
+                    resolved_count,
+                    resolved_items,
+                    accepted_count,
+                    rejected_count,
+                    true,
+                ))
             } else {
                 state.item_index = state.item_index.min(state.items.len() - 1);
                 state.suggestion_cursor = 0;

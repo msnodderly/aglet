@@ -1,857 +1,591 @@
 # Unified Classification UX And Provider Architecture
 
+Revision note: this document supersedes earlier discussion with a March 24,
+2026 snapshot of what is already implemented in `agenda-core` and `agenda-tui`.
+It is intentionally grounded in the current code, not the older imagined UX.
+
 ## Context
 
-Aglet already has the beginnings of a classification engine, but the current UX
-does not yet match the product direction or the flexibility of the underlying
-model.
+Aglet already has a meaningful classification system:
 
-Today:
+- deterministic implicit-string category matching
+- deterministic `When` parsing
+- persisted classification config in `app_settings`
+- persisted suggestion records in `classification_suggestions`
+- distinct assignment provenance for auto-applied vs accepted suggestions
+- a pending-review overlay opened with `C`
+- inline suggestion review inside the edit-item panel
 
-- item create/edit runs classification eagerly and inline
-- category create/update/reparent can retroactively scan all items
-- the main TUI affordance is a per-category `Auto-match` toggle
-- there is no first-class suggestion review queue
-- there is no explicit manual recalc workflow
-- there is no LLM provider abstraction
+That means the next step is not "invent classification from scratch." The next
+step is to extend the existing system so it can support LLM-backed category
+classification cleanly, starting with a local-first Ollama integration.
 
-At the same time, Aglet is intentionally not "just a task manager." It is a
-general-purpose, schemaless personal database in the Lotus Agenda tradition.
-The same database can feel like:
+The project is still greenfield, so schema and UX shape can change when needed.
+Backward compatibility is less important than getting the classification model
+and product direction right.
 
-- a feature tracker
-- a budget tracker
-- a contact database
-- a personal CRM
-- a research notebook
-- a mixed system that combines all of the above
+## What Exists Today
 
-That breadth changes the UX bar:
+### Core model and persistence
 
-- classification should feel visible and useful, not magical or intrusive
-- spreadsheet-like use cases must not be overwhelmed by chatty AI behavior
-- recommendations should use enough context to feel smart
-- the TUI must stay responsive even when hosted or local LLM providers are in play
+The current classification model already includes:
 
-## Problem Summary
+- `ClassificationConfig`
+  - `enabled`
+  - `continuous_mode`: `Off | AutoApply | SuggestReview`
+  - `run_on_item_save`
+  - `run_on_category_change`
+  - `enabled_providers: Vec<ProviderConfig>`
+- `ClassificationCandidate`
+- `ClassificationSuggestion`
+- `SuggestionStatus`
+  - `Pending`
+  - `Accepted`
+  - `Rejected`
+  - `Superseded`
+- `ClassificationProvider`
+- persisted suggestion rows in `classification_suggestions`
+- persisted classification config under `classification.config.v1`
 
-The current implementation is internally coherent but externally surprising.
+Accepted suggestions and auto-applied classifications already use distinct
+assignment sources:
 
-### What exists now
+- `AssignmentSource::AutoClassified`
+- `AssignmentSource::SuggestionAccepted`
 
-- Rule-based name matching is implemented via a simple word-boundary substring
-  classifier.
-- Matching is evaluated against `item.text` plus the full note body.
-- Retroactive classification runs as a side effect of category mutations.
-- Manual assignment re-runs the engine so profile-based rules can cascade.
-- Assignment provenance is visible after the fact in the preview/info pane.
+So the provenance baseline is better than older proposal drafts assumed.
 
-### What is missing
+### Providers that actually run today
 
-- No unified concept of "classification" that covers both rules and future LLMs.
-- No distinction between "candidate generation" and "assignment application."
-- No review queue for suggestion-first operation.
-- No persistent record of rejected suggestions.
-- No provider abstraction for OpenAI, Anthropic, Ollama, or LM Studio.
-- No explicit UI for "recalculate this item/category/database now."
-- No clear way to make intelligence visible without forcing it into every workflow.
-
-## Goals
-
-- Unify rule-based and LLM-based categorization behind one classification model.
-- Support both `auto-apply` and `suggest/review` behavior for all automatic
-  categorization providers.
-- Support on-demand classification regardless of continuous policy.
-- Treat fuzzy `When` extraction as part of the same classification and assignment system.
-- Keep the TUI responsive; classification may be async where appropriate.
-- Make classification more visible and discoverable without making every workflow
-  feel AI-centric.
-- Use richer context than just item title text when generating recommendations.
-- Make general-purpose uses like budgeting, issue tracking, and contacts feel
-  natural.
-- Preserve trust through clear provenance, review, and scoped control.
-
-## Non-goals
-
-- Replacing manual category assignment.
-- Making LLM classification mandatory.
-- Requiring online APIs; local providers must be first-class.
-- Turning Aglet into a chat-first interface.
-
-## Design Principles
-
-### 1. One classification pipeline, many providers
-
-Rule-based and LLM-based categorization should feel like the same feature from
-the user's perspective. They differ in provider, cost, speed, and confidence,
-not in overall UX shape.
-
-### 2. Separate detection from application
-
-The engine should be able to say:
-
-- "these are likely categories"
-- "this item likely has this `When` value"
-- "these should be auto-applied"
-- "these need user review"
-
-without conflating those steps.
-
-### 3. Structural derivation is not the same as classification
-
-Subsumption, exclusivity, and action/profile cascades are still important, but
-they should happen after an assignment is accepted or applied. They are
-consequences of classification, not competing classification providers.
-
-### 4. Visible, but progressively disclosed
-
-Classification should be easier to discover than it is now, but it should not
-dominate databases that behave more like spreadsheets or compact registries.
-
-### 5. Context-rich, not title-only
-
-Recommendations should be able to consider:
-
-- item title
-- note body
-- existing manual assignments
-- current section/view context
-- relevant numeric values
-- `when` data
-- category metadata and parentage
-
-### 6. Trust beats cleverness
-
-Users should always be able to answer:
-
-- why was this assigned?
-- which provider suggested it?
-- how confident was it?
-- can I stop this from happening again?
-
-## Current State Recap
-
-The current architecture is a good base, but it is optimized for deterministic,
-inline MVP behavior:
-
-- single-item classification is synchronous and immediate
-- category retroactive scans are synchronous and database-wide
-- the current matcher returns `Some(1.0)` or `None`, so there is no meaningful
-  low/medium/high confidence routing yet
-- `AssignmentSource` has no concept of suggestion acceptance or LLM-originated
-  review decisions
-- the TUI has manual assignment UI, but that UI is autocomplete for
-  manual category entry, not review of system-generated classification candidates
-
-Aglet should keep eager interpretation as the default for ordinary item work:
-
-- saving a changed item should eagerly classify it by default
-- manually assigning a category should eagerly reprocess the item by default
-- changing `When` should eagerly reprocess the item by default
-
-What needs to change is not the default eagerness of normal item workflows, but
-the handling of bulk and expensive provider-backed work.
-
-This proposal intentionally reuses the existing strengths:
-
-- provenance
-- category hierarchy
-- structural cascades
-- item/category manager workflows
-- store-backed settings
-
-while changing the shape of automatic categorization around them.
-
-It also intentionally revisits the current product decision that classification
-is always synchronous and inline for all triggering operations. That decision is
-still a good default for cheap structural and single-item deterministic work,
-but it is too restrictive for bulk recalc and future hosted/local LLM providers.
-
-## Proposed Model
-
-## 1. Classification becomes a first-class database feature
-
-Add a database-level classification configuration that is visible in the TUI and
-persisted in `app_settings`.
-
-Proposed high-level settings:
-
-- `classification.enabled`
-- `classification.continuous_mode`
-  - `off`
-  - `auto_apply`
-  - `suggest_review`
-- `classification.run_on_item_save`
-- `classification.run_on_category_change`
-- `classification.default_bulk_mode`
-  - `background`
-  - `foreground`
-- `classification.pending_indicator`
-  - `off`
-  - `count_only`
-  - `count_and_status`
-
-This separates:
-
-- whether classification exists
-- whether it runs continuously
-- whether results apply automatically or queue for review
-- whether bulk operations block the caller
-
-Recommended defaults:
-
-- `classification.enabled = true`
-- `classification.continuous_mode = auto_apply`
-- `classification.run_on_item_save = true`
-- `classification.run_on_category_change = true`
-
-## 2. Provider model
-
-Introduce a provider abstraction:
-
-```rust
-trait ClassificationProvider {
-    fn id(&self) -> &str;
-    fn classify(&self, request: ClassificationRequest) -> Result<Vec<ClassificationCandidate>>;
-    fn supports_sync(&self) -> bool;
-    fn supports_async(&self) -> bool;
-}
-```
-
-Initial provider families:
+Two providers exist and are wired:
 
 - `implicit_string`
-- `hashtag`
 - `when_parser`
-- `openai`
-- `anthropic`
-- `ollama`
-- `lmstudio`
 
-### Recommendation
+Current behavior:
 
-- deterministic local providers can run inline for the current item if they are fast
-- all LLM providers should be safe to run async
-- bulk recalc should default to async even for rule-based providers once item
-  counts are non-trivial
+- implicit-string matching runs against `item.text` plus full note body
+- `When` parsing runs against `item.text`
+- both providers return `ClassificationCandidate`
+- candidates are deduplicated by `(provider, assignment)`
 
-## 3. Candidate generation, not immediate assignment
+### Continuous behavior today
 
-Providers return `ClassificationCandidate` records, not assignments:
+On item create/edit, if classification is enabled and `run_on_item_save=true`:
 
-```rust
-struct ClassificationCandidate {
-    item_id: ItemId,
-    assignment: CandidateAssignment,
-    provider: String,
-    model: Option<String>,
-    confidence: Option<f32>,
-    rationale: Option<String>,
-    context_hash: String,
-}
+- candidates are collected
+- stale pending suggestions for older item revisions are superseded
+- `AutoApply`
+  - category candidates are persisted as accepted and applied immediately
+  - `When` candidates are persisted as accepted and applied immediately
+- `SuggestReview`
+  - category candidates are persisted as pending suggestions
+  - `When` candidates are still persisted as accepted and applied immediately
 
-enum CandidateAssignment {
-    Category(CategoryId),
-    When(NaiveDateTime),
-}
-```
+This last point matters: current `Suggest/Review` is already category-review
+mode, not full "review every kind of classification" mode.
 
-Then policy decides:
+### TUI behavior today
 
-- ignore
-- auto-apply
-- queue for review
+The current user-facing surfaces are:
 
-This is the key unlock for unifying rule-based and LLM-based behavior.
+- Global Settings (`g s` / `F10`) for classification mode
+- board/item rows with a `?` pending-suggestion indicator
+- preview/info pane showing pending suggestion counts
+- edit-item panel with inline pending suggestions and three-state decisions
+  - `Pending -> Accept -> Reject -> Pending`
+- suggestion review overlay opened with `C`
+  - left pane: items with pending suggestions
+  - right pane: selected item context and suggestions
+  - `Space` toggles, `Enter` confirms current item, `s` skips, `A` accepts all
 
-## 4. Suggestion-first persistence
+That means the review panel user mentioned is already real and tested. We
+should extend it, not replace it with a different first-pass concept.
 
-Add a `classification_suggestions` table (or equivalent persisted store) for:
+## Current Gaps And Mismatches
 
-- pending suggestions
-- accepted suggestions
-- rejected suggestions
-- stale suggestions tied to an old item revision/config hash
+The existing implementation is a strong base, but several important pieces are
+still missing or only partly wired.
 
-This enables:
+### 1. Provider config exists, but runtime selection does not
 
-- a real review queue
-- not re-suggesting rejected matches forever
-- background classification without losing work
-- stable UX when jobs finish after the user moves elsewhere in the TUI
+`ClassificationConfig.enabled_providers` and `ProviderMode` exist in the data
+model, but the runtime service currently instantiates providers directly and
+does not honor provider enablement or per-provider execution mode.
 
-## 5. Accepted suggestions become assignments, then cascades run
+Implication:
 
-When a suggestion is accepted or auto-applied:
+- provider architecture is partially modeled, not fully implemented
 
-1. write the assignment with provider-aware provenance
-2. run structural/cascade logic synchronously
-3. refresh affected views
+### 2. Candidate category scoping is still rule-centric
 
-That means:
+`ClassificationService::build_request()` currently includes only categories
+where `enable_implicit_string=true`, excluding numeric and reserved categories.
 
-- profile conditions still work
-- actions still work
-- subsumption still works
-- exclusive parent handling still works
+That is correct for implicit string matching, but it is too restrictive for LLM
+classification. An LLM provider should not require "rule auto-match" to be on
+before a category can even be considered semantically.
 
-but they are downstream of accepted classification, not mixed into provider selection.
+### 3. View/section context is modeled but not populated
 
-## 6. Classification context envelope
+`ClassificationRequest` already has:
 
-Providers should receive richer context than a bare title string.
+- `visible_view_name`
+- `visible_section_title`
+- `manual_category_ids`
+- `numeric_values`
 
-Proposed request shape:
+But the current request builder always leaves visible view/section context as
+`None`. The envelope is ahead of the actual wiring.
 
-```rust
-struct ClassificationRequest {
-    item_id: ItemId,
-    text: String,
-    note: Option<String>,
-    when_date: Option<NaiveDateTime>,
-    manual_category_ids: Vec<CategoryId>,
-    visible_view_name: Option<String>,
-    visible_section_title: Option<String>,
-    numeric_values: Vec<(CategoryId, Decimal)>,
-    candidate_categories: Vec<CategoryDescriptor>,
-}
-```
+### 4. Category-change reprocessing is still auto-apply-only
 
-### Important constraint
+Retroactive category-change processing currently flows through the older engine
+path and only supports implicit-string reprocessing in `AutoApply`.
 
-The provider should not always see the entire category universe.
+It does not yet:
 
-Candidate categories should be narrowed by:
+- queue category suggestions in `SuggestReview`
+- route through the same provider abstraction as item-save classification
+- support expensive providers safely
 
-- active view/section context when available
-- category hierarchy and existing category semantics
-- current assignments and current `When`
+### 5. Review UI does not yet expose full provider metadata
 
-This avoids wasting tokens and keeps results coherent in mixed-purpose databases.
-
-## UX Proposal
-
-## 1. Surface classification more visibly, but not everywhere all the time
-
-The answer to "should we surface classification more visibly?" is yes, with
-progressive disclosure.
-
-### Recommendation
-
-Make classification visible at four levels:
-
-- database level: whether it is on, off, auto-apply, or suggest/review
-- item level: whether this item has pending suggestions or recent auto-applies
-- category level: the existing rule-based `Auto-match` toggle and related provenance
-- review level: a dedicated place to accept/reject suggestions
-
-Do not force classification UI into every pane by default.
-
-## 2. Rename the current `Auto-match` concept
-
-The existing `Auto-match` checkbox should remain, but it should be understood as
-the per-category control for deterministic rule-based implicit matching, not as
-the master switch for the whole classification system.
-
-Recommendation:
-
-- keep the checkbox
-- optionally relabel it to `Rule Auto-match` or `Implicit Match`
-- keep provider selection and suggestion policy at the database level
-
-This preserves a useful local control without overloading the category UI.
-
-## 3. Add a Classification Center
-
-Introduce a dedicated TUI surface for classification status and review.
-
-For the first implementation, the "Classification Center" and the "Review
-Queue" may share one screen, as long as that screen clearly separates
-database-level settings/status from suggestion triage. We do not need two
-totally separate modal systems on day one.
-
-Potential entry points:
-
-- `C` opens classification status/settings and pending review
-- `=` runs recalc for current item
-- `?` remains help in the existing TUI and should not be repurposed for review
-- if we later split the surfaces, `C` can remain the center entry and another
-  key can open review directly
-
-The exact keys can be refined later, but the workflow needs dedicated affordances.
-
-### Classification Center responsibilities
-
-- show continuous mode
-- show pending suggestion count
-- show recent completed jobs
-- provide recalc actions
-- provide access to global classification mode settings
-- provide a direct path into pending review
-
-### Recommended initial screen shape
-
-For the first slice, prefer one screen with three bands:
-
-- summary band: mode, provider status, pending count
-- settings band: global classification mode
-- review band: pending suggestions grouped by item
-
-This makes classification discoverable without forcing users through nested
-dialogs.
-
-For built-in providers:
-
-- implicit category matching remains a category-level concern via `Auto-match`
-- natural-language `When` parsing stays always-on while continuous
-  classification is enabled
-- inline vs background execution should be decided by implementation cost, not
-  by a user-facing toggle
-
-## 4. Review queue UX
-
-In `suggest/review` mode, users need a fast accept/reject loop.
-
-The queue should be **item-grouped**, not flat suggestion-grouped. Users should
-normally select an item first, then review that item's pending suggestions in a
-detail pane. This avoids repeating the same item context for each suggestion.
-
-### Review item fields
-
-- item text
-- note excerpt
-- suggested category or `When`
-- provider and model
-- confidence or confidence band
-- short rationale
-- current assignments
-- accept / reject actions
-
-### Recommended phase-1 layout
-
-- left pane: items with pending suggestions plus a count badge
-- right pane top: selected item context (`text`, note excerpt, current assignments)
-- right pane bottom: the selected item's pending suggestions
-
-Suggested actions:
-
-- `Enter`: accept selected suggestion
-- `r`: reject selected suggestion
-- `A`: accept all suggestions for selected item
-- `R`: reject all suggestions for selected item
-- `Tab`: move between item list and suggestion list
-- `Esc`: close
-
-Navigation is a sufficient "skip" mechanism in phase 1; no persisted skip state
-is required yet.
-
-### Mockup: review queue
-
-```text
-┌ Classification Review ──────────────────────────────────────────────────────┐
-│ Mode: Suggest/Review     Pending: 12     Providers: Rules, Ollama:mistral │
-│ Scope: This Database                                                  [C] │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ > "Reimburse Sam for conference hotel"                                    │
-│   Note: paid on card ending 1142, include parking                         │
-│   Suggest: Travel                                                         │
-│   Provider: Rules                                                         │
-│   Why: matched note text + prior accepted payee pattern                   │
-│   Current: Expense, Work                                                  │
-│                                                                            │
-│   "Reimburse Sam for conference hotel"                                    │
-│   Suggest: Reimbursement                                                  │
-│   Provider: Ollama / mistral-small                                        │
-│   Confidence: medium                                                      │
-│   Why: reimbursement language in title and note                           │
-│   Current: Expense, Work                                                  │
-│                                                                            │
-│   "Lunch with Sam next Tuesday at noon"                                   │
-│   Suggest: When = 2026-03-24 12:00                                        │
-│   Provider: When Parser                                                   │
-│   Why: parsed "next Tuesday at noon"                                      │
-│   Current: Work                                                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Enter accept   r reject   A accept-all-item   R reject-all-item   Esc close │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## 5. Item-level visibility
-
-Items with pending suggestions should expose that state without demanding action.
-
-Examples:
-
-- small `?` marker in board/list row
-- preview line: `Suggestions: 2 pending`
-- status after save: `Saved. 2 classification suggestions pending. Open review queue to inspect.`
-
-### Mockup: normal board with subtle signal
-
-```text
-Ready                         In Progress
-──────────────────────────    ──────────────────────────
-? Reimburse Sam hotel         Draft release notes
-  Add Claude local provider   Fix batch assign bug
-  Grocery run
-
-Status: Classification on (Suggest/Review). 2 pending suggestions.
-Footer: a assign  e edit  p preview  = recalc  C classify
-```
-
-This keeps the feature visible but does not force modal interruption.
-
-## 6. Category Manager visibility
-
-Classification should be configurable from the Category Manager because that is
-where category semantics already live.
-
-### Proposed details block
-
-```text
-┌ Category Details ───────────────────────────────┐
-│ Name: Travel                                    │
-│ Type: Tag                                       │
-│ Exclusive: [ ]                                  │
-│ Actionable: [ ]                                 │
-│ Rule Auto-match: [x]                            │
-│ Recent derived assignments: 14                  │
-│                                                │
-│ Note: ...                                       │
-└──────────────────────────────────────────────────┘
-```
-
-### Recommendation
-
-Keep the current category-local rule toggle in the category manager, but keep
-provider selection and suggestion policy database-wide. That avoids introducing
-new per-category provider toggles we have not committed to implement.
-
-## 7. Recalc workflows
-
-Recalc needs to be explicit and easy.
-
-Start simple:
-
-- expose a manual "re-run classification" action
-- do not commit this proposal to a detailed scope-picker UX that is not yet implemented
-- keep current-item work eager and let expensive bulk work move to the background
-
-## Example Use Cases
-
-## 1. Feature tracker workflow
-
-### Scenario
-
-The database is used like a lightweight local issue tracker.
-
-Categories:
-
-- `Issue Type -> Bug / Feature request / Idea`
-- `Priority -> High / Normal / Low`
-- `Project -> Aglet / NeoNV`
-- `Status -> Ready / In Progress / Complete`
-
-### Desired behavior
-
-- Rules catch obvious exact-name matches like `Aglet`.
-- LLM can suggest `Feature request` from description text even when title is vague.
-- Suggestions appear after save, not while typing.
-- Accepting `Ready` or `Feature request` still triggers downstream profile/action logic.
-
-### Why this feels good
-
-It supports low-friction capture while still keeping workflow categories auditable.
-
-## 2. Budget tracker workflow
-
-### Scenario
-
-The database behaves more like a spreadsheet or personal ledger.
-
-Categories:
-
-- `Account -> Checking / Cash / Visa`
-- `Expense Type -> Fuel / Groceries / Lodging / Maintenance`
-- numeric categories like `Amount`
-
-### Desired behavior
-
-- Numeric categories are never LLM targets by default.
-- Existing section/view context narrows suggestions. If the user enters an item
-  in a `March Budget` or `Visa` context, that is part of the classification envelope.
-- The UI stays calm: a subtle pending indicator is fine; modal prompts are not.
-
-### Why this feels good
-
-The system remains natural for structured entry and analysis instead of turning
-every expense row into an "AI workflow."
-
-## 3. Contact database workflow
-
-### Scenario
-
-The database is used to track people, orgs, relationships, and follow-ups.
-
-Categories:
-
-- `People`
-- `Company`
-- `Relationship -> Friend / Vendor / Colleague`
-- `Follow Up`
-
-### Desired behavior
-
-- Rules catch direct proper-name matches when categories exist.
-- LLM can infer likely relationship tags from note text.
-- fuzzy `When` extraction can infer follow-up timing from free text
-- Review mode is especially valuable because contact categorization is nuanced.
-
-### Why this feels good
-
-This is exactly the kind of "general-purpose personal database" workload where
-semantic recommendations can feel like a multiplier instead of a gimmick.
-
-## 4. Retroactive category creation workflow
-
-### Scenario
-
-The user creates a new category `Reimbursement` after months of entering expense items.
-
-### Desired behavior
-
-- The system does not surprise-freeze the UI with a full blocking scan by default.
-- It preserves eager defaults for ordinary item work, while expensive retroactive
-  work can move to the background automatically when needed.
-- In `auto_apply` mode, accepted high-confidence rule matches can apply automatically.
-- In `suggest/review` mode, category results land in the review queue, while
-  `When` parser results still apply inline.
-
-This is a much better fit for both large databases and future LLM-backed scans.
-
-## Provider Strategy
-
-## 1. Hosted providers
-
-Supported examples:
-
-- OpenAI fast classification models
-- Anthropic fast classification models
-
-Requirements:
-
-- API key configuration
-- timeouts
-- retry policy
-- concurrency limits
-- clear model and provider provenance in suggestions
-
-## 2. Local providers
-
-Supported examples:
-
-- Ollama
-- LM Studio
-
-Requirements:
-
-- local endpoint configuration
-- model selection
-- health checks
-- timeouts
-- background execution
-- non-blocking UX
-
-### Important product point
-
-Local provider support is not a nice-to-have. It should be treated as a first-
-class path, not an afterthought behind hosted APIs.
-
-## 3. Rule-based providers
-
-Rule-based classification should also move into the provider model.
-
-That allows:
-
-- unified provenance
-- unified review UX
-- shared recalc infrastructure
-- the same auto-apply vs suggest/review policy surface
-- one conceptual home for category inference and fuzzy `When` inference
-
-## Provenance Model
-
-Add richer provenance for assignments and suggestions.
-
-### Suggestions
+The current review overlay and edit-panel suggestion rows show rationale, but
+they do not yet prominently show:
 
 - provider
 - model
 - confidence
-- rationale
-- generated_at
-- item_revision
 
-### Assignments created from suggestions
+That is acceptable for deterministic rules, but it will not be sufficient once
+LLM providers are active.
 
-Options:
+### 6. Manual recalc is still underspecified
 
-1. add new assignment sources such as `SuggestionAccepted` and `AutoClassified`
-2. keep `Manual` / `AutoMatch` but store richer structured origins
+The proposal has talked about explicit recalc workflows for a while, but the
+current UX still lacks a clear, dedicated "reclassify this item now" command.
 
-### Recommendation
+## Design Principles
 
-Prefer richer assignment-source modeling over origin-string overloading.
+### 1. Extend the current UX; do not restart it
 
-Suggested additions:
+The first LLM-backed version should fit into the already-shipped surfaces:
 
-- `SuggestionAccepted`
-- `AutoClassified`
+- Global Settings for policy
+- `C` for bulk review
+- edit-item inline suggestion handling
+- item-level `?` markers and preview counts
 
-with origin metadata including provider/model. This will age better once both
-rules and LLM providers are active.
+We do not need a new "Classification Center" before we can ship useful LLM
+classification.
 
-## Sync vs Async Strategy
+### 2. One pipeline, multiple provider classes
 
-## 1. What should stay synchronous
+Rule-based providers and semantic providers should share:
 
-- explicit manual assignment
-- structural invariant enforcement
-- cascade/application after an accepted assignment
-- very cheap current-item rule scans when continuous classification is enabled
-- date and `When` updates once a suggestion has been accepted
+- candidate generation
+- suggestion persistence
+- provenance
+- review
+- recalc entry points
 
-## 2. What should support async
+They should differ in latency, confidence, and routing policy, not in whether
+they "count" as classification.
 
-- all LLM-backed classification
-- bulk recalc
-- retroactive scans after category changes
-- background suggestion refresh
+### 3. Preserve trust
 
-## 3. UX rules for async work
+Users should be able to answer:
 
-- never block keystrokes on provider calls
-- show job progress in the TUI status area or Classification Center
-- make pending results durable
-- allow refresh/review after job completion
-- cancel or supersede stale jobs when item text changes
+- what was suggested?
+- by which provider?
+- using which model?
+- why?
+- was it auto-applied or accepted by review?
 
-## Implementation Outline
+### 4. Keep local-first support first-class
 
-## Phase 1: Unify model without LLM calls
+Hosted providers can come later. The first semantic provider target should be a
+local model through Ollama.
 
-- Introduce classification settings and provider abstraction.
-- Move implicit-string matching into provider form.
-- Introduce suggestion persistence.
-- Add review queue UI.
-- Add recalc actions.
-- Rename and expand category-level classification controls.
+## Proposal Updates
 
-## Phase 2: Async job infrastructure
+### 1. Make the current TUI surfaces the official phase-1 UX
 
-- Add background job runner for classification tasks.
-- Add durable job/suggestion state.
-- Add foreground vs background choice for bulk recalc.
+The proposal should stop treating these as future ideas and instead treat them
+as the baseline product UX:
 
-## Phase 3: Local provider support
+- `C` is the bulk review entry point
+- the review overlay is item-grouped and two-pane
+- edit-item inline suggestion review remains the per-item side channel
+- Global Settings is the canonical home of the global classification mode toggle
+- the `?` board indicator remains the passive pending-review signal
 
-- Add Ollama provider.
-- Add LM Studio provider.
-- Add provider settings UI and health checks.
+Follow-up UX work should refine these surfaces rather than invent parallel ones.
 
-## Phase 4: Hosted provider support
+### 2. Split category-level controls by provider family
 
-- Add OpenAI and Anthropic providers.
-- Add secure API-key configuration and model selection.
+The current per-category `Auto-match` toggle should be explicitly documented as
+the implicit-string provider gate, not the gate for all automatic
+classification.
 
-## Phase 5: Smarter context and ranking
+Updated product rule:
 
-- add view/section context weighting
-- add category-family scoping helpers
-- improve duplicate/rejection memory
-- refine confidence bands and rationale formatting
+- `enable_implicit_string` controls only the implicit-string provider
+- semantic providers should have a parallel per-category enablement control
+  independent of `enable_implicit_string`
+- exact naming is TBD, but the product model should support separate rule-based
+  and LLM-based category participation
+- numeric categories and reserved categories remain excluded from LLM category
+  suggestions in the initial slice
+
+Open follow-up:
+
+- choose the final user-facing label for the semantic control
+- decide whether semantic participation defaults on or off for newly-created
+  categories
+
+### 3. Honor provider registration in runtime code
+
+The implementation should move from "hard-coded provider construction" to a
+provider registry that is actually driven by persisted config.
+
+Minimum phase-1 behavior:
+
+- only enabled providers are instantiated
+- provider execution mode is read from config
+- cheap deterministic providers may still run inline
+- expensive providers can be selectively enabled without affecting providers the
+  user is not using
+
+### 4. Add provider-specific settings
+
+The current config model is missing provider-specific runtime settings.
+
+For phase 1, add provider settings sufficient for Ollama:
+
+- provider enabled
+- base URL
+- model name
+- timeout
+- optional system-prompt version marker
+
+These settings can live inside classification config or under dedicated
+provider-specific app settings. The important part is that they are persisted
+per database and available to both CLI/TUI flows.
+
+### 5. Ollama is the first semantic provider
+
+Initial semantic provider target:
+
+- provider id: `ollama_openai_compat`
+- transport: OpenAI-compatible chat-completions style API against Ollama
+- default model: `mistral`
+- default stance: local-first, no hosted dependency required
+
+This keeps the transport layer reusable later for:
+
+- LM Studio in OpenAI-compatible mode
+- actual hosted OpenAI-compatible providers if desired
+
+### 6. Ollama MVP should be suggestion-first
+
+For the first semantic slice, Ollama-backed category classification should be
+review-first, not silent.
+
+Recommended MVP policy:
+
+- `Off`
+  - Ollama does not run
+- `SuggestReview`
+  - Ollama may generate category suggestions
+  - results are persisted as pending suggestions
+  - users review them through `C` or the edit panel
+- `AutoApply`
+  - deterministic providers may still auto-apply
+  - Ollama does not auto-apply in the MVP
+
+Reason:
+
+- semantic confidence is uncalibrated at first
+- local models can be slow
+- the review workflow already exists and gives us a safe integration point
+
+This is intentionally conservative. We can revisit semantic auto-apply after we
+have real usage data and a confidence policy we trust.
+
+### 7. Keep `When` parsing separate in behavior, unified in architecture
+
+The current behavior is good and should remain explicit in the proposal:
+
+- `When` parsing is part of the classification architecture
+- `When` parsing remains deterministic and inline
+- even in `SuggestReview`, `When` results continue to apply immediately
+
+That preserves the current fast capture workflow while letting category
+classification become smarter and more review-oriented.
+
+At the same time, the roadmap should explicitly leave room for a later semantic
+`When` provider:
+
+- current hardcoded/date-parser coverage remains the first-line `When` system
+- later phases may add LLM-backed `When` suggestions when the parser cannot
+  confidently interpret the text
+- semantic `When` inference should be treated as a distinct provider, not
+  conflated with category suggestion generation
+
+### 8. Populate richer prompt context from real TUI state
+
+The request envelope already anticipates richer context. Phase 1 should begin
+using it for semantic providers.
+
+When available, the LLM request should include:
+
+- item text
+- note text
+- existing manual assignments
+- current `when` value
+- current numeric values
+- visible view name
+- visible section title
+- candidate category descriptors
+
+For the first slice, "visible" context only needs to be provided when an item
+save/edit originates from a known TUI slot. CLI-originated saves can omit it.
+
+### 9. Expand review UI to show provider details
+
+Before semantic suggestions ship, the current review surfaces should be updated
+so the suggestion metadata is not rule-centric.
+
+Recommended additions:
+
+- review overlay right pane shows provider and model
+- confidence is shown when present
+- rationale remains visible
+- edit-item suggestion rows show a compact provider tag or expose provider/model
+  in a secondary detail line for the selected suggestion
+
+The user must be able to distinguish:
+
+- rules matched a word
+- `When` parser extracted a date
+- Ollama inferred a semantic category
+
+## Ollama MVP Contract
+
+### Scope
+
+In scope for the first implementation:
+
+- local Ollama provider using an OpenAI-compatible API shape
+- category suggestions only
+- suggestion persistence
+- suggestion review through existing `C` overlay and edit panel
+- provider/model/rationale metadata visible in review
+- per-database Ollama config
+
+Out of scope for the first implementation:
+
+- hosted providers
+- background jobs
+- database-wide semantic rescans
+- category-change semantic backfills
+- semantic auto-apply
+- semantic `When` extraction
+
+### Output shape
+
+The semantic provider should return `ClassificationCandidate` values using the
+same model as the existing providers:
+
+- `assignment = CandidateAssignment::Category(category_id)`
+- `provider = "ollama_openai_compat"`
+- `model = Some(<configured model>)`
+- `confidence = optional`
+- `rationale = short explanation`
+
+### Category universe for the first slice
+
+For the first semantic slice, candidate categories should be:
+
+- non-reserved
+- non-numeric
+
+and should not be limited by `enable_implicit_string`.
+
+If category counts become too large for prompt quality, we should solve that
+with candidate narrowing or ranking, not by implicitly reusing the rule toggle.
+
+### Execution policy for the first slice
+
+To get to a usable slice quickly and avoid overcommitting before async
+infrastructure exists:
+
+- Ollama runs only for current-item classification, not bulk recalc
+- Ollama runs only when semantic classification is enabled and configured
+- bulk and category-change semantic work is deferred to a later async phase
+
+This gives us a small, testable first step that matches the current app shape.
+
+## Revised Phase Plan
+
+### Phase 1: Align architecture with shipped UX
+
+- update the proposal and implementation to match current `C` review and edit
+  panel flows
+- honor enabled providers in runtime wiring
+- add provider-specific settings storage
+- add a separate per-category semantic/LLM participation control in parallel
+  with implicit-string `Auto-match`
+- enrich review UI with provider/model/confidence display
+
+### Phase 2: Ollama semantic provider
+
+- add an Ollama provider using an OpenAI-compatible API shape
+- use `mistral` as the default model
+- generate category suggestions for current-item save/edit flows
+- route results into existing suggestion persistence and review flows
+
+### Phase 3: Explicit recalc
+
+- add "reclassify current item" command
+- add focused recalc entry points before any large async job system
+
+### Phase 4: Async and bulk infrastructure
+
+- background jobs for slow providers
+- category-change semantic rescans
+- manual bulk recalc
+- durable job progress/status
+
+### Phase 5: Advanced `When` intelligence
+
+- add an LLM-backed `When` suggestion provider for cases the deterministic parser
+  cannot confidently handle
+- keep deterministic `When` parsing as the first pass
+- decide review vs auto-apply policy for semantic `When` suggestions
+- reuse the same provider metadata and suggestion persistence model
+
+### Phase 6: Hosted providers and richer scoping
+
+- hosted providers if still desired
+- better category narrowing
+- confidence calibration
+- optional semantic auto-apply policy
 
 ## Risks
 
-### 1. Overexposure in structured databases
+### 1. Reusing the rule toggle accidentally constrains LLM behavior
 
-If classification is too prominent, budget-tracker and ledger workflows will
-feel noisy.
-
-Mitigation:
-
-- progressive disclosure
-- subtle item-level indicators
-- database-level `off` and `suggest/review` modes
-
-### 2. Slow or flaky provider experience
-
-Hosted APIs and local models can both be slow.
+If semantic providers keep inheriting `enable_implicit_string`, users will have
+to enable "rule auto-match" just to let AI consider a category.
 
 Mitigation:
 
-- async by default for expensive providers
-- durable queue
-- provider timeouts
-- cancel stale requests
+- document and implement separate semantics now
+- add an explicit per-category semantic participation control
 
-### 3. Mixed mental models
+### 2. Synchronous local-model latency can feel rough
 
-Users may confuse manual assignment autocomplete with system-generated classification suggestions.
+Even local models may be slow enough to interrupt save/edit workflows.
 
 Mitigation:
 
-- separate language in the UI
-- separate panels
-- separate icons/badges
-- separate footer hints
+- keep Ollama scope to current-item flows only at first
+- defer bulk semantic work until async infrastructure exists
+- surface clear status text while classification is running
 
-### 4. Provenance debt
+### 3. Review UI may become too opaque once provider diversity grows
 
-If richer suggestion state is added without better provenance types, the model
-will get messy quickly.
+Rationale-only display is not enough when multiple providers are active.
 
 Mitigation:
 
-- add explicit suggestion/auto-classification provenance now
+- show provider/model/confidence before semantic suggestions ship
+
+### 4. Semantic suggestions may overreach in mixed-purpose databases
+
+Aglet databases can mix issue tracking, budgets, contacts, and general notes.
+
+Mitigation:
+
+- keep semantic classification suggestion-first
+- use available view/section/manual context
+- keep deterministic `When` behavior simple and separate
 
 ## Recommendation Summary
 
-Recommend the following product direction:
+Recommended direction:
 
-- unify all automatic categorization behind one classification system
-- treat fuzzy `When` assignment as part of that same system
-- support `off`, `auto_apply`, and `suggest_review` continuous behavior
-- always support explicit on-demand recalc
-- treat rules and LLMs as providers in the same pipeline
-- keep structural cascades synchronous after acceptance/application
-- make expensive and bulk classification async
-- add a dedicated Classification Center and review queue
-- make classification more visible in the UI, but via progressive disclosure
-- use richer item context and narrowed candidate scopes so recommendations feel
-  intelligent across tasks, budgets, contacts, and mixed personal databases
-- keep eager interpretation as the default for normal item workflows
+- treat the current classification pipeline as real infrastructure, not an MVP
+  stub
+- make the existing TUI surfaces the official first-phase UX
+- keep `Auto-match` as the implicit-string control only
+- add a parallel per-category semantic/LLM control with separate semantics
+- wire provider config into actual runtime provider selection
+- add provider-specific settings
+- ship Ollama first, through an OpenAI-compatible transport layer
+- use `mistral` as the default local model
+- keep Ollama suggestion-first in the MVP
+- keep `When` parsing deterministic and inline
+- add LLM-backed `When` suggestions in a later phase
+- postpone async/bulk semantic work and semantic auto-apply until later phases
 
-## Open Questions
+## Separate Literal + LLM Classification MVP With Ollama
 
-- Should rule-based current-item classification remain inline by default when
-  continuous mode is on, or should all classification unify behind async job
-  completion for consistency?
-- `When` parser results should not appear as category-style review suggestions;
-  keep them inline even when category suggestions use the review queue.
-- Should accepted suggestions be undoable as one batch action from the review queue?
-- Should LLM providers ever be allowed to auto-apply, or should they remain
-  suggestion-first even when the global mode is `auto_apply`?
+### Implementation Checklist
 
-## Suggested Next Step
+- [x] Replace the single global mode with independent `literal_mode` and
+  `semantic_mode` settings
+- [x] Add backward-compatible config loading from legacy
+  `continuous_mode`
+- [x] Add persisted Ollama settings for enabled/base URL/model/timeout
+- [x] Add persisted per-category semantic participation
+  (`enable_semantic_classification`)
+- [x] Keep `enable_implicit_string` scoped to literal matching only
+- [x] Honor `enabled_providers` in runtime provider construction
+- [x] Split runtime execution into literal-family and semantic-family provider
+  policy
+- [x] Keep deterministic `When` parsing under the literal policy
+- [x] Add synchronous Ollama provider wiring through an OpenAI-compatible
+  transport
+- [x] Use `mistral` as the default Ollama model
+- [x] Restrict semantic candidate categories to non-reserved, non-numeric,
+  semantic-enabled categories
+- [x] Use exact category-name validation, duplicate filtering, and
+  malformed-response fallback for Ollama outputs
+- [x] Route semantic category suggestions into pending review rather than
+  auto-apply
+- [x] Add Global Settings rows for literal mode, semantic mode, Ollama enabled,
+  Ollama base URL, and Ollama model
+- [x] Add Category Manager `Semantic Match` toggle
+- [x] Show provider/model/confidence metadata in review surfaces
+- [x] Add initial unit/integration coverage for legacy config loading and core
+  literal + semantic mode combinations
+- [x] Update the local Aglet feature tracker with an in-progress feature request
+  for this work
+- [ ] Add dedicated TUI persistence coverage for the `Semantic Match` category
+  toggle
+- [ ] Add explicit TUI coverage for Ollama config string editing and review
+  metadata rendering
+- [ ] Run a real local Ollama smoke test against `mistral`
+- [ ] Decide whether to expose timeout editing in Global Settings during this
+  phase or leave it config-only
+- [ ] Plan the later semantic `When` phase separately from the category MVP
 
-If this direction is accepted, the next document should be a narrower
-implementation plan covering:
+### What Is Next
 
-- model/schema additions
-- provider trait and request/response contracts
-- TUI mode/state changes
-- persistence for suggestions/jobs/settings
-- rollout sequencing and migration strategy
-- roadmap hooks for broader Catalyst-style application triggers after the core
-  classification system is in place
+The next highest-value step is a real end-to-end smoke test with local Ollama:
+
+- enable semantic classification in Global Settings
+- point it at local Ollama
+- save a few representative items
+- verify pending semantic suggestions appear in `C` with provider/model metadata
+- verify acceptance persists as `SuggestionAccepted`
+
+After that, the next code step is to close the remaining TUI coverage gaps:
+
+- `Semantic Match` toggle persistence test
+- Ollama base URL/model editing test
+- review metadata rendering test

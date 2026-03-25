@@ -3,28 +3,33 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    let db_path = match resolve_db_path() {
-        Ok(path) => path,
+    let (db_path, debug) = match parse_args() {
+        Ok(result) => result,
         Err(err) => {
             eprintln!("error: {err}");
             std::process::exit(1);
         }
     };
 
-    if let Err(err) = agenda_tui::run(&db_path) {
+    if let Err(err) = agenda_tui::run_with_options(&db_path, debug) {
         eprintln!("error: {err}");
         std::process::exit(1);
     }
 }
 
-fn resolve_db_path() -> Result<PathBuf, String> {
+fn parse_args() -> Result<(PathBuf, bool), String> {
     let mut args = env::args().skip(1);
     let mut explicit: Option<PathBuf> = None;
+    let mut debug = false;
 
     while let Some(arg) = args.next() {
         if arg == "--db" {
             let value = args.next().ok_or("--db requires a value".to_string())?;
             explicit = Some(PathBuf::from(value));
+            continue;
+        }
+        if arg == "--debug" {
+            debug = true;
             continue;
         }
 
@@ -44,5 +49,5 @@ fn resolve_db_path() -> Result<PathBuf, String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    Ok(path)
+    Ok((path, debug))
 }

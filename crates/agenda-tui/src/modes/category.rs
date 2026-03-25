@@ -94,24 +94,24 @@ impl App {
     fn workflow_setup_cross_role_conflict_status(
         &self,
         agenda: &Agenda<'_>,
+        role_index: usize,
         selected_category_id: CategoryId,
     ) -> TuiResult<Option<String>> {
-        let (role_label, current_role_id, other_role_label, other_role_id) =
-            if self.workflow_setup_focus == 0 {
-                (
-                    "Ready Queue",
-                    self.workflow_config.ready_category_id,
-                    "Claim Result",
-                    self.workflow_config.claim_category_id,
-                )
-            } else {
-                (
-                    "Claim Result",
-                    self.workflow_config.claim_category_id,
-                    "Ready Queue",
-                    self.workflow_config.ready_category_id,
-                )
-            };
+        let (role_label, current_role_id, other_role_label, other_role_id) = if role_index == 0 {
+            (
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+                "Claim Result",
+                self.workflow_config.claim_category_id,
+            )
+        } else {
+            (
+                "Claim Result",
+                self.workflow_config.claim_category_id,
+                "Ready Queue",
+                self.workflow_config.ready_category_id,
+            )
+        };
 
         if other_role_id != Some(selected_category_id)
             || current_role_id == Some(selected_category_id)
@@ -191,7 +191,15 @@ impl App {
         })
     }
 
-    fn open_category_create_panel(&mut self, parent_id: Option<CategoryId>) {
+    fn selected_category_parent_id(&self) -> Option<CategoryId> {
+        let selected_id = self.selected_category_id()?;
+        self.categories
+            .iter()
+            .find(|category| category.id == selected_id)
+            .and_then(|category| category.parent)
+    }
+
+    fn open_category_create_panel(&mut self, parent_id: Option<CategoryId>, status: String) {
         let parent_label = self.category_manager_parent_label(parent_id);
         self.input_panel = Some(input_panel::InputPanel::new_category_create(
             parent_id,
@@ -202,7 +210,7 @@ impl App {
         self.set_category_manager_inline_action(None);
         self.name_input_context = Some(NameInputContext::CategoryCreate);
         self.mode = Mode::InputPanel;
-        self.status = format!("Create category under {parent_label}");
+        self.status = status;
     }
 
     fn start_category_inline_rename(&mut self) {
@@ -500,6 +508,7 @@ impl App {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive
                         | CategoryManagerDetailsFocus::AutoMatch
+                        | CategoryManagerDetailsFocus::SemanticMatch
                         | CategoryManagerDetailsFocus::MatchCategoryName
                         | CategoryManagerDetailsFocus::Actionable => {
                             CategoryManagerDetailsFocus::AlsoMatch
@@ -536,6 +545,7 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::Exclusive
                         | CategoryManagerDetailsFocus::AutoMatch
+                        | CategoryManagerDetailsFocus::SemanticMatch
                         | CategoryManagerDetailsFocus::MatchCategoryName
                         | CategoryManagerDetailsFocus::Actionable => {
                             self.set_category_manager_focus(CategoryManagerFocus::Tree);
@@ -600,6 +610,7 @@ impl App {
                 details_focus,
                 CategoryManagerDetailsFocus::Exclusive
                     | CategoryManagerDetailsFocus::AutoMatch
+                    | CategoryManagerDetailsFocus::SemanticMatch
                     | CategoryManagerDetailsFocus::MatchCategoryName
                     | CategoryManagerDetailsFocus::Actionable
                     | CategoryManagerDetailsFocus::AlsoMatch
@@ -762,6 +773,11 @@ impl App {
                     self.set_category_manager_focus(CategoryManagerFocus::Tree);
                     return Ok(true);
                 }
+                CategoryManagerDetailsFocus::SemanticMatch => {
+                    self.toggle_selected_category_semantic(agenda)?;
+                    self.set_category_manager_focus(CategoryManagerFocus::Tree);
+                    return Ok(true);
+                }
                 CategoryManagerDetailsFocus::MatchCategoryName => {
                     self.toggle_selected_category_match_category_name(agenda)?;
                     self.set_category_manager_focus(CategoryManagerFocus::Tree);
@@ -810,6 +826,10 @@ impl App {
                 }
                 CategoryManagerDetailsFocus::AutoMatch => {
                     self.toggle_selected_category_implicit(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::SemanticMatch => {
+                    self.toggle_selected_category_semantic(agenda)?;
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::MatchCategoryName => {
@@ -1268,7 +1288,10 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Enter => {
-                self.open_workflow_role_picker(self.workflow_setup_focus);
+                self.open_workflow_role_picker_with_origin(
+                    self.workflow_setup_focus,
+                    WorkflowRolePickerOrigin::CategoryManager,
+                );
                 return Ok(true);
             }
             _ => {}
@@ -1290,7 +1313,11 @@ impl App {
             .collect()
     }
 
-    fn open_workflow_role_picker(&mut self, role_index: usize) {
+    pub(crate) fn open_workflow_role_picker_with_origin(
+        &mut self,
+        role_index: usize,
+        origin: WorkflowRolePickerOrigin,
+    ) {
         let row_indices = self.workflow_role_picker_row_indices();
         if row_indices.is_empty() {
             self.status = "No eligible categories available for workflow roles".to_string();
@@ -1314,6 +1341,8 @@ impl App {
         self.workflow_role_picker = Some(WorkflowRolePickerState {
             role_index,
             row_index,
+            origin,
+            scroll_offset: ScrollCell::new(0),
         });
         let role_label = if role_index == 0 {
             "Ready Queue"
@@ -1323,7 +1352,7 @@ impl App {
         self.status = format!("{role_label} picker: j/k select category, Enter assign, Esc back");
     }
 
-    fn handle_workflow_role_picker_key(
+    pub(crate) fn handle_workflow_role_picker_key(
         &mut self,
         code: KeyCode,
         agenda: &Agenda<'_>,
@@ -1367,9 +1396,11 @@ impl App {
                     return Ok(true);
                 };
                 let preserved_selection = self.selected_category_id();
-                if let Some(status) =
-                    self.workflow_setup_cross_role_conflict_status(agenda, row.id)?
-                {
+                if let Some(status) = self.workflow_setup_cross_role_conflict_status(
+                    agenda,
+                    picker.role_index,
+                    row.id,
+                )? {
                     self.status = status;
                     return Ok(true);
                 }
@@ -1404,20 +1435,8 @@ impl App {
         if let Some(category_id) = selected_category_id {
             self.set_category_selection_by_id(category_id);
         }
-        self.mode = Mode::CategoryManager;
-        self.workflow_setup_open = true;
-        self.workflow_role_picker = None;
-        self.workflow_setup_focus = role_index.min(1);
         self.status = format!("Cleared {role_label} category ({cleared_name})");
         Ok(())
-    }
-
-    fn open_classification_mode_picker(&mut self) {
-        self.classification_mode_picker_open = true;
-        self.classification_mode_picker_focus = modes::classification::continuous_mode_index(
-            self.classification_ui.config.continuous_mode,
-        );
-        self.status = "Classification mode: j/k select, Enter apply, Esc close".to_string();
     }
 
     fn handle_classification_mode_picker_key(
@@ -1442,7 +1461,7 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Enter => {
-                let mode = modes::classification::continuous_mode_from_index(
+                let mode = modes::classification::literal_mode_from_index(
                     self.classification_mode_picker_focus,
                 );
                 self.apply_category_manager_classification_mode(agenda, mode)?;
@@ -1621,6 +1640,20 @@ impl App {
                 self.indent_selected_category_under_previous_sibling(agenda)?;
             }
             KeyCode::Char('n') => {
+                let selected_name = self.selected_category_row().map(|row| row.name.clone());
+                let parent_id = self.selected_category_parent_id();
+                let status = match selected_name {
+                    Some(name) if parent_id.is_some() => {
+                        let parent_label = self.category_manager_parent_label(parent_id);
+                        format!("Create category at same level as {name} under {parent_label}")
+                    }
+                    Some(name) => format!("Create top-level category at same level as {name}"),
+                    None => "Create top-level category".to_string(),
+                };
+                self.open_category_create_panel(parent_id, status);
+            }
+            KeyCode::Char('N') => {
+                let selected_name = self.selected_category_row().map(|row| row.name.clone());
                 let parent_id = if self.selected_category_is_numeric()
                     || self.selected_category_is_reserved()
                 {
@@ -1628,7 +1661,14 @@ impl App {
                 } else {
                     self.selected_category_id()
                 };
-                self.open_category_create_panel(parent_id);
+                let status = match selected_name {
+                    Some(name) if parent_id.is_some() => format!("Create child category under {name}"),
+                    Some(name) => {
+                        format!("{name} cannot have child categories here; creating top-level category")
+                    }
+                    None => "Create top-level category".to_string(),
+                };
+                self.open_category_create_panel(parent_id, status);
             }
             KeyCode::Char('r') => {
                 self.start_category_inline_rename();
@@ -1663,15 +1703,14 @@ impl App {
                 }
             }
             KeyCode::Char('w') => {
-                self.workflow_setup_open = true;
-                self.workflow_setup_focus = 0;
-                self.workflow_role_picker = None;
                 self.status =
-                    "Workflow setup: j/k select role, Enter choose category, x clear, Esc close"
+                    "Workflow roles moved to Global Settings (return to Normal and use g s or F10)"
                         .to_string();
             }
             KeyCode::Char('m') => {
-                self.open_classification_mode_picker();
+                self.status =
+                    "Classification mode moved to Global Settings (return to Normal and use g s or F10)"
+                        .to_string();
             }
             KeyCode::Enter => {
                 self.set_category_manager_focus(CategoryManagerFocus::Details);
@@ -1690,15 +1729,15 @@ impl App {
     fn apply_category_manager_classification_mode(
         &mut self,
         agenda: &Agenda<'_>,
-        mode: ContinuousMode,
+        mode: LiteralClassificationMode,
     ) -> TuiResult<()> {
         let mut config = self.classification_ui.config.clone();
-        config.continuous_mode = mode;
-        config.enabled = config.continuous_mode != ContinuousMode::Off;
+        config.literal_mode = mode;
+        config.sync_enabled_flag();
         let selected_category_id = self.selected_category_id();
         let manager_focus = self.category_manager_focus();
         let details_focus = self.category_manager_details_focus();
-        let mode_label = modes::classification::continuous_mode_label(config.continuous_mode);
+        let mode_label = modes::classification::literal_mode_label(config.literal_mode);
 
         agenda.store().set_classification_config(&config)?;
         self.refresh(agenda.store())?;
@@ -1712,7 +1751,7 @@ impl App {
         if let Some(focus) = details_focus {
             self.set_category_manager_details_focus(focus);
         }
-        self.status = format!("Classification mode: {mode_label}");
+        self.status = format!("Literal classification: {mode_label}");
         Ok(())
     }
 
@@ -1763,6 +1802,34 @@ impl App {
             "{} auto-match={} (processed_items={}, affected_items={})",
             updated.name,
             updated.enable_implicit_string,
+            result.processed_items,
+            result.affected_items
+        );
+        Ok(())
+    }
+
+    pub(crate) fn toggle_selected_category_semantic(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<()> {
+        if self.selected_category_is_reserved() {
+            self.status = "Reserved category config is read-only".to_string();
+            return Ok(());
+        }
+        let Some(category_id) = self.selected_category_id() else {
+            self.status = "No selected category".to_string();
+            return Ok(());
+        };
+        let mut category = agenda.store().get_category(category_id)?;
+        category.enable_semantic_classification = !category.enable_semantic_classification;
+        let updated = category.clone();
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(updated.id);
+        self.status = format!(
+            "{} semantic-match={} (processed_items={}, affected_items={})",
+            updated.name,
+            updated.enable_semantic_classification,
             result.processed_items,
             result.affected_items
         );

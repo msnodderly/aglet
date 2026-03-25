@@ -2123,12 +2123,16 @@ impl App {
                     self.begin_global_search_session(agenda)?;
                     return Ok(false);
                 }
+                (NormalModePrefix::G, KeyCode::Char('s')) => {
+                    self.open_global_settings(agenda.store())?;
+                    return Ok(false);
+                }
                 (NormalModePrefix::G, KeyCode::Esc) => {
                     self.status = "Cancelled g-prefix command".to_string();
                     return Ok(false);
                 }
                 (NormalModePrefix::G, _) => {
-                    self.status = "Unknown g command (use ga or g/)".to_string();
+                    self.status = "Unknown g command (use ga, g/, or gs)".to_string();
                     return Ok(false);
                 }
             }
@@ -2290,6 +2294,9 @@ impl App {
                     "View palette: Enter switch, n create, r rename, x delete, e edit view, Esc cancel"
                         .to_string();
             }
+            KeyCode::F(10) => {
+                self.open_global_settings(agenda.store())?;
+            }
             KeyCode::F(9) | KeyCode::Char('c') => {
                 self.mode = Mode::CategoryManager;
                 self.open_category_manager_session();
@@ -2309,18 +2316,18 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.normal_mode_prefix = Some(NormalModePrefix::G);
-                self.status = "g-prefix: ga=All Items, g/=Global search".to_string();
+                self.status =
+                    "g-prefix: ga=All Items, g/=Global search, gs=Global Settings".to_string();
             }
             KeyCode::Char('a') => {
                 if self.selected_item_id().is_none() {
                     self.status = "No selected item to edit categories".to_string();
-                } else if self.category_rows.is_empty() {
+                } else if self.item_assign_visible_category_row_indices().is_empty() {
                     self.status = "No categories available".to_string();
                 } else {
                     self.mode = Mode::ItemAssignPicker;
                     self.start_item_assign_session();
-                    self.item_assign_category_index =
-                        first_non_reserved_category_index(&self.category_rows);
+                    self.clamp_item_assign_category_index();
                     self.item_assign_pane = ItemAssignPane::Categories;
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
@@ -3601,11 +3608,6 @@ impl App {
                     self.status = "Reloaded view from store".to_string();
                     return Ok(false);
                 }
-                KeyCode::Char('r') | KeyCode::Char('R') => {
-                    self.cycle_auto_refresh_interval();
-                    self.persist_auto_refresh_interval(agenda.store())?;
-                    return Ok(false);
-                }
                 KeyCode::Char('z') => {
                     self.apply_undo(agenda)?;
                     return Ok(false);
@@ -4071,10 +4073,28 @@ impl App {
                     .unwrap_or(input_panel::InputPanelKind::AddItem);
                 match kind {
                     input_panel::InputPanelKind::AddItem => {
-                        self.save_input_panel_add(agenda)?;
+                        if self.should_show_blocking_classification_overlay()
+                            && self.validate_input_panel_add_before_blocking_save()
+                        {
+                            self.queue_blocking_ui_action(
+                                PendingBlockingUiAction::SaveInputPanelAdd,
+                                "Saving item and classifying...",
+                            );
+                        } else {
+                            self.save_input_panel_add(agenda)?;
+                        }
                     }
                     input_panel::InputPanelKind::EditItem => {
-                        self.save_input_panel_edit(agenda)?;
+                        if self.should_show_blocking_classification_overlay()
+                            && self.validate_input_panel_edit_before_blocking_save(agenda)?
+                        {
+                            self.queue_blocking_ui_action(
+                                PendingBlockingUiAction::SaveInputPanelEdit,
+                                "Updating item and classifying...",
+                            );
+                        } else {
+                            self.save_input_panel_edit(agenda)?;
+                        }
                     }
                     input_panel::InputPanelKind::NameInput => {
                         self.save_input_panel_name(agenda)?;
@@ -4247,7 +4267,113 @@ impl App {
     }
 
     /// Save an InputPanel(AddItem) to the store.
-    fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    fn validate_input_panel_add_before_blocking_save(&mut self) -> bool {
+        let Some(panel) = &self.input_panel else {
+            self.mode = Mode::Normal;
+            return false;
+        };
+        let text = panel.text.trimmed().to_string();
+        if text.is_empty() {
+            self.status = "Cannot save: text cannot be empty".to_string();
+            return false;
+        }
+        true
+    }
+
+    fn validate_input_panel_edit_before_blocking_save(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        let Some(panel) = &self.input_panel else {
+            self.mode = Mode::Normal;
+            return Ok(false);
+        };
+        let Some(item_id) = panel.item_id else {
+            self.input_panel = None;
+            self.mode = Mode::Normal;
+            self.status = "Edit failed: no item ID".to_string();
+            return Ok(false);
+        };
+        let updated_text = panel.text.trimmed().to_string();
+        if updated_text.is_empty() {
+            self.status = "Cannot save: text cannot be empty".to_string();
+            return Ok(false);
+        }
+
+        let item = agenda.store().get_item(item_id)?;
+        let existing_categories: HashSet<_> = item.assignments.keys().copied().collect();
+        let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
+        let numeric_buffers = panel.numeric_buffers.clone();
+        let numeric_originals = panel.numeric_originals.clone();
+        let has_numeric_changes = numeric_buffers.iter().any(|(cat_id, buf)| {
+            let trimmed = buf.trimmed();
+            if trimmed.is_empty() {
+                return false;
+            }
+            let original = numeric_originals.get(cat_id).copied().flatten();
+            match trimmed.replace(',', "").parse::<rust_decimal::Decimal>() {
+                Ok(new_val) => original != Some(new_val),
+                Err(_) => true,
+            }
+        });
+        let no_text_change = item.text == updated_text;
+        let no_note_change = item.note
+            == if panel.note.trimmed().is_empty() {
+                None
+            } else {
+                Some(panel.note.text().to_string())
+            };
+        let no_cat_change = existing_categories == new_categories;
+        let when_text = panel.when_buffer.trimmed().to_string();
+        let no_when_change = when_text == panel.original_when;
+        let has_suggestion_decisions = panel
+            .pending_suggestions
+            .iter()
+            .any(|(_, d)| *d != SuggestionDecision::Pending);
+
+        if no_text_change
+            && no_note_change
+            && no_cat_change
+            && no_when_change
+            && !has_numeric_changes
+            && !has_suggestion_decisions
+        {
+            return Ok(false);
+        }
+
+        if !no_when_change && !when_text.is_empty() {
+            if let Err(err) = Self::parse_when_datetime_input(&when_text) {
+                self.status = format!("Could not parse when date: {err}");
+                return Ok(false);
+            }
+        }
+
+        for (cat_id, buf) in &numeric_buffers {
+            let trimmed = buf.trimmed();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed
+                .replace(',', "")
+                .parse::<rust_decimal::Decimal>()
+                .is_err()
+            {
+                let cat_name = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == *cat_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("?");
+                self.status = format!("Invalid numeric value for '{}': '{}'", cat_name, trimmed);
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Save an InputPanel(AddItem) to the store.
+    pub(crate) fn save_input_panel_add(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
             return Ok(());
@@ -4268,14 +4394,28 @@ impl App {
         // Create item (parses When, applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
         let reference_date = jiff::Zoned::now().date();
-        agenda.create_item_with_reference_date(&item, reference_date)?;
+        let mut process_result = agenda.create_item_with_reference_date(&item, reference_date)?;
 
         // Set note if provided.
         if note.is_some() {
             let mut loaded = agenda.store().get_item(item.id)?;
             loaded.note = note;
             loaded.modified_at = Timestamp::now();
-            agenda.update_item_with_reference_date(&loaded, reference_date)?;
+            let note_update_result = agenda.update_item_with_reference_date(&loaded, reference_date)?;
+            process_result
+                .new_assignments
+                .extend(note_update_result.new_assignments);
+            process_result
+                .deferred_removals
+                .extend(note_update_result.deferred_removals);
+            process_result.semantic_candidates_seen += note_update_result.semantic_candidates_seen;
+            process_result.semantic_candidates_queued_review +=
+                note_update_result.semantic_candidates_queued_review;
+            process_result.semantic_candidates_skipped_already_assigned +=
+                note_update_result.semantic_candidates_skipped_already_assigned;
+            process_result
+                .semantic_debug_messages
+                .extend(note_update_result.semantic_debug_messages);
         }
 
         // Assign explicitly selected categories.
@@ -4325,14 +4465,20 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         self.status = add_capture_status_message(created.when_date, &unknown_hashtags);
-        if let Some(suffix) = self.classification_pending_suffix() {
-            self.status = format!("{} | {suffix}. Press C to review.", self.status);
+        if let Some((suffix, show_review_hint)) =
+            self.classification_feedback_for_saved_item(item.id, &process_result)
+        {
+            self.status = if show_review_hint {
+                format!("{} | {suffix}. Press C to review.", self.status)
+            } else {
+                format!("{} | {suffix}.", self.status)
+            };
         }
         Ok(())
     }
 
     /// Save an InputPanel(EditItem) to the store (text, note, and category diff).
-    fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    pub(crate) fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
             return Ok(());
@@ -4447,7 +4593,7 @@ impl App {
         item.note = updated_note;
         item.modified_at = Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
-        agenda.update_item_with_reference_date(&item, reference_date)?;
+        let process_result = agenda.update_item_with_reference_date(&item, reference_date)?;
 
         // Apply when-date change.
         if let Some(new_when) = parsed_when {
@@ -4521,8 +4667,14 @@ impl App {
                 "{status} ({suggestion_accepted} accepted, {suggestion_rejected} rejected)"
             );
         }
-        if let Some(suffix) = self.classification_pending_suffix() {
-            status = format!("{status} | {suffix}. Press C to review.");
+        if let Some((suffix, show_review_hint)) =
+            self.classification_feedback_for_saved_item(item_id, &process_result)
+        {
+            status = if show_review_hint {
+                format!("{status} | {suffix}. Press C to review.")
+            } else {
+                format!("{status} | {suffix}.")
+            };
         }
         self.status = status;
         Ok(())
@@ -4537,6 +4689,9 @@ impl App {
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
+            Some(NameInputContext::OllamaBaseUrl)
+            | Some(NameInputContext::OllamaModel)
+            | Some(NameInputContext::OllamaTimeout) => Mode::GlobalSettings,
             None => Mode::Normal,
         }
     }
@@ -4821,6 +4976,52 @@ impl App {
                 self.mode = Mode::CategoryManager;
                 self.status = "Unexpected save dispatch for CategoryCreate".to_string();
             }
+            Some(NameInputContext::OllamaBaseUrl) => {
+                if input_text.is_empty() {
+                    self.status = "Ollama base URL cannot be empty".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.base_url = input_text.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("Ollama base URL set to '{}'", input_text);
+            }
+            Some(NameInputContext::OllamaModel) => {
+                if input_text.is_empty() {
+                    self.status = "Ollama model cannot be empty".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.model = input_text.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("Ollama model set to '{}'", input_text);
+            }
+            Some(NameInputContext::OllamaTimeout) => {
+                let Ok(secs) = input_text.trim().parse::<u64>() else {
+                    self.status = "Timeout must be a positive integer (seconds)".to_string();
+                    return Ok(());
+                };
+                if secs == 0 {
+                    self.status = "Timeout must be at least 1 second".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.timeout_secs = secs;
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("Ollama timeout set to {secs}s");
+            }
             None => {
                 self.input_panel = None;
                 self.name_input_context = None;
@@ -4925,19 +5126,28 @@ impl App {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !self.category_rows.is_empty() {
-                    self.item_assign_category_index =
-                        next_index(self.item_assign_category_index, self.category_rows.len(), 1);
+                let visible_len = self.item_assign_visible_category_row_indices().len();
+                if visible_len > 0 {
+                    let current_visible_index =
+                        self.item_assign_selected_category_row_index().unwrap_or(0);
+                    self.set_item_assign_category_visible_selection(next_index(
+                        current_visible_index,
+                        visible_len,
+                        1,
+                    ));
                     self.compute_assignment_preview(agenda);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if !self.category_rows.is_empty() {
-                    self.item_assign_category_index = next_index(
-                        self.item_assign_category_index,
-                        self.category_rows.len(),
+                let visible_len = self.item_assign_visible_category_row_indices().len();
+                if visible_len > 0 {
+                    let current_visible_index =
+                        self.item_assign_selected_category_row_index().unwrap_or(0);
+                    self.set_item_assign_category_visible_selection(next_index(
+                        current_visible_index,
+                        visible_len,
                         -1,
-                    );
+                    ));
                     self.compute_assignment_preview(agenda);
                 }
             }
@@ -4959,11 +5169,7 @@ impl App {
                     self.status = "Assign failed: no selected item".to_string();
                     return Ok(false);
                 };
-                let Some(row) = self
-                    .category_rows
-                    .get(self.item_assign_category_index)
-                    .cloned()
-                else {
+                let Some(row) = self.item_assign_selected_category_row().cloned() else {
                     self.status = "Assign failed: no category selected".to_string();
                     return Ok(false);
                 };
@@ -5064,6 +5270,7 @@ impl App {
                                     old_assignment: assignment,
                                 });
                             }
+                            self.item_assign_dirty = true;
                             self.refresh(agenda.store())?;
                             self.set_item_selection_by_id(item_id);
                             self.status = format!("Removed category {}", row.name);
@@ -5082,6 +5289,7 @@ impl App {
                         item_id,
                         category_id: row.id,
                     });
+                    self.item_assign_dirty = true;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
                     self.status = format!(
@@ -5092,14 +5300,23 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                self.handle_item_assign_category_key(KeyCode::Char(' '), agenda)?;
-                if self.mode == Mode::ItemAssignPicker {
-                    let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                if self.item_assign_dirty {
+                    let clear_selection = self.has_selected_items();
                     self.mode = Mode::Normal;
                     if clear_selection {
                         self.clear_selected_items();
                     }
                     self.clear_item_assign_session();
+                } else {
+                    self.handle_item_assign_category_key(KeyCode::Char(' '), agenda)?;
+                    if self.mode == Mode::ItemAssignPicker {
+                        let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                        self.mode = Mode::Normal;
+                        if clear_selection {
+                            self.clear_selected_items();
+                        }
+                        self.clear_item_assign_session();
+                    }
                 }
             }
             _ => {}
@@ -5321,14 +5538,23 @@ impl App {
                 };
             }
             KeyCode::Enter => {
-                self.handle_item_assign_view_key(KeyCode::Char(' '), agenda)?;
-                if self.mode == Mode::ItemAssignPicker {
-                    let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                if self.item_assign_dirty {
+                    let clear_selection = self.has_selected_items();
                     self.mode = Mode::Normal;
                     if clear_selection {
                         self.clear_selected_items();
                     }
                     self.clear_item_assign_session();
+                } else {
+                    self.handle_item_assign_view_key(KeyCode::Char(' '), agenda)?;
+                    if self.mode == Mode::ItemAssignPicker {
+                        let clear_selection = self.item_assign_dirty && self.has_selected_items();
+                        self.mode = Mode::Normal;
+                        if clear_selection {
+                            self.clear_selected_items();
+                        }
+                        self.clear_item_assign_session();
+                    }
                 }
             }
             KeyCode::Esc => {
@@ -5383,11 +5609,24 @@ impl App {
                     .iter()
                     .find(|category| category.name.eq_ignore_ascii_case(&name))
                     .map(|category| (category.id, category.name.clone()));
+                if exact_match
+                    .as_ref()
+                    .is_some_and(|(_, category_name)| is_reserved_category_name(category_name))
+                {
+                    self.mode = Mode::ItemAssignPicker;
+                    self.clear_input();
+                    self.status = format!(
+                        "Reserved category '{}' cannot be assigned from this menu",
+                        name
+                    );
+                    return Ok(false);
+                }
                 let single_visible_match = if exact_match.is_none() {
                     let query = name.to_ascii_lowercase();
                     let mut matching_rows = self
-                        .category_rows
-                        .iter()
+                        .item_assign_visible_category_row_indices()
+                        .into_iter()
+                        .filter_map(|row_index| self.category_rows.get(row_index))
                         .filter(|row| row.name.to_ascii_lowercase().contains(&query));
                     match (matching_rows.next(), matching_rows.next()) {
                         (Some(row), None) => Some((row.id, row.name.clone())),
@@ -5404,6 +5643,15 @@ impl App {
                     } else if let Some((category_id, category_name)) = single_visible_match {
                         (category_id, category_name)
                     } else {
+                        if is_reserved_category_name(&name) {
+                            self.mode = Mode::ItemAssignPicker;
+                            self.clear_input();
+                            self.status = format!(
+                                "Reserved category '{}' cannot be created or assigned here",
+                                name
+                            );
+                            return Ok(false);
+                        }
                         let mut category = Category::new(name.clone());
                         category.enable_implicit_string = true;
                         let category_id = category.id;
@@ -5440,13 +5688,7 @@ impl App {
 
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
-                if let Some(index) = self
-                    .category_rows
-                    .iter()
-                    .position(|row| row.id == category_id)
-                {
-                    self.item_assign_category_index = index;
-                }
+                self.set_item_assign_category_selection_by_id(category_id);
                 self.set_item_selection_by_id(item_id);
                 self.mode = Mode::ItemAssignPicker;
                 if assigned > 0 && failed == 0 {
@@ -5689,6 +5931,7 @@ mod tests {
             is_exclusive,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         }

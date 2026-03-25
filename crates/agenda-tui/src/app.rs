@@ -8,6 +8,7 @@ use agenda_core::store::DEFAULT_VIEW_NAME;
 use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
 };
+use agenda_core::classification::PROVIDER_ID_OLLAMA_OPENAI_COMPAT;
 
 pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
     let Some(parts) = shlex::split(editor) else {
@@ -23,11 +24,6 @@ impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
     const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
-
-    fn is_auto_refresh_cycle_key(key: KeyEvent) -> bool {
-        key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
-    }
 
     pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
         self.transient_status.as_ref().and_then(|transient| {
@@ -49,8 +45,8 @@ impl App {
         }
     }
 
-    pub(crate) fn clear_transient_status_on_key(&mut self, key: KeyEvent) {
-        if self.transient_status.is_some() && !Self::is_auto_refresh_cycle_key(key) {
+    pub(crate) fn clear_transient_status_on_key(&mut self, _key: KeyEvent) {
+        if self.transient_status.is_some() {
             self.transient_status = None;
         }
     }
@@ -66,8 +62,8 @@ impl App {
         self.auto_refresh_interval.label()
     }
 
-    pub(crate) fn cycle_auto_refresh_interval(&mut self) {
-        self.auto_refresh_interval = self.auto_refresh_interval.next();
+    pub(crate) fn set_auto_refresh_interval(&mut self, interval: AutoRefreshInterval) {
+        self.auto_refresh_interval = interval;
         self.auto_refresh_last_tick = Instant::now();
         self.transient_status = Some(TransientStatus {
             message: format!("Auto-refresh interval: {}", self.auto_refresh_mode_label()),
@@ -112,6 +108,49 @@ impl App {
             store.set_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY, view_name)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn open_global_settings(&mut self, store: &Store) -> TuiResult<()> {
+        self.refresh(store)?;
+        self.load_auto_refresh_interval(store)?;
+        self.global_settings = Some(GlobalSettingsState::default());
+        self.mode = Mode::GlobalSettings;
+        self.status =
+            "Global settings: j/k move, Space or ←/→ cycle, Enter pick, Esc close".to_string();
+        Ok(())
+    }
+
+    pub(crate) fn should_show_blocking_classification_overlay(&self) -> bool {
+        self.classification_ui.config.semantic_mode == SemanticClassificationMode::SuggestReview
+            && self.classification_ui.config.should_run_continuously()
+            && self.classification_ui.config.run_on_item_save
+            && self.classification_ui.config.ollama.enabled
+            && !self.classification_ui.config.ollama.base_url.trim().is_empty()
+            && !self.classification_ui.config.ollama.model.trim().is_empty()
+            && self
+                .classification_ui
+                .config
+                .provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
+    }
+
+    pub(crate) fn queue_blocking_ui_action(
+        &mut self,
+        action: PendingBlockingUiAction,
+        message: impl Into<String>,
+    ) {
+        self.pending_blocking_ui_action = Some(action);
+        self.blocking_overlay_message = Some(message.into());
+    }
+
+    fn execute_pending_blocking_ui_action(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(action) = self.pending_blocking_ui_action.take() else {
+            return Ok(());
+        };
+        self.blocking_overlay_message = None;
+        match action {
+            PendingBlockingUiAction::SaveInputPanelAdd => self.save_input_panel_add(agenda),
+            PendingBlockingUiAction::SaveInputPanelEdit => self.save_input_panel_edit(agenda),
+        }
     }
 
     pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> TuiResult<()> {
@@ -168,6 +207,17 @@ impl App {
             self.clear_expired_transient_status();
             terminal.draw(|frame| self.draw(frame))?;
 
+            if self.pending_blocking_ui_action.is_some() {
+                if let Err(err) = self.execute_pending_blocking_ui_action(agenda) {
+                    self.blocking_overlay_message = None;
+                    self.mode = Mode::Normal;
+                    self.clear_input();
+                    self.status = format!("Error: {err}");
+                }
+                self.maybe_run_auto_refresh(agenda.store())?;
+                continue;
+            }
+
             if !event::poll(std::time::Duration::from_millis(200))? {
                 self.maybe_run_auto_refresh(agenda.store())?;
                 continue;
@@ -183,6 +233,8 @@ impl App {
             let should_quit = match self.handle_key_event(key, agenda) {
                 Ok(value) => value,
                 Err(err) => {
+                    self.blocking_overlay_message = None;
+                    self.pending_blocking_ui_action = None;
                     self.mode = Mode::Normal;
                     self.clear_input();
                     self.status = format!("Error: {err}");
@@ -842,6 +894,75 @@ impl App {
         }
     }
 
+    pub(crate) fn classification_feedback_for_saved_item(
+        &self,
+        item_id: ItemId,
+        result: &agenda_core::engine::ProcessItemResult,
+    ) -> Option<(String, bool)> {
+        let semantic_debug = if result.semantic_debug_messages.is_empty() {
+            None
+        } else {
+            let mut unique = Vec::new();
+            for msg in &result.semantic_debug_messages {
+                if !unique.contains(msg) {
+                    unique.push(msg.clone());
+                }
+            }
+            Some(unique.join("; "))
+        };
+        let pending_for_item = self.pending_suggestion_count_for_item(item_id);
+        if pending_for_item > 0 {
+            return Some((
+                match semantic_debug {
+                    Some(debug) => format!(
+                        "? {pending_for_item} pending suggestion{} for this item | {debug}",
+                        if pending_for_item == 1 { "" } else { "s" }
+                    ),
+                    None => format!(
+                    "? {pending_for_item} pending suggestion{} for this item",
+                    if pending_for_item == 1 { "" } else { "s" }
+                    ),
+                },
+                true,
+            ));
+        }
+
+        if result.semantic_candidates_seen > 0 {
+            if result.semantic_candidates_skipped_already_assigned == result.semantic_candidates_seen
+            {
+                return Some((
+                    match semantic_debug {
+                        Some(debug) => format!(
+                            "semantic ran; no new review suggestions (all already assigned) | {debug}"
+                        ),
+                        None => {
+                            "semantic ran; no new review suggestions (all already assigned)"
+                                .to_string()
+                        }
+                    },
+                    false,
+                ));
+            }
+            if result.semantic_candidates_queued_review == 0 {
+                return Some((
+                    match semantic_debug {
+                        Some(debug) => {
+                            format!("semantic ran; no new review suggestions | {debug}")
+                        }
+                        None => "semantic ran; no new review suggestions".to_string(),
+                    },
+                    false,
+                ));
+            }
+        }
+
+        if let Some(debug) = semantic_debug {
+            return Some((debug, false));
+        }
+
+        None
+    }
+
     pub(crate) fn selected_item_has_assignment(&self, category_id: CategoryId) -> bool {
         self.item_assign_anchor_id()
             .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
@@ -987,6 +1108,89 @@ impl App {
             })
             .count();
         (assigned, action_item_ids.len())
+    }
+
+    pub(crate) fn item_assign_visible_category_row_indices(&self) -> Vec<usize> {
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| !row.is_reserved)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    pub(crate) fn item_assign_selected_category_row_index(&self) -> Option<usize> {
+        let visible_indices = self.item_assign_visible_category_row_indices();
+        visible_indices
+            .iter()
+            .position(|row_index| *row_index == self.item_assign_category_index)
+    }
+
+    pub(crate) fn item_assign_selected_category_row(&self) -> Option<&CategoryListRow> {
+        let row_index = self
+            .item_assign_visible_category_row_indices()
+            .get(self.item_assign_selected_category_row_index()?)
+            .copied()?;
+        self.category_rows.get(row_index)
+    }
+
+    pub(crate) fn clamp_item_assign_category_index(&mut self) {
+        let visible_indices = self.item_assign_visible_category_row_indices();
+        if visible_indices.is_empty() {
+            self.item_assign_category_index = 0;
+            return;
+        }
+
+        if let Some(visible_index) = visible_indices
+            .iter()
+            .position(|row_index| *row_index == self.item_assign_category_index)
+        {
+            self.item_assign_category_index = visible_indices[visible_index];
+        } else {
+            self.item_assign_category_index = visible_indices[0];
+        }
+    }
+
+    pub(crate) fn set_item_assign_category_visible_selection(&mut self, visible_index: usize) {
+        let visible_indices = self.item_assign_visible_category_row_indices();
+        if visible_indices.is_empty() {
+            self.item_assign_category_index = 0;
+            return;
+        }
+        let next_visible = visible_index.min(visible_indices.len() - 1);
+        self.item_assign_category_index = visible_indices[next_visible];
+    }
+
+    pub(crate) fn set_item_assign_category_selection_by_id(&mut self, category_id: CategoryId) {
+        if let Some(row_index) = self
+            .item_assign_visible_category_row_indices()
+            .into_iter()
+            .find(|row_index| {
+                self.category_rows
+                    .get(*row_index)
+                    .map(|row| row.id == category_id)
+                    .unwrap_or(false)
+            })
+        {
+            self.item_assign_category_index = row_index;
+        } else {
+            self.clamp_item_assign_category_index();
+        }
+    }
+
+    pub(crate) fn focused_numeric_board_column(&self) -> bool {
+        match self.current_slot_sort_column() {
+            Some(SlotSortColumn::SectionColumn {
+                heading,
+                kind: ColumnKind::Standard,
+            }) => self
+                .categories
+                .iter()
+                .find(|category| category.id == heading)
+                .map(|category| category.value_kind == CategoryValueKind::Numeric)
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 
     /// Returns `(present_count, total_action_count)` — how many of the current
@@ -1137,11 +1341,7 @@ impl App {
 
             // ── Left pane hovered: show which view slots would change ─────────
             ItemAssignPane::Categories => {
-                let Some(row) = self
-                    .category_rows
-                    .get(self.item_assign_category_index)
-                    .cloned()
-                else {
+                let Some(row) = self.item_assign_selected_category_row().cloned() else {
                     return;
                 };
                 let action_ids = self.effective_action_item_ids();

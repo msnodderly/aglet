@@ -1,25 +1,46 @@
 use crate::*;
 
-pub(crate) fn continuous_mode_index(mode: ContinuousMode) -> usize {
+pub(crate) fn literal_mode_index(mode: LiteralClassificationMode) -> usize {
     match mode {
-        ContinuousMode::Off => 0,
-        ContinuousMode::AutoApply => 1,
-        ContinuousMode::SuggestReview => 2,
+        LiteralClassificationMode::Off => 0,
+        LiteralClassificationMode::AutoApply => 1,
+        LiteralClassificationMode::SuggestReview => 2,
     }
 }
 
-pub(crate) fn continuous_mode_from_index(index: usize) -> ContinuousMode {
+pub(crate) fn literal_mode_from_index(index: usize) -> LiteralClassificationMode {
     match index {
-        0 => ContinuousMode::Off,
-        2 => ContinuousMode::SuggestReview,
-        _ => ContinuousMode::AutoApply,
+        0 => LiteralClassificationMode::Off,
+        2 => LiteralClassificationMode::SuggestReview,
+        _ => LiteralClassificationMode::AutoApply,
     }
 }
 
-pub(crate) fn continuous_mode_label(mode: ContinuousMode) -> &'static str {
+pub(crate) fn literal_mode_label(mode: LiteralClassificationMode) -> &'static str {
     match mode {
-        ContinuousMode::Off => "Off",
-        ContinuousMode::AutoApply => "Auto-apply",
-        ContinuousMode::SuggestReview => "Suggest/Review",
+        LiteralClassificationMode::Off => "Off",
+        LiteralClassificationMode::AutoApply => "Auto-apply",
+        LiteralClassificationMode::SuggestReview => "Suggest/Review",
+    }
+}
+
+pub(crate) fn semantic_mode_index(mode: SemanticClassificationMode) -> usize {
+    match mode {
+        SemanticClassificationMode::Off => 0,
+        SemanticClassificationMode::SuggestReview => 1,
+    }
+}
+
+pub(crate) fn semantic_mode_from_index(index: usize) -> SemanticClassificationMode {
+    match index {
+        0 => SemanticClassificationMode::Off,
+        _ => SemanticClassificationMode::SuggestReview,
+    }
+}
+
+pub(crate) fn semantic_mode_label(mode: SemanticClassificationMode) -> &'static str {
+    match mode {
+        SemanticClassificationMode::Off => "Off",
+        SemanticClassificationMode::SuggestReview => "Suggest/Review",
     }
 }

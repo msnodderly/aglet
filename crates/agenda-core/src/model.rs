@@ -113,6 +113,8 @@ pub struct Category {
     pub is_actionable: bool,
     pub enable_implicit_string: bool,
     #[serde(default = "default_true")]
+    pub enable_semantic_classification: bool,
+    #[serde(default = "default_true")]
     pub match_category_name: bool,
     #[serde(default)]
     pub also_match: Vec<String>,
@@ -484,6 +486,7 @@ impl Category {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            enable_semantic_classification: true,
             match_category_name: true,
             also_match: Vec::new(),
             note: None,

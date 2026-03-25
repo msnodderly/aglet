@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell as ScrollCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
-    CandidateAssignment, ClassificationConfig, ClassificationSuggestion, ContinuousMode,
+    CandidateAssignment, ClassificationConfig, ClassificationSuggestion, LiteralClassificationMode,
+    SemanticClassificationMode,
 };
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
@@ -127,9 +128,13 @@ impl Drop for TerminalSession {
 }
 
 pub fn run(db_path: &Path) -> TuiResult<()> {
+    run_with_options(db_path, false)
+}
+
+pub fn run_with_options(db_path: &Path, debug: bool) -> TuiResult<()> {
     let store = Store::open(db_path)?;
     let classifier = SubstringClassifier;
-    let agenda = Agenda::new(&store, &classifier);
+    let agenda = Agenda::with_debug(&store, &classifier, debug);
 
     let mut terminal = TerminalSession::enter()?;
 
@@ -171,6 +176,7 @@ struct CategoryListRow {
     is_exclusive: bool,
     is_actionable: bool,
     enable_implicit_string: bool,
+    enable_semantic_classification: bool,
     match_category_name: bool,
     value_kind: CategoryValueKind,
 }
@@ -238,6 +244,7 @@ enum BucketEditTarget {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Mode {
     Normal,
+    GlobalSettings,
     HelpPanel,
     SuggestionReview,
     InputPanel, // unified add/edit/name-input (replaces AddInput + ItemEdit)
@@ -439,6 +446,12 @@ enum NameInputContext {
     WhenDateEdit,
     /// Creating a new category via InputPanel.
     CategoryCreate,
+    /// Editing the Ollama base URL from Global Settings.
+    OllamaBaseUrl,
+    /// Editing the Ollama model from Global Settings.
+    OllamaModel,
+    /// Editing the Ollama timeout from Global Settings.
+    OllamaTimeout,
 }
 
 /// Pending state for an in-flight numeric cell edit.
@@ -519,6 +532,7 @@ enum CategoryManagerFocus {
 enum CategoryManagerDetailsFocus {
     Exclusive,
     AutoMatch,
+    SemanticMatch,
     MatchCategoryName,
     Actionable,
     AlsoMatch,
@@ -549,7 +563,8 @@ impl CategoryManagerDetailsFocus {
         } else {
             match self {
                 Self::Exclusive => Self::AutoMatch,
-                Self::AutoMatch => Self::MatchCategoryName,
+                Self::AutoMatch => Self::SemanticMatch,
+                Self::SemanticMatch => Self::MatchCategoryName,
                 Self::MatchCategoryName => Self::Actionable,
                 Self::Actionable => Self::AlsoMatch,
                 Self::AlsoMatch => Self::Note,
@@ -579,7 +594,8 @@ impl CategoryManagerDetailsFocus {
             match self {
                 Self::Exclusive => Self::Note,
                 Self::AutoMatch => Self::Exclusive,
-                Self::MatchCategoryName => Self::AutoMatch,
+                Self::SemanticMatch => Self::AutoMatch,
+                Self::MatchCategoryName => Self::SemanticMatch,
                 Self::Actionable => Self::MatchCategoryName,
                 Self::AlsoMatch => Self::Actionable,
                 Self::Note => Self::AlsoMatch,
@@ -648,6 +664,14 @@ struct CategorySuggestState {
 struct WorkflowRolePickerState {
     role_index: usize,
     row_index: usize,
+    origin: WorkflowRolePickerOrigin,
+    scroll_offset: ScrollCell<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct OllamaModelPickerState {
+    models: Vec<String>,
+    selected_index: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -661,6 +685,50 @@ enum AddColumnDirection {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NormalModePrefix {
     G,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WorkflowRolePickerOrigin {
+    CategoryManager,
+    GlobalSettings,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GlobalSettingsRow {
+    AutoRefresh,
+    LiteralClassificationMode,
+    SemanticClassificationMode,
+    OllamaEnabled,
+    OllamaBaseUrl,
+    OllamaModel,
+    OllamaTimeout,
+    WorkflowReady,
+    WorkflowClaim,
+}
+
+impl GlobalSettingsRow {
+    fn count() -> usize {
+        9
+    }
+
+    fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::AutoRefresh,
+            1 => Self::LiteralClassificationMode,
+            2 => Self::SemanticClassificationMode,
+            3 => Self::OllamaEnabled,
+            4 => Self::OllamaBaseUrl,
+            5 => Self::OllamaModel,
+            6 => Self::OllamaTimeout,
+            7 => Self::WorkflowReady,
+            _ => Self::WorkflowClaim,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct GlobalSettingsState {
+    selected_row: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -912,6 +980,14 @@ impl AutoRefreshInterval {
         }
     }
 
+    fn prev(self) -> Self {
+        match self {
+            Self::Off => Self::FiveSeconds,
+            Self::OneSecond => Self::Off,
+            Self::FiveSeconds => Self::OneSecond,
+        }
+    }
+
     fn as_duration(self) -> Option<Duration> {
         match self {
             Self::Off => None,
@@ -1102,6 +1178,12 @@ enum ExternalEditorTarget {
     Note,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PendingBlockingUiAction {
+    SaveInputPanelAdd,
+    SaveInputPanelEdit,
+}
+
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1141,8 +1223,10 @@ struct App {
     workflow_setup_open: bool,
     workflow_setup_focus: usize,
     workflow_role_picker: Option<WorkflowRolePickerState>,
+    ollama_model_picker: Option<OllamaModelPickerState>,
     classification_mode_picker_open: bool,
     classification_mode_picker_focus: usize,
+    global_settings: Option<GlobalSettingsState>,
     category_manager: Option<CategoryManagerState>,
     category_suggest: Option<CategorySuggestState>,
     category_direct_edit: Option<CategoryDirectEditState>,
@@ -1185,6 +1269,8 @@ struct App {
     undo: UndoState,
     input_panel_discard_confirm: bool,
     pending_external_edit: Option<ExternalEditorTarget>,
+    pending_blocking_ui_action: Option<PendingBlockingUiAction>,
+    blocking_overlay_message: Option<String>,
 }
 
 impl Default for App {
@@ -1220,8 +1306,10 @@ impl Default for App {
             workflow_setup_open: false,
             workflow_setup_focus: 0,
             workflow_role_picker: None,
+            ollama_model_picker: None,
             classification_mode_picker_open: false,
             classification_mode_picker_focus: 1,
+            global_settings: None,
             category_manager: None,
             category_suggest: None,
             category_direct_edit: None,
@@ -1264,6 +1352,8 @@ impl Default for App {
             undo: UndoState::default(),
             input_panel_discard_confirm: false,
             pending_external_edit: None,
+            pending_blocking_ui_action: None,
+            blocking_overlay_message: None,
         }
     }
 }
@@ -1520,11 +1610,17 @@ mod tests {
         when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-        CategoryManagerDetailsFocus, CategoryManagerFocus, ItemAssignPane, Mode, NameInputContext,
-        SlotSortDirection, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
+        CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
+        NameInputContext, OllamaModelPickerState, PendingBlockingUiAction, SlotSortDirection, ViewAssignRow,
+        ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
-    use agenda_core::classification::{ClassificationConfig, ContinuousMode};
+    use agenda_core::classification::{
+        CandidateAssignment, ClassificationConfig, ClassificationSuggestion,
+        LiteralClassificationMode, SemanticClassificationMode, SuggestionStatus,
+        PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
+    };
+    use agenda_core::engine::ProcessItemResult;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
@@ -1533,10 +1629,11 @@ mod tests {
     };
     use agenda_core::store::Store;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use jiff::civil::Date;
+    use jiff::{civil::Date, Timestamp};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::Terminal;
+    use uuid::Uuid;
 
     fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
         rows.iter().map(|row| (row.id, row.depth)).collect()
@@ -4837,7 +4934,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('H'), &agenda)
             .expect("gH should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g/)");
+        assert_eq!(app.status, "Unknown g command (use ga, g/, or gs)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -4849,7 +4946,7 @@ mod tests {
             .expect("g prefix");
         app.handle_key(KeyCode::Char('L'), &agenda)
             .expect("gL should be rejected");
-        assert_eq!(app.status, "Unknown g command (use ga or g/)");
+        assert_eq!(app.status, "Unknown g command (use ga, g/, or gs)");
 
         let saved = store
             .get_view(app.current_view().expect("current view").id)
@@ -5050,6 +5147,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5062,6 +5160,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: true,
             enable_implicit_string: true,
+            enable_semantic_classification: true,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5083,6 +5182,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5095,6 +5195,7 @@ mod tests {
             is_exclusive: false,
             is_actionable: false,
             enable_implicit_string: false,
+            enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
         };
@@ -5649,6 +5750,145 @@ mod tests {
             context_row_count, 1,
             "add-item context should stay in one fixed row even in narrow layouts"
         );
+    }
+
+    #[test]
+    fn add_item_save_queues_blocking_classification_action() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut config = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        config.ollama.enabled = true;
+        config.ollama.base_url = "http://127.0.0.1:11434/v1".to_string();
+        config.ollama.model = "mistral".to_string();
+        config.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store
+            .set_classification_config(&config)
+            .expect("set classification config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new());
+        panel.text.set("Plan travel".to_string());
+        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("queue blocking save");
+
+        assert_eq!(
+            app.pending_blocking_ui_action,
+            Some(PendingBlockingUiAction::SaveInputPanelAdd)
+        );
+        assert_eq!(
+            app.blocking_overlay_message.as_deref(),
+            Some("Saving item and classifying...")
+        );
+        assert_eq!(app.mode, Mode::InputPanel);
+    }
+
+    #[test]
+    fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
+        let item_id = ItemId::new_v4();
+        let app = App::default();
+        let result = ProcessItemResult {
+            semantic_candidates_seen: 2,
+            semantic_candidates_queued_review: 0,
+            semantic_candidates_skipped_already_assigned: 2,
+            semantic_debug_messages: vec![
+                "semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0"
+                    .to_string(),
+            ],
+            ..ProcessItemResult::default()
+        };
+
+        assert_eq!(
+            app.classification_feedback_for_saved_item(item_id, &result),
+            Some((
+                "semantic ran; no new review suggestions (all already assigned) | semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0".to_string(),
+                false
+            ))
+        );
+    }
+
+    #[test]
+    fn classification_feedback_surfaces_debug_on_transport_error() {
+        let item_id = ItemId::new_v4();
+        let app = App::default();
+        let result = ProcessItemResult {
+            semantic_candidates_seen: 0,
+            semantic_debug_messages: vec![
+                "Ollama not reachable at http://127.0.0.1:11434/v1 — is it running?".to_string(),
+            ],
+            ..ProcessItemResult::default()
+        };
+
+        let feedback = app
+            .classification_feedback_for_saved_item(item_id, &result);
+        assert!(feedback.is_some());
+        let (msg, _) = feedback.unwrap();
+        assert!(
+            msg.contains("Ollama not reachable"),
+            "feedback should surface transport error: {msg}"
+        );
+    }
+
+    #[test]
+    fn edit_item_invalid_when_does_not_queue_blocking_classification_action() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut config = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::AutoApply,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        config.ollama.enabled = true;
+        config.ollama.base_url = "http://127.0.0.1:11434/v1".to_string();
+        config.ollama.model = "mistral".to_string();
+        config.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store
+            .set_classification_config(&config)
+            .expect("set classification config");
+
+        let item = Item::new("Plan travel".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            item.id,
+            "Plan travel".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        panel.when_buffer.set("next weem".to_string());
+        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("attempt edit save");
+
+        assert_eq!(app.pending_blocking_ui_action, None);
+        assert_eq!(app.blocking_overlay_message, None);
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert!(
+            app.status.contains("Could not parse when date"),
+            "expected validation error status, got: {}",
+            app.status
+        );
+        assert!(app.input_panel.is_some());
     }
 
     #[test]
@@ -7094,7 +7334,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_mode_ctrl_r_cycles_auto_refresh_interval() {
+    fn global_settings_auto_refresh_row_cycles_interval_with_keys() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7104,29 +7344,30 @@ mod tests {
 
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
 
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r -> 1s");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("enter -> 1s");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
         assert_eq!(app.auto_refresh_mode_label(), "1s");
 
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r -> 5s");
+        app.handle_key(KeyCode::Right, &agenda)
+            .expect("right -> 5s");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
         assert_eq!(app.auto_refresh_mode_label(), "5s");
 
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r -> off");
-        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
-        assert_eq!(app.auto_refresh_mode_label(), "off");
+        app.handle_key(KeyCode::Left, &agenda).expect("left -> 1s");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
+        assert_eq!(app.auto_refresh_mode_label(), "1s");
+
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("space -> 5s");
+        assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
+        assert_eq!(app.auto_refresh_mode_label(), "5s");
     }
 
     #[test]
@@ -7145,11 +7386,12 @@ mod tests {
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
-        app.handle_normal_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r should persist 1s interval");
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("enter should persist 1s interval");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
 
         let mut reopened_app = App::default();
@@ -7188,7 +7430,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_refresh_status_toast_clears_on_next_non_ctrl_r_key() {
+    fn auto_refresh_status_toast_clears_on_next_key() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7199,11 +7441,7 @@ mod tests {
         app.refresh(&store).expect("refresh app");
         app.mode = Mode::Normal;
 
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &agenda,
-        )
-        .expect("ctrl-r shows transient status");
+        app.set_auto_refresh_interval(AutoRefreshInterval::OneSecond);
         let backend = TestBackend::new(100, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal.draw(|frame| app.draw(frame)).expect("render app");
@@ -7224,7 +7462,7 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
             !rendered.contains("Auto-refresh interval:"),
-            "toast should clear on next non-ctrl-r key: {rendered}"
+            "toast should clear on next key: {rendered}"
         );
         assert!(
             rendered.contains("Ready | Auto-refresh:1s"),
@@ -7239,7 +7477,7 @@ mod tests {
             mode: Mode::Normal,
             ..App::default()
         };
-        app.cycle_auto_refresh_interval();
+        app.set_auto_refresh_interval(AutoRefreshInterval::OneSecond);
         app.transient_status
             .as_mut()
             .expect("transient status")
@@ -7398,19 +7636,27 @@ mod tests {
 
     #[test]
     fn normal_mode_footer_hints_include_preview_shortcut() {
-        let mut app = App {
+        let app = App {
             mode: Mode::Normal,
             status: "Ready".to_string(),
             ..App::default()
         };
 
-        let backend = TestBackend::new(220, 18);
+        let backend = TestBackend::new(280, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal.draw(|frame| app.draw(frame)).expect("render app");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
             rendered.contains("p:preview"),
             "normal footer hints should include preview shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("g s:settings"),
+            "normal footer hints should include global settings shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("F10:settings"),
+            "normal footer hints should include F10 settings shortcut: {rendered}"
         );
         assert!(
             rendered.contains("?:help"),
@@ -7428,9 +7674,22 @@ mod tests {
             rendered.contains("u:deps"),
             "normal footer hints should include hide-dependent toggle shortcut: {rendered}"
         );
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "normal footer hints should hide numeric-only format shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "normal footer hints should hide numeric-only summary shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ctrl-R"),
+            "normal footer hints should no longer advertise Ctrl-R: {rendered}"
+        );
 
+        let mut app = app;
         app.section_filters = vec![Some("ready".to_string())];
-        let backend = TestBackend::new(220, 18);
+        let backend = TestBackend::new(280, 18);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal.draw(|frame| app.draw(frame)).expect("render app");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
@@ -7457,6 +7716,111 @@ mod tests {
         assert!(
             rendered.contains("u:deps"),
             "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
+        );
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "filtered footer hints should still hide numeric-only format shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "filtered footer hints should still hide numeric-only summary shortcut without numeric focus: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ctrl-R"),
+            "filtered footer hints should no longer advertise Ctrl-R: {rendered}"
+        );
+    }
+
+    #[test]
+    fn normal_mode_footer_hints_show_numeric_shortcuts_only_for_numeric_column_focus() {
+        let (store, classifier, _cost_id, _item_id, db_path) =
+            setup_numeric_column_board("footer-numeric-hints");
+        let _agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.column_index = 1; // numeric Cost column
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("f:col fmt"),
+            "numeric column focus should show format shortcut: {rendered}"
+        );
+        assert!(
+            rendered.contains("F:col summary"),
+            "numeric column focus should show summary shortcut: {rendered}"
+        );
+
+        app.column_index = 0; // item column
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "item-column focus should hide format shortcut: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "item-column focus should hide summary shortcut: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_footer_hints_hide_numeric_shortcuts_for_non_numeric_column_focus() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let _agenda = Agenda::new(&store, &classifier);
+
+        let priority = Category::new("Priority".to_string());
+        store.create_category(&priority).expect("create priority");
+
+        let item = Item::new("Footer hint target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: vec![Column {
+                kind: ColumnKind::Standard,
+                heading: priority.id,
+                width: 12,
+                summary_fn: None,
+            }],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.column_index = 1; // non-numeric standard column
+
+        let backend = TestBackend::new(220, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            !rendered.contains("f:col fmt"),
+            "non-numeric column focus should hide format shortcut: {rendered}"
+        );
+        assert!(
+            !rendered.contains("F:col summary"),
+            "non-numeric column focus should hide summary shortcut: {rendered}"
         );
     }
 
@@ -7529,7 +7893,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -7583,7 +7948,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -7626,7 +7992,8 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
 
         let cfg = ClassificationConfig {
-            continuous_mode: ContinuousMode::SuggestReview,
+            literal_mode: LiteralClassificationMode::SuggestReview,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store
@@ -7662,7 +8029,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_m_opens_picker_and_enter_applies_classification_mode() {
+    fn global_settings_literal_classification_row_applies_selection() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -7672,26 +8039,246 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
 
-        app.handle_category_manager_key(KeyCode::Char('m'), &agenda)
-            .expect("open classification mode picker");
-        assert!(app.classification_mode_picker_open);
-
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("move picker to suggest/review");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("move to classification mode row");
+        assert_eq!(
+            app.global_settings_selected_kind(),
+            GlobalSettingsRow::LiteralClassificationMode
+        );
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("apply classification mode");
 
         let reloaded = store.get_classification_config().expect("reload config");
-        assert_eq!(reloaded.continuous_mode, ContinuousMode::SuggestReview);
-        assert_eq!(app.mode, Mode::CategoryManager);
-        assert!(!app.classification_mode_picker_open);
+        assert_eq!(
+            reloaded.literal_mode,
+            LiteralClassificationMode::SuggestReview
+        );
+        assert_eq!(app.mode, Mode::GlobalSettings);
         assert!(
-            app.status.contains("Classification mode: Suggest/Review"),
+            app.status
+                .contains("Literal classification: Suggest/Review"),
             "expected classification mode status, got: {}",
             app.status
+        );
+    }
+
+    #[test]
+    fn global_settings_ollama_text_rows_persist_updates() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut config = ClassificationConfig::default();
+        config.ollama.base_url = "old".to_string();
+        config.ollama.model = "oldmodel".to_string();
+        store
+            .set_classification_config(&config)
+            .expect("persist initial config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        open_global_settings_for_test(&mut app, &agenda);
+
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::OllamaBaseUrl);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ollama base url input");
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::OllamaBaseUrl));
+        for _ in 0.."old".len() {
+            app.handle_key(KeyCode::Backspace, &agenda)
+                .expect("clear old base url");
+        }
+        for ch in "http://localhost:11434/v1".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type new base url");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save ollama base url");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert!(app.status.contains("Ollama base URL set to"));
+
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::OllamaModel);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ollama model input");
+        if app.ollama_model_picker.is_some() {
+            // Ollama is running — picker opened. Dismiss it and verify we can
+            // fall back to text input for direct model entry.
+            app.handle_key(KeyCode::Esc, &agenda)
+                .expect("dismiss ollama model picker");
+            assert!(app.ollama_model_picker.is_none());
+            // Now use the text input fallback path directly.
+            app.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+        }
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(app.name_input_context, Some(NameInputContext::OllamaModel));
+        for _ in 0.."oldmodel".len() {
+            app.handle_key(KeyCode::Backspace, &agenda)
+                .expect("clear old model");
+        }
+        for ch in "mistral".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("type new model");
+        }
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("save ollama model");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert!(app.status.contains("Ollama model set to 'mistral'"));
+
+        let reloaded = store.get_classification_config().expect("reload config");
+        assert_eq!(reloaded.ollama.base_url, "http://localhost:11434/v1");
+        assert_eq!(reloaded.ollama.model, "mistral");
+    }
+
+    #[test]
+    fn ollama_model_picker_selects_and_persists_model() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        open_global_settings_for_test(&mut app, &agenda);
+
+        // Inject picker state directly (avoids network call).
+        app.ollama_model_picker = Some(OllamaModelPickerState {
+            models: vec![
+                "gemma2".to_string(),
+                "llama3".to_string(),
+                "mistral".to_string(),
+            ],
+            selected_index: 0,
+        });
+
+        // Navigate down to "mistral" (index 2).
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("picker down");
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("picker down");
+        assert_eq!(
+            app.ollama_model_picker.as_ref().map(|p| p.selected_index),
+            Some(2)
+        );
+
+        // Select it.
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("picker select");
+        assert!(app.ollama_model_picker.is_none());
+        assert!(app.status.contains("Ollama model set to 'mistral'"));
+
+        let config = store.get_classification_config().expect("reload config");
+        assert_eq!(config.ollama.model, "mistral");
+    }
+
+    #[test]
+    fn ollama_model_picker_esc_cancels() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        open_global_settings_for_test(&mut app, &agenda);
+
+        app.ollama_model_picker = Some(OllamaModelPickerState {
+            models: vec!["gemma2".to_string(), "llama3".to_string()],
+            selected_index: 0,
+        });
+
+        // Verify it renders without panicking.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw picker");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Pick Ollama Model"),
+            "picker overlay should be visible: {rendered}"
+        );
+
+        app.handle_key(KeyCode::Esc, &agenda).expect("picker esc");
+        assert!(app.ollama_model_picker.is_none());
+        assert!(app.status.contains("cancelled"));
+    }
+
+    #[test]
+    fn suggestion_review_render_shows_provider_model_confidence_and_full_reasoning() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Travel".to_string());
+        store.create_category(&category).expect("create category");
+        let item = Item::new("Book flights".to_string());
+        store.create_item(&item).expect("create item");
+
+        store
+            .upsert_suggestion(&ClassificationSuggestion {
+                id: Uuid::new_v4(),
+                item_id: item.id,
+                assignment: CandidateAssignment::Category(category.id),
+                provider_id: "ollama_openai_compat".to_string(),
+                model: Some("mistral".to_string()),
+                confidence: Some(0.9),
+                rationale: Some(
+                    "trip planning because the item involves flights hotel local transport and an away from home conference stay END-OF-RATIONALE".to_string(),
+                ),
+                status: SuggestionStatus::Pending,
+                context_hash: "ctx".to_string(),
+                item_revision_hash: "rev".to_string(),
+                created_at: Timestamp::now(),
+                decided_at: None,
+            })
+            .expect("persist suggestion");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('C'), &agenda)
+            .expect("open suggestion review");
+        assert_eq!(app.mode, Mode::SuggestionReview);
+
+        let backend = TestBackend::new(180, 32);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("ollama_openai_compat:mistral 90%"),
+            "review overlay should show provider/model/confidence metadata: {rendered}"
+        );
+        assert!(
+            rendered.contains("Reason:"),
+            "review overlay should label the full rationale block: {rendered}"
+        );
+        assert!(
+            rendered.contains("END-OF-RATIONALE"),
+            "review overlay should show rationale: {rendered}"
+        );
+    }
+
+    #[test]
+    fn blocking_overlay_renders_working_message() {
+        let app = App {
+            blocking_overlay_message: Some("Saving item and classifying...".to_string()),
+            ..App::default()
+        };
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("Working"),
+            "working overlay should render title: {rendered}"
+        );
+        assert!(
+            rendered.contains("Saving item and classifying..."),
+            "working overlay should render message: {rendered}"
         );
     }
 
@@ -7715,7 +8302,7 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Auto classification: Auto-apply"),
+            rendered.contains("Literal: Auto-apply"),
             "category manager should show classification summary: {rendered}"
         );
         assert!(
@@ -7725,6 +8312,69 @@ mod tests {
         assert!(
             rendered.contains("Claim result: (unset)"),
             "category manager should show claim summary: {rendered}"
+        );
+        assert!(
+            !rendered.contains("(m)"),
+            "category manager should no longer advertise classification edit affordance: {rendered}"
+        );
+        assert!(
+            !rendered.contains("(w)"),
+            "category manager should no longer advertise workflow edit affordance: {rendered}"
+        );
+        assert!(
+            rendered.contains("Use g s or F10 for Global Settings"),
+            "category manager should redirect users to global settings: {rendered}"
+        );
+    }
+
+    #[test]
+    fn category_manager_details_note_workflow_roles_are_configured_in_global_settings() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let claim = Category::new("In Progress".to_string());
+        store.create_category(&ready).expect("create ready");
+        store.create_category(&claim).expect("create claim");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: Some(claim.id),
+            })
+            .expect("set workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        app.set_category_selection_by_id(ready.id);
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw ready");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Workflow: Ready Queue"),
+            "category manager should show ready workflow note: {rendered}"
+        );
+        assert!(
+            rendered.contains("Configured in Global Settings (g s / F10)"),
+            "ready role note should point back to global settings: {rendered}"
+        );
+
+        app.set_category_selection_by_id(claim.id);
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw claim");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Workflow: Claim Result"),
+            "category manager should show claim workflow note: {rendered}"
+        );
+        assert!(
+            rendered.contains("Configured in Global Settings (g s / F10)"),
+            "claim role note should point back to global settings: {rendered}"
         );
     }
 
@@ -7834,8 +8484,16 @@ mod tests {
             "help panel should include global search description: {rendered}"
         );
         assert!(
+            rendered.contains("Open Global Settings"),
+            "help panel should include global settings shortcut: {rendered}"
+        );
+        assert!(
             rendered.contains("Assign categories to current item or selection"),
             "help panel should include updated assign description: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Ctrl-R"),
+            "help panel should no longer advertise Ctrl-R: {rendered}"
         );
     }
 
@@ -8029,6 +8687,9 @@ mod tests {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
 
         let mut view = View::new("Board".to_string());
         view.sections.push(Section {
@@ -8314,7 +8975,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_picker_and_done_confirm_render_updated_footer_copy() {
+    fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -8369,22 +9030,9 @@ mod tests {
             "assign picker should show focused target context inside the modal: {rendered}"
         );
 
-        app.item_assign_category_index = app
-            .category_rows
-            .iter()
-            .position(|row| row.name.eq_ignore_ascii_case("Done"))
-            .expect("Done category row should exist");
-        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open batch done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
-
-        terminal
-            .draw(|frame| app.draw(frame))
-            .expect("render confirm");
-        let rendered = terminal_buffer_lines(&terminal).join("\n");
         assert!(
-            rendered.contains("y:remove links + done  n:done only  Esc:cancel"),
-            "done confirm footer should use compact batch wording: {rendered}"
+            !rendered.contains("[ ] Done"),
+            "assign picker should hide reserved Done category: {rendered}"
         );
 
         drop(store);
@@ -8431,6 +9079,103 @@ mod tests {
         app.handle_item_assign_category_key(KeyCode::BackTab, &agenda)
             .expect("backtab should move back to category pane");
         assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
+    }
+
+    #[test]
+    fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let item = Item::new("Assign target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(
+            app.item_assign_selected_category_row().map(|row| row.id),
+            Some(work.id),
+            "assign picker should select the first non-reserved category"
+        );
+        assert!(
+            app.item_assign_visible_category_row_indices()
+                .iter()
+                .filter_map(|row_index| app.category_rows.get(*row_index))
+                .all(|row| !row.is_reserved),
+            "assign picker visible rows should exclude reserved categories"
+        );
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("[ ] Work"),
+            "work row should render: {rendered}"
+        );
+        assert!(
+            !rendered.contains("[ ] Done"),
+            "reserved Done should not render in assign picker: {rendered}"
+        );
+        assert!(
+            !rendered.contains("[ ] When"),
+            "reserved When should not render in assign picker: {rendered}"
+        );
+        assert!(
+            !rendered.contains("[ ] Entry"),
+            "reserved Entry should not render in assign picker: {rendered}"
+        );
+    }
+
+    #[test]
+    fn assign_picker_space_then_enter_keeps_single_item_assignment() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let item = Item::new("Assign target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle assignment with space");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+
+        let after_space = store.get_item(item.id).expect("reload after space");
+        assert!(
+            after_space.assignments.contains_key(&work.id),
+            "space should assign the category immediately"
+        );
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("enter should close without undoing prior toggle");
+
+        let after_enter = store.get_item(item.id).expect("reload after enter");
+        assert!(
+            after_enter.assignments.contains_key(&work.id),
+            "enter after a prior space toggle should not remove the assignment"
+        );
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]
@@ -8632,6 +9377,62 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_input_rejects_reserved_category_names() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        store.create_category(&work).expect("create category");
+
+        let item = Item::new("Reserved assign target".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let initial_category_count = app.categories.len();
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+
+        for reserved_name in ["Done", "When", "Entry"] {
+            app.mode = Mode::ItemAssignInput;
+            app.input.set(reserved_name.to_string());
+            app.handle_item_assign_category_input_key(KeyCode::Enter, &agenda)
+                .expect("submit reserved category");
+
+            assert_eq!(
+                app.mode,
+                Mode::ItemAssignPicker,
+                "reserved category input should return to picker"
+            );
+            assert!(
+                app.status.contains("Reserved category"),
+                "status should explain reserved categories are blocked: {}",
+                app.status
+            );
+        }
+
+        app.refresh(&store).expect("refresh after reserved rejects");
+        let categories_after = app.categories.len();
+        assert_eq!(
+            categories_after, initial_category_count,
+            "reserved-name input should not create categories"
+        );
+
+        let saved_item = store.get_item(item.id).expect("reload item");
+        assert!(
+            !saved_item.is_done,
+            "rejecting reserved Done should not mark the item done"
+        );
+        assert!(
+            saved_item.when_date.is_none(),
+            "rejecting reserved When should not set a date"
+        );
     }
 
     #[test]
@@ -9432,6 +10233,54 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_reserved_details_render_as_read_only() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        let reserved_index = app
+            .category_rows
+            .iter()
+            .position(|row| row.is_reserved)
+            .expect("reserved row should exist");
+        app.category_index = reserved_index;
+        app.sync_category_manager_state_from_selection();
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+        assert!(
+            rendered.contains("[reserved]"),
+            "reserved category badge should remain visible in tree: {rendered}"
+        );
+        assert!(
+            rendered.contains("Note (read-only)"),
+            "reserved categories should render note pane as read-only: {rendered}"
+        );
+        assert!(
+            rendered.contains("Also Match (read-only)"),
+            "reserved categories should render also-match pane as read-only: {rendered}"
+        );
+        assert!(
+            rendered.contains("Reserved categories are built-in and read-only"),
+            "reserved categories should show an explicit read-only hint: {rendered}"
+        );
+        assert!(
+            !rendered.contains("> Note (read-only)"),
+            "reserved read-only note pane should not render as actively editable: {rendered}"
+        );
+    }
+
+    #[test]
     fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -9576,7 +10425,7 @@ mod tests {
     }
 
     #[test]
-    fn category_create_panel_child_creates_under_selected_parent() {
+    fn category_create_panel_n_creates_sibling_under_selected_parent() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -9590,34 +10439,37 @@ mod tests {
         let parent = Category::new("Parent".to_string());
         store.create_category(&parent).expect("create parent");
 
+        let mut selected = Category::new("Selected".to_string());
+        selected.parent = Some(parent.id);
+        store.create_category(&selected).expect("create selected");
+
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
         app.handle_normal_key(KeyCode::Char('c'), &agenda)
             .expect("open category manager");
-        app.set_category_selection_by_id(parent.id);
+        app.set_category_selection_by_id(selected.id);
 
         app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
             .expect("open create panel");
         assert_eq!(app.mode, Mode::InputPanel);
-        // Panel should have parent pre-filled
         assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(parent.id));
+        assert!(app.status.contains("same level as Selected"));
 
-        for c in "Child".chars() {
+        for c in "Sibling".chars() {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
-                .expect("type child name");
+                .expect("type sibling name");
         }
-        // Tab to Parent, then Tab to TypePicker, then S to save
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to parent");
+            .expect("tab to type picker");
         app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save category");
 
-        let child = app
+        let sibling = app
             .categories
             .iter()
-            .find(|c| c.name == "Child")
-            .expect("child created");
-        assert_eq!(child.parent, Some(parent.id));
+            .find(|c| c.name == "Sibling")
+            .expect("sibling created");
+        assert_eq!(sibling.parent, Some(parent.id));
         assert_eq!(app.mode, Mode::CategoryManager);
 
         drop(store);
@@ -9625,13 +10477,13 @@ mod tests {
     }
 
     #[test]
-    fn category_create_panel_tab_cycles_without_parent_picker_and_keeps_default_parent() {
+    fn category_create_panel_upper_n_creates_child_of_selected_category() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
         let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-create-panel-no-parent-picker-{nanos}.ag"
+            "agenda-tui-category-create-panel-uppercase-child-{nanos}.ag"
         ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
@@ -9646,8 +10498,9 @@ mod tests {
             .expect("open category manager");
         app.set_category_selection_by_id(alpha.id);
 
-        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+        app.handle_category_manager_key(KeyCode::Char('N'), &agenda)
             .expect("open create panel");
+        assert!(app.status.contains("child category under Alpha"));
         for c in "Child".chars() {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type child name");
@@ -9671,6 +10524,53 @@ mod tests {
             .find(|category| category.name == "Child")
             .expect("child should be created");
         assert_eq!(child.parent, Some(alpha.id));
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_n_on_root_selection_creates_top_level_sibling() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-root-sibling-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let alpha = Category::new("Alpha".to_string());
+        store.create_category(&alpha).expect("create alpha");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(alpha.id);
+
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+        assert_eq!(app.input_panel.as_ref().unwrap().parent_id, None);
+        assert!(app.status.contains("same level as Alpha"));
+
+        for c in "Beta".chars() {
+            app.handle_input_panel_key(KeyCode::Char(c), &agenda)
+                .expect("type sibling name");
+        }
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("tab to type picker");
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+            .expect("save category");
+
+        let beta = app
+            .categories
+            .iter()
+            .find(|category| category.name == "Beta")
+            .expect("beta should be created");
+        assert_eq!(beta.parent, None);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -11532,6 +12432,85 @@ mod tests {
     }
 
     #[test]
+    fn category_manager_semantic_match_toggle_persists() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-semantic-toggle-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Work".to_string());
+        store.create_category(&category).expect("create category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.set_category_selection_by_id(category.id);
+        app.set_category_manager_focus(CategoryManagerFocus::Details);
+        app.set_category_manager_details_focus(CategoryManagerDetailsFocus::SemanticMatch);
+
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("toggle semantic match and leave details");
+
+        let loaded = store.get_category(category.id).expect("load category");
+        assert!(!loaded.enable_semantic_classification);
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Tree)
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    fn open_global_settings_for_test(app: &mut App, agenda: &Agenda<'_>) {
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('g'), agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+    }
+
+    fn select_global_settings_row_for_test(
+        app: &mut App,
+        agenda: &Agenda<'_>,
+        target: GlobalSettingsRow,
+    ) {
+        while app.global_settings_selected_kind() != target {
+            app.handle_key(KeyCode::Char('j'), agenda)
+                .expect("move global settings selection");
+        }
+    }
+
+    fn select_workflow_picker_category_for_test(
+        app: &mut App,
+        agenda: &Agenda<'_>,
+        target_name: &str,
+    ) {
+        let visible_count = app.workflow_role_picker_row_indices().len();
+        for _ in 0..visible_count {
+            let picker = app
+                .workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should be open");
+            let row_idx = app.workflow_role_picker_row_indices()[picker.row_index];
+            if app.category_rows[row_idx].name == target_name {
+                return;
+            }
+            app.handle_key(KeyCode::Char('j'), agenda)
+                .expect("move workflow picker selection");
+        }
+        panic!("workflow picker row not found: {target_name}");
+    }
+
+    #[test]
     fn workflow_ready_role_assignment_disables_implicit_match() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -11549,17 +12528,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -11589,17 +12564,12 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(claim.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowClaim);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("focus claim target");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open claim result picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign claim target role");
 
         let updated = store.get_category(claim.id).expect("load claim target");
@@ -11629,20 +12599,18 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
-        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("reopen ready queue picker");
+        app.handle_key(KeyCode::Char('x'), &agenda)
             .expect("remove ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -11655,7 +12623,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_picker_assignment_ignores_tree_selection() {
+    fn global_settings_workflow_picker_opens_and_closes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -11674,15 +12642,10 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(claim.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowClaim);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("focus claim result");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open claim result picker");
         assert_eq!(
             app.workflow_role_picker
@@ -11691,17 +12654,80 @@ mod tests {
                 .row_index,
             0
         );
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick claim category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
-            .expect("assign from picker");
+        assert_eq!(
+            app.workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should be open")
+                .origin,
+            WorkflowRolePickerOrigin::GlobalSettings
+        );
 
-        assert_eq!(app.workflow_config.ready_category_id, None);
-        assert_eq!(app.workflow_config.claim_category_id, Some(claim.id));
-        assert_eq!(app.selected_category_id(), Some(claim.id));
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("close workflow picker");
+        assert!(app.workflow_role_picker.is_none());
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert_eq!(app.status, "Workflow category picker closed");
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn global_settings_workflow_picker_scroll_offset_stays_stable_while_selection_is_visible() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        for idx in 0..24 {
+            store
+                .create_category(&Category::new(format!("Category {idx:02}")))
+                .expect("create category");
+        }
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        let mut first_scrolled_offset = None;
+        for _ in 0..24 {
+            terminal.draw(|frame| app.draw(frame)).expect("draw picker");
+            let offset = app
+                .workflow_role_picker
+                .as_ref()
+                .expect("workflow role picker should stay open")
+                .scroll_offset
+                .get();
+            if offset > 0 {
+                first_scrolled_offset = Some(offset);
+                break;
+            }
+            app.handle_key(KeyCode::Char('j'), &agenda)
+                .expect("move picker selection");
+        }
+
+        let first_scrolled_offset =
+            first_scrolled_offset.expect("picker should scroll once selection reaches lower edge");
+
+        app.handle_key(KeyCode::Char('k'), &agenda)
+            .expect("move within visible scrolled window");
+        terminal.draw(|frame| app.draw(frame)).expect("draw picker");
+        let next_offset = app
+            .workflow_role_picker
+            .as_ref()
+            .expect("workflow role picker should stay open")
+            .scroll_offset
+            .get();
+
+        assert_eq!(
+            next_offset, first_scrolled_offset,
+            "scroll offset should remain stable while the next selection is still visible"
+        );
     }
 
     #[test]
@@ -11730,17 +12756,14 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready_b.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
+        app.handle_key(KeyCode::Char('j'), &agenda)
             .expect("pick replacement ready role");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("replace ready role");
 
         let updated_a = store.get_category(ready_a.id).expect("load ready a");
@@ -11775,17 +12798,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -11822,17 +12841,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -11871,17 +12886,13 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Down, &agenda)
-            .expect("pick ready category from picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        select_workflow_picker_category_for_test(&mut app, &agenda, "Ready");
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         let updated = store.get_category(ready.id).expect("load ready");
@@ -11928,15 +12939,12 @@ mod tests {
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh app");
-        app.handle_normal_key(KeyCode::Char('c'), &agenda)
-            .expect("open category manager");
-        app.set_category_selection_by_id(ready.id);
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
 
-        app.handle_category_manager_key(KeyCode::Char('w'), &agenda)
-            .expect("open workflow setup");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ready queue picker");
-        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        app.handle_key(KeyCode::Enter, &agenda)
             .expect("assign ready role");
 
         assert!(
@@ -11949,6 +12957,85 @@ mod tests {
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn global_settings_workflow_picker_filters_reserved_and_numeric_categories() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let assignable = Category::new("Assignable".to_string());
+        let mut estimate = Category::new("Estimate".to_string());
+        estimate.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&assignable)
+            .expect("create assignable category");
+        store
+            .create_category(&estimate)
+            .expect("create numeric category");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowReady);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open ready queue picker");
+        let visible_names: Vec<String> = app
+            .workflow_role_picker_row_indices()
+            .into_iter()
+            .map(|idx| app.category_rows[idx].name.clone())
+            .collect();
+
+        assert!(
+            visible_names.iter().any(|name| name == "Assignable"),
+            "regular categories should remain eligible: {visible_names:?}"
+        );
+        assert!(
+            !visible_names.iter().any(|name| name == "Estimate"),
+            "numeric categories should be filtered out: {visible_names:?}"
+        );
+        assert!(
+            !visible_names
+                .iter()
+                .any(|name| name == "Done" || name == "When" || name == "Entry"),
+            "reserved categories should be filtered out: {visible_names:?}"
+        );
+    }
+
+    #[test]
+    fn global_settings_workflow_picker_blocks_cross_role_conflicts() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        store.create_category(&ready).expect("create ready");
+        store
+            .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
+                ready_category_id: Some(ready.id),
+                claim_category_id: None,
+            })
+            .expect("seed workflow config");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        open_global_settings_for_test(&mut app, &agenda);
+        select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::WorkflowClaim);
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open claim result picker");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("attempt conflicting claim assignment");
+
+        assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
+        assert_eq!(app.workflow_config.claim_category_id, None);
+        assert!(
+            app.status.contains("already the Ready Queue category"),
+            "expected cross-role conflict warning, got: {}",
+            app.status
+        );
     }
 
     #[test]
@@ -11989,7 +13076,23 @@ mod tests {
             .expect("details next field");
         assert_eq!(
             app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::SemanticMatch)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("details next field");
+        assert_eq!(
+            app.category_manager_details_focus(),
             Some(CategoryManagerDetailsFocus::MatchCategoryName)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('k'), &agenda)
+            .expect("details previous field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::SemanticMatch)
         );
         assert_eq!(app.selected_category_id(), Some(alpha.id));
 
@@ -12401,6 +13504,61 @@ mod tests {
         );
 
         drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_gs_opens_global_settings_and_esc_returns_to_normal() {
+        let (store, db_path) = make_two_section_store("g-settings-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert_eq!(
+            app.global_settings_selected_kind(),
+            GlobalSettingsRow::AutoRefresh
+        );
+
+        app.handle_key(KeyCode::Esc, &agenda)
+            .expect("Esc should close global settings");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.status, "Closed Global Settings");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn normal_mode_f10_opens_global_settings() {
+        let (store, db_path) = make_two_section_store("f10-settings-open");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::F(10), &agenda)
+            .expect("F10 should open global settings");
+
+        assert_eq!(app.mode, Mode::GlobalSettings);
+        assert!(
+            app.status.contains("Global settings"),
+            "expected global settings status, got: {}",
+            app.status
+        );
+
         let _ = std::fs::remove_file(&db_path);
     }
 
@@ -13043,7 +14201,7 @@ mod tests {
     }
 
     #[test]
-    fn item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+    fn item_assign_hidden_reserved_done_does_not_open_confirm_or_change_item() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -13077,12 +14235,13 @@ mod tests {
             .expect("Done category row should exist");
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
-
-        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
-            .expect("Esc should cancel done prompt");
+            .expect("space on hidden reserved category should no-op");
         assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert!(
+            app.status.contains("no category selected"),
+            "hidden reserved Done should not be assignable: {}",
+            app.status
+        );
         assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
         assert_eq!(
             agenda
@@ -13097,7 +14256,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_item_assign_done_prompt_esc_returns_to_picker_without_changes() {
+    fn batch_item_assign_hidden_reserved_done_keeps_picker_and_selection() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -13140,13 +14299,14 @@ mod tests {
             .expect("Done category row should exist");
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open batch done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
-
-        app.handle_confirm_delete_key(KeyCode::Esc, &agenda)
-            .expect("Esc should cancel batch done prompt");
+            .expect("space on hidden reserved category should no-op");
         assert_eq!(app.mode, Mode::ItemAssignPicker);
         assert_eq!(app.selected_count(), 2);
+        assert!(
+            app.status.contains("no category selected"),
+            "hidden reserved Done should not open batch-done flow: {}",
+            app.status
+        );
         assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
         assert!(!store.get_item(plain.id).expect("load plain").is_done);
         assert_eq!(
@@ -13162,7 +14322,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_item_assign_done_prompt_n_marks_selected_done_and_clears_selection() {
+    fn batch_item_assign_hidden_reserved_done_does_not_mark_selected_items_done() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -13205,14 +14365,10 @@ mod tests {
             .expect("Done category row should exist");
 
         app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
-            .expect("space should open batch done confirm");
-        assert_eq!(app.mode, Mode::ConfirmDelete);
+            .expect("space on hidden reserved category should no-op");
 
-        app.handle_confirm_delete_key(KeyCode::Char('n'), &agenda)
-            .expect("n should mark selected items done");
-
-        assert!(store.get_item(blocker.id).expect("load blocker").is_done);
-        assert!(store.get_item(plain.id).expect("load plain").is_done);
+        assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
+        assert!(!store.get_item(plain.id).expect("load plain").is_done);
         assert_eq!(
             agenda
                 .immediate_dependent_ids(blocker.id)
@@ -13220,11 +14376,11 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(app.selected_count(), 0);
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+        assert_eq!(app.selected_count(), 2);
         assert!(
-            app.status.contains("Marked 2 selected items done"),
-            "status should summarize batch done result: {}",
+            app.status.contains("no category selected"),
+            "status should explain hidden reserved Done was not assignable: {}",
             app.status
         );
 

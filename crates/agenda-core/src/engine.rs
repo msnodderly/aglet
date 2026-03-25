@@ -23,6 +23,10 @@ pub struct DeferredRemoval {
 pub struct ProcessItemResult {
     pub new_assignments: HashSet<CategoryId>,
     pub deferred_removals: Vec<DeferredRemoval>,
+    pub semantic_candidates_seen: usize,
+    pub semantic_candidates_queued_review: usize,
+    pub semantic_candidates_skipped_already_assigned: usize,
+    pub semantic_debug_messages: Vec<String>,
 }
 
 #[derive(Debug, Default)]
