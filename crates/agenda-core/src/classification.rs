@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::time::Duration;
 
 use jiff::civil::{Date, DateTime};
@@ -244,7 +245,7 @@ impl Default for OllamaProviderSettings {
             enabled: false,
             base_url: "http://127.0.0.1:11434/v1".to_string(),
             model: "mistral".to_string(),
-            timeout_secs: 10,
+            timeout_secs: 30,
         }
     }
 }
@@ -574,6 +575,7 @@ impl ClassificationProvider for WhenParserProvider {
 pub struct OllamaProvider<'a> {
     pub settings: &'a OllamaProviderSettings,
     pub transport: &'a dyn OllamaTransport,
+    pub debug: bool,
 }
 
 impl ClassificationProvider for OllamaProvider<'_> {
@@ -582,22 +584,47 @@ impl ClassificationProvider for OllamaProvider<'_> {
     }
 
     fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
+        let debug = self.debug;
+        let dbg = |msg: &str| {
+            if !debug {
+                return;
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/aglet-ollama-debug.log")
+            {
+                let _ = writeln!(f, "[{}] {msg}", jiff::Zoned::now());
+            }
+        };
+
+        dbg(&format!(
+            "classify called: enabled={} model={:?} base_url={:?} semantic_cats={}",
+            self.settings.enabled,
+            self.settings.model,
+            self.settings.base_url,
+            request.semantic_candidate_categories.len()
+        ));
+
         if !self.settings.enabled
             || self.settings.model.trim().is_empty()
             || self.settings.base_url.trim().is_empty()
             || request.semantic_candidate_categories.is_empty()
         {
+            dbg("early return: precondition failed");
             return Ok(ProviderClassificationResult::default());
         }
 
-        let system_prompt = "You classify a single item into existing categories. Return strict JSON only with shape {\"suggestions\":[{\"category\":\"Exact Category Name\",\"confidence\":0.0,\"rationale\":\"short reason\"}]}. Use only exact category names from the provided list. Any category name not exactly present in the allowed list is invalid and will be discarded. Do not invent, expand, paraphrase, or rewrite category names. If nothing applies, return {\"suggestions\":[]}. Suggest at most 3 categories.";
+        let system_prompt = "You classify a single item into existing categories. Return strict JSON only with shape {\"suggestions\":[{\"category\":\"Exact Category Name\",\"confidence\":0.0,\"rationale\":\"short reason\"}]}. The \"category\" field must contain ONLY the category name — no parenthetical annotations, no hierarchy info. For example return \"High\" not \"High (child of Priority)\". Use only exact category names from the provided list. Any category name not exactly present in the allowed list is invalid and will be discarded. Do not invent, expand, paraphrase, or rewrite category names. If nothing applies, return {\"suggestions\":[]}. Suggest at most 3 categories. Categories are organized in a hierarchy. Categories marked [group] are parents that contain child categories. Prefer specific child categories over their parent group when a child clearly fits.";
         let user_prompt = build_ollama_user_prompt(request);
+        dbg(&format!("user_prompt:\n{user_prompt}"));
         let content = match self
             .transport
             .complete(self.settings, system_prompt, &user_prompt)
         {
             Ok(content) => content,
-            Err(_) => {
+            Err(err) => {
+                dbg(&format!("transport error: {err}"));
                 return Ok(ProviderClassificationResult {
                     candidates: Vec::new(),
                     debug_summary: Some(format!(
@@ -608,22 +635,45 @@ impl ClassificationProvider for OllamaProvider<'_> {
             }
         };
         let Some(content) = content else {
+            dbg("empty response from transport");
             return Ok(ProviderClassificationResult {
                 candidates: Vec::new(),
                 debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
             });
         };
 
-        Ok(parse_ollama_suggestions(
+        dbg(&format!("ollama response: {content}"));
+
+        let result = parse_ollama_suggestions(
             request,
             &content,
             &self.settings.model,
             self.id(),
-        ))
+        );
+        dbg(&format!(
+            "parse result: {} candidates, debug={:?}",
+            result.candidates.len(),
+            result.debug_summary
+        ));
+        Ok(result)
     }
 }
 
 fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
+    // Build a name lookup for resolving parent IDs to human-readable names.
+    let name_map: HashMap<CategoryId, &str> = request
+        .semantic_candidate_categories
+        .iter()
+        .map(|cat| (cat.id, cat.name.as_str()))
+        .collect();
+
+    // Identify which categories are parents (have children in the list).
+    let parent_ids: HashSet<CategoryId> = request
+        .semantic_candidate_categories
+        .iter()
+        .filter_map(|cat| cat.parent_id)
+        .collect();
+
     let mut lines = Vec::new();
     lines.push(format!("Item text: {}", request.text));
     lines.push(format!(
@@ -637,16 +687,23 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "(none)".to_string())
     ));
+
+    // Show manual categories by name when possible.
     if request.manual_category_ids.is_empty() {
         lines.push("Manual categories: (none)".to_string());
     } else {
-        let mut manual_ids: Vec<String> = request
+        let mut manual_names: Vec<String> = request
             .manual_category_ids
             .iter()
-            .map(ToString::to_string)
+            .map(|id| {
+                name_map
+                    .get(id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| id.to_string())
+            })
             .collect();
-        manual_ids.sort();
-        lines.push(format!("Manual category ids: {}", manual_ids.join(", ")));
+        manual_names.sort();
+        lines.push(format!("Manual categories: {}", manual_names.join(", ")));
     }
     if request.numeric_values.is_empty() {
         lines.push("Numeric assignments: (none)".to_string());
@@ -654,7 +711,13 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
         let mut numeric_values: Vec<String> = request
             .numeric_values
             .iter()
-            .map(|(id, value)| format!("{id}={value}"))
+            .map(|(id, value)| {
+                let name = name_map
+                    .get(id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| id.to_string());
+                format!("{name}={value}")
+            })
             .collect();
         numeric_values.sort();
         lines.push(format!(
@@ -667,18 +730,25 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
     );
     for category in &request.semantic_candidate_categories {
         let aliases = if category.also_match.is_empty() {
-            "(none)".to_string()
+            String::new()
         } else {
-            category.also_match.join(", ")
+            format!(" | aliases: {}", category.also_match.join(", "))
+        };
+        let parent = match category.parent_id {
+            Some(pid) => {
+                let parent_name = name_map.get(&pid).copied().unwrap_or("?");
+                format!(" (child of \"{}\")", parent_name)
+            }
+            None => String::new(),
+        };
+        let role = if parent_ids.contains(&category.id) {
+            " [group]"
+        } else {
+            ""
         };
         lines.push(format!(
-            "- {} | aliases: {} | parent: {}",
+            "- {}{parent}{role}{aliases}",
             category.name,
-            aliases,
-            category
-                .parent_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "(root)".to_string())
         ));
     }
     lines.push("Do not invent, rewrite, expand, or paraphrase category names.".to_string());
@@ -721,7 +791,15 @@ fn parse_ollama_suggestions(
     let mut dropped_duplicate = 0usize;
 
     for suggestion in parsed.suggestions.into_iter().take(3) {
-        let key = suggestion.category.trim().to_ascii_lowercase();
+        // Strip any parenthetical annotations the model may echo back,
+        // e.g. "High (child of Priority)" → "High".
+        let raw = suggestion.category.trim();
+        let normalized = raw
+            .find(" (")
+            .map(|pos| &raw[..pos])
+            .unwrap_or(raw)
+            .trim();
+        let key = normalized.to_ascii_lowercase();
         let Some(category) = category_map.get(&key) else {
             dropped_unknown += 1;
             continue;
@@ -1033,6 +1111,7 @@ mod tests {
         let provider = OllamaProvider {
             settings: &settings,
             transport: &transport,
+            debug: false,
         };
 
         let out = provider.classify(&request).expect("classify");
@@ -1080,6 +1159,7 @@ mod tests {
         let provider = OllamaProvider {
             settings: &settings,
             transport: &transport,
+            debug: false,
         };
 
         let out = provider.classify(&request).expect("classify");
@@ -1133,6 +1213,7 @@ mod tests {
         let provider = OllamaProvider {
             settings: &settings,
             transport: &transport,
+            debug: false,
         };
 
         let out = provider

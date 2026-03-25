@@ -2737,7 +2737,6 @@ mod tests {
     fn test_classification_config_roundtrip() {
         let store = Store::open_memory().expect("open store");
         let config = ClassificationConfig {
-            enabled: false,
             run_on_category_change: false,
             ..ClassificationConfig::default()
         };

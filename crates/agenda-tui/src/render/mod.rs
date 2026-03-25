@@ -4844,6 +4844,10 @@ impl App {
                 "Ollama model        {}",
                 self.classification_ui.config.ollama.model
             ))),
+            ListItem::new(Line::from(format!(
+                "Ollama timeout      {}s",
+                self.classification_ui.config.ollama.timeout_secs
+            ))),
             ListItem::new(Line::from(format!("Ready category       {ready_name}"))),
             ListItem::new(Line::from(format!("Claim category       {claim_name}"))),
         ];

@@ -111,6 +111,10 @@ impl App {
                 self.classification_ui.config.ollama.model.clone(),
                 "Ollama model",
             ),
+            NameInputContext::OllamaTimeout => (
+                self.classification_ui.config.ollama.timeout_secs.to_string(),
+                "Ollama timeout (seconds)",
+            ),
             _ => return,
         };
         self.input_panel = Some(input_panel::InputPanel::new_name_input(
@@ -187,6 +191,7 @@ impl App {
                     }
                     GlobalSettingsRow::OllamaBaseUrl
                     | GlobalSettingsRow::OllamaModel
+                    | GlobalSettingsRow::OllamaTimeout
                     | GlobalSettingsRow::WorkflowReady
                     | GlobalSettingsRow::WorkflowClaim => {}
                 }
@@ -206,6 +211,7 @@ impl App {
                 }
                 GlobalSettingsRow::OllamaBaseUrl
                 | GlobalSettingsRow::OllamaModel
+                | GlobalSettingsRow::OllamaTimeout
                 | GlobalSettingsRow::WorkflowReady
                 | GlobalSettingsRow::WorkflowClaim => {}
             },
@@ -227,6 +233,9 @@ impl App {
                 }
                 GlobalSettingsRow::OllamaModel => {
                     self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+                }
+                GlobalSettingsRow::OllamaTimeout => {
+                    self.open_global_settings_ollama_text_input(NameInputContext::OllamaTimeout);
                 }
                 GlobalSettingsRow::WorkflowReady | GlobalSettingsRow::WorkflowClaim => {
                     self.open_global_settings_workflow_picker();

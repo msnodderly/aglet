@@ -35,6 +35,7 @@ pub struct Agenda<'a> {
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
     ollama_transport: Arc<dyn OllamaTransport>,
+    debug: bool,
 }
 
 /// The net category changes that would result from a section-move operation,
@@ -64,6 +65,12 @@ impl<'a> Agenda<'a> {
         Self::with_ollama_transport(store, classifier, Arc::new(ReqwestOllamaTransport))
     }
 
+    pub fn with_debug(store: &'a Store, classifier: &'a dyn Classifier, debug: bool) -> Self {
+        let mut agenda = Self::new(store, classifier);
+        agenda.debug = debug;
+        agenda
+    }
+
     pub fn with_ollama_transport(
         store: &'a Store,
         classifier: &'a dyn Classifier,
@@ -74,6 +81,7 @@ impl<'a> Agenda<'a> {
             classifier,
             date_parser: BasicDateParser::default(),
             ollama_transport,
+            debug: false,
         }
     }
 
@@ -816,6 +824,7 @@ impl<'a> Agenda<'a> {
             providers.push(Box::new(OllamaProvider {
                 settings: &cfg.ollama,
                 transport: self.ollama_transport.as_ref(),
+                debug: self.debug,
             }) as _);
         }
         ClassificationService::new(self.store, providers)
@@ -1800,6 +1809,8 @@ mod tests {
 
         let cfg = ClassificationConfig {
             enabled: false,
+            literal_mode: LiteralClassificationMode::Off,
+            semantic_mode: SemanticClassificationMode::Off,
             ..ClassificationConfig::default()
         };
         store

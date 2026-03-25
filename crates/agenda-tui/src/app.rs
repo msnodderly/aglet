@@ -956,6 +956,10 @@ impl App {
             }
         }
 
+        if let Some(debug) = semantic_debug {
+            return Some((debug, false));
+        }
+
         None
     }
 

@@ -128,9 +128,13 @@ impl Drop for TerminalSession {
 }
 
 pub fn run(db_path: &Path) -> TuiResult<()> {
+    run_with_options(db_path, false)
+}
+
+pub fn run_with_options(db_path: &Path, debug: bool) -> TuiResult<()> {
     let store = Store::open(db_path)?;
     let classifier = SubstringClassifier;
-    let agenda = Agenda::new(&store, &classifier);
+    let agenda = Agenda::with_debug(&store, &classifier, debug);
 
     let mut terminal = TerminalSession::enter()?;
 
@@ -446,6 +450,8 @@ enum NameInputContext {
     OllamaBaseUrl,
     /// Editing the Ollama model from Global Settings.
     OllamaModel,
+    /// Editing the Ollama timeout from Global Settings.
+    OllamaTimeout,
 }
 
 /// Pending state for an in-flight numeric cell edit.
@@ -689,13 +695,14 @@ enum GlobalSettingsRow {
     OllamaEnabled,
     OllamaBaseUrl,
     OllamaModel,
+    OllamaTimeout,
     WorkflowReady,
     WorkflowClaim,
 }
 
 impl GlobalSettingsRow {
     fn count() -> usize {
-        8
+        9
     }
 
     fn from_index(index: usize) -> Self {
@@ -706,7 +713,8 @@ impl GlobalSettingsRow {
             3 => Self::OllamaEnabled,
             4 => Self::OllamaBaseUrl,
             5 => Self::OllamaModel,
-            6 => Self::WorkflowReady,
+            6 => Self::OllamaTimeout,
+            7 => Self::WorkflowReady,
             _ => Self::WorkflowClaim,
         }
     }
@@ -5796,6 +5804,27 @@ mod tests {
             app.classification_feedback_for_saved_item(item_id, &result),
             Some((
                 "semantic ran; no new review suggestions (all already assigned) | semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0".to_string(),
+                false
+            ))
+        );
+    }
+
+    #[test]
+    fn classification_feedback_surfaces_debug_on_transport_error() {
+        let item_id = ItemId::new_v4();
+        let app = App::default();
+        let result = ProcessItemResult {
+            semantic_candidates_seen: 0,
+            semantic_debug_messages: vec![
+                "semantic[mistral]: transport error".to_string(),
+            ],
+            ..ProcessItemResult::default()
+        };
+
+        assert_eq!(
+            app.classification_feedback_for_saved_item(item_id, &result),
+            Some((
+                "semantic[mistral]: transport error".to_string(),
                 false
             ))
         );

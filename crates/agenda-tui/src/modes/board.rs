@@ -4689,9 +4689,9 @@ impl App {
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
-            Some(NameInputContext::OllamaBaseUrl) | Some(NameInputContext::OllamaModel) => {
-                Mode::GlobalSettings
-            }
+            Some(NameInputContext::OllamaBaseUrl)
+            | Some(NameInputContext::OllamaModel)
+            | Some(NameInputContext::OllamaTimeout) => Mode::GlobalSettings,
             None => Mode::Normal,
         }
     }
@@ -5003,6 +5003,24 @@ impl App {
                 self.name_input_context = None;
                 self.mode = Mode::GlobalSettings;
                 self.status = format!("Ollama model set to '{}'", input_text);
+            }
+            Some(NameInputContext::OllamaTimeout) => {
+                let Ok(secs) = input_text.trim().parse::<u64>() else {
+                    self.status = "Timeout must be a positive integer (seconds)".to_string();
+                    return Ok(());
+                };
+                if secs == 0 {
+                    self.status = "Timeout must be at least 1 second".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.timeout_secs = secs;
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("Ollama timeout set to {secs}s");
             }
             None => {
                 self.input_panel = None;
