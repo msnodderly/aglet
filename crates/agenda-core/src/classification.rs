@@ -657,7 +657,7 @@ impl ClassificationProvider for OllamaProvider<'_> {
             return Ok(ProviderClassificationResult::default());
         }
 
-        let system_prompt = "You classify a single item into existing categories. Return strict JSON only with shape {\"suggestions\":[{\"category\":\"Exact Category Name\",\"confidence\":0.0,\"rationale\":\"short reason\"}]}. The \"category\" field must contain ONLY the category name — no parenthetical annotations, no hierarchy info. For example return \"High\" not \"High (child of Priority)\". Use only exact category names from the provided list. Any category name not exactly present in the allowed list is invalid and will be discarded. Do not invent, expand, paraphrase, or rewrite category names. If nothing applies, return {\"suggestions\":[]}. Suggest at most 3 categories. Categories are organized in a hierarchy. Categories marked [group] are parents that contain child categories. Prefer specific child categories over their parent group when a child clearly fits.";
+        let system_prompt = "You classify a single item into existing categories. Return strict JSON only with shape {\"suggestions\":[{\"category\":\"Exact Category Name\",\"confidence\":0.0,\"rationale\":\"short reason\"}]}. The \"category\" field must contain ONLY the category name — no parenthetical annotations, no hierarchy info. For example return \"High\" not \"High (child of Priority)\". Use only exact category names from the provided list. Any category name not exactly present in the allowed list is invalid and will be discarded. Do not invent, expand, paraphrase, or rewrite category names. If nothing applies, return {\"suggestions\":[]}. Suggest at most 3 categories. Categories are organized in a hierarchy. Categories marked [group] are organizational parents — NEVER suggest a [group] category. Always suggest the specific child category that fits. For example if \"Issue Type [group]\" has children \"Bug\" and \"Feature\", suggest \"Bug\" or \"Feature\", never \"Issue Type\".";
         let user_prompt = build_ollama_user_prompt(request);
         dbg(&format!("user_prompt:\n{user_prompt}"));
         let content = match self
@@ -767,32 +767,42 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
             numeric_values.join(", ")
         ));
     }
-    lines.push(
-        "Allowed category names (use exactly as written, or return an empty list):".to_string(),
-    );
+    // Separate group (parent) categories from leaf categories.
+    // Groups are context-only — the model should never suggest them.
+    let mut group_lines = Vec::new();
+    let mut leaf_lines = Vec::new();
     for category in &request.semantic_candidate_categories {
         let aliases = if category.also_match.is_empty() {
             String::new()
         } else {
             format!(" | aliases: {}", category.also_match.join(", "))
         };
-        let parent = match category.parent_id {
+        let parent_annotation = match category.parent_id {
             Some(pid) => {
                 let parent_name = name_map.get(&pid).copied().unwrap_or("?");
                 format!(" (child of \"{}\")", parent_name)
             }
             None => String::new(),
         };
-        let role = if parent_ids.contains(&category.id) {
-            " [group]"
+        if parent_ids.contains(&category.id) {
+            group_lines.push(format!("- {} [group — do not suggest]", category.name));
         } else {
-            ""
-        };
-        lines.push(format!(
-            "- {}{parent}{role}{aliases}",
-            category.name,
-        ));
+            leaf_lines.push(format!(
+                "- {}{parent_annotation}{aliases}",
+                category.name,
+            ));
+        }
     }
+    if !group_lines.is_empty() {
+        lines.push(
+            "Category groups (for hierarchy context only — NEVER suggest these):".to_string(),
+        );
+        lines.extend(group_lines);
+    }
+    lines.push(
+        "Allowed category names (use exactly as written, or return an empty list):".to_string(),
+    );
+    lines.extend(leaf_lines);
     lines.push("Do not invent, rewrite, expand, or paraphrase category names.".to_string());
     lines.join("\n")
 }
@@ -826,11 +836,18 @@ fn parse_ollama_suggestions(
         .iter()
         .map(|category| (category.name.to_ascii_lowercase(), category))
         .collect();
+    // Identify group (parent) categories — never accept suggestions for these.
+    let group_ids: HashSet<CategoryId> = request
+        .semantic_candidate_categories
+        .iter()
+        .filter_map(|cat| cat.parent_id)
+        .collect();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     let raw_count = parsed.suggestions.len();
     let mut dropped_unknown = 0usize;
     let mut dropped_duplicate = 0usize;
+    let mut dropped_group = 0usize;
 
     for suggestion in parsed.suggestions.into_iter().take(3) {
         // Strip any parenthetical annotations the model may echo back,
@@ -846,6 +863,10 @@ fn parse_ollama_suggestions(
             dropped_unknown += 1;
             continue;
         };
+        if group_ids.contains(&category.id) {
+            dropped_group += 1;
+            continue;
+        }
         if !seen.insert(category.id) {
             dropped_duplicate += 1;
             continue;
@@ -869,10 +890,8 @@ fn parse_ollama_suggestions(
     ProviderClassificationResult {
         candidates: out.clone(),
         debug_summary: Some(format!(
-            "semantic[{model}]: raw={raw_count} kept={} dropped_unknown={} dropped_duplicate={}",
-            out.len(),
-            dropped_unknown,
-            dropped_duplicate
+            "semantic[{model}]: raw={raw_count} kept={} dropped_unknown={dropped_unknown} dropped_duplicate={dropped_duplicate} dropped_group={dropped_group}",
+            out.len()
         )),
     }
 }
@@ -965,6 +984,7 @@ impl<'a> ClassificationService<'a> {
             }
             if descriptor.value_kind != CategoryValueKind::Numeric
                 && category.enable_semantic_classification
+                && !item.assignments.contains_key(&descriptor.id)
             {
                 semantic_candidate_categories.push(descriptor);
             }
@@ -1117,7 +1137,68 @@ mod tests {
         );
         assert_eq!(
             parsed.debug_summary.as_deref(),
-            Some("semantic[mistral]: raw=3 kept=1 dropped_unknown=1 dropped_duplicate=1")
+            Some("semantic[mistral]: raw=3 kept=1 dropped_unknown=1 dropped_duplicate=1 dropped_group=0")
+        );
+    }
+
+    #[test]
+    fn parse_ollama_suggestions_rejects_group_categories() {
+        let parent = CategoryDescriptor {
+            id: CategoryId::new_v4(),
+            name: "Issue Type".to_string(),
+            match_category_name: true,
+            also_match: Vec::new(),
+            parent_id: None,
+            value_kind: CategoryValueKind::Tag,
+        };
+        let child_bug = CategoryDescriptor {
+            id: CategoryId::new_v4(),
+            name: "Bug".to_string(),
+            match_category_name: true,
+            also_match: Vec::new(),
+            parent_id: Some(parent.id),
+            value_kind: CategoryValueKind::Tag,
+        };
+        let child_feature = CategoryDescriptor {
+            id: CategoryId::new_v4(),
+            name: "Feature".to_string(),
+            match_category_name: true,
+            also_match: Vec::new(),
+            parent_id: Some(parent.id),
+            value_kind: CategoryValueKind::Tag,
+        };
+        let request = ClassificationRequest {
+            item_id: ItemId::new_v4(),
+            text: "fix crash on startup".to_string(),
+            note: None,
+            when_date: None,
+            manual_category_ids: Vec::new(),
+            visible_view_name: None,
+            visible_section_title: None,
+            numeric_values: Vec::new(),
+            literal_candidate_categories: Vec::new(),
+            semantic_candidate_categories: vec![
+                parent.clone(),
+                child_bug.clone(),
+                child_feature.clone(),
+            ],
+        };
+
+        // Model suggests the group parent — should be dropped.
+        let parsed = parse_ollama_suggestions(
+            &request,
+            r#"{"suggestions":[{"category":"Issue Type","confidence":0.9,"rationale":"it is an issue"},{"category":"Bug","confidence":0.8,"rationale":"crash is a bug"}]}"#,
+            "mistral",
+            PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
+        );
+        assert_eq!(parsed.candidates.len(), 1);
+        assert_eq!(
+            parsed.candidates[0].assignment,
+            CandidateAssignment::Category(child_bug.id)
+        );
+        assert_eq!(
+            parsed.debug_summary.as_deref(),
+            Some("semantic[mistral]: raw=2 kept=1 dropped_unknown=0 dropped_duplicate=0 dropped_group=1")
         );
     }
 
@@ -1219,7 +1300,7 @@ mod tests {
         );
         assert_eq!(
             out.debug_summary.as_deref(),
-            Some("semantic[mistral]: raw=1 kept=1 dropped_unknown=0 dropped_duplicate=0")
+            Some("semantic[mistral]: raw=1 kept=1 dropped_unknown=0 dropped_duplicate=0 dropped_group=0")
         );
     }
 
@@ -1313,5 +1394,60 @@ mod tests {
         assert!(literal_names.contains(&"LiteralOnly"));
         assert!(!literal_names.contains(&"SemanticEnabled"));
         assert!(!literal_names.contains(&"Estimate"));
+    }
+
+    #[test]
+    fn build_request_excludes_already_assigned_categories_from_semantic() {
+        let store = Store::open_memory().expect("open in-memory store");
+
+        let mut assigned_cat = crate::model::Category::new("Bug".to_string());
+        assigned_cat.enable_semantic_classification = true;
+        store
+            .create_category(&assigned_cat)
+            .expect("create assigned category");
+
+        let mut unassigned_cat = crate::model::Category::new("Feature".to_string());
+        unassigned_cat.enable_semantic_classification = true;
+        store
+            .create_category(&unassigned_cat)
+            .expect("create unassigned category");
+
+        let item = Item::new("fix crash on startup".to_string());
+        store.create_item(&item).expect("create item");
+
+        // Manually assign "Bug" to the item.
+        store
+            .assign_item(
+                item.id,
+                assigned_cat.id,
+                &crate::model::Assignment {
+                    source: crate::model::AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: Some("manual:test".to_string()),
+                    numeric_value: None,
+                },
+            )
+            .expect("assign category");
+
+        let stored_item = store.get_item(item.id).expect("reload item");
+        let service = ClassificationService::new(&store, Vec::new());
+        let request = service
+            .build_request(&stored_item)
+            .expect("build request");
+
+        let semantic_names: Vec<&str> = request
+            .semantic_candidate_categories
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(
+            !semantic_names.contains(&"Bug"),
+            "already-assigned category should be excluded from semantic candidates"
+        );
+        assert!(
+            semantic_names.contains(&"Feature"),
+            "unassigned category should remain in semantic candidates"
+        );
     }
 }
