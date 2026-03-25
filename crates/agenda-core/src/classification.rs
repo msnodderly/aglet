@@ -661,7 +661,7 @@ impl ClassificationProvider for OllamaProvider<'_> {
             return Ok(ProviderClassificationResult::default());
         }
 
-        let system_prompt = "You classify a single item into existing categories. Return strict JSON only with shape {\"suggestions\":[{\"category\":\"NAME\",\"confidence\":0.85,\"rationale\":\"why\"}]}. Set confidence between 0.0 and 1.0 reflecting how sure you are. The \"category\" field must contain ONLY the category name — no parenthetical annotations, no hierarchy info. For example return \"High\" not \"High (child of Priority)\". Use only exact category names from the provided list. Any category name not exactly present in the allowed list is invalid and will be discarded. Do not invent, expand, paraphrase, or rewrite category names. If nothing applies, return {\"suggestions\":[]}. Only suggest categories you are very confident about — prefer fewer suggestions over uncertain ones. It is better to return 0 or 1 high-confidence suggestions than 3 mediocre ones. Categories are organized in a hierarchy. Categories marked [group] are organizational parents — NEVER suggest a [group] category. Always suggest the specific child category that fits. For example if \"Issue Type [group]\" has children \"Bug\" and \"Feature\", suggest \"Bug\" or \"Feature\", never \"Issue Type\". Some categories have aliases (shown as \"| aliases: ...\"). These are alternate names or keywords that hint at what the category covers — use them to understand the category's scope, but always return the exact category name, not the alias.";
+        let system_prompt = "Classify an item into categories. Return JSON: {\"suggestions\":[{\"category\":\"EXACT NAME\",\"confidence\":0.0-1.0,\"rationale\":\"brief\"}]}\nRules:\n- Use ONLY exact names from the allowed list. Never invent names.\n- Suggest 1-3 categories. Only include confident matches (>0.7).\n- If nothing fits, return {\"suggestions\":[]}.\n- NEVER suggest [group] categories. Pick their children instead.\n- Aliases (aka:) hint at scope but always return the exact category name.";
         let user_prompt = build_ollama_user_prompt(request);
         dbg(&format!("user_prompt:\n{user_prompt}"));
         let content = match self
@@ -719,7 +719,6 @@ impl ClassificationProvider for OllamaProvider<'_> {
 }
 
 fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
-    // Use the full category name map for resolving IDs to human-readable names.
     let name_map = &request.all_category_names;
 
     // Identify which categories are parents (have children in the list).
@@ -730,23 +729,15 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
         .collect();
 
     let mut lines = Vec::new();
-    lines.push(format!("Item text: {}", request.text));
-    lines.push(format!(
-        "Note: {}",
-        request.note.as_deref().unwrap_or("(none)")
-    ));
-    lines.push(format!(
-        "When: {}",
-        request
-            .when_date
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "(none)".to_string())
-    ));
+    lines.push(format!("Item: {}", request.text));
+    if let Some(note) = request.note.as_deref().filter(|n| !n.trim().is_empty()) {
+        lines.push(format!("Note: {note}"));
+    }
+    if let Some(when) = request.when_date {
+        lines.push(format!("When: {when}"));
+    }
 
-    // Show manual categories by name when possible.
-    if request.manual_category_ids.is_empty() {
-        lines.push("Manual categories: (none)".to_string());
-    } else {
+    if !request.manual_category_ids.is_empty() {
         let mut manual_names: Vec<String> = request
             .manual_category_ids
             .iter()
@@ -758,12 +749,10 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
             })
             .collect();
         manual_names.sort();
-        lines.push(format!("Manual categories: {}", manual_names.join(", ")));
+        lines.push(format!("Already assigned: {}", manual_names.join(", ")));
     }
-    if request.numeric_values.is_empty() {
-        lines.push("Numeric assignments: (none)".to_string());
-    } else {
-        let mut numeric_values: Vec<String> = request
+    if !request.numeric_values.is_empty() {
+        let mut nv: Vec<String> = request
             .numeric_values
             .iter()
             .map(|(id, value)| {
@@ -774,49 +763,38 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
                 format!("{name}={value}")
             })
             .collect();
-        numeric_values.sort();
-        lines.push(format!(
-            "Numeric assignments: {}",
-            numeric_values.join(", ")
-        ));
+        nv.sort();
+        lines.push(format!("Numeric: {}", nv.join(", ")));
     }
-    // Separate group (parent) categories from leaf categories.
-    // Groups are context-only — the model should never suggest them.
+
+    // Groups shown as context only; leaf categories are the allowed list.
     let mut group_lines = Vec::new();
     let mut leaf_lines = Vec::new();
     for category in &request.semantic_candidate_categories {
-        let aliases = if category.also_match.is_empty() {
-            String::new()
-        } else {
-            format!(" | aliases: {}", category.also_match.join(", "))
-        };
-        let parent_annotation = match category.parent_id {
+        if parent_ids.contains(&category.id) {
+            group_lines.push(format!("  {} [group]", category.name));
+            continue;
+        }
+        let parent = match category.parent_id {
             Some(pid) => {
-                let parent_name = name_map.get(&pid).map(|s| s.as_str()).unwrap_or("?");
-                format!(" (child of \"{}\")", parent_name)
+                let pname = name_map.get(&pid).map(|s| s.as_str()).unwrap_or("?");
+                format!(" < {pname}")
             }
             None => String::new(),
         };
-        if parent_ids.contains(&category.id) {
-            group_lines.push(format!("- {} [group — do not suggest]", category.name));
+        let aliases = if category.also_match.is_empty() {
+            String::new()
         } else {
-            leaf_lines.push(format!(
-                "- {}{parent_annotation}{aliases}",
-                category.name,
-            ));
-        }
+            format!(" (aka: {})", category.also_match.join(", "))
+        };
+        leaf_lines.push(format!("  {}{parent}{aliases}", category.name));
     }
     if !group_lines.is_empty() {
-        lines.push(
-            "Category groups (for hierarchy context only — NEVER suggest these):".to_string(),
-        );
+        lines.push("Groups (context only, do NOT suggest):".to_string());
         lines.extend(group_lines);
     }
-    lines.push(
-        "Allowed category names (use exactly as written, or return an empty list):".to_string(),
-    );
+    lines.push("Allowed categories:".to_string());
     lines.extend(leaf_lines);
-    lines.push("Do not invent, rewrite, expand, or paraphrase category names.".to_string());
     lines.join("\n")
 }
 
