@@ -413,6 +413,48 @@ pub trait OllamaTransport: Send + Sync {
     ) -> Result<Option<String>>;
 }
 
+#[derive(Debug, Deserialize)]
+struct OllamaModelEntry {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaModelListResponse {
+    data: Vec<OllamaModelEntry>,
+}
+
+/// Queries the Ollama API for available models.
+pub fn list_ollama_models(settings: &OllamaProviderSettings) -> Result<Vec<String>> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|err| AgendaError::StorageError {
+            source: Box::new(err),
+        })?;
+    let url = format!(
+        "{}/models",
+        settings.base_url.trim_end_matches('/')
+    );
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|err| AgendaError::StorageError {
+            source: Box::new(err),
+        })?;
+    let response = response
+        .error_for_status()
+        .map_err(|err| AgendaError::StorageError {
+            source: Box::new(err),
+        })?;
+    let parsed: OllamaModelListResponse =
+        response.json().map_err(|err| AgendaError::StorageError {
+            source: Box::new(err),
+        })?;
+    let mut models: Vec<String> = parsed.data.into_iter().map(|entry| entry.id).collect();
+    models.sort();
+    Ok(models)
+}
+
 #[derive(Debug, Default)]
 pub struct ReqwestOllamaTransport;
 

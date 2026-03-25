@@ -4881,6 +4881,86 @@ impl App {
         {
             self.render_workflow_role_picker_overlay(frame, area);
         }
+
+        if let Some(picker) = &self.ollama_model_picker {
+            self.render_ollama_model_picker_overlay(frame, area, picker);
+        }
+    }
+
+    fn render_ollama_model_picker_overlay(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        picker: &OllamaModelPickerState,
+    ) {
+        let height = (picker.models.len() as u16 + 6).min(area.height.saturating_sub(4));
+        let width = 50u16.min(area.width.saturating_sub(4));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup_area = Rect::new(x, y, width, height);
+        frame.render_widget(Clear, popup_area);
+
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(
+                Block::default()
+                    .title(" Pick Ollama Model ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                    .inner(popup_area),
+            );
+
+        frame.render_widget(
+            Block::default()
+                .title(" Pick Ollama Model ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+            popup_area,
+        );
+
+        let current_model = &self.classification_ui.config.ollama.model;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("Current: {current_model}"),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            outer[0],
+        );
+
+        let rows: Vec<ListItem<'_>> = picker
+            .models
+            .iter()
+            .map(|model| {
+                let suffix = if model == current_model {
+                    " [current]"
+                } else {
+                    ""
+                };
+                ListItem::new(Line::from(format!("{model}{suffix}")))
+            })
+            .collect();
+
+        let mut list_state = Self::list_state_for(outer[1], Some(picker.selected_index));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style()),
+            outer[1],
+            &mut list_state,
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "j/k:navigate  Enter:select  Esc:cancel",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            outer[2],
+        );
     }
 
     fn render_workflow_role_picker_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -5331,7 +5411,7 @@ impl App {
                 let flags_height = if is_numeric_category {
                     7
                 } else {
-                    6 + workflow_role_height
+                    7 + workflow_role_height
                 };
                 let details_chunks = if is_numeric_category {
                     Layout::default()

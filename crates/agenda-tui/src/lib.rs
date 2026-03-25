@@ -668,6 +668,12 @@ struct WorkflowRolePickerState {
     scroll_offset: ScrollCell<usize>,
 }
 
+#[derive(Clone, Debug)]
+struct OllamaModelPickerState {
+    models: Vec<String>,
+    selected_index: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AddColumnDirection {
     // TODO(feature): inserting a column to the left not yet wired up
@@ -1217,6 +1223,7 @@ struct App {
     workflow_setup_open: bool,
     workflow_setup_focus: usize,
     workflow_role_picker: Option<WorkflowRolePickerState>,
+    ollama_model_picker: Option<OllamaModelPickerState>,
     classification_mode_picker_open: bool,
     classification_mode_picker_focus: usize,
     global_settings: Option<GlobalSettingsState>,
@@ -1299,6 +1306,7 @@ impl Default for App {
             workflow_setup_open: false,
             workflow_setup_focus: 0,
             workflow_role_picker: None,
+            ollama_model_picker: None,
             classification_mode_picker_open: false,
             classification_mode_picker_focus: 1,
             global_settings: None,
@@ -1603,7 +1611,7 @@ mod tests {
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
         CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
-        NameInputContext, PendingBlockingUiAction, SlotSortDirection, ViewAssignRow,
+        NameInputContext, OllamaModelPickerState, PendingBlockingUiAction, SlotSortDirection, ViewAssignRow,
         ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
@@ -8097,6 +8105,15 @@ mod tests {
         select_global_settings_row_for_test(&mut app, &agenda, GlobalSettingsRow::OllamaModel);
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ollama model input");
+        if app.ollama_model_picker.is_some() {
+            // Ollama is running — picker opened. Dismiss it and verify we can
+            // fall back to text input for direct model entry.
+            app.handle_key(KeyCode::Esc, &agenda)
+                .expect("dismiss ollama model picker");
+            assert!(app.ollama_model_picker.is_none());
+            // Now use the text input fallback path directly.
+            app.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+        }
         assert_eq!(app.mode, Mode::InputPanel);
         assert_eq!(app.name_input_context, Some(NameInputContext::OllamaModel));
         for _ in 0.."oldmodel".len() {
@@ -8115,6 +8132,76 @@ mod tests {
         let reloaded = store.get_classification_config().expect("reload config");
         assert_eq!(reloaded.ollama.base_url, "http://localhost:11434/v1");
         assert_eq!(reloaded.ollama.model, "mistral");
+    }
+
+    #[test]
+    fn ollama_model_picker_selects_and_persists_model() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        open_global_settings_for_test(&mut app, &agenda);
+
+        // Inject picker state directly (avoids network call).
+        app.ollama_model_picker = Some(OllamaModelPickerState {
+            models: vec![
+                "gemma2".to_string(),
+                "llama3".to_string(),
+                "mistral".to_string(),
+            ],
+            selected_index: 0,
+        });
+
+        // Navigate down to "mistral" (index 2).
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("picker down");
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("picker down");
+        assert_eq!(
+            app.ollama_model_picker.as_ref().map(|p| p.selected_index),
+            Some(2)
+        );
+
+        // Select it.
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("picker select");
+        assert!(app.ollama_model_picker.is_none());
+        assert!(app.status.contains("Ollama model set to 'mistral'"));
+
+        let config = store.get_classification_config().expect("reload config");
+        assert_eq!(config.ollama.model, "mistral");
+    }
+
+    #[test]
+    fn ollama_model_picker_esc_cancels() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        open_global_settings_for_test(&mut app, &agenda);
+
+        app.ollama_model_picker = Some(OllamaModelPickerState {
+            models: vec!["gemma2".to_string(), "llama3".to_string()],
+            selected_index: 0,
+        });
+
+        // Verify it renders without panicking.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw picker");
+        let rendered = terminal_buffer_lines(&terminal).join("\n");
+        assert!(
+            rendered.contains("Pick Ollama Model"),
+            "picker overlay should be visible: {rendered}"
+        );
+
+        app.handle_key(KeyCode::Esc, &agenda).expect("picker esc");
+        assert!(app.ollama_model_picker.is_none());
+        assert!(app.status.contains("cancelled"));
     }
 
     #[test]
@@ -8262,7 +8349,7 @@ mod tests {
             .expect("open category manager");
 
         app.set_category_selection_by_id(ready.id);
-        let backend = TestBackend::new(160, 40);
+        let backend = TestBackend::new(160, 50);
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal.draw(|frame| app.draw(frame)).expect("draw ready");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
@@ -8276,7 +8363,7 @@ mod tests {
         );
 
         app.set_category_selection_by_id(claim.id);
-        let backend = TestBackend::new(160, 40);
+        let backend = TestBackend::new(160, 50);
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal.draw(|frame| app.draw(frame)).expect("draw claim");
         let rendered = terminal_buffer_lines(&terminal).join("\n");
@@ -12988,7 +13075,23 @@ mod tests {
             .expect("details next field");
         assert_eq!(
             app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::SemanticMatch)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("details next field");
+        assert_eq!(
+            app.category_manager_details_focus(),
             Some(CategoryManagerDetailsFocus::MatchCategoryName)
+        );
+        assert_eq!(app.selected_category_id(), Some(alpha.id));
+
+        app.handle_category_manager_key(KeyCode::Char('k'), &agenda)
+            .expect("details previous field");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::SemanticMatch)
         );
         assert_eq!(app.selected_category_id(), Some(alpha.id));
 

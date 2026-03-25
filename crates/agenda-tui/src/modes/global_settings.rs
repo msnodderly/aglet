@@ -101,7 +101,7 @@ impl App {
         Ok(())
     }
 
-    fn open_global_settings_ollama_text_input(&mut self, context: NameInputContext) {
+    pub(crate) fn open_global_settings_ollama_text_input(&mut self, context: NameInputContext) {
         let (current_value, label) = match context {
             NameInputContext::OllamaBaseUrl => (
                 self.classification_ui.config.ollama.base_url.clone(),
@@ -143,6 +143,10 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> TuiResult<bool> {
+        if self.ollama_model_picker.is_some() {
+            self.handle_ollama_model_picker_key(code, agenda)?;
+            return Ok(false);
+        }
         if self
             .workflow_role_picker
             .as_ref()
@@ -232,7 +236,7 @@ impl App {
                     self.open_global_settings_ollama_text_input(NameInputContext::OllamaBaseUrl);
                 }
                 GlobalSettingsRow::OllamaModel => {
-                    self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+                    self.open_ollama_model_picker(agenda);
                 }
                 GlobalSettingsRow::OllamaTimeout => {
                     self.open_global_settings_ollama_text_input(NameInputContext::OllamaTimeout);
@@ -245,5 +249,68 @@ impl App {
         }
 
         Ok(false)
+    }
+
+    fn open_ollama_model_picker(&mut self, _agenda: &Agenda<'_>) {
+        match agenda_core::classification::list_ollama_models(
+            &self.classification_ui.config.ollama,
+        ) {
+            Ok(models) if !models.is_empty() => {
+                let current = &self.classification_ui.config.ollama.model;
+                let selected_index = models
+                    .iter()
+                    .position(|m| m == current)
+                    .unwrap_or(0);
+                self.ollama_model_picker = Some(OllamaModelPickerState {
+                    models,
+                    selected_index,
+                });
+                self.status =
+                    "Pick a model: j/k navigate, Enter select, Esc cancel".to_string();
+            }
+            Ok(_) => {
+                self.status = "No models found. Falling back to text input.".to_string();
+                self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+            }
+            Err(err) => {
+                self.status = format!("Could not reach Ollama: {err}");
+                self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+            }
+        }
+    }
+
+    fn handle_ollama_model_picker_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<()> {
+        let Some(picker) = self.ollama_model_picker.as_mut() else {
+            return Ok(());
+        };
+        match code {
+            KeyCode::Esc => {
+                self.ollama_model_picker = None;
+                self.status = "Model selection cancelled".to_string();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if picker.selected_index + 1 < picker.models.len() {
+                    picker.selected_index += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                picker.selected_index = picker.selected_index.saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                let selected = picker.models[picker.selected_index].clone();
+                self.ollama_model_picker = None;
+                let mut config = self.classification_ui.config.clone();
+                config.ollama.model = selected.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.status = format!("Ollama model set to '{selected}'");
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
