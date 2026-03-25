@@ -700,8 +700,12 @@ impl App {
         }
 
         self.slot_index = to_index;
-        self.item_index = 0;
         self.refresh(agenda.store())?;
+        self.item_index = self
+            .slots
+            .get(to_index)
+            .and_then(|slot| slot.items.iter().position(|i| i.id == item_id))
+            .unwrap_or(0);
         self.status = "Moved item to new section".to_string();
         Ok(())
     }

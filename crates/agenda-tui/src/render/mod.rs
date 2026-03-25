@@ -2851,7 +2851,7 @@ impl App {
         } else {
             items.push(ListItem::new(Line::from("Info")));
             items.push(ListItem::new(Line::from(
-                "f focus | j/k or J/K scroll | i summary",
+                "f focus | j/k scroll | i summary",
             )));
             items.push(ListItem::new(Line::from("")));
             items.push(ListItem::new(Line::from("(no selected item)")));
@@ -2887,7 +2887,7 @@ impl App {
         let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
         let mut lines = vec![
             Line::from("Summary"),
-            Line::from("f focus | j/k or J/K scroll | i info"),
+            Line::from("f focus | j/k scroll | i info"),
             Line::from(""),
             Line::from(format!("ID: {}", item.id)),
             Line::from(format!(
@@ -2923,7 +2923,7 @@ impl App {
     pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
         let mut lines = vec![
             "Info".to_string(),
-            "f focus | j/k or J/K scroll | i summary".to_string(),
+            "f focus | j/k scroll | i summary".to_string(),
             String::new(),
             format!("ID: {}", item.id),
             format!(
@@ -3010,7 +3010,7 @@ impl App {
         } else {
             vec![
                 Line::from("Summary"),
-                Line::from("f focus | j/k or J/K scroll | i info"),
+                Line::from("f focus | j/k scroll | i info"),
                 Line::from(""),
                 Line::from("(no selected item)"),
             ]
@@ -3866,7 +3866,7 @@ impl App {
             Line::from(Span::styled("NAVIGATION", header)),
             help_entry("\u{2191}/k \u{2193}/j", "Move between items"),
             help_entry("\u{2190}/h \u{2192}/l", "Move between sections (lanes)"),
-            help_entry("J / K", "Scroll preview pane"),
+            help_entry("J / K", "Move item between sections"),
             help_entry("Tab/S-Tab", "Next / previous section"),
             help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
             help_entry("z", "Cycle card size (compact \u{2194} detail)"),
