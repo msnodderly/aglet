@@ -88,6 +88,24 @@ impl TextBuffer {
             return false;
         }
 
+        // Remap standard keybindings that differ from tui-textarea's Emacs defaults.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            let remapped = match key.code {
+                KeyCode::Char('z') | KeyCode::Char('Z') => Some(self.textarea.undo()),
+                KeyCode::Char('y') | KeyCode::Char('Y') => Some(self.textarea.redo()),
+                KeyCode::Char('v') | KeyCode::Char('V') => Some(self.textarea.paste()),
+                KeyCode::Backspace => Some(self.textarea.delete_word()),
+                KeyCode::Delete => Some(self.textarea.delete_next_word()),
+                _ => None,
+            };
+            if let Some(modified) = remapped {
+                if modified {
+                    self.sync_text_from_textarea();
+                }
+                return true;
+            }
+        }
+
         let before_cursor = self.textarea.cursor();
         let modified = self.textarea.input(key);
         if modified {

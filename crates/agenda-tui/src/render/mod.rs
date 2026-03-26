@@ -1671,37 +1671,9 @@ impl App {
                 Some((cursor_x, regions.text.y))
             }
             InputPanelFocus::Note => {
-                let note_rect = regions.note?;
-                if note_rect.width < 3 || note_rect.height < 3 {
-                    return None;
-                }
-                let note_inner = Rect {
-                    x: note_rect.x.saturating_add(1),
-                    y: note_rect.y.saturating_add(1),
-                    width: note_rect.width.saturating_sub(2),
-                    height: note_rect.height.saturating_sub(2),
-                };
-                if note_inner.width == 0 || note_inner.height == 0 {
-                    return None;
-                }
-                let (line, col) = panel.note.line_col();
-                let scroll = list_scroll_for_selected_line(note_rect, Some(line)) as usize;
-                let visible_row = line.saturating_sub(scroll);
-                let max_x = note_inner
-                    .x
-                    .saturating_add(note_inner.width.saturating_sub(1));
-                let max_y = note_inner
-                    .y
-                    .saturating_add(note_inner.height.saturating_sub(1));
-                let cursor_x = note_inner
-                    .x
-                    .saturating_add(col.min(u16::MAX as usize) as u16)
-                    .min(max_x);
-                let cursor_y = note_inner
-                    .y
-                    .saturating_add(visible_row.min(u16::MAX as usize) as u16)
-                    .min(max_y);
-                Some((cursor_x, cursor_y))
+                // tui-textarea renders its own styled cursor that correctly
+                // handles word wrapping; no terminal cursor needed.
+                None
             }
             InputPanelFocus::Categories => {
                 if panel.category_filter_editing {
@@ -4057,14 +4029,16 @@ impl App {
             note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
             note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
             note_widget.set_style(Style::default());
+            note_widget.set_cursor_line_style(Style::default());
             if note_focused {
-                note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
                 note_widget.set_cursor_style(
                     Style::default()
                         .fg(Color::Black)
                         .bg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 );
+            } else {
+                note_widget.set_cursor_style(Style::default());
             }
             note_widget.set_block(
                 Block::default()
@@ -5712,15 +5686,16 @@ impl App {
                         } else {
                             Style::default()
                         });
+                        also_match_widget.set_cursor_line_style(Style::default());
                         if also_match_editing && !is_reserved_category {
-                            also_match_widget
-                                .set_cursor_line_style(Style::default().bg(Color::DarkGray));
                             also_match_widget.set_cursor_style(
                                 Style::default()
                                     .fg(Color::Black)
                                     .bg(Color::Yellow)
                                     .add_modifier(Modifier::BOLD),
                             );
+                        } else {
+                            also_match_widget.set_cursor_style(Style::default());
                         }
                         also_match_widget.set_block(
                             Block::default()
@@ -5777,14 +5752,16 @@ impl App {
                     } else {
                         Style::default()
                     });
+                    note_widget.set_cursor_line_style(Style::default());
                     if note_editing && !is_reserved_category {
-                        note_widget.set_cursor_line_style(Style::default().bg(Color::DarkGray));
                         note_widget.set_cursor_style(
                             Style::default()
                                 .fg(Color::Black)
                                 .bg(Color::Yellow)
                                 .add_modifier(Modifier::BOLD),
                         );
+                    } else {
+                        note_widget.set_cursor_style(Style::default());
                     }
                     note_widget.set_block(
                         Block::default()

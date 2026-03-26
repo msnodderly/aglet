@@ -5338,15 +5338,9 @@ mod tests {
         } else {
             None
         };
-        assert!(pos.is_some(), "expected note cursor position");
-        let (cx, cy) = pos.unwrap();
         assert!(
-            cx >= popup.x && cx < popup.x + popup.width,
-            "cursor x in bounds"
-        );
-        assert!(
-            cy >= popup.y && cy < popup.y + popup.height,
-            "cursor y in bounds"
+            pos.is_none(),
+            "note cursor is handled by tui-textarea widget, not terminal cursor"
         );
     }
 
