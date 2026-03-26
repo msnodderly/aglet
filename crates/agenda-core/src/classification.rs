@@ -258,6 +258,7 @@ pub struct CategoryDescriptor {
     pub also_match: Vec<String>,
     pub parent_id: Option<CategoryId>,
     pub value_kind: CategoryValueKind,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -787,7 +788,13 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
         } else {
             format!(" (aka: {})", category.also_match.join(", "))
         };
-        leaf_lines.push(format!("  {}{parent}{aliases}", category.name));
+        let note_suffix = category
+            .note
+            .as_deref()
+            .filter(|n| !n.trim().is_empty())
+            .map(|n| format!(" -- {n}"))
+            .unwrap_or_default();
+        leaf_lines.push(format!("  {}{parent}{aliases}{note_suffix}", category.name));
     }
     if !group_lines.is_empty() {
         lines.push("FORBIDDEN groups (do NOT return these names):".to_string());
@@ -972,6 +979,7 @@ impl<'a> ClassificationService<'a> {
                 also_match: category.also_match,
                 parent_id: category.parent,
                 value_kind: category.value_kind,
+                note: category.note,
             };
             if descriptor.value_kind != CategoryValueKind::Numeric
                 && category.enable_implicit_string
@@ -1099,6 +1107,7 @@ mod tests {
             also_match: Vec::new(),
             parent_id: None,
             value_kind: CategoryValueKind::Tag,
+            note: None,
         };
         let category_b = CategoryDescriptor {
             id: CategoryId::new_v4(),
@@ -1107,6 +1116,7 @@ mod tests {
             also_match: Vec::new(),
             parent_id: None,
             value_kind: CategoryValueKind::Tag,
+            note: None,
         };
         let request = ClassificationRequest {
             item_id: ItemId::new_v4(),
@@ -1148,6 +1158,7 @@ mod tests {
             also_match: Vec::new(),
             parent_id: None,
             value_kind: CategoryValueKind::Tag,
+            note: None,
         };
         let child_bug = CategoryDescriptor {
             id: CategoryId::new_v4(),
@@ -1156,6 +1167,7 @@ mod tests {
             also_match: Vec::new(),
             parent_id: Some(parent.id),
             value_kind: CategoryValueKind::Tag,
+            note: None,
         };
         let child_feature = CategoryDescriptor {
             id: CategoryId::new_v4(),
@@ -1164,6 +1176,7 @@ mod tests {
             also_match: Vec::new(),
             parent_id: Some(parent.id),
             value_kind: CategoryValueKind::Tag,
+            note: None,
         };
         let request = ClassificationRequest {
             item_id: ItemId::new_v4(),
@@ -1220,6 +1233,7 @@ mod tests {
                 also_match: Vec::new(),
                 parent_id: None,
                 value_kind: CategoryValueKind::Tag,
+                note: None,
             }],
             all_category_names: HashMap::new(),
         };
@@ -1254,6 +1268,7 @@ mod tests {
             also_match: Vec::new(),
             parent_id: None,
             value_kind: CategoryValueKind::Tag,
+            note: None,
         };
         let request = ClassificationRequest {
             item_id: ItemId::new_v4(),
@@ -1324,6 +1339,7 @@ mod tests {
                 also_match: Vec::new(),
                 parent_id: None,
                 value_kind: CategoryValueKind::Tag,
+                note: None,
             }],
             all_category_names: HashMap::new(),
         };
