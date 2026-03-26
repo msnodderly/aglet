@@ -501,7 +501,10 @@ impl App {
                         | CategoryManagerDetailsFocus::ThousandsSeparator => {
                             CategoryManagerDetailsFocus::Note
                         }
-                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::Integer,
+                        CategoryManagerDetailsFocus::Note => {
+                            self.set_category_manager_focus(CategoryManagerFocus::Filter);
+                            return;
+                        }
                         _ => CategoryManagerDetailsFocus::Integer,
                     }
                 } else {
@@ -514,7 +517,10 @@ impl App {
                             CategoryManagerDetailsFocus::AlsoMatch
                         }
                         CategoryManagerDetailsFocus::AlsoMatch => CategoryManagerDetailsFocus::Note,
-                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::Exclusive,
+                        CategoryManagerDetailsFocus::Note => {
+                            self.set_category_manager_focus(CategoryManagerFocus::Filter);
+                            return;
+                        }
                         _ => CategoryManagerDetailsFocus::Exclusive,
                     }
                 }
@@ -658,21 +664,13 @@ impl App {
             && self.category_manager_details_note_editing()
         {
             match code {
-                KeyCode::Esc => {
+                KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
                     self.set_category_manager_details_note_editing(false);
-                    self.status = if self.category_manager_details_note_dirty() {
-                        "Note draft retained (Esc again to choose save/discard)".to_string()
-                    } else {
-                        "Exited note edit".to_string()
-                    };
-                    return Ok(true);
-                }
-                KeyCode::Tab | KeyCode::BackTab => {
                     if self.category_manager_details_note_dirty() {
-                        self.status = "Note has unsaved changes (S to save)".to_string();
+                        self.save_category_manager_details_note(agenda)?;
                     }
-                    self.set_category_manager_details_note_editing(false);
-                    return Ok(false);
+                    // Esc is consumed (stays on Note); Tab/BackTab fall through to navigation.
+                    return Ok(code == KeyCode::Esc);
                 }
                 _ => {
                     let text_key = self.text_key_event(code);
@@ -691,22 +689,12 @@ impl App {
             && self.category_manager_details_also_match_editing()
         {
             match code {
-                KeyCode::Esc => {
+                KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
                     self.set_category_manager_details_also_match_editing(false);
-                    self.status = if self.category_manager_details_also_match_dirty() {
-                        "Also-match draft retained (Esc again to choose save/discard)".to_string()
-                    } else {
-                        "Exited also-match edit".to_string()
-                    };
-                    return Ok(true);
-                }
-                KeyCode::Tab | KeyCode::BackTab => {
                     if self.category_manager_details_also_match_dirty() {
-                        self.status =
-                            "Also-match terms have unsaved changes (S to save)".to_string();
+                        self.save_category_manager_details_also_match(agenda)?;
                     }
-                    self.set_category_manager_details_also_match_editing(false);
-                    return Ok(false);
+                    return Ok(code == KeyCode::Esc);
                 }
                 _ => {
                     let text_key = self.text_key_event(code);
@@ -1583,10 +1571,12 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.set_category_manager_filter_editing(false);
+                self.save_category_manager_dirty_details(agenda)?;
                 self.move_category_cursor(1)
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.set_category_manager_filter_editing(false);
+                self.save_category_manager_dirty_details(agenda)?;
                 self.move_category_cursor(-1)
             }
             KeyCode::Char('K') => {

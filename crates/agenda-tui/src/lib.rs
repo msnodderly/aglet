@@ -8420,25 +8420,22 @@ mod tests {
         );
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("tab wraps to flags");
+            .expect("tab exits details to filter");
         assert_eq!(
             app.category_manager_focus(),
-            Some(CategoryManagerFocus::Details)
-        );
-        assert_eq!(
-            app.category_manager_details_focus(),
-            Some(CategoryManagerDetailsFocus::Exclusive)
+            Some(CategoryManagerFocus::Filter)
         );
 
-        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
-            .expect("shift-tab returns to tree");
+        // Continue cycling: Filter → Tree → Details
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to tree");
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Tree)
         );
 
         app.handle_category_manager_key(KeyCode::BackTab, &agenda)
-            .expect("shift-tab reaches filter");
+            .expect("shift-tab back to filter");
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Filter)
@@ -11721,7 +11718,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_note_explicit_save_with_capital_s() {
+    fn category_manager_details_note_tab_auto_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -11749,17 +11746,9 @@ mod tests {
         }
         assert!(app.category_manager_details_note_editing());
 
-        // Tab should NOT save — note stays dirty
+        // Tab should auto-save
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
             .expect("tab away from note");
-        let saved = store.get_category(category.id).expect("load category");
-        assert_eq!(saved.note, None, "tab should not autosave");
-        assert!(app.status.contains("unsaved changes"));
-
-        // Save explicitly with S from outside note-edit mode
-        assert!(!app.category_manager_details_note_editing());
-        app.handle_category_manager_key(KeyCode::Char('S'), &agenda)
-            .expect("explicit save with S");
         let saved = store.get_category(category.id).expect("load category");
         assert_eq!(saved.note.as_deref(), Some("Ship"));
 
@@ -11870,7 +11859,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_also_match_esc_keeps_unsaved_draft() {
+    fn category_manager_details_also_match_esc_auto_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -11902,22 +11891,17 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
             .expect("leave also-match edit");
         assert!(!app.category_manager_details_also_match_editing());
-        assert!(app.category_manager_details_also_match_dirty());
-        assert_eq!(
-            app.category_manager_details_also_match_text(),
-            Some("phoned")
-        );
-        assert!(app.status.contains("retained"));
 
+        // Esc should auto-save the also-match changes.
         let saved = store.get_category(category.id).expect("load category");
-        assert_eq!(saved.also_match, vec!["phone".to_string()]);
+        assert_eq!(saved.also_match, vec!["phoned".to_string()]);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_details_also_match_tab_away_preserves_unsaved_text() {
+    fn category_manager_details_also_match_tab_away_auto_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -11953,31 +11937,12 @@ mod tests {
         assert!(app.category_manager_details_also_match_dirty());
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("leave details pane");
-        assert_eq!(
-            app.category_manager_focus(),
-            Some(CategoryManagerFocus::Details)
-        );
+            .expect("tab auto-saves and moves to note");
         assert!(!app.category_manager_details_also_match_editing());
-        assert_eq!(app.category_manager_details_also_match_text(), Some("dial"));
-        assert!(app.category_manager_details_also_match_dirty());
-        assert_eq!(
-            app.category_manager_details_focus(),
-            Some(CategoryManagerDetailsFocus::Note)
-        );
 
-        app.handle_category_manager_key(KeyCode::BackTab, &agenda)
-            .expect("return to also-match");
-        assert_eq!(
-            app.category_manager_focus(),
-            Some(CategoryManagerFocus::Details)
-        );
-        assert_eq!(
-            app.category_manager_details_focus(),
-            Some(CategoryManagerDetailsFocus::AlsoMatch)
-        );
-        assert_eq!(app.category_manager_details_also_match_text(), Some("dial"));
-        assert!(app.category_manager_details_also_match_dirty());
+        // Tab should auto-save
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.also_match, vec!["dial".to_string()]);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -12034,7 +11999,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_note_edit_esc_keeps_unsaved_draft() {
+    fn category_manager_details_note_edit_esc_auto_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -12064,22 +12029,19 @@ mod tests {
         assert!(app.category_manager_details_note_dirty());
 
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("esc leaves note edit");
+            .expect("esc auto-saves note");
 
-        // Esc should keep the draft and leave edit mode.
+        // Esc should auto-save the note.
         let loaded = store.get_category(category.id).expect("load category");
-        assert_eq!(loaded.note.as_deref(), Some("seed"));
-        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
+        assert_eq!(loaded.note.as_deref(), Some("seed!"));
         assert!(!app.category_manager_details_note_editing());
-        assert!(app.category_manager_details_note_dirty());
-        assert!(app.status.contains("retained"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_dirty_note_is_discarded_only_via_close_prompt() {
+    fn category_manager_esc_auto_saves_then_closes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -12107,37 +12069,26 @@ mod tests {
             .expect("begin note edit");
         app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
             .expect("type note");
+
+        // First Esc auto-saves the note and leaves edit mode.
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("leave note edit but keep draft");
+            .expect("esc auto-saves note");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("seed!"));
+        assert!(!app.category_manager_details_note_dirty());
 
-        assert_eq!(app.category_manager_details_note_text(), Some("seed!"));
-        assert!(app.category_manager_details_note_dirty());
-
+        // Second Esc closes the manager (no discard prompt needed).
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("open close confirm");
-        assert!(
-            app.category_manager
-                .as_ref()
-                .expect("manager state")
-                .discard_confirm
-        );
-
-        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
-            .expect("discard and close");
-
+            .expect("close category manager");
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.category_manager.is_none());
-        assert_eq!(
-            store.get_category(category.id).expect("load category").note,
-            Some("seed".to_string())
-        );
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_esc_with_dirty_note_opens_discard_confirm() {
+    fn category_manager_tab_auto_saves_note_then_esc_closes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -12164,38 +12115,26 @@ mod tests {
             .expect("begin note edit");
         app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
             .expect("type note");
+
+        // Tab auto-saves the note.
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("leave note edit");
-        assert!(app.category_manager_details_note_dirty());
+            .expect("tab auto-saves note");
+        let saved = store.get_category(category.id).expect("load category");
+        assert_eq!(saved.note.as_deref(), Some("x"));
+        assert!(!app.category_manager_details_note_dirty());
 
+        // Esc should close directly (no discard confirm needed).
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("open close confirm");
-        assert_eq!(app.mode, Mode::CategoryManager);
-        assert!(
-            app.category_manager
-                .as_ref()
-                .expect("manager state")
-                .discard_confirm
-        );
-        assert!(app.status.contains("Save changes?"));
-
-        app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("cancel close confirm");
-        assert_eq!(app.mode, Mode::CategoryManager);
-        assert!(
-            !app.category_manager
-                .as_ref()
-                .expect("manager state")
-                .discard_confirm
-        );
-        assert!(app.category_manager_details_note_dirty());
+            .expect("close category manager");
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_discard_confirm_y_saves_and_closes() {
+    fn category_manager_note_auto_saved_on_tab_then_esc_closes_cleanly() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -12222,28 +12161,27 @@ mod tests {
             .expect("begin note edit");
         app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
             .expect("type note");
+
+        // Tab auto-saves.
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("leave note edit");
-        assert!(app.category_manager_details_note_dirty());
-
-        app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("open close confirm");
-        app.handle_category_manager_key(KeyCode::Char('y'), &agenda)
-            .expect("save and close");
-
-        assert_eq!(app.mode, Mode::Normal);
-        assert!(app.category_manager.is_none());
+            .expect("tab auto-saves");
         assert_eq!(
             store.get_category(category.id).expect("load category").note,
             Some("x".to_string())
         );
+
+        // Esc closes cleanly (no discard prompt).
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("close");
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.category_manager.is_none());
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn category_manager_discard_confirm_n_discards_and_closes() {
+    fn category_manager_note_auto_saved_on_tab_persists_to_db() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -12271,20 +12209,13 @@ mod tests {
             .expect("begin note edit");
         app.handle_category_manager_key(KeyCode::Char('!'), &agenda)
             .expect("type note");
+
+        // Tab auto-saves the modified note.
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
-            .expect("leave note edit");
-        assert!(app.category_manager_details_note_dirty());
-
-        app.handle_category_manager_key(KeyCode::Esc, &agenda)
-            .expect("open close confirm");
-        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
-            .expect("discard and close");
-
-        assert_eq!(app.mode, Mode::Normal);
-        assert!(app.category_manager.is_none());
+            .expect("tab auto-saves");
         assert_eq!(
             store.get_category(category.id).expect("load category").note,
-            Some("seed".to_string())
+            Some("seed!".to_string())
         );
 
         drop(store);
@@ -12292,7 +12223,7 @@ mod tests {
     }
 
     #[test]
-    fn category_manager_details_dirty_note_not_saved_on_selection_change() {
+    fn category_manager_details_dirty_note_saved_on_selection_change() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -12323,16 +12254,19 @@ mod tests {
             .expect("type note");
         assert!(app.category_manager_details_note_dirty());
 
+        // Esc auto-saves the note, then switch to Tree.
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("esc auto-saves");
         app.set_category_manager_focus(CategoryManagerFocus::Tree);
         app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
             .expect("move selection");
 
         assert_eq!(app.selected_category_id(), Some(beta.id));
-        // Selection change should NOT autosave the note
+        // Note should be auto-saved.
         assert_eq!(
             store.get_category(alpha.id).expect("alpha").note,
-            None,
-            "note should not be saved on selection change"
+            Some("x".to_string()),
+            "note should be auto-saved"
         );
 
         drop(store);
