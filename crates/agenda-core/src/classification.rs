@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
 
 use jiff::civil::{Date, DateTime};
@@ -894,6 +895,17 @@ fn parse_ollama_suggestions(
     }
 }
 
+/// Everything needed to run classification on a background thread.
+/// All fields are `Send` — no Store or lifetime references.
+pub struct BackgroundClassificationJob {
+    pub item_id: ItemId,
+    pub item_revision_hash: String,
+    pub request: ClassificationRequest,
+    pub config: ClassificationConfig,
+    pub ollama_transport: Arc<dyn OllamaTransport>,
+    pub reference_date: Date,
+}
+
 pub struct ClassificationService<'a> {
     store: &'a Store,
     providers: Vec<Box<dyn ClassificationProvider + 'a>>,
@@ -912,33 +924,23 @@ impl<'a> ClassificationService<'a> {
         &self,
         item_id: ItemId,
     ) -> Result<(Item, String, Vec<ClassificationCandidate>, Vec<String>)> {
+        let (item, request, revision_hash) = self.prepare_request(item_id)?;
+        let (candidates, debug_summaries) =
+            execute_providers(&self.providers, &request)?;
+        Ok((item, revision_hash, candidates, debug_summaries))
+    }
+
+    /// Read item from Store, build the classification request, and snapshot
+    /// the item revision hash. This is the Store-dependent phase of
+    /// classification — the returned request can be sent to another thread.
+    pub fn prepare_request(
+        &self,
+        item_id: ItemId,
+    ) -> Result<(Item, ClassificationRequest, String)> {
         let item = self.store.get_item(item_id)?;
         let request = self.build_request(&item)?;
-        let item_revision_hash = item_revision_hash(&item);
-        let mut candidates = Vec::new();
-        let mut debug_summaries = Vec::new();
-
-        for provider in &self.providers {
-            let result = provider.classify(&request)?;
-            candidates.extend(result.candidates);
-            if let Some(summary) = result.debug_summary {
-                debug_summaries.push(summary);
-            }
-        }
-
-        candidates.sort_by(|left, right| {
-            left.provider.cmp(&right.provider).then_with(|| {
-                left.assignment
-                    .stable_key()
-                    .cmp(&right.assignment.stable_key())
-            })
-        });
-        candidates.dedup_by(|left, right| {
-            left.provider == right.provider
-                && left.assignment.stable_key() == right.assignment.stable_key()
-        });
-
-        Ok((item, item_revision_hash, candidates, debug_summaries))
+        let revision_hash = item_revision_hash(&item);
+        Ok((item, request, revision_hash))
     }
 
     fn build_request(&self, item: &Item) -> Result<ClassificationRequest> {
@@ -1027,6 +1029,38 @@ pub fn item_revision_hash(item: &Item) -> String {
         item.when_date.map(|value| value.to_string()),
         manual_category_ids.join(",")
     )
+}
+
+/// Run classification providers against a prepared request. This is the
+/// Store-independent phase of classification — safe to call from any thread.
+pub fn execute_providers(
+    providers: &[Box<dyn ClassificationProvider + '_>],
+    request: &ClassificationRequest,
+) -> Result<(Vec<ClassificationCandidate>, Vec<String>)> {
+    let mut candidates = Vec::new();
+    let mut debug_summaries = Vec::new();
+
+    for provider in providers {
+        let result = provider.classify(request)?;
+        candidates.extend(result.candidates);
+        if let Some(summary) = result.debug_summary {
+            debug_summaries.push(summary);
+        }
+    }
+
+    candidates.sort_by(|left, right| {
+        left.provider.cmp(&right.provider).then_with(|| {
+            left.assignment
+                .stable_key()
+                .cmp(&right.assignment.stable_key())
+        })
+    });
+    candidates.dedup_by(|left, right| {
+        left.provider == right.provider
+            && left.assignment.stable_key() == right.assignment.stable_key()
+    });
+
+    Ok((candidates, debug_summaries))
 }
 
 #[cfg(test)]

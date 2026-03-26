@@ -335,44 +335,6 @@ impl App {
         if self.mode == Mode::SuggestionReview {
             self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
         }
-        if let Some(message) = self.blocking_overlay_message.as_deref() {
-            self.render_blocking_overlay(frame, centered_rect(36, 18, frame.area()), message);
-        }
-    }
-
-    fn render_blocking_overlay(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: Rect,
-        message: &str,
-    ) {
-        frame.render_widget(Clear, area);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    message,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "This can take a few seconds with local models.",
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                )),
-            ])
-            .alignment(ratatui::layout::Alignment::Center)
-            .block(
-                Block::default()
-                    .title(" Working ")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Yellow)),
-            )
-            .wrap(Wrap { trim: false }),
-            area,
-        );
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
@@ -3424,15 +3386,17 @@ impl App {
                 .active_transient_status_text()
                 .map(str::to_string)
                 .unwrap_or_else(|| {
-                    if let Some(suffix) = self.classification_pending_suffix() {
-                        if self.status.contains("classification suggestion") {
-                            self.status.clone()
-                        } else {
-                            format!("{} | {suffix}", self.status)
-                        }
-                    } else {
-                        self.status.clone()
+                    let mut parts = vec![self.status.clone()];
+                    if !self.in_flight_classifications.is_empty() {
+                        let n = self.in_flight_classifications.len();
+                        parts.push(format!("[classifying {n}…]"));
                     }
+                    if let Some(suffix) = self.classification_pending_suffix() {
+                        if !self.status.contains("classification suggestion") {
+                            parts.push(suffix);
+                        }
+                    }
+                    parts.join(" | ")
                 }),
             Mode::HelpPanel
             | Mode::ViewPicker

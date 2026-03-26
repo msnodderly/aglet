@@ -39,6 +39,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 mod app;
+mod async_classify;
 mod error;
 mod input;
 mod input_panel;
@@ -1178,13 +1179,6 @@ enum ExternalEditorTarget {
     Note,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-enum PendingBlockingUiAction {
-    SaveInputPanelAdd,
-    SaveInputPanelEdit,
-    ClassifyItems(Vec<ItemId>),
-}
-
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1270,8 +1264,8 @@ struct App {
     undo: UndoState,
     input_panel_discard_confirm: bool,
     pending_external_edit: Option<ExternalEditorTarget>,
-    pending_blocking_ui_action: Option<PendingBlockingUiAction>,
-    blocking_overlay_message: Option<String>,
+    classification_worker: async_classify::ClassificationWorker,
+    in_flight_classifications: HashSet<ItemId>,
 }
 
 impl Default for App {
@@ -1353,8 +1347,8 @@ impl Default for App {
             undo: UndoState::default(),
             input_panel_discard_confirm: false,
             pending_external_edit: None,
-            pending_blocking_ui_action: None,
-            blocking_overlay_message: None,
+            classification_worker: async_classify::ClassificationWorker::spawn(),
+            in_flight_classifications: HashSet::new(),
         }
     }
 }
@@ -1612,7 +1606,7 @@ mod tests {
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
         CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
-        NameInputContext, OllamaModelPickerState, PendingBlockingUiAction, SlotSortDirection, ViewAssignRow,
+        NameInputContext, OllamaModelPickerState, SlotSortDirection, ViewAssignRow,
         ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
@@ -5748,7 +5742,7 @@ mod tests {
     }
 
     #[test]
-    fn add_item_save_queues_blocking_classification_action() {
+    fn add_item_save_submits_background_classification() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -5775,17 +5769,14 @@ mod tests {
         app.input_panel = Some(panel);
 
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("queue blocking save");
+            .expect("save item");
 
-        assert_eq!(
-            app.pending_blocking_ui_action,
-            Some(PendingBlockingUiAction::SaveInputPanelAdd)
-        );
-        assert_eq!(
-            app.blocking_overlay_message.as_deref(),
-            Some("Saving item and classifying...")
-        );
-        assert_eq!(app.mode, Mode::InputPanel);
+        // Save should happen immediately (no blocking overlay).
+        assert_eq!(app.mode, Mode::Normal);
+        // Item should exist in the store.
+        assert_eq!(store.list_items().expect("list").len(), 1);
+        // Background classification should have been submitted.
+        assert_eq!(app.in_flight_classifications.len(), 1);
     }
 
     #[test]
@@ -5875,8 +5866,6 @@ mod tests {
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("attempt edit save");
 
-        assert_eq!(app.pending_blocking_ui_action, None);
-        assert_eq!(app.blocking_overlay_message, None);
         assert_eq!(app.mode, Mode::InputPanel);
         assert!(
             app.status.contains("Could not parse when date"),
@@ -8252,28 +8241,6 @@ mod tests {
         assert!(
             rendered.contains("END-OF-RATIONALE"),
             "review overlay should show rationale: {rendered}"
-        );
-    }
-
-    #[test]
-    fn blocking_overlay_renders_working_message() {
-        let app = App {
-            blocking_overlay_message: Some("Saving item and classifying...".to_string()),
-            ..App::default()
-        };
-
-        let backend = TestBackend::new(120, 30);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        terminal.draw(|frame| app.draw(frame)).expect("draw");
-        let rendered = terminal_buffer_lines(&terminal).join("\n");
-
-        assert!(
-            rendered.contains("Working"),
-            "working overlay should render title: {rendered}"
-        );
-        assert!(
-            rendered.contains("Saving item and classifying..."),
-            "working overlay should render message: {rendered}"
         );
     }
 

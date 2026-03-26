@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::classification::{
-    ClassificationCandidate, ClassificationConfig, ClassificationService, ClassificationSuggestion,
-    ImplicitStringProvider, LiteralClassificationMode, OllamaProvider, OllamaTransport,
-    ReqwestOllamaTransport, SemanticClassificationMode, SuggestionStatus, WhenParserProvider,
+    BackgroundClassificationJob, ClassificationCandidate, ClassificationConfig,
+    ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
+    LiteralClassificationMode, OllamaProvider, OllamaTransport, ReqwestOllamaTransport,
+    SemanticClassificationMode, SuggestionStatus, WhenParserProvider,
     PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
@@ -670,8 +671,22 @@ impl<'a> Agenda<'a> {
 
         let (_item, item_revision_hash, candidates, _debug) =
             service.collect_candidates(item_id)?;
+        self.apply_classification_results(item_id, &item_revision_hash, &candidates)
+    }
+
+    /// Apply pre-computed classification candidates for an item.
+    /// Supersedes old suggestions for this revision, then upserts new ones
+    /// based on the current classification config disposition.
+    /// Returns the number of new pending suggestions created.
+    pub fn apply_classification_results(
+        &self,
+        item_id: ItemId,
+        item_revision_hash: &str,
+        candidates: &[ClassificationCandidate],
+    ) -> Result<usize> {
+        let cfg = self.store.get_classification_config()?;
         self.store
-            .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
+            .supersede_suggestions_for_item_revision(item_id, item_revision_hash)?;
 
         let mut queued = 0usize;
         for candidate in candidates {
@@ -679,10 +694,9 @@ impl<'a> Agenda<'a> {
                 candidate.assignment,
                 crate::classification::CandidateAssignment::When(_)
             ) {
-                // When-date candidates: auto-apply as before.
                 let suggestion = ClassificationSuggestion::from_candidate(
-                    &candidate,
-                    item_revision_hash.clone(),
+                    candidate,
+                    item_revision_hash.to_string(),
                     SuggestionStatus::Accepted,
                 );
                 if self
@@ -693,16 +707,16 @@ impl<'a> Agenda<'a> {
                     continue;
                 }
                 self.store.upsert_suggestion(&suggestion)?;
-                self.apply_auto_classification_candidate(item_id, &candidate)?;
+                self.apply_auto_classification_candidate(item_id, candidate)?;
                 continue;
             }
 
-            match self.candidate_status_for_config(&cfg, &candidate) {
+            match self.candidate_status_for_config(&cfg, candidate) {
                 CandidateDisposition::Skip => {}
                 CandidateDisposition::AutoApply => {
                     let suggestion = ClassificationSuggestion::from_candidate(
-                        &candidate,
-                        item_revision_hash.clone(),
+                        candidate,
+                        item_revision_hash.to_string(),
                         SuggestionStatus::Accepted,
                     );
                     if self
@@ -713,15 +727,15 @@ impl<'a> Agenda<'a> {
                         continue;
                     }
                     self.store.upsert_suggestion(&suggestion)?;
-                    self.apply_auto_classification_candidate(item_id, &candidate)?;
+                    self.apply_auto_classification_candidate(item_id, candidate)?;
                 }
                 CandidateDisposition::QueueReview => {
-                    if self.candidate_assignment_already_present(item_id, &candidate)? {
+                    if self.candidate_assignment_already_present(item_id, candidate)? {
                         continue;
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
-                        &candidate,
-                        item_revision_hash.clone(),
+                        candidate,
+                        item_revision_hash.to_string(),
                         SuggestionStatus::Pending,
                     );
                     if self
@@ -741,6 +755,41 @@ impl<'a> Agenda<'a> {
         }
 
         Ok(queued)
+    }
+
+    /// Prepare a background classification job for an item. Returns `None`
+    /// if no expensive (semantic/Ollama) providers are enabled.
+    /// The returned job contains everything needed to run classification
+    /// on a background thread without Store access.
+    pub fn prepare_background_classification(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+    ) -> Result<Option<BackgroundClassificationJob>> {
+        let cfg = self.store.get_classification_config()?;
+        if cfg.semantic_mode == SemanticClassificationMode::Off
+            || !cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
+            || !cfg.ollama.enabled
+        {
+            return Ok(None);
+        }
+
+        let (request, revision_hash) = {
+            let service = self.classification_service(reference_date, &cfg, true);
+            if !service.has_providers() {
+                return Ok(None);
+            }
+            let (_item, request, revision_hash) = service.prepare_request(item_id)?;
+            (request, revision_hash)
+        };
+        Ok(Some(BackgroundClassificationJob {
+            item_id,
+            item_revision_hash: revision_hash,
+            request,
+            config: cfg,
+            ollama_transport: Arc::clone(&self.ollama_transport),
+            reference_date,
+        }))
     }
 
     fn process_item_save(
