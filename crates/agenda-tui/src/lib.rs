@@ -1178,10 +1178,11 @@ enum ExternalEditorTarget {
     Note,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum PendingBlockingUiAction {
     SaveInputPanelAdd,
     SaveInputPanelEdit,
+    ClassifyItems(Vec<ItemId>),
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {

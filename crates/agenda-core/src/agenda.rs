@@ -654,6 +654,95 @@ impl<'a> Agenda<'a> {
             .set_suggestion_status(suggestion_id, SuggestionStatus::Rejected)
     }
 
+    /// Run classification on demand for a single item, regardless of
+    /// `run_on_item_save` / `should_run_continuously` config flags.
+    /// Returns the number of new pending suggestions created.
+    pub fn classify_item_on_demand(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+    ) -> Result<usize> {
+        let cfg = self.store.get_classification_config()?;
+        let service = self.classification_service(reference_date, &cfg, true);
+        if !service.has_providers() {
+            return Ok(0);
+        }
+
+        let (_item, item_revision_hash, candidates, _debug) =
+            service.collect_candidates(item_id)?;
+        self.store
+            .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
+
+        let mut queued = 0usize;
+        for candidate in candidates {
+            if matches!(
+                candidate.assignment,
+                crate::classification::CandidateAssignment::When(_)
+            ) {
+                // When-date candidates: auto-apply as before.
+                let suggestion = ClassificationSuggestion::from_candidate(
+                    &candidate,
+                    item_revision_hash.clone(),
+                    SuggestionStatus::Accepted,
+                );
+                if self
+                    .store
+                    .get_classification_suggestion(suggestion.id)?
+                    .is_some_and(|existing| existing.status == SuggestionStatus::Rejected)
+                {
+                    continue;
+                }
+                self.store.upsert_suggestion(&suggestion)?;
+                self.apply_auto_classification_candidate(item_id, &candidate)?;
+                continue;
+            }
+
+            match self.candidate_status_for_config(&cfg, &candidate) {
+                CandidateDisposition::Skip => {}
+                CandidateDisposition::AutoApply => {
+                    let suggestion = ClassificationSuggestion::from_candidate(
+                        &candidate,
+                        item_revision_hash.clone(),
+                        SuggestionStatus::Accepted,
+                    );
+                    if self
+                        .store
+                        .get_classification_suggestion(suggestion.id)?
+                        .is_some_and(|existing| existing.status == SuggestionStatus::Rejected)
+                    {
+                        continue;
+                    }
+                    self.store.upsert_suggestion(&suggestion)?;
+                    self.apply_auto_classification_candidate(item_id, &candidate)?;
+                }
+                CandidateDisposition::QueueReview => {
+                    if self.candidate_assignment_already_present(item_id, &candidate)? {
+                        continue;
+                    }
+                    let suggestion = ClassificationSuggestion::from_candidate(
+                        &candidate,
+                        item_revision_hash.clone(),
+                        SuggestionStatus::Pending,
+                    );
+                    if self
+                        .store
+                        .get_classification_suggestion(suggestion.id)?
+                        .is_some_and(|existing| {
+                            existing.status == SuggestionStatus::Rejected
+                                || existing.status == SuggestionStatus::Accepted
+                        })
+                    {
+                        continue;
+                    }
+                    self.store.upsert_suggestion(&suggestion)?;
+                    queued += 1;
+                }
+            }
+        }
+
+        Ok(queued)
+    }
+
     fn process_item_save(
         &self,
         item_id: ItemId,

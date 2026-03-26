@@ -2414,6 +2414,23 @@ impl App {
             KeyCode::Char('[') => {
                 self.move_selected_item_between_slots(-1, agenda)?;
             }
+            KeyCode::Char('=') => {
+                let item_ids: Vec<ItemId> = if self.has_selected_items() {
+                    self.selected_item_ids_in_view_order()
+                } else {
+                    self.selected_item_id().into_iter().collect()
+                };
+                if item_ids.is_empty() {
+                    self.status = "No item selected to classify".to_string();
+                } else {
+                    let item_count = item_ids.len();
+                    let item_word = if item_count == 1 { "item" } else { "items" };
+                    self.queue_blocking_ui_action(
+                        PendingBlockingUiAction::ClassifyItems(item_ids),
+                        format!("Classifying {item_count} {item_word}…"),
+                    );
+                }
+            }
             _ => {}
         }
 

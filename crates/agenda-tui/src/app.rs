@@ -150,6 +150,9 @@ impl App {
         match action {
             PendingBlockingUiAction::SaveInputPanelAdd => self.save_input_panel_add(agenda),
             PendingBlockingUiAction::SaveInputPanelEdit => self.save_input_panel_edit(agenda),
+            PendingBlockingUiAction::ClassifyItems(item_ids) => {
+                self.execute_classify_items(agenda, &item_ids)
+            }
         }
     }
 
@@ -572,6 +575,35 @@ impl App {
         self.classification_ui.config = config;
         self.classification_ui.review_items = review_items;
 
+        Ok(())
+    }
+
+    fn execute_classify_items(
+        &mut self,
+        agenda: &Agenda<'_>,
+        item_ids: &[ItemId],
+    ) -> TuiResult<()> {
+        let reference_date = jiff::Zoned::now().date();
+        let mut total_queued = 0usize;
+        for &item_id in item_ids {
+            total_queued += agenda.classify_item_on_demand(item_id, reference_date)?;
+        }
+        self.refresh(agenda.store())?;
+        let item_count = item_ids.len();
+        let item_word = if item_count == 1 { "item" } else { "items" };
+        if total_queued > 0 {
+            let sug_word = if total_queued == 1 {
+                "suggestion"
+            } else {
+                "suggestions"
+            };
+            self.status = format!(
+                "Classified {item_count} {item_word}: {total_queued} new {sug_word} (Shift+C to review)"
+            );
+        } else {
+            self.status =
+                format!("Classified {item_count} {item_word}: no new suggestions");
+        }
         Ok(())
     }
 
