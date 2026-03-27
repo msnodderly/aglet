@@ -5328,7 +5328,7 @@ mod tests {
             input_panel: Some(panel),
             ..App::default()
         };
-        // Cursor should be positioned in the text row of the popup, after the "  Text> " prefix
+        // Cursor should be positioned in the text row of the popup, after the "  Description: " prefix
         // with 2 chars of cursor offset (TextBuffer::new puts cursor at end; we need with_cursor)
         // Just assert it's Some and within the popup bounds.
         let pos = if let Some(panel) = &app.input_panel {
@@ -5415,6 +5415,35 @@ mod tests {
             pos, None,
             "actions focus should not place a text cursor"
         );
+    }
+
+    #[test]
+    fn input_panel_cursor_position_is_set_for_when_focus() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            agenda_core::model::ItemId::new_v4(),
+            "Title".to_string(),
+            String::new(),
+            "tomorrow".to_string(),
+            Default::default(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        panel.focus = input_panel::InputPanelFocus::When;
+        panel.when_buffer = text_buffer::TextBuffer::with_cursor("tomorrow".to_string(), 3);
+        let app = App {
+            mode: Mode::InputPanel,
+            input_panel: Some(panel),
+            ..App::default()
+        };
+
+        let pos = if let Some(panel) = &app.input_panel {
+            app.input_panel_cursor_position(popup, panel)
+        } else {
+            None
+        };
+        assert!(pos.is_some(), "when focus should place a cursor");
     }
 
     #[test]
@@ -5762,7 +5791,7 @@ mod tests {
 
         let text_line = lines
             .iter()
-            .find(|line| line.contains("Text> Draft title"))
+            .find(|line| line.contains("Description: Draft title"))
             .expect("text input line should be rendered");
         assert!(
             !text_line.contains("Adding to"),
@@ -5954,6 +5983,86 @@ mod tests {
         assert_eq!(list_scroll_for_selected_line(area, Some(0)), 0);
         assert_eq!(list_scroll_for_selected_line(area, Some(7)), 0);
         assert_eq!(list_scroll_for_selected_line(area, Some(8)), 1);
+    }
+
+    #[test]
+    fn edit_item_when_enter_recalculates_without_closing_panel() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Plan travel".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            item.id,
+            "Plan travel".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        panel.when_buffer.set("tomorrow".to_string());
+        panel.focus = input_panel::InputPanelFocus::When;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("recalculate when");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::When
+        );
+        assert_ne!(
+            app.input_panel.as_ref().unwrap().when_buffer.text(),
+            "tomorrow"
+        );
+        assert!(app.status.starts_with("When set to "));
+    }
+
+    #[test]
+    fn edit_item_when_tab_recalculates_and_advances_focus() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Plan travel".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            item.id,
+            "Plan travel".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        panel.when_buffer.set("tomorrow".to_string());
+        panel.focus = input_panel::InputPanelFocus::When;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("recalculate when and advance");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Note
+        );
+        assert_ne!(
+            app.input_panel.as_ref().unwrap().when_buffer.text(),
+            "tomorrow"
+        );
+        assert!(app.status.starts_with("When set to "));
     }
 
     #[test]
@@ -20075,6 +20184,48 @@ mod tests {
             app.input_panel.as_ref().unwrap().focus,
             input_panel::InputPanelFocus::Text
         );
+    }
+
+    #[test]
+    fn edit_panel_actions_support_arrow_selection_and_enter() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+
+        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
+        app.handle_key(KeyCode::Down, &agenda)
+            .expect("move to inspect action");
+        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 1);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open details from action menu");
+        assert!(app.input_panel.as_ref().unwrap().details_popup_open);
     }
 
     #[test]

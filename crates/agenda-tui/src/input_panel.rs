@@ -375,13 +375,8 @@ impl InputPanel {
                 Some(InputPanelAction::Save)
             }
             // Single-value editors: Enter from text field saves directly.
-            // Enter saves from single-line text fields (not Note, which inserts a newline).
-            KeyCode::Enter
-                if matches!(
-                    self.focus,
-                    InputPanelFocus::Text | InputPanelFocus::When
-                ) =>
-            {
+            // The When field is handled separately so Enter can recalculate in place.
+            KeyCode::Enter if matches!(self.focus, InputPanelFocus::Text) => {
                 Some(InputPanelAction::Save)
             }
             _ => None,
@@ -394,7 +389,12 @@ impl InputPanel {
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
         if self.kind == InputPanelKind::EditItem {
-            return InputPanelAction::Unhandled;
+            return match code {
+                KeyCode::Down | KeyCode::Char('j') => InputPanelAction::MoveCategoryCursor(1),
+                KeyCode::Up | KeyCode::Char('k') => InputPanelAction::MoveCategoryCursor(-1),
+                KeyCode::Char(' ') | KeyCode::Enter => InputPanelAction::ToggleCategory,
+                _ => InputPanelAction::Unhandled,
+            };
         }
         match code {
             KeyCode::Down | KeyCode::Char('j') => InputPanelAction::MoveCategoryCursor(1),
@@ -462,7 +462,7 @@ impl InputPanel {
         )
     }
 
-    fn cycle_focus_forward(&mut self) {
+    pub(crate) fn cycle_focus_forward(&mut self) {
         self.focus = match self.focus {
             InputPanelFocus::Text => match self.kind {
                 InputPanelKind::NameInput
@@ -481,7 +481,7 @@ impl InputPanel {
         };
     }
 
-    fn cycle_focus_backward(&mut self) {
+    pub(crate) fn cycle_focus_backward(&mut self) {
         self.focus = match self.focus {
             InputPanelFocus::Text => match self.kind {
                 InputPanelKind::NameInput

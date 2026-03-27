@@ -1828,9 +1828,9 @@ impl App {
                 let prefix_str = match panel.kind {
                     input_panel::InputPanelKind::NameInput
                     | input_panel::InputPanelKind::CategoryCreate => "  Name> ",
-                    input_panel::InputPanelKind::WhenDate => "  When> ",
+                    input_panel::InputPanelKind::WhenDate => "  When: ",
                     input_panel::InputPanelKind::NumericValue => "  Value> ",
-                    _ => "  Text> ",
+                    _ => "  Description: ",
                 };
                 let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
                 let (_, visible_cursor) = clip_text_for_row(
@@ -1916,7 +1916,29 @@ impl App {
                 }
                 None
             }
-            InputPanelFocus::When | InputPanelFocus::TypePicker => None,
+            InputPanelFocus::When => {
+                let prefix_str = "  When: ";
+                let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
+                let (_, visible_cursor) = clip_text_for_row(
+                    panel.when_buffer.text(),
+                    panel.when_buffer.cursor(),
+                    (regions.when?.width as usize).saturating_sub(prefix_len as usize),
+                    true,
+                );
+                let input_chars = visible_cursor.min(u16::MAX as usize) as u16;
+                let max_x = regions
+                    .when?
+                    .x
+                    .saturating_add(regions.when?.width.saturating_sub(1));
+                let cursor_x = regions
+                    .when?
+                    .x
+                    .saturating_add(prefix_len)
+                    .saturating_add(input_chars)
+                    .min(max_x);
+                Some((cursor_x, regions.when?.y))
+            }
+            InputPanelFocus::TypePicker => None,
         }
     }
 
@@ -4267,9 +4289,13 @@ impl App {
             InputPanelKind::NameInput | InputPanelKind::CategoryCreate => "Name",
             InputPanelKind::WhenDate => "When",
             InputPanelKind::NumericValue => "Value",
-            _ => "Text",
+            _ => "Description",
         };
-        let text_prefix = format!("{text_marker}{text_label}> ");
+        let text_prefix = if matches!(panel.kind, InputPanelKind::NameInput | InputPanelKind::CategoryCreate | InputPanelKind::NumericValue) {
+            format!("{text_marker}{text_label}> ")
+        } else {
+            format!("{text_marker}{text_label}: ")
+        };
         let text_width = regions.text.width as usize;
         let (visible_value, _) = clip_text_for_row(
             panel.text.text(),
@@ -4314,7 +4340,7 @@ impl App {
         if let Some(when_rect) = regions.when {
             let when_focused = panel.focus == InputPanelFocus::When;
             let when_marker = if when_focused { "> " } else { "  " };
-            let when_prefix = format!("{when_marker}When> ");
+            let when_prefix = format!("{when_marker}When: ");
             let when_width = when_rect.width as usize;
             let (when_visible, _) = clip_text_for_row(
                 panel.when_buffer.text(),
@@ -4329,9 +4355,7 @@ impl App {
             } else {
                 Style::default()
             };
-            let when_value_style = if when_focused {
-                Style::default()
-            } else if panel.when_buffer.text().is_empty() {
+            let when_value_style = if !when_focused && panel.when_buffer.text().is_empty() {
                 Style::default().fg(MUTED_TEXT_COLOR)
             } else {
                 Style::default()
@@ -4427,34 +4451,30 @@ impl App {
                 cat_rect,
             );
             if panel.kind == InputPanelKind::EditItem {
-                let lines = vec![
-                    Line::from(vec![
-                        Span::styled(
-                            "a",
-                            if cat_focused {
-                                Style::default().fg(Color::Black).bg(Color::Cyan)
-                            } else {
-                                Style::default().fg(Color::Yellow)
-                            },
-                        ),
-                        Span::raw("  Open Assign menu"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled(
-                            "I",
-                            if cat_focused {
-                                Style::default().fg(Color::Black).bg(Color::Cyan)
-                            } else {
-                                Style::default().fg(Color::Yellow)
-                            },
-                        ),
-                        Span::raw("  Inspect details"),
-                    ]),
-                    Line::from(Span::styled(
-                        "Category edits now use the Assign picker.",
-                        Style::default().fg(MUTED_TEXT_COLOR),
-                    )),
-                ];
+                let action_rows = [("a", "Assign categories"), ("i", "Inspect item details")];
+                let lines: Vec<Line<'_>> = action_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (key, label))| {
+                        let selected = cat_focused && panel.category_cursor == idx;
+                        let line_style = if selected {
+                            Style::default().fg(Color::Black).bg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        };
+                        let key_style = if selected {
+                            line_style
+                        } else {
+                            Style::default().fg(Color::Yellow)
+                        };
+                        Line::from(vec![
+                            Span::styled(if selected { "> " } else { "  " }, line_style),
+                            Span::styled(*key, key_style),
+                            Span::styled("  ", line_style),
+                            Span::styled(*label, line_style),
+                        ])
+                    })
+                    .collect();
                 frame.render_widget(Paragraph::new(lines), cat_inner);
             } else if panel.category_filter_editing {
                 frame.render_widget(
@@ -4706,14 +4726,14 @@ impl App {
             }
             InputPanelFocus::Categories => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "a:assign  I:details  Tab:text  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Esc:save and close"
                 } else {
                     "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close"
                 }
             }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
             InputPanelFocus::When => {
-                "When date (today, tomorrow, 2026-03-25, …)  Enter/Esc:save  Tab:note"
+                "When date (today, tomorrow, 2026-03-25, …)  Enter:recalc  Tab:apply+next  Esc:save"
             }
         };
         let mut help_style = Style::default();

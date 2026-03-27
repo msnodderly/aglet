@@ -4007,6 +4007,43 @@ impl App {
                 .to_string();
     }
 
+    fn recalculate_input_panel_when(&mut self) -> TuiResult<bool> {
+        let Some(panel) = self.input_panel.as_mut() else {
+            return Ok(false);
+        };
+        if !matches!(
+            panel.kind,
+            input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+        ) || panel.focus != input_panel::InputPanelFocus::When
+        {
+            return Ok(false);
+        }
+
+        let raw = panel.when_buffer.trimmed().to_string();
+        if raw.is_empty() {
+            self.status = "When cleared".to_string();
+            return Ok(true);
+        }
+
+        match Self::parse_when_datetime_input(&raw) {
+            Ok(Some(dt)) => {
+                let normalized = dt.strftime("%Y-%m-%d %H:%M").to_string();
+                panel.when_buffer.set(normalized.clone());
+                self.status = format!("When set to {normalized}");
+                Ok(true)
+            }
+            Ok(None) => {
+                panel.when_buffer.set(String::new());
+                self.status = "When cleared".to_string();
+                Ok(true)
+            }
+            Err(e) => {
+                self.status = format!("Could not parse when date: {e}");
+                Ok(false)
+            }
+        }
+    }
+
     /// Handle a key event while in Mode::InputPanel.
     pub(crate) fn handle_input_panel_key(
         &mut self,
@@ -4028,7 +4065,7 @@ impl App {
                 .map(|panel| self.input_panel_edit_details_line_count(panel))
                 .unwrap_or(1);
             match code {
-                KeyCode::Char('I') | KeyCode::Esc => {
+                KeyCode::Char('i') | KeyCode::Char('I') | KeyCode::Esc => {
                     if let Some(panel) = &mut self.input_panel {
                         panel.details_popup_open = false;
                     }
@@ -4095,7 +4132,7 @@ impl App {
             }
         }
 
-        if matches!(code, KeyCode::Char('I'))
+        if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
             && self.input_panel.as_ref().is_some_and(|panel| {
                 panel.kind == input_panel::InputPanelKind::EditItem
                     && !panel.details_popup_open
@@ -4112,7 +4149,7 @@ impl App {
                 panel.details_popup_open = true;
                 panel.details_scroll = 0;
             }
-            self.status = "Inspect item details: Esc or I closes".to_string();
+            self.status = "Inspect item details: Esc or i closes".to_string();
             return Ok(false);
         }
 
@@ -4123,12 +4160,63 @@ impl App {
                     && !panel.details_popup_open
             })
         {
+            if let Some(panel) = &mut self.input_panel {
+                panel.category_cursor = 0;
+            }
             self.open_item_assign_from_edit_panel(agenda);
+            return Ok(false);
+        }
+
+        if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
+            && self.input_panel.as_ref().is_some_and(|panel| {
+                panel.kind == input_panel::InputPanelKind::EditItem
+                    && panel.focus == input_panel::InputPanelFocus::Categories
+                    && !panel.details_popup_open
+            })
+        {
+            if let Some(panel) = &mut self.input_panel {
+                panel.category_cursor = 1;
+                panel.details_popup_open = true;
+                panel.details_scroll = 0;
+            }
+            self.status = "Inspect item details: Esc or i closes".to_string();
             return Ok(false);
         }
 
         if self.handle_input_panel_category_filter_key(code) {
             return Ok(false);
+        }
+
+        if self.input_panel.as_ref().is_some_and(|panel| {
+            panel.focus == input_panel::InputPanelFocus::When
+                && matches!(
+                    panel.kind,
+                    input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+                )
+        }) {
+            match code {
+                KeyCode::Enter => {
+                    self.recalculate_input_panel_when()?;
+                    return Ok(false);
+                }
+                KeyCode::Tab => {
+                    if self.recalculate_input_panel_when()? {
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.cycle_focus_forward();
+                        }
+                    }
+                    return Ok(false);
+                }
+                KeyCode::BackTab => {
+                    if self.recalculate_input_panel_when()? {
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.cycle_focus_backward();
+                        }
+                    }
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
 
         let current_row_is_assigned_numeric = self
@@ -4187,6 +4275,28 @@ impl App {
                 }
             }
             InputPanelAction::ToggleCategory => {
+                if self.input_panel.as_ref().is_some_and(|panel| {
+                    panel.kind == input_panel::InputPanelKind::EditItem
+                        && panel.focus == input_panel::InputPanelFocus::Categories
+                }) {
+                    let action_index = self
+                        .input_panel
+                        .as_ref()
+                        .map(|p| p.category_cursor.min(1))
+                        .unwrap_or(0);
+                    match action_index {
+                        0 => self.open_item_assign_from_edit_panel(agenda),
+                        1 => {
+                            if let Some(panel) = &mut self.input_panel {
+                                panel.details_popup_open = true;
+                                panel.details_scroll = 0;
+                            }
+                            self.status = "Inspect item details: Esc or i closes".to_string();
+                        }
+                        _ => {}
+                    }
+                    return Ok(false);
+                }
                 // Suggestions occupy indices 0..suggestion_len; categories start after
                 let suggestion_len = self
                     .input_panel
@@ -4279,13 +4389,20 @@ impl App {
                 }
             }
             InputPanelAction::MoveCategoryCursor(delta) => {
-                let cat_len = self.input_panel_visible_category_row_indices().len();
-                let suggestion_len = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.pending_suggestions.len())
-                    .unwrap_or(0);
-                let total_len = cat_len + suggestion_len;
+                let total_len = if self.input_panel.as_ref().is_some_and(|panel| {
+                    panel.kind == input_panel::InputPanelKind::EditItem
+                        && panel.focus == input_panel::InputPanelFocus::Categories
+                }) {
+                    2
+                } else {
+                    let cat_len = self.input_panel_visible_category_row_indices().len();
+                    let suggestion_len = self
+                        .input_panel
+                        .as_ref()
+                        .map(|p| p.pending_suggestions.len())
+                        .unwrap_or(0);
+                    cat_len + suggestion_len
+                };
                 if let Some(panel) = &mut self.input_panel {
                     if total_len > 0 {
                         let current = panel.category_cursor as i64;
