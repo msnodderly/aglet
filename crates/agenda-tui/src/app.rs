@@ -22,6 +22,7 @@ pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec
 impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
+    const SECTION_BORDER_MODE_SETTING_KEY: &'static str = "tui.section_border_mode";
     const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
 
     pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
@@ -70,6 +71,14 @@ impl App {
         });
     }
 
+    pub(crate) fn section_border_mode_label(&self) -> &'static str {
+        self.section_border_mode.label()
+    }
+
+    pub(crate) fn set_section_border_mode(&mut self, mode: SectionBorderMode) {
+        self.section_border_mode = mode;
+    }
+
     pub(crate) fn load_auto_refresh_interval(&mut self, store: &Store) -> TuiResult<()> {
         let persisted = store.get_app_setting(Self::AUTO_REFRESH_SETTING_KEY)?;
         self.auto_refresh_interval = persisted
@@ -80,10 +89,27 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn load_section_border_mode(&mut self, store: &Store) -> TuiResult<()> {
+        let persisted = store.get_app_setting(Self::SECTION_BORDER_MODE_SETTING_KEY)?;
+        self.section_border_mode = persisted
+            .as_deref()
+            .and_then(SectionBorderMode::from_persisted_value)
+            .unwrap_or(SectionBorderMode::Full);
+        Ok(())
+    }
+
     pub(crate) fn persist_auto_refresh_interval(&self, store: &Store) -> TuiResult<()> {
         store.set_app_setting(
             Self::AUTO_REFRESH_SETTING_KEY,
             self.auto_refresh_interval.persisted_value(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn persist_section_border_mode(&self, store: &Store) -> TuiResult<()> {
+        store.set_app_setting(
+            Self::SECTION_BORDER_MODE_SETTING_KEY,
+            self.section_border_mode.persisted_value(),
         )?;
         Ok(())
     }
@@ -112,6 +138,7 @@ impl App {
     pub(crate) fn open_global_settings(&mut self, store: &Store) -> TuiResult<()> {
         self.refresh(store)?;
         self.load_auto_refresh_interval(store)?;
+        self.load_section_border_mode(store)?;
         self.global_settings = Some(GlobalSettingsState::default());
         self.mode = Mode::GlobalSettings;
         self.status =
@@ -167,6 +194,7 @@ impl App {
         self.load_last_view_name(agenda.store())?;
         self.refresh(agenda.store())?; // re-resolve slots for the restored view
         self.load_auto_refresh_interval(agenda.store())?;
+        self.load_section_border_mode(agenda.store())?;
         self.auto_refresh_last_tick = Instant::now();
 
         loop {
@@ -530,10 +558,7 @@ impl App {
     }
 
     /// Drain completed background classification results and apply them.
-    pub(crate) fn process_classification_results(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    pub(crate) fn process_classification_results(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let mut any_applied = false;
         while let Some(result) = self.classification_worker.try_recv() {
             self.in_flight_classifications.remove(&result.item_id);
@@ -548,8 +573,7 @@ impl App {
                 Ok(item) => item,
                 Err(_) => continue, // item was deleted
             };
-            let current_hash =
-                agenda_core::classification::item_revision_hash(&current_item);
+            let current_hash = agenda_core::classification::item_revision_hash(&current_item);
             if current_hash != result.item_revision_hash {
                 self.status = format!(
                     "Classification skipped for '{}' (item was modified)",
@@ -589,12 +613,10 @@ impl App {
                 } else {
                     "suggestions"
                 };
-                self.status = format!(
-                    "Classification complete: {queued} new {sug_word} (Shift+C to review)"
-                );
-            } else {
                 self.status =
-                    "Classification complete: no new suggestions".to_string();
+                    format!("Classification complete: {queued} new {sug_word} (Shift+C to review)");
+            } else {
+                self.status = "Classification complete: no new suggestions".to_string();
             }
         }
 
@@ -615,9 +637,7 @@ impl App {
             return Ok(false);
         }
         let reference_date = jiff::Zoned::now().date();
-        if let Some(job) =
-            agenda.prepare_background_classification(item_id, reference_date)?
-        {
+        if let Some(job) = agenda.prepare_background_classification(item_id, reference_date)? {
             self.in_flight_classifications.insert(item_id);
             self.classification_worker.submit(job);
             Ok(true)
@@ -974,8 +994,8 @@ impl App {
                         if pending_for_item == 1 { "" } else { "s" }
                     ),
                     None => format!(
-                    "? {pending_for_item} pending suggestion{} for this item",
-                    if pending_for_item == 1 { "" } else { "s" }
+                        "? {pending_for_item} pending suggestion{} for this item",
+                        if pending_for_item == 1 { "" } else { "s" }
                     ),
                 },
                 true,
@@ -983,7 +1003,8 @@ impl App {
         }
 
         if result.semantic_candidates_seen > 0 {
-            if result.semantic_candidates_skipped_already_assigned == result.semantic_candidates_seen
+            if result.semantic_candidates_skipped_already_assigned
+                == result.semantic_candidates_seen
             {
                 return Some((
                     match semantic_debug {

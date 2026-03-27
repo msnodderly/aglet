@@ -37,6 +37,22 @@ impl App {
         Ok(())
     }
 
+    fn cycle_global_settings_section_borders(
+        &mut self,
+        agenda: &Agenda<'_>,
+        forward: bool,
+    ) -> TuiResult<()> {
+        let next = if forward {
+            self.section_border_mode.next()
+        } else {
+            self.section_border_mode.prev()
+        };
+        self.set_section_border_mode(next);
+        self.persist_section_border_mode(agenda.store())?;
+        self.status = format!("Section borders: {}", self.section_border_mode_label());
+        Ok(())
+    }
+
     fn cycle_global_settings_literal_mode(
         &mut self,
         agenda: &Agenda<'_>,
@@ -112,7 +128,11 @@ impl App {
                 "Ollama model",
             ),
             NameInputContext::OllamaTimeout => (
-                self.classification_ui.config.ollama.timeout_secs.to_string(),
+                self.classification_ui
+                    .config
+                    .ollama
+                    .timeout_secs
+                    .to_string(),
                 "Ollama timeout (seconds)",
             ),
             _ => return,
@@ -184,6 +204,9 @@ impl App {
                     GlobalSettingsRow::AutoRefresh => {
                         self.cycle_global_settings_auto_refresh(agenda, true)?;
                     }
+                    GlobalSettingsRow::SectionBorders => {
+                        self.cycle_global_settings_section_borders(agenda, true)?;
+                    }
                     GlobalSettingsRow::LiteralClassificationMode => {
                         self.cycle_global_settings_literal_mode(agenda, true)?;
                     }
@@ -204,6 +227,9 @@ impl App {
                 GlobalSettingsRow::AutoRefresh => {
                     self.cycle_global_settings_auto_refresh(agenda, false)?;
                 }
+                GlobalSettingsRow::SectionBorders => {
+                    self.cycle_global_settings_section_borders(agenda, false)?;
+                }
                 GlobalSettingsRow::LiteralClassificationMode => {
                     self.cycle_global_settings_literal_mode(agenda, false)?;
                 }
@@ -222,6 +248,9 @@ impl App {
             KeyCode::Enter => match self.global_settings_selected_kind() {
                 GlobalSettingsRow::AutoRefresh => {
                     self.cycle_global_settings_auto_refresh(agenda, true)?;
+                }
+                GlobalSettingsRow::SectionBorders => {
+                    self.cycle_global_settings_section_borders(agenda, true)?;
                 }
                 GlobalSettingsRow::LiteralClassificationMode => {
                     self.cycle_global_settings_literal_mode(agenda, true)?;
@@ -252,21 +281,16 @@ impl App {
     }
 
     fn open_ollama_model_picker(&mut self, _agenda: &Agenda<'_>) {
-        match agenda_core::classification::list_ollama_models(
-            &self.classification_ui.config.ollama,
-        ) {
+        match agenda_core::classification::list_ollama_models(&self.classification_ui.config.ollama)
+        {
             Ok(models) if !models.is_empty() => {
                 let current = &self.classification_ui.config.ollama.model;
-                let selected_index = models
-                    .iter()
-                    .position(|m| m == current)
-                    .unwrap_or(0);
+                let selected_index = models.iter().position(|m| m == current).unwrap_or(0);
                 self.ollama_model_picker = Some(OllamaModelPickerState {
                     models,
                     selected_index,
                 });
-                self.status =
-                    "Pick a model: j/k navigate, Enter select, Esc cancel".to_string();
+                self.status = "Pick a model: j/k navigate, Enter select, Esc cancel".to_string();
             }
             Ok(_) => {
                 self.status = "No models found. Falling back to text input.".to_string();
