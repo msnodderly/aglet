@@ -3749,7 +3749,7 @@ impl App {
             }
             Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
             Mode::ItemAssignPicker => {
-                "Assign categories (Enter applies+closes; Space applies; Esc cancels)".to_string()
+                "Assign categories (Enter applies+closes; Space applies; Esc closes)".to_string()
             }
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
@@ -3988,15 +3988,15 @@ impl App {
                     ("Tab/S-Tab", "pane"),
                     ("Space", "toggle"),
                     ("n", "new"),
-                    ("Enter", "apply+back"),
-                    ("Esc", "cancel"),
+                    ("Enter", "apply+close"),
+                    ("Esc", "close"),
                 ],
                 ItemAssignPane::ViewSection => vec![
                     ("Tab/S-Tab", "pane"),
                     ("Space", "assign"),
-                    ("Enter", "apply+back"),
+                    ("Enter", "apply+close"),
                     ("r", "remove"),
-                    ("Esc", "cancel"),
+                    ("Esc", "close"),
                 ],
             },
             Mode::ItemAssignInput => vec![("Enter", "assign"), ("Esc", "cancel")],
@@ -5019,9 +5019,9 @@ impl App {
         // Header — changes based on which pane is active.
         let header = match self.item_assign_pane {
             ItemAssignPane::Categories =>
-                "Edit item categories  (Tab/S-Tab: switch pane  Space: toggle  n or /: type  Enter: apply+close  Esc: cancel)",
+                "Edit item categories  (Tab/S-Tab: switch pane  Space: toggle  n or /: type  Enter: apply+close  Esc: close)",
             ItemAssignPane::ViewSection =>
-                "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: cancel)",
+                "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: close)",
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
@@ -5056,9 +5056,11 @@ impl App {
         // ── Left: category pane ────────────────────────────────────────────
         let cat_active = self.item_assign_pane == ItemAssignPane::Categories;
         let cat_border_style = if cat_active {
-            Style::default().fg(Color::Cyan)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Cyan)
         };
         let visible_category_indices = self.item_assign_visible_category_row_indices();
 
@@ -5105,11 +5107,10 @@ impl App {
                     } else {
                         "    "
                     };
-                    let category_name = with_note_marker(row.name.clone(), row.has_note);
                     let text = format!(
                         "{preview_prefix}{checkbox} {}{}{}",
                         "  ".repeat(row.depth),
-                        category_name,
+                        row.name,
                         suffix
                     );
                     let style = if to_add {
@@ -5137,7 +5138,11 @@ impl App {
                 })
                 .block(
                     Block::default()
-                        .title("Categories")
+                        .title(if cat_active {
+                            "> Categories"
+                        } else {
+                            "Categories"
+                        })
                         .borders(Borders::ALL)
                         .border_style(cat_border_style),
                 ),
@@ -5149,9 +5154,11 @@ impl App {
         // ── Right: view/section pane ───────────────────────────────────────
         let view_active = self.item_assign_pane == ItemAssignPane::ViewSection;
         let view_border_style = if view_active {
-            Style::default().fg(Color::Cyan)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Cyan)
         };
 
         let view_items: Vec<ListItem<'_>> = if self.view_assign_rows.is_empty() {
@@ -5225,7 +5232,11 @@ impl App {
         frame.render_stateful_widget(
             List::new(view_items).block(
                 Block::default()
-                    .title("View / Section")
+                    .title(if view_active {
+                        "> View / Section"
+                    } else {
+                        "View / Section"
+                    })
                     .borders(Borders::ALL)
                     .border_style(view_border_style),
             ),

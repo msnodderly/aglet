@@ -9036,7 +9036,8 @@ mod tests {
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
 
-        let work = Category::new("Work".to_string());
+        let mut work = Category::new("Work".to_string());
+        work.note = Some("has note".to_string());
         store.create_category(&work).expect("create category");
 
         let mut view = View::new("Board".to_string());
@@ -9370,12 +9371,25 @@ mod tests {
             "assign picker should render an outer modal title/border: {rendered}"
         );
         assert!(
-            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:apply+back  Esc:cancel"),
+            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:apply+close  Esc:close"),
             "assign picker footer should advertise forward/backward pane switching: {rendered}"
+        );
+        assert!(
+            rendered.contains("Edit item categories  (Tab/S-Tab: switch pane  Space: toggle")
+                && rendered.contains("Enter: apply+close  Esc: clo"),
+            "assign picker header should describe close semantics: {rendered}"
         );
         assert!(
             rendered.contains("Target: Plain  Batch: 2 items"),
             "assign picker should show focused target context inside the modal: {rendered}"
+        );
+        assert!(
+            rendered.contains("> Categories"),
+            "active categories pane should show focused title styling marker: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Work ♪"),
+            "assign picker should not append note markers to category rows: {rendered}"
         );
 
         assert!(
