@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::classification::{
-    ClassificationCandidate, ClassificationConfig, ClassificationService, ClassificationSuggestion,
-    ImplicitStringProvider, LiteralClassificationMode, OllamaProvider, OllamaTransport,
-    ReqwestOllamaTransport, SemanticClassificationMode, SuggestionStatus, WhenParserProvider,
+    BackgroundClassificationJob, ClassificationCandidate, ClassificationConfig,
+    ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
+    LiteralClassificationMode, OllamaProvider, OllamaTransport, ReqwestOllamaTransport,
+    SemanticClassificationMode, SuggestionStatus, WhenParserProvider,
     PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
@@ -104,6 +105,20 @@ impl<'a> Agenda<'a> {
         self.process_item_save(item_to_create.id, reference_date, true)
     }
 
+    /// Like `create_item_with_reference_date` but skips expensive providers
+    /// (Ollama). Callers are expected to submit background classification
+    /// separately for the semantic/LLM path.
+    pub fn create_item_cheap(
+        &self,
+        item: &Item,
+        reference_date: jiff::civil::Date,
+    ) -> Result<ProcessItemResult> {
+        let item_to_create = item.clone();
+        self.store.create_item(&item_to_create)?;
+        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, None)?;
+        self.process_item_save_cheap(item_to_create.id, reference_date, true)
+    }
+
     pub fn update_item(&self, item: &Item) -> Result<ProcessItemResult> {
         self.update_item_with_reference_date(item, jiff::Zoned::now().date())
     }
@@ -113,12 +128,36 @@ impl<'a> Agenda<'a> {
         item: &Item,
         reference_date: jiff::civil::Date,
     ) -> Result<ProcessItemResult> {
+        self.update_item_inner(item, reference_date, true)
+    }
+
+    /// Like `update_item_with_reference_date` but skips expensive providers
+    /// (Ollama). Callers are expected to submit background classification
+    /// separately for the semantic/LLM path.
+    pub fn update_item_cheap(
+        &self,
+        item: &Item,
+        reference_date: jiff::civil::Date,
+    ) -> Result<ProcessItemResult> {
+        self.update_item_inner(item, reference_date, false)
+    }
+
+    fn update_item_inner(
+        &self,
+        item: &Item,
+        reference_date: jiff::civil::Date,
+        include_semantic: bool,
+    ) -> Result<ProcessItemResult> {
         let item_to_update = item.clone();
         let existing = self.store.get_item(item.id)?;
         let text_changed = item_to_update.text != existing.text;
         self.store.update_item(&item_to_update)?;
         self.sync_when_assignment(item_to_update.id, item_to_update.when_date, None)?;
-        self.process_item_save(item_to_update.id, reference_date, text_changed)
+        if include_semantic {
+            self.process_item_save(item_to_update.id, reference_date, text_changed)
+        } else {
+            self.process_item_save_cheap(item_to_update.id, reference_date, text_changed)
+        }
     }
 
     pub fn set_item_when_date(
@@ -670,8 +709,22 @@ impl<'a> Agenda<'a> {
 
         let (_item, item_revision_hash, candidates, _debug) =
             service.collect_candidates(item_id)?;
+        self.apply_classification_results(item_id, &item_revision_hash, &candidates)
+    }
+
+    /// Apply pre-computed classification candidates for an item.
+    /// Supersedes old suggestions for this revision, then upserts new ones
+    /// based on the current classification config disposition.
+    /// Returns the number of new pending suggestions created.
+    pub fn apply_classification_results(
+        &self,
+        item_id: ItemId,
+        item_revision_hash: &str,
+        candidates: &[ClassificationCandidate],
+    ) -> Result<usize> {
+        let cfg = self.store.get_classification_config()?;
         self.store
-            .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
+            .supersede_suggestions_for_item_revision(item_id, item_revision_hash)?;
 
         let mut queued = 0usize;
         for candidate in candidates {
@@ -679,10 +732,9 @@ impl<'a> Agenda<'a> {
                 candidate.assignment,
                 crate::classification::CandidateAssignment::When(_)
             ) {
-                // When-date candidates: auto-apply as before.
                 let suggestion = ClassificationSuggestion::from_candidate(
-                    &candidate,
-                    item_revision_hash.clone(),
+                    candidate,
+                    item_revision_hash.to_string(),
                     SuggestionStatus::Accepted,
                 );
                 if self
@@ -693,16 +745,16 @@ impl<'a> Agenda<'a> {
                     continue;
                 }
                 self.store.upsert_suggestion(&suggestion)?;
-                self.apply_auto_classification_candidate(item_id, &candidate)?;
+                self.apply_auto_classification_candidate(item_id, candidate)?;
                 continue;
             }
 
-            match self.candidate_status_for_config(&cfg, &candidate) {
+            match self.candidate_status_for_config(&cfg, candidate) {
                 CandidateDisposition::Skip => {}
                 CandidateDisposition::AutoApply => {
                     let suggestion = ClassificationSuggestion::from_candidate(
-                        &candidate,
-                        item_revision_hash.clone(),
+                        candidate,
+                        item_revision_hash.to_string(),
                         SuggestionStatus::Accepted,
                     );
                     if self
@@ -713,15 +765,15 @@ impl<'a> Agenda<'a> {
                         continue;
                     }
                     self.store.upsert_suggestion(&suggestion)?;
-                    self.apply_auto_classification_candidate(item_id, &candidate)?;
+                    self.apply_auto_classification_candidate(item_id, candidate)?;
                 }
                 CandidateDisposition::QueueReview => {
-                    if self.candidate_assignment_already_present(item_id, &candidate)? {
+                    if self.candidate_assignment_already_present(item_id, candidate)? {
                         continue;
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
-                        &candidate,
-                        item_revision_hash.clone(),
+                        candidate,
+                        item_revision_hash.to_string(),
                         SuggestionStatus::Pending,
                     );
                     if self
@@ -743,11 +795,66 @@ impl<'a> Agenda<'a> {
         Ok(queued)
     }
 
+    /// Prepare a background classification job for an item. Returns `None`
+    /// if no expensive (semantic/Ollama) providers are enabled.
+    /// The returned job contains everything needed to run classification
+    /// on a background thread without Store access.
+    pub fn prepare_background_classification(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+    ) -> Result<Option<BackgroundClassificationJob>> {
+        let cfg = self.store.get_classification_config()?;
+        if cfg.semantic_mode == SemanticClassificationMode::Off
+            || !cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
+            || !cfg.ollama.enabled
+        {
+            return Ok(None);
+        }
+
+        let (request, revision_hash) = {
+            let service = self.classification_service(reference_date, &cfg, true);
+            if !service.has_providers() {
+                return Ok(None);
+            }
+            let (_item, request, revision_hash) = service.prepare_request(item_id)?;
+            (request, revision_hash)
+        };
+        Ok(Some(BackgroundClassificationJob {
+            item_id,
+            item_revision_hash: revision_hash,
+            request,
+            config: cfg,
+            ollama_transport: Arc::clone(&self.ollama_transport),
+            reference_date,
+        }))
+    }
+
     fn process_item_save(
         &self,
         item_id: ItemId,
         reference_date: jiff::civil::Date,
         text_changed: bool,
+    ) -> Result<ProcessItemResult> {
+        self.process_item_save_inner(item_id, reference_date, text_changed, true)
+    }
+
+    /// Like `process_item_save` but excludes expensive (semantic/Ollama) providers.
+    fn process_item_save_cheap(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+        text_changed: bool,
+    ) -> Result<ProcessItemResult> {
+        self.process_item_save_inner(item_id, reference_date, text_changed, false)
+    }
+
+    fn process_item_save_inner(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+        text_changed: bool,
+        include_semantic: bool,
     ) -> Result<ProcessItemResult> {
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
@@ -755,7 +862,11 @@ impl<'a> Agenda<'a> {
             return self.process_cascades(item_id);
         }
 
-        let service = self.classification_service(reference_date, &cfg, text_changed);
+        let service = if include_semantic {
+            self.classification_service(reference_date, &cfg, text_changed)
+        } else {
+            self.classification_service_cheap(reference_date, &cfg, text_changed)
+        };
         if !service.has_providers() {
             return self.process_cascades(item_id);
         }
@@ -889,6 +1000,25 @@ impl<'a> Agenda<'a> {
         cfg: &'b ClassificationConfig,
         allow_when_parser: bool,
     ) -> ClassificationService<'b> {
+        self.classification_service_inner(reference_date, cfg, allow_when_parser, true)
+    }
+
+    fn classification_service_cheap<'b>(
+        &'b self,
+        reference_date: jiff::civil::Date,
+        cfg: &'b ClassificationConfig,
+        allow_when_parser: bool,
+    ) -> ClassificationService<'b> {
+        self.classification_service_inner(reference_date, cfg, allow_when_parser, false)
+    }
+
+    fn classification_service_inner<'b>(
+        &'b self,
+        reference_date: jiff::civil::Date,
+        cfg: &'b ClassificationConfig,
+        allow_when_parser: bool,
+        include_semantic: bool,
+    ) -> ClassificationService<'b> {
         let mut providers = Vec::new();
         if cfg.literal_mode != LiteralClassificationMode::Off
             && cfg.provider_enabled(PROVIDER_ID_IMPLICIT_STRING)
@@ -906,7 +1036,8 @@ impl<'a> Agenda<'a> {
                 reference_date,
             }) as _);
         }
-        if cfg.semantic_mode == SemanticClassificationMode::SuggestReview
+        if include_semantic
+            && cfg.semantic_mode == SemanticClassificationMode::SuggestReview
             && cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
             && cfg.ollama.enabled
         {

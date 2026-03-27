@@ -8,7 +8,6 @@ use agenda_core::store::DEFAULT_VIEW_NAME;
 use agenda_core::workflow::{
     build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
 };
-use agenda_core::classification::PROVIDER_ID_OLLAMA_OPENAI_COMPAT;
 
 pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
     let Some(parts) = shlex::split(editor) else {
@@ -120,42 +119,6 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn should_show_blocking_classification_overlay(&self) -> bool {
-        self.classification_ui.config.semantic_mode == SemanticClassificationMode::SuggestReview
-            && self.classification_ui.config.should_run_continuously()
-            && self.classification_ui.config.run_on_item_save
-            && self.classification_ui.config.ollama.enabled
-            && !self.classification_ui.config.ollama.base_url.trim().is_empty()
-            && !self.classification_ui.config.ollama.model.trim().is_empty()
-            && self
-                .classification_ui
-                .config
-                .provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
-    }
-
-    pub(crate) fn queue_blocking_ui_action(
-        &mut self,
-        action: PendingBlockingUiAction,
-        message: impl Into<String>,
-    ) {
-        self.pending_blocking_ui_action = Some(action);
-        self.blocking_overlay_message = Some(message.into());
-    }
-
-    fn execute_pending_blocking_ui_action(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
-        let Some(action) = self.pending_blocking_ui_action.take() else {
-            return Ok(());
-        };
-        self.blocking_overlay_message = None;
-        match action {
-            PendingBlockingUiAction::SaveInputPanelAdd => self.save_input_panel_add(agenda),
-            PendingBlockingUiAction::SaveInputPanelEdit => self.save_input_panel_edit(agenda),
-            PendingBlockingUiAction::ClassifyItems(item_ids) => {
-                self.execute_classify_items(agenda, &item_ids)
-            }
-        }
-    }
-
     pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> TuiResult<()> {
         if self.should_auto_refresh_now() {
             self.refresh(store)?;
@@ -208,18 +171,8 @@ impl App {
 
         loop {
             self.clear_expired_transient_status();
+            self.process_classification_results(agenda)?;
             terminal.draw(|frame| self.draw(frame))?;
-
-            if self.pending_blocking_ui_action.is_some() {
-                if let Err(err) = self.execute_pending_blocking_ui_action(agenda) {
-                    self.blocking_overlay_message = None;
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = format!("Error: {err}");
-                }
-                self.maybe_run_auto_refresh(agenda.store())?;
-                continue;
-            }
 
             if !event::poll(std::time::Duration::from_millis(200))? {
                 self.maybe_run_auto_refresh(agenda.store())?;
@@ -236,8 +189,6 @@ impl App {
             let should_quit = match self.handle_key_event(key, agenda) {
                 Ok(value) => value,
                 Err(err) => {
-                    self.blocking_overlay_message = None;
-                    self.pending_blocking_ui_action = None;
                     self.mode = Mode::Normal;
                     self.clear_input();
                     self.status = format!("Error: {err}");
@@ -578,33 +529,101 @@ impl App {
         Ok(())
     }
 
-    fn execute_classify_items(
+    /// Drain completed background classification results and apply them.
+    pub(crate) fn process_classification_results(
         &mut self,
         agenda: &Agenda<'_>,
-        item_ids: &[ItemId],
     ) -> TuiResult<()> {
-        let reference_date = jiff::Zoned::now().date();
-        let mut total_queued = 0usize;
-        for &item_id in item_ids {
-            total_queued += agenda.classify_item_on_demand(item_id, reference_date)?;
-        }
-        self.refresh(agenda.store())?;
-        let item_count = item_ids.len();
-        let item_word = if item_count == 1 { "item" } else { "items" };
-        if total_queued > 0 {
-            let sug_word = if total_queued == 1 {
-                "suggestion"
-            } else {
-                "suggestions"
+        let mut any_applied = false;
+        while let Some(result) = self.classification_worker.try_recv() {
+            self.in_flight_classifications.remove(&result.item_id);
+
+            if let Some(error) = result.error {
+                self.status = format!("Classification error: {error}");
+                continue;
+            }
+
+            // Staleness check: compare revision hash against current item state.
+            let current_item = match agenda.store().get_item(result.item_id) {
+                Ok(item) => item,
+                Err(_) => continue, // item was deleted
             };
-            self.status = format!(
-                "Classified {item_count} {item_word}: {total_queued} new {sug_word} (Shift+C to review)"
-            );
-        } else {
-            self.status =
-                format!("Classified {item_count} {item_word}: no new suggestions");
+            let current_hash =
+                agenda_core::classification::item_revision_hash(&current_item);
+            if current_hash != result.item_revision_hash {
+                self.status = format!(
+                    "Classification skipped for '{}' (item was modified)",
+                    truncate_str(&current_item.text, 40)
+                );
+                continue;
+            }
+
+            let queued = agenda.apply_classification_results(
+                result.item_id,
+                &result.item_revision_hash,
+                &result.candidates,
+            )?;
+
+            any_applied = true;
+            let remaining = self.in_flight_classifications.len();
+            if remaining > 0 {
+                let sug_part = if queued > 0 {
+                    format!(
+                        "{queued} new {} — ",
+                        if queued == 1 {
+                            "suggestion"
+                        } else {
+                            "suggestions"
+                        }
+                    )
+                } else {
+                    String::new()
+                };
+                self.status = format!(
+                    "Classified '{}': {sug_part}{remaining} still pending…",
+                    truncate_str(&current_item.text, 30)
+                );
+            } else if queued > 0 {
+                let sug_word = if queued == 1 {
+                    "suggestion"
+                } else {
+                    "suggestions"
+                };
+                self.status = format!(
+                    "Classification complete: {queued} new {sug_word} (Shift+C to review)"
+                );
+            } else {
+                self.status =
+                    "Classification complete: no new suggestions".to_string();
+            }
+        }
+
+        if any_applied {
+            self.refresh(agenda.store())?;
         }
         Ok(())
+    }
+
+    /// Submit background classification for a single item.
+    /// Returns true if a job was submitted, false if skipped.
+    pub(crate) fn submit_background_classification(
+        &mut self,
+        agenda: &Agenda<'_>,
+        item_id: ItemId,
+    ) -> TuiResult<bool> {
+        if self.in_flight_classifications.contains(&item_id) {
+            return Ok(false);
+        }
+        let reference_date = jiff::Zoned::now().date();
+        if let Some(job) =
+            agenda.prepare_background_classification(item_id, reference_date)?
+        {
+            self.in_flight_classifications.insert(item_id);
+            self.classification_worker.submit(job);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub(crate) fn move_slot_cursor(&mut self, delta: i32) {
