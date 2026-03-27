@@ -4156,12 +4156,17 @@ impl App {
         if matches!(code, KeyCode::Char('a'))
             && self.input_panel.as_ref().is_some_and(|panel| {
                 panel.kind == input_panel::InputPanelKind::EditItem
-                    && panel.focus == input_panel::InputPanelFocus::Categories
+                    && matches!(
+                        panel.focus,
+                        input_panel::InputPanelFocus::Actions
+                            | input_panel::InputPanelFocus::Suggestions
+                    )
                     && !panel.details_popup_open
             })
         {
             if let Some(panel) = &mut self.input_panel {
-                panel.category_cursor = 0;
+                panel.focus = input_panel::InputPanelFocus::Actions;
+                panel.action_cursor = 0;
             }
             self.open_item_assign_from_edit_panel(agenda);
             return Ok(false);
@@ -4170,12 +4175,17 @@ impl App {
         if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
             && self.input_panel.as_ref().is_some_and(|panel| {
                 panel.kind == input_panel::InputPanelKind::EditItem
-                    && panel.focus == input_panel::InputPanelFocus::Categories
+                    && matches!(
+                        panel.focus,
+                        input_panel::InputPanelFocus::Actions
+                            | input_panel::InputPanelFocus::Suggestions
+                    )
                     && !panel.details_popup_open
             })
         {
             if let Some(panel) = &mut self.input_panel {
-                panel.category_cursor = 1;
+                panel.focus = input_panel::InputPanelFocus::Actions;
+                panel.action_cursor = 1;
                 panel.details_popup_open = true;
                 panel.details_scroll = 0;
             }
@@ -4277,12 +4287,12 @@ impl App {
             InputPanelAction::ToggleCategory => {
                 if self.input_panel.as_ref().is_some_and(|panel| {
                     panel.kind == input_panel::InputPanelKind::EditItem
-                        && panel.focus == input_panel::InputPanelFocus::Categories
+                        && panel.focus == input_panel::InputPanelFocus::Actions
                 }) {
                     let action_index = self
                         .input_panel
                         .as_ref()
-                        .map(|p| p.category_cursor.min(1))
+                        .map(|p| p.action_cursor.min(1))
                         .unwrap_or(0);
                     match action_index {
                         0 => self.open_item_assign_from_edit_panel(agenda),
@@ -4294,6 +4304,41 @@ impl App {
                             self.status = "Inspect item details: Esc or i closes".to_string();
                         }
                         _ => {}
+                    }
+                    return Ok(false);
+                }
+                if self.input_panel.as_ref().is_some_and(|panel| {
+                    panel.kind == input_panel::InputPanelKind::EditItem
+                        && panel.focus == input_panel::InputPanelFocus::Suggestions
+                }) {
+                    let cursor = self
+                        .input_panel
+                        .as_ref()
+                        .map(|p| p.category_cursor)
+                        .unwrap_or(0);
+                    let new_status = if let Some(panel) = &mut self.input_panel {
+                        if let Some(entry) = panel.pending_suggestions.get_mut(cursor) {
+                            entry.1 = entry.1.next();
+                            let cat_names = category_name_map(&self.categories);
+                            let cat_name =
+                                candidate_assignment_label(&entry.0.assignment, &cat_names);
+                            Some(format!(
+                                "Suggestion '{}': {}",
+                                cat_name,
+                                match entry.1 {
+                                    SuggestionDecision::Pending => "pending",
+                                    SuggestionDecision::Accept => "accept",
+                                    SuggestionDecision::Reject => "reject",
+                                }
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(status) = new_status {
+                        self.status = status;
                     }
                     return Ok(false);
                 }
@@ -4389,24 +4434,34 @@ impl App {
                 }
             }
             InputPanelAction::MoveCategoryCursor(delta) => {
-                let total_len = if self.input_panel.as_ref().is_some_and(|panel| {
-                    panel.kind == input_panel::InputPanelKind::EditItem
-                        && panel.focus == input_panel::InputPanelFocus::Categories
-                }) {
-                    2
-                } else {
+                let add_panel_total_len = self.input_panel.as_ref().map_or(0, |panel| {
+                    let suggestion_len = panel.pending_suggestions.len();
                     let cat_len = self.input_panel_visible_category_row_indices().len();
-                    let suggestion_len = self
-                        .input_panel
-                        .as_ref()
-                        .map(|p| p.pending_suggestions.len())
-                        .unwrap_or(0);
                     cat_len + suggestion_len
-                };
+                });
                 if let Some(panel) = &mut self.input_panel {
-                    if total_len > 0 {
+                    if panel.kind == input_panel::InputPanelKind::EditItem {
+                        match panel.focus {
+                            input_panel::InputPanelFocus::Actions => {
+                                let len = 2i64;
+                                let current = panel.action_cursor as i64;
+                                panel.action_cursor =
+                                    ((current + delta as i64).rem_euclid(len)) as usize;
+                            }
+                            input_panel::InputPanelFocus::Suggestions => {
+                                let total_len = panel.pending_suggestions.len();
+                                if total_len > 0 {
+                                    let current = panel.category_cursor as i64;
+                                    let len = total_len as i64;
+                                    panel.category_cursor =
+                                        ((current + delta as i64).rem_euclid(len)) as usize;
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if add_panel_total_len > 0 {
                         let current = panel.category_cursor as i64;
-                        let len = total_len as i64;
+                        let len = add_panel_total_len as i64;
                         let new = ((current + delta as i64).rem_euclid(len)) as usize;
                         panel.category_cursor = new;
                     }

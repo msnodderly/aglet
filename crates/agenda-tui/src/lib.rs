@@ -1654,6 +1654,7 @@ mod tests {
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
         CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
         NameInputContext, OllamaModelPickerState, SectionBorderMode, SlotSortDirection,
+        SuggestionDecision,
         ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
@@ -5594,7 +5595,7 @@ mod tests {
             .expect("focus actions");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
         // Capital S saves from Actions focus
         app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
@@ -20039,7 +20040,7 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
 
         app.handle_key(KeyCode::Char('a'), &agenda)
@@ -20176,7 +20177,7 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
         // Tab from Actions wraps back to Text
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
@@ -20219,13 +20220,96 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
 
-        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
+        assert_eq!(app.input_panel.as_ref().unwrap().action_cursor, 0);
         app.handle_key(KeyCode::Down, &agenda)
             .expect("move to inspect action");
-        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 1);
+        assert_eq!(app.input_panel.as_ref().unwrap().action_cursor, 1);
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("open details from action menu");
         assert!(app.input_panel.as_ref().unwrap().details_popup_open);
+    }
+
+    #[test]
+    fn edit_panel_suggestions_can_be_toggled_before_actions() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Travel".to_string());
+        store.create_category(&category).expect("create category");
+        let item = Item::new("Book flights".to_string());
+        store.create_item(&item).expect("create item");
+
+        store
+            .upsert_suggestion(&ClassificationSuggestion {
+                id: Uuid::new_v4(),
+                item_id: item.id,
+                assignment: CandidateAssignment::Category(category.id),
+                provider_id: "ollama_openai_compat".to_string(),
+                model: Some("mistral".to_string()),
+                confidence: Some(0.9),
+                rationale: Some("trip planning".to_string()),
+                status: SuggestionStatus::Pending,
+                context_hash: "ctx".to_string(),
+                item_revision_hash: "rev".to_string(),
+                created_at: Timestamp::now(),
+                decided_at: None,
+            })
+            .expect("persist suggestion");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("tab to suggestions");
+
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Suggestions
+        );
+
+        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().pending_suggestions[0].1,
+            SuggestionDecision::Pending
+        );
+
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("accept suggestion");
+
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().pending_suggestions[0].1,
+            SuggestionDecision::Accept
+        );
+        assert!(
+            app.status.contains("Suggestion 'Travel': accept"),
+            "status: {}",
+            app.status
+        );
+
+        app.handle_key(KeyCode::Down, &agenda)
+            .expect("move within suggestions");
+        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
     }
 
     #[test]
@@ -20268,7 +20352,7 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
         app.handle_key(KeyCode::Char('I'), &agenda)
             .expect("open details popup");
