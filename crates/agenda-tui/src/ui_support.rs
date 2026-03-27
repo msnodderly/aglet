@@ -320,6 +320,7 @@ pub(super) struct BoardColumnLayout {
     pub(super) marker: usize,
     pub(super) note: usize,
     pub(super) item: usize,
+    #[allow(dead_code)]
     pub(super) item_label: String,
     pub(super) columns: Vec<BoardColumnSpec>,
 }
@@ -631,6 +632,7 @@ pub(super) fn right_pad_cell(text: &str, width: usize) -> String {
 
 /// Format a board header cell label.
 /// Numeric column headers are right-aligned to match numeric value alignment.
+#[allow(dead_code)]
 pub(super) fn format_board_header_cell(
     label: &str,
     heading_value_kind: CategoryValueKind,
