@@ -1883,11 +1883,10 @@ impl App {
                 }
             }
         }
-        let view_item_label = current_view
+        let explicit_item_label = current_view
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
-            .filter(|label| !label.trim().is_empty())
-            .unwrap_or_else(|| "Item".to_string());
+            .filter(|label| !label.trim().is_empty());
         if self.is_horizontal_section_flow() {
             self.render_horizontal_board_lanes(frame, &columns, &category_display_names);
             return;
@@ -1918,12 +1917,19 @@ impl App {
                 .and_then(|f| f.as_deref())
                 .map(|needle| format!("  filter:{needle}"))
                 .unwrap_or_default();
-            let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let title = if filter_suffix.is_empty() {
+                String::new()
+            } else {
+                format!("{}{}", slot.title, filter_suffix)
+            };
             let border_color = if is_selected_slot {
                 Color::Cyan
             } else {
                 Color::Blue
             };
+            let slot_item_label = explicit_item_label
+                .clone()
+                .unwrap_or_else(|| slot.title.clone());
             let (slot_columns_owned, slot_item_column_index) =
                 match (&slot.context, current_view.as_ref()) {
                     (SlotContext::Section { section_index }, Some(view))
@@ -1949,7 +1955,7 @@ impl App {
                     &slot_columns_owned,
                     &self.categories,
                     &category_display_names,
-                    &view_item_label,
+                    &slot_item_label,
                     inner_width,
                 );
                 let mut item_width = layout.item;
@@ -2484,7 +2490,7 @@ impl App {
                                 Cell::from(""),
                                 Cell::from("When"),
                                 Cell::from(""),
-                                Cell::from("Item"),
+                                Cell::from(slot_item_label.clone()),
                                 Cell::from("All Categories"),
                             ])
                             .style(Style::default().add_modifier(Modifier::BOLD)),
