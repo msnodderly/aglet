@@ -11,6 +11,15 @@ const FOOTER_HEIGHT: u16 = 4;
 const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
 const CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC: u16 = 6;
 
+#[derive(Clone, Debug)]
+struct InlineBorderSegment {
+    start: usize,
+    width: usize,
+    text: String,
+    priority: u8,
+    active: bool,
+}
+
 fn clip_text_for_row(
     text: &str,
     cursor: usize,
@@ -78,7 +87,214 @@ fn clip_text_for_row(
     (out, cursor_visible)
 }
 
+fn board_column_offsets(widths: &[usize], spacing: usize) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(widths.len());
+    let mut cursor = 0usize;
+    for (index, width) in widths.iter().copied().enumerate() {
+        offsets.push(cursor);
+        cursor = cursor.saturating_add(width);
+        if index + 1 < widths.len() {
+            cursor = cursor.saturating_add(spacing);
+        }
+    }
+    offsets
+}
+
+fn format_inline_border_segment_text(text: &str, width: usize) -> Option<String> {
+    if width < 2 {
+        return None;
+    }
+    let label = truncate_board_cell(text.trim(), width.saturating_sub(1));
+    if label.trim().is_empty() {
+        return None;
+    }
+    let label_width = label.chars().count();
+    if label_width < width {
+        Some(format!("{label} "))
+    } else {
+        Some(label)
+    }
+}
+
+fn build_segmented_board_border_title(
+    base_label: &str,
+    segments: &[InlineBorderSegment],
+    width: usize,
+) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let mut chars = vec!['─'; width];
+    let mut sorted_segments = segments.to_vec();
+    sorted_segments.sort_by_key(|segment| (segment.priority, segment.start));
+    let mut rendered_ranges: Vec<(usize, usize)> = Vec::new();
+
+    for segment in sorted_segments {
+        if segment.width == 0 || segment.text.trim().is_empty() || segment.start >= width {
+            continue;
+        }
+        let zone_start = segment.start;
+        let zone_end = (segment.start + segment.width).min(width);
+        if zone_end <= zone_start {
+            continue;
+        }
+        let start = zone_start;
+        let end = zone_end;
+        if rendered_ranges
+            .iter()
+            .any(|(existing_start, existing_end)| start < *existing_end && *existing_start < end)
+        {
+            continue;
+        }
+        let Some(display) = format_inline_border_segment_text(&segment.text, end - start) else {
+            continue;
+        };
+        let display_width = display.chars().count();
+        let render_end = (start + display_width).min(width);
+        for (offset, ch) in display.chars().enumerate() {
+            let pos = start + offset;
+            if pos >= width {
+                break;
+            }
+            chars[pos] = ch;
+        }
+        rendered_ranges.push((start, render_end));
+    }
+
+    let title_budget = rendered_ranges
+        .iter()
+        .map(|(start, _)| *start)
+        .min()
+        .map(|start| start.saturating_sub(2))
+        .unwrap_or(width)
+        .min(width);
+    let left_title = truncate_board_cell(base_label, title_budget);
+    for (idx, ch) in left_title.chars().enumerate() {
+        if idx >= width {
+            break;
+        }
+        chars[idx] = ch;
+    }
+
+    chars.into_iter().collect()
+}
+
+fn build_segmented_board_border_title_line(
+    base_label: &str,
+    segments: &[InlineBorderSegment],
+    width: usize,
+    base_style: Style,
+    label_style: Style,
+    active_label_style: Style,
+) -> Line<'static> {
+    let text = build_segmented_board_border_title(base_label, segments, width);
+    let mut chars: Vec<char> = text.chars().collect();
+    let mut styles = vec![base_style; chars.len()];
+
+    let mut sorted_segments = segments.to_vec();
+    sorted_segments.sort_by_key(|segment| (segment.priority, segment.start));
+    let mut rendered_ranges: Vec<(usize, usize)> = Vec::new();
+
+    for segment in sorted_segments {
+        if segment.width == 0 || segment.text.trim().is_empty() || segment.start >= width {
+            continue;
+        }
+        let zone_start = segment.start;
+        let zone_end = (segment.start + segment.width).min(width);
+        if zone_end <= zone_start {
+            continue;
+        }
+        let start = zone_start;
+        let end = zone_end;
+        if rendered_ranges
+            .iter()
+            .any(|(existing_start, existing_end)| start < *existing_end && *existing_start < end)
+        {
+            continue;
+        }
+        let Some(display) = format_inline_border_segment_text(&segment.text, end - start) else {
+            continue;
+        };
+        let display_width = display.chars().count();
+        let render_end = (start + display_width).min(width);
+        for pos in start..render_end.min(styles.len()) {
+            styles[pos] = if segment.active {
+                active_label_style
+            } else {
+                label_style
+            };
+        }
+        rendered_ranges.push((start, render_end));
+    }
+
+    let title_budget = rendered_ranges
+        .iter()
+        .map(|(start, _)| *start)
+        .min()
+        .map(|start| start.saturating_sub(2))
+        .unwrap_or(width)
+        .min(width);
+    let left_title = truncate_board_cell(base_label, title_budget);
+    for idx in 0..left_title.chars().count().min(styles.len()) {
+        styles[idx] = base_style;
+    }
+
+    if chars.is_empty() {
+        return Line::default();
+    }
+
+    let mut spans = Vec::new();
+    let mut current_style = styles[0];
+    let mut current_text = String::new();
+    for (ch, style) in chars.drain(..).zip(styles.into_iter()) {
+        if style == current_style {
+            current_text.push(ch);
+        } else {
+            spans.push(Span::styled(current_text, current_style));
+            current_text = String::new();
+            current_text.push(ch);
+            current_style = style;
+        }
+    }
+    if !current_text.is_empty() {
+        spans.push(Span::styled(current_text, current_style));
+    }
+    Line::from(spans)
+}
+
 impl App {
+    fn inline_border_segment_priority(
+        &self,
+        slot_index: usize,
+        board_column_index: usize,
+        column: SlotSortColumn,
+        item_column_index: usize,
+    ) -> u8 {
+        let is_focused = slot_index == self.slot_index && self.column_index == board_column_index;
+        let is_sorted = self
+            .slot_sort_keys
+            .get(slot_index)
+            .map(|keys| keys.iter().any(|key| key.column == column))
+            .unwrap_or(false);
+        if is_focused {
+            0
+        } else if is_sorted {
+            1
+        } else if board_column_index == item_column_index {
+            2
+        } else {
+            3
+        }
+    }
+
+    fn inline_border_segment_text(
+        &self,
+        label: &str,
+    ) -> String {
+        label.to_string()
+    }
+
     fn list_state_for(area: Rect, selected_line: Option<usize>) -> ListState {
         let mut state = ListState::default().with_selected(selected_line);
         *state.offset_mut() = list_scroll_for_selected_line(area, selected_line) as usize;
@@ -1700,8 +1916,7 @@ impl App {
                 }
                 None
             }
-            InputPanelFocus::When
-            | InputPanelFocus::TypePicker => None,
+            InputPanelFocus::When | InputPanelFocus::TypePicker => None,
         }
     }
 
@@ -1883,11 +2098,10 @@ impl App {
                 }
             }
         }
-        let view_item_label = current_view
+        let explicit_item_label = current_view
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
-            .filter(|label| !label.trim().is_empty())
-            .unwrap_or_else(|| "Item".to_string());
+            .filter(|label| !label.trim().is_empty());
         if self.is_horizontal_section_flow() {
             self.render_horizontal_board_lanes(frame, &columns, &category_display_names);
             return;
@@ -1919,6 +2133,9 @@ impl App {
                 .map(|needle| format!("  filter:{needle}"))
                 .unwrap_or_default();
             let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let slot_item_label = explicit_item_label
+                .clone()
+                .unwrap_or_else(|| slot.title.clone());
             let border_color = if is_selected_slot {
                 Color::Cyan
             } else {
@@ -1949,7 +2166,7 @@ impl App {
                     &slot_columns_owned,
                     &self.categories,
                     &category_display_names,
-                    &view_item_label,
+                    &slot_item_label,
                     inner_width,
                 );
                 let mut item_width = layout.item;
@@ -1972,6 +2189,7 @@ impl App {
                     Constraint::Length(layout.marker.min(u16::MAX as usize) as u16),
                     Constraint::Length(layout.note.min(u16::MAX as usize) as u16),
                 ];
+                let mut column_widths = vec![layout.marker, layout.note];
                 constraints.extend(
                     layout.columns[..item_board_column_index]
                         .iter()
@@ -1979,7 +2197,13 @@ impl App {
                             Constraint::Length(column.width.min(u16::MAX as usize) as u16)
                         }),
                 );
+                column_widths.extend(
+                    layout.columns[..item_board_column_index]
+                        .iter()
+                        .map(|column| column.width),
+                );
                 constraints.push(Constraint::Length(item_width.min(u16::MAX as usize) as u16));
+                column_widths.push(item_width);
                 constraints.extend(
                     layout.columns[item_board_column_index..]
                         .iter()
@@ -1987,34 +2211,94 @@ impl App {
                             Constraint::Length(column.width.min(u16::MAX as usize) as u16)
                         }),
                 );
+                column_widths.extend(
+                    layout.columns[item_board_column_index..]
+                        .iter()
+                        .map(|column| column.width),
+                );
                 if synthetic_categories_width > 0 {
                     constraints.push(Constraint::Length(
                         synthetic_categories_width.min(u16::MAX as usize) as u16,
                     ));
+                    column_widths.push(synthetic_categories_width);
                 }
-                let mut header_cells = vec![Cell::from(String::new()), Cell::from(String::new())];
-                header_cells.extend(layout.columns[..item_board_column_index].iter().map(
-                    |column| {
-                        Cell::from(format_board_header_cell(
-                            &column.label,
-                            column.heading_value_kind,
-                            column.width,
-                        ))
-                    },
-                ));
-                header_cells.push(Cell::from(layout.item_label.clone()));
-                header_cells.extend(layout.columns[item_board_column_index..].iter().map(
-                    |column| {
-                        Cell::from(format_board_header_cell(
-                            &column.label,
-                            column.heading_value_kind,
-                            column.width,
-                        ))
-                    },
-                ));
+                let offsets =
+                    board_column_offsets(&column_widths, BOARD_TABLE_COLUMN_SPACING as usize);
+                let mut border_segments = Vec::new();
+                for (col_idx, column) in layout.columns.iter().enumerate() {
+                    let board_column_index = if col_idx < item_board_column_index {
+                        col_idx
+                    } else {
+                        col_idx + 1
+                    };
+                    let table_col_idx = if col_idx < item_board_column_index {
+                        2 + col_idx
+                    } else {
+                        3 + col_idx
+                    };
+                    border_segments.push(InlineBorderSegment {
+                        start: offsets.get(table_col_idx).copied().unwrap_or(0),
+                        width: column.width,
+                        text: self.inline_border_segment_text(&column.label),
+                        priority: self.inline_border_segment_priority(
+                            slot_index,
+                            board_column_index,
+                            SlotSortColumn::SectionColumn {
+                                heading: column.heading_id,
+                                kind: column.kind,
+                            },
+                            item_board_column_index,
+                        ),
+                        active: slot_index == self.slot_index
+                            && self.column_index == board_column_index,
+                    });
+                }
+                if item_board_column_index > 0 {
+                    border_segments.push(InlineBorderSegment {
+                        start: offsets
+                            .get(2 + item_board_column_index)
+                            .copied()
+                            .unwrap_or(0),
+                        width: item_width,
+                        text: self.inline_border_segment_text(&layout.item_label),
+                        priority: self.inline_border_segment_priority(
+                            slot_index,
+                            item_board_column_index,
+                            SlotSortColumn::ItemText,
+                            item_board_column_index,
+                        ),
+                        active: slot_index == self.slot_index
+                            && self.column_index == item_board_column_index,
+                    });
+                }
                 if synthetic_categories_width > 0 {
-                    header_cells.push(Cell::from("All Categories"));
+                    border_segments.push(InlineBorderSegment {
+                        start: *offsets.last().unwrap_or(&0),
+                        width: synthetic_categories_width,
+                        text: "All Categories".to_string(),
+                        priority: 4,
+                        active: false,
+                    });
                 }
+                let left_border_title = if item_board_column_index > 0 {
+                    if filter_suffix.is_empty() {
+                        format!("({})", slot.items.len())
+                    } else {
+                        format!("({}){}", slot.items.len(), filter_suffix)
+                    }
+                } else {
+                    title.clone()
+                };
+                let border_title = build_segmented_board_border_title_line(
+                    &left_border_title,
+                    &border_segments,
+                    inner_width as usize,
+                    Style::default().fg(border_color),
+                    Style::default().fg(border_color),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                );
 
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
                     let has_filter = self
@@ -2318,13 +2602,9 @@ impl App {
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
-                        .header(
-                            Row::new(header_cells)
-                                .style(Style::default().add_modifier(Modifier::BOLD)),
-                        )
                         .block(
                             Block::default()
-                                .title(title)
+                                .title(border_title)
                                 .borders(Borders::ALL)
                                 .border_style(Style::default().fg(border_color)),
                         ),
@@ -2349,11 +2629,47 @@ impl App {
                 );
             } else {
                 let widths = board_column_widths(inner_width);
+                let legacy_column_widths = vec![
+                    widths.marker,
+                    widths.note,
+                    widths.item,
+                    widths.when,
+                    widths.categories,
+                ];
+                let offsets = board_column_offsets(
+                    &legacy_column_widths,
+                    BOARD_TABLE_COLUMN_SPACING as usize,
+                );
+                let border_title = build_segmented_board_border_title_line(
+                    &title,
+                    &[
+                        InlineBorderSegment {
+                            start: offsets.get(3).copied().unwrap_or(0),
+                            width: widths.when,
+                            text: self.inline_border_segment_text("When"),
+                            priority: 3,
+                            active: slot_index == self.slot_index && self.column_index == 1,
+                        },
+                        InlineBorderSegment {
+                            start: offsets.get(4).copied().unwrap_or(0),
+                            width: widths.categories,
+                            text: self.inline_border_segment_text("All Categories"),
+                            priority: 4,
+                            active: slot_index == self.slot_index && self.column_index == 2,
+                        },
+                    ],
+                    inner_width as usize,
+                    Style::default().fg(border_color),
+                    Style::default().fg(border_color),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                );
                 let constraints = vec![
                     Constraint::Length(widths.marker.min(u16::MAX as usize) as u16),
-                    Constraint::Length(widths.when.min(u16::MAX as usize) as u16),
                     Constraint::Length(widths.note.min(u16::MAX as usize) as u16),
                     Constraint::Length(widths.item.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.when.min(u16::MAX as usize) as u16),
                     Constraint::Length(widths.categories.min(u16::MAX as usize) as u16),
                 ];
                 let rows: Vec<Row<'_>> = if slot.items.is_empty() {
@@ -2373,11 +2689,11 @@ impl App {
                     vec![Row::new(vec![
                         Cell::from(String::new()),
                         Cell::from(String::new()),
-                        Cell::from(String::new()),
                         Cell::from(Span::styled(
                             empty_msg,
                             Style::default().fg(MUTED_TEXT_COLOR),
                         )),
+                        Cell::from(String::new()),
                         Cell::from(String::new()),
                     ])]
                 } else {
@@ -2435,9 +2751,9 @@ impl App {
                                 .max(1);
                             let mut row = Row::new(vec![
                                 Cell::from(marker_cell),
-                                Cell::from(when_text),
                                 Cell::from(note_cell),
                                 Cell::from(item_cell_text),
+                                Cell::from(when_text),
                                 Cell::from(categories_cell_text),
                             ]);
                             if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -2479,19 +2795,9 @@ impl App {
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
-                        .header(
-                            Row::new(vec![
-                                Cell::from(""),
-                                Cell::from("When"),
-                                Cell::from(""),
-                                Cell::from("Item"),
-                                Cell::from("All Categories"),
-                            ])
-                            .style(Style::default().add_modifier(Modifier::BOLD)),
-                        )
                         .block(
                             Block::default()
-                                .title(title)
+                                .title(border_title)
                                 .borders(Borders::ALL)
                                 .border_style(Style::default().fg(border_color)),
                         ),
@@ -3215,96 +3521,95 @@ impl App {
             let mut sugg_lines: Vec<Line<'_>> = Vec::new();
             let mut selected_suggestion_line = Some(0usize);
             for (i, review) in item.suggestions.iter().enumerate() {
-                    let is_selected_suggestion = i == state.suggestion_cursor;
-                    let is_cursor = sugg_focused && is_selected_suggestion;
-                    let marker = if review.accepted { "[x]" } else { "[ ]" };
-                    let marker_color = if review.accepted {
-                        Color::LightGreen
-                    } else {
-                        Color::LightRed
-                    };
-                    let category_name =
-                        candidate_assignment_label(&review.suggestion.assignment, &cat_names);
-                    let provider_label = review
-                        .suggestion
-                        .model
-                        .as_ref()
-                        .map(|model| format!("{}:{model}", review.suggestion.provider_id))
-                        .unwrap_or_else(|| review.suggestion.provider_id.clone());
-                    let confidence_label = review
-                        .suggestion
-                        .confidence
-                        .map(|value| format!("{:.0}%", value * 100.0))
-                        .unwrap_or_else(|| "-".to_string());
-                    let rationale = review
-                        .suggestion
-                        .rationale
-                        .as_deref()
-                        .unwrap_or("text match");
-                    let meta = format!("{provider_label} {confidence_label}");
+                let is_selected_suggestion = i == state.suggestion_cursor;
+                let is_cursor = sugg_focused && is_selected_suggestion;
+                let marker = if review.accepted { "[x]" } else { "[ ]" };
+                let marker_color = if review.accepted {
+                    Color::LightGreen
+                } else {
+                    Color::LightRed
+                };
+                let category_name =
+                    candidate_assignment_label(&review.suggestion.assignment, &cat_names);
+                let provider_label = review
+                    .suggestion
+                    .model
+                    .as_ref()
+                    .map(|model| format!("{}:{model}", review.suggestion.provider_id))
+                    .unwrap_or_else(|| review.suggestion.provider_id.clone());
+                let confidence_label = review
+                    .suggestion
+                    .confidence
+                    .map(|value| format!("{:.0}%", value * 100.0))
+                    .unwrap_or_else(|| "-".to_string());
+                let rationale = review
+                    .suggestion
+                    .rationale
+                    .as_deref()
+                    .unwrap_or("text match");
+                let meta = format!("{provider_label} {confidence_label}");
 
-                    if is_selected_suggestion {
-                        selected_suggestion_line = Some(sugg_lines.len());
-                    }
-                    if is_cursor {
-                        // Cursor row: selected_row_style (Cyan bg + Black fg)
-                        let sel = selected_row_style();
-                        let sel_marker = if review.accepted {
-                            Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .fg(Color::Red)
-                                .bg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD)
-                        };
-                        sugg_lines.push(Line::from(vec![
-                            Span::styled("> ", sel),
-                            Span::styled(marker, sel_marker),
-                            Span::styled(" ", sel),
-                            Span::styled(category_name, sel.add_modifier(Modifier::BOLD)),
-                            Span::styled(
-                                format!("  [{meta}]"),
-                                Style::default().fg(Color::DarkGray).bg(Color::Cyan),
-                            ),
-                        ]));
+                if is_selected_suggestion {
+                    selected_suggestion_line = Some(sugg_lines.len());
+                }
+                if is_cursor {
+                    // Cursor row: selected_row_style (Cyan bg + Black fg)
+                    let sel = selected_row_style();
+                    let sel_marker = if review.accepted {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        sugg_lines.push(Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(marker, Style::default().fg(marker_color)),
-                            Span::raw(" "),
-                            Span::styled(
-                                category_name,
-                                Style::default()
-                                    .fg(Color::White)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(
-                                format!("  [{meta}]"),
-                                Style::default().fg(Color::Gray),
-                            ),
-                        ]));
+                        Style::default()
+                            .fg(Color::Red)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    sugg_lines.push(Line::from(vec![
+                        Span::styled("> ", sel),
+                        Span::styled(marker, sel_marker),
+                        Span::styled(" ", sel),
+                        Span::styled(category_name, sel.add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("  [{meta}]"),
+                            Style::default().fg(Color::DarkGray).bg(Color::Cyan),
+                        ),
+                    ]));
+                } else {
+                    sugg_lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(marker, Style::default().fg(marker_color)),
+                        Span::raw(" "),
+                        Span::styled(
+                            category_name,
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("  [{meta}]"), Style::default().fg(Color::Gray)),
+                    ]));
+                }
+                if is_selected_suggestion {
+                    let reason_prefix = if is_cursor { "    Reason: " } else { "      " };
+                    let wrapped_reason = wrap_text_for_board_cell(rationale, reason_width.max(12));
+                    for (line_index, line) in wrapped_reason.into_iter().enumerate() {
+                        let prefix = if line_index == 0 {
+                            reason_prefix
+                        } else {
+                            "            "
+                        };
+                        let style = if is_cursor {
+                            Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        };
+                        sugg_lines.push(Line::from(Span::styled(format!("{prefix}{line}"), style)));
                     }
-                    if is_selected_suggestion {
-                        let reason_prefix = if is_cursor { "    Reason: " } else { "      " };
-                        let wrapped_reason = wrap_text_for_board_cell(rationale, reason_width.max(12));
-                        for (line_index, line) in wrapped_reason.into_iter().enumerate() {
-                            let prefix = if line_index == 0 { reason_prefix } else { "            " };
-                            let style = if is_cursor {
-                                Style::default().fg(Color::DarkGray).bg(Color::Cyan)
-                            } else {
-                                Style::default().fg(Color::Gray)
-                            };
-                            sugg_lines.push(Line::from(Span::styled(
-                                format!("{prefix}{line}"),
-                                style,
-                            )));
-                        }
-                    }
+                }
             }
-            let sugg_scroll = list_scroll_for_selected_line(detail_chunks[1], selected_suggestion_line);
+            let sugg_scroll =
+                list_scroll_for_selected_line(detail_chunks[1], selected_suggestion_line);
             frame.render_widget(
                 Paragraph::new(sugg_lines).scroll((sugg_scroll, 0)),
                 detail_chunks[1],
@@ -3730,10 +4035,7 @@ impl App {
                     })
                     .unwrap_or(false)
                 {
-                    vec![
-                        ("Enter", "save"),
-                        ("Esc", "close"),
-                    ]
+                    vec![("Enter", "save"), ("Esc", "close")]
                 } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
                 }) {
@@ -3755,11 +4057,7 @@ impl App {
                         ("Esc", "close"),
                     ]
                 } else {
-                    vec![
-                        ("Tab", "next"),
-                        ("Ctrl-G", "$EDITOR"),
-                        ("Esc", "close"),
-                    ]
+                    vec![("Tab", "next"), ("Ctrl-G", "$EDITOR"), ("Esc", "close")]
                 }
             }
             Mode::Normal => {
@@ -4356,7 +4654,6 @@ impl App {
             );
         }
 
-
         // Help row
         let base_help = match panel.focus {
             InputPanelFocus::Text => match panel.kind {
@@ -4366,9 +4663,7 @@ impl App {
                     "Enter natural language or ISO datetime  Enter:save  Esc:close"
                 }
                 InputPanelKind::CategoryCreate => "Type name  Enter/Esc:save  Tab:next",
-                InputPanelKind::EditItem => {
-                    "Type title  Enter/Esc:save and close  Tab:when"
-                }
+                InputPanelKind::EditItem => "Type title  Enter/Esc:save and close  Tab:when",
                 InputPanelKind::AddItem => "Type title  Enter/Esc:save  Tab:when",
             },
             InputPanelFocus::Note => {

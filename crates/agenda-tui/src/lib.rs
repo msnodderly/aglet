@@ -5812,8 +5812,7 @@ mod tests {
             semantic_candidates_queued_review: 0,
             semantic_candidates_skipped_already_assigned: 2,
             semantic_debug_messages: vec![
-                "semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0"
-                    .to_string(),
+                "semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0".to_string(),
             ],
             ..ProcessItemResult::default()
         };
@@ -5839,8 +5838,7 @@ mod tests {
             ..ProcessItemResult::default()
         };
 
-        let feedback = app
-            .classification_feedback_for_saved_item(item_id, &result);
+        let feedback = app.classification_feedback_for_saved_item(item_id, &result);
         assert!(feedback.is_some());
         let (msg, _) = feedback.unwrap();
         assert!(
@@ -8098,7 +8096,10 @@ mod tests {
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("open ollama base url input");
         assert_eq!(app.mode, Mode::InputPanel);
-        assert_eq!(app.name_input_context, Some(NameInputContext::OllamaBaseUrl));
+        assert_eq!(
+            app.name_input_context,
+            Some(NameInputContext::OllamaBaseUrl)
+        );
         for _ in 0.."old".len() {
             app.handle_key(KeyCode::Backspace, &agenda)
                 .expect("clear old base url");
@@ -10813,8 +10814,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir()
-            .join(format!("agenda-tui-category-create-panel-esc-save-{nanos}.ag"));
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-category-create-panel-esc-save-{nanos}.ag"
+        ));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -12446,9 +12448,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        let db_path = std::env::temp_dir().join(format!(
-            "agenda-tui-category-semantic-toggle-{nanos}.ag"
-        ));
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-category-semantic-toggle-{nanos}.ag"));
         let store = Store::open(&db_path).expect("open temp db");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -14949,6 +14950,363 @@ mod tests {
         assert!(
             !rendered.contains("Complexity"),
             "board header should prefer alias over canonical heading: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_legacy_column_labels_render_in_top_border() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-legacy-inline-border-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let item = Item::new("Verify Death Star".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Death Star".to_string(),
+            criteria: Query::default(),
+            columns: vec![],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(96, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let border_line = lines
+            .iter()
+            .find(|line| line.contains("Death Star (1)"))
+            .expect("top border should include section title");
+        assert!(
+            border_line.contains("When"),
+            "top border should include the When label: {border_line}"
+        );
+        assert!(
+            border_line.contains("All Categories"),
+            "top border should include the categories label: {border_line}"
+        );
+        assert!(
+            !lines.iter().any(|line| {
+                line.starts_with('│')
+                    && line.contains("When")
+                    && line.contains("All Categories")
+                    && !line.contains("Verify Death Star")
+            }),
+            "legacy board should not render a separate header row: {}",
+            lines.join("\n")
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_dynamic_column_labels_render_in_top_border() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-dynamic-inline-border-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let when_id = store
+            .get_hierarchy()
+            .expect("hierarchy")
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .expect("reserved When")
+            .id;
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+
+        let mut completed = Category::new("Completed".to_string());
+        completed.parent = Some(status.id);
+        store.create_category(&completed).expect("create completed");
+
+        let item = Item::new("Verify Death Star".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, completed.id, Some("test:assign".to_string()))
+            .expect("assign completed");
+
+        let mut view = View::new("Board".to_string());
+        view.category_aliases.insert(status.id, "Done".to_string());
+        view.sections.push(Section {
+            title: "Death Star".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::When,
+                    heading: when_id,
+                    width: 12,
+                    summary_fn: None,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: status.id,
+                    width: 10,
+                    summary_fn: None,
+                },
+            ],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(90, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let border_line = lines
+            .iter()
+            .find(|line| line.contains("Death Star (1)"))
+            .expect("top border should include section title");
+        assert!(
+            border_line.contains("When"),
+            "top border should include the When label: {border_line}"
+        );
+        assert!(
+            border_line.contains("Done"),
+            "top border should include the aliased status label: {border_line}"
+        );
+        assert!(
+            !lines.iter().any(|line| {
+                line.starts_with('│')
+                    && line.contains("When")
+                    && line.contains("Done")
+                    && !line.contains("Verify Death Star")
+            }),
+            "dynamic board should not render a separate header row: {}",
+            lines.join("\n")
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_inline_border_keeps_adjacent_labels_visibly_separated() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-inline-border-spacing-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut complexity = Category::new("Complexity".to_string());
+        complexity.value_kind = CategoryValueKind::Numeric;
+        store
+            .create_category(&complexity)
+            .expect("create complexity");
+
+        let mut issue_type = Category::new("Issue type".to_string());
+        issue_type.is_exclusive = true;
+        store.create_category(&issue_type).expect("create issue type");
+        let mut bug = Category::new("Bug".to_string());
+        bug.parent = Some(issue_type.id);
+        store.create_category(&bug).expect("create bug");
+
+        let item = Item::new("Border spacing".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, bug.id, Some("test:assign".to_string()))
+            .expect("assign bug");
+        agenda
+            .assign_item_numeric_manual(
+                item.id,
+                complexity.id,
+                rust_decimal::Decimal::new(5, 0),
+                Some("test:assign".to_string()),
+            )
+            .expect("assign complexity");
+
+        let mut view = View::new("Board".to_string());
+        view.category_aliases
+            .insert(complexity.id, "Points".to_string());
+        view.sections.push(Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: complexity.id,
+                    width: 8,
+                    summary_fn: None,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: issue_type.id,
+                    width: 12,
+                    summary_fn: None,
+                },
+            ],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(52, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let border_line = lines
+            .iter()
+            .find(|line| line.contains("Points") && line.contains("Issue type"))
+            .expect("top border should include adjacent labels");
+        let points_index = border_line.find("Points").expect("points label");
+        let issue_index = border_line.find("Issue type").expect("issue type label");
+        assert!(
+            issue_index > points_index + "Points".len(),
+            "labels should not overlap: {border_line}"
+        );
+        let gap = &border_line[points_index + "Points".len()..issue_index];
+        assert!(
+            gap.chars().any(|ch| ch.is_whitespace()),
+            "adjacent labels should have visible spacing: {border_line}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn board_inline_border_shows_item_label_when_item_column_is_reordered() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-board-inline-border-item-label-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let when_id = store
+            .get_hierarchy()
+            .expect("hierarchy")
+            .into_iter()
+            .find(|category| category.name.eq_ignore_ascii_case("When"))
+            .expect("reserved When")
+            .id;
+
+        let mut status = Category::new("Status".to_string());
+        status.is_exclusive = true;
+        store.create_category(&status).expect("create status");
+        let mut completed = Category::new("Completed".to_string());
+        completed.parent = Some(status.id);
+        store.create_category(&completed).expect("create completed");
+
+        let item = Item::new("Reordered item".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, completed.id, Some("test:assign".to_string()))
+            .expect("assign completed");
+
+        let mut view = View::new("Board".to_string());
+        view.item_column_label = Some("Task".to_string());
+        view.category_aliases.insert(status.id, "Done".to_string());
+        view.sections.push(Section {
+            title: "Ready".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::When,
+                    heading: when_id,
+                    width: 12,
+                    summary_fn: None,
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: status.id,
+                    width: 10,
+                    summary_fn: None,
+                },
+            ],
+            item_column_index: 1,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        let backend = TestBackend::new(84, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let border_line = lines
+            .iter()
+            .find(|line| line.contains("When") && line.contains("Task") && line.contains("Done"))
+            .expect("top border should include reordered item label");
+        let when_index = border_line.find("When").expect("when label");
+        let task_index = border_line.find("Task").expect("task label");
+        let done_index = border_line.find("Done").expect("done label");
+        assert!(
+            when_index < task_index && task_index < done_index,
+            "item label should render in the reordered slot: {border_line}"
         );
 
         let _ = std::fs::remove_file(&db_path);
@@ -19399,8 +19757,7 @@ mod tests {
         }
 
         // Esc auto-saves (triggers validation)
-        app.handle_key(KeyCode::Esc, &agenda)
-            .expect("attempt save");
+        app.handle_key(KeyCode::Esc, &agenda).expect("attempt save");
 
         // Panel should still be open with error
         assert_eq!(app.mode, Mode::InputPanel);
