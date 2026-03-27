@@ -2433,11 +2433,7 @@ impl App {
                         }
                     }
                     if submitted > 0 {
-                        let item_word =
-                            if submitted == 1 { "item" } else { "items" };
-                        self.status = format!(
-                            "Classifying {submitted} {item_word} in background…"
-                        );
+                        // No status message needed — footer shows [classifying N…]
                     } else if skipped > 0 {
                         self.status =
                             "Already classifying selected items".to_string();
@@ -4303,14 +4299,14 @@ impl App {
         // Create item (parses When, applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
         let reference_date = jiff::Zoned::now().date();
-        let mut process_result = agenda.create_item_with_reference_date(&item, reference_date)?;
+        let mut process_result = agenda.create_item_cheap(&item, reference_date)?;
 
         // Set note if provided.
         if note.is_some() {
             let mut loaded = agenda.store().get_item(item.id)?;
             loaded.note = note;
             loaded.modified_at = Timestamp::now();
-            let note_update_result = agenda.update_item_with_reference_date(&loaded, reference_date)?;
+            let note_update_result = agenda.update_item_cheap(&loaded, reference_date)?;
             process_result
                 .new_assignments
                 .extend(note_update_result.new_assignments);
@@ -4504,7 +4500,7 @@ impl App {
         item.note = updated_note;
         item.modified_at = Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
-        let process_result = agenda.update_item_with_reference_date(&item, reference_date)?;
+        let process_result = agenda.update_item_cheap(&item, reference_date)?;
 
         // Apply when-date change.
         if let Some(new_when) = parsed_when {

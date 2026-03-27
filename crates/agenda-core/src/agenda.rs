@@ -105,6 +105,20 @@ impl<'a> Agenda<'a> {
         self.process_item_save(item_to_create.id, reference_date, true)
     }
 
+    /// Like `create_item_with_reference_date` but skips expensive providers
+    /// (Ollama). Callers are expected to submit background classification
+    /// separately for the semantic/LLM path.
+    pub fn create_item_cheap(
+        &self,
+        item: &Item,
+        reference_date: jiff::civil::Date,
+    ) -> Result<ProcessItemResult> {
+        let item_to_create = item.clone();
+        self.store.create_item(&item_to_create)?;
+        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, None)?;
+        self.process_item_save_cheap(item_to_create.id, reference_date, true)
+    }
+
     pub fn update_item(&self, item: &Item) -> Result<ProcessItemResult> {
         self.update_item_with_reference_date(item, jiff::Zoned::now().date())
     }
@@ -114,12 +128,36 @@ impl<'a> Agenda<'a> {
         item: &Item,
         reference_date: jiff::civil::Date,
     ) -> Result<ProcessItemResult> {
+        self.update_item_inner(item, reference_date, true)
+    }
+
+    /// Like `update_item_with_reference_date` but skips expensive providers
+    /// (Ollama). Callers are expected to submit background classification
+    /// separately for the semantic/LLM path.
+    pub fn update_item_cheap(
+        &self,
+        item: &Item,
+        reference_date: jiff::civil::Date,
+    ) -> Result<ProcessItemResult> {
+        self.update_item_inner(item, reference_date, false)
+    }
+
+    fn update_item_inner(
+        &self,
+        item: &Item,
+        reference_date: jiff::civil::Date,
+        include_semantic: bool,
+    ) -> Result<ProcessItemResult> {
         let item_to_update = item.clone();
         let existing = self.store.get_item(item.id)?;
         let text_changed = item_to_update.text != existing.text;
         self.store.update_item(&item_to_update)?;
         self.sync_when_assignment(item_to_update.id, item_to_update.when_date, None)?;
-        self.process_item_save(item_to_update.id, reference_date, text_changed)
+        if include_semantic {
+            self.process_item_save(item_to_update.id, reference_date, text_changed)
+        } else {
+            self.process_item_save_cheap(item_to_update.id, reference_date, text_changed)
+        }
     }
 
     pub fn set_item_when_date(
@@ -798,13 +836,37 @@ impl<'a> Agenda<'a> {
         reference_date: jiff::civil::Date,
         text_changed: bool,
     ) -> Result<ProcessItemResult> {
+        self.process_item_save_inner(item_id, reference_date, text_changed, true)
+    }
+
+    /// Like `process_item_save` but excludes expensive (semantic/Ollama) providers.
+    fn process_item_save_cheap(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+        text_changed: bool,
+    ) -> Result<ProcessItemResult> {
+        self.process_item_save_inner(item_id, reference_date, text_changed, false)
+    }
+
+    fn process_item_save_inner(
+        &self,
+        item_id: ItemId,
+        reference_date: jiff::civil::Date,
+        text_changed: bool,
+        include_semantic: bool,
+    ) -> Result<ProcessItemResult> {
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
         if !cfg.should_run_continuously() || !cfg.run_on_item_save {
             return self.process_cascades(item_id);
         }
 
-        let service = self.classification_service(reference_date, &cfg, text_changed);
+        let service = if include_semantic {
+            self.classification_service(reference_date, &cfg, text_changed)
+        } else {
+            self.classification_service_cheap(reference_date, &cfg, text_changed)
+        };
         if !service.has_providers() {
             return self.process_cascades(item_id);
         }
@@ -938,6 +1000,25 @@ impl<'a> Agenda<'a> {
         cfg: &'b ClassificationConfig,
         allow_when_parser: bool,
     ) -> ClassificationService<'b> {
+        self.classification_service_inner(reference_date, cfg, allow_when_parser, true)
+    }
+
+    fn classification_service_cheap<'b>(
+        &'b self,
+        reference_date: jiff::civil::Date,
+        cfg: &'b ClassificationConfig,
+        allow_when_parser: bool,
+    ) -> ClassificationService<'b> {
+        self.classification_service_inner(reference_date, cfg, allow_when_parser, false)
+    }
+
+    fn classification_service_inner<'b>(
+        &'b self,
+        reference_date: jiff::civil::Date,
+        cfg: &'b ClassificationConfig,
+        allow_when_parser: bool,
+        include_semantic: bool,
+    ) -> ClassificationService<'b> {
         let mut providers = Vec::new();
         if cfg.literal_mode != LiteralClassificationMode::Off
             && cfg.provider_enabled(PROVIDER_ID_IMPLICIT_STRING)
@@ -955,7 +1036,8 @@ impl<'a> Agenda<'a> {
                 reference_date,
             }) as _);
         }
-        if cfg.semantic_mode == SemanticClassificationMode::SuggestReview
+        if include_semantic
+            && cfg.semantic_mode == SemanticClassificationMode::SuggestReview
             && cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
             && cfg.ollama.enabled
         {
