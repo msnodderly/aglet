@@ -4365,9 +4365,11 @@ impl App {
                 InputPanelKind::WhenDate => {
                     "Enter natural language or ISO datetime  Enter:save  Esc:close"
                 }
-                InputPanelKind::CategoryCreate => "Type name  Tab:next  Esc:close",
-                InputPanelKind::EditItem => "Type title  Tab:when  Esc:save and close",
-                InputPanelKind::AddItem => "Type title  Tab:when  Esc:close",
+                InputPanelKind::CategoryCreate => "Type name  Enter/Esc:save  Tab:next",
+                InputPanelKind::EditItem => {
+                    "Type title  Enter/Esc:save and close  Tab:when"
+                }
+                InputPanelKind::AddItem => "Type title  Enter/Esc:save  Tab:when",
             },
             InputPanelFocus::Note => {
                 "Type note  Enter:new line  Tab:categories  Esc:save and close"
@@ -4384,7 +4386,7 @@ impl App {
             }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
             InputPanelFocus::When => {
-                "When date (today, tomorrow, 2026-03-25, …)  Tab:note  Esc:save and close"
+                "When date (today, tomorrow, 2026-03-25, …)  Enter/Esc:save  Tab:note"
             }
         };
         let mut help_style = Style::default();

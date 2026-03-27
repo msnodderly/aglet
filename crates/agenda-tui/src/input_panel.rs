@@ -375,11 +375,12 @@ impl InputPanel {
                 Some(InputPanelAction::Save)
             }
             // Single-value editors: Enter from text field saves directly.
+            // Enter saves from single-line text fields (not Note, which inserts a newline).
             KeyCode::Enter
-                if (self.kind == InputPanelKind::NumericValue
-                    || self.kind == InputPanelKind::NameInput
-                    || self.kind == InputPanelKind::WhenDate)
-                    && self.focus == InputPanelFocus::Text =>
+                if matches!(
+                    self.focus,
+                    InputPanelFocus::Text | InputPanelFocus::When
+                ) =>
             {
                 Some(InputPanelAction::Save)
             }
@@ -701,11 +702,11 @@ mod tests {
 
 
     #[test]
-    fn enter_in_text_focus_not_consumed() {
+    fn enter_in_text_focus_saves() {
         let mut p = add_panel();
         p.focus = InputPanelFocus::Text;
         let action = p.handle_key(KeyCode::Enter, false);
-        assert_eq!(action, InputPanelAction::Unhandled);
+        assert_eq!(action, InputPanelAction::Save);
     }
 
     #[test]
