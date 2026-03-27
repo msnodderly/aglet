@@ -697,6 +697,7 @@ enum WorkflowRolePickerOrigin {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum GlobalSettingsRow {
     AutoRefresh,
+    SectionBorders,
     LiteralClassificationMode,
     SemanticClassificationMode,
     OllamaEnabled,
@@ -709,19 +710,20 @@ enum GlobalSettingsRow {
 
 impl GlobalSettingsRow {
     fn count() -> usize {
-        9
+        10
     }
 
     fn from_index(index: usize) -> Self {
         match index {
             0 => Self::AutoRefresh,
-            1 => Self::LiteralClassificationMode,
-            2 => Self::SemanticClassificationMode,
-            3 => Self::OllamaEnabled,
-            4 => Self::OllamaBaseUrl,
-            5 => Self::OllamaModel,
-            6 => Self::OllamaTimeout,
-            7 => Self::WorkflowReady,
+            1 => Self::SectionBorders,
+            2 => Self::LiteralClassificationMode,
+            3 => Self::SemanticClassificationMode,
+            4 => Self::OllamaEnabled,
+            5 => Self::OllamaBaseUrl,
+            6 => Self::OllamaModel,
+            7 => Self::OllamaTimeout,
+            8 => Self::WorkflowReady,
             _ => Self::WorkflowClaim,
         }
     }
@@ -1019,6 +1021,44 @@ impl AutoRefreshInterval {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SectionBorderMode {
+    Full,
+    Compact,
+}
+
+impl SectionBorderMode {
+    fn next(self) -> Self {
+        match self {
+            Self::Full => Self::Compact,
+            Self::Compact => Self::Full,
+        }
+    }
+
+    fn prev(self) -> Self {
+        self.next()
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+        }
+    }
+
+    fn persisted_value(self) -> &'static str {
+        self.label()
+    }
+
+    fn from_persisted_value(value: &str) -> Option<Self> {
+        match value {
+            "full" => Some(Self::Full),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TransientStatus {
     message: String,
@@ -1255,6 +1295,7 @@ struct App {
     batch_delete_item_ids: Option<Vec<ItemId>>,
     board_pending_delete_column_label: Option<String>,
     auto_refresh_interval: AutoRefreshInterval,
+    section_border_mode: SectionBorderMode,
     auto_refresh_last_tick: Instant,
     transient_status: Option<TransientStatus>,
     current_key_modifiers: KeyModifiers,
@@ -1337,6 +1378,7 @@ impl Default for App {
             batch_delete_item_ids: None,
             board_pending_delete_column_label: None,
             auto_refresh_interval: AutoRefreshInterval::Off,
+            section_border_mode: SectionBorderMode::Full,
             auto_refresh_last_tick: Instant::now(),
             transient_status: None,
             current_key_modifiers: KeyModifiers::NONE,
@@ -1604,8 +1646,8 @@ mod tests {
         CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
         CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
-        NameInputContext, OllamaModelPickerState, SlotSortDirection, ViewAssignRow,
-        ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
+        NameInputContext, OllamaModelPickerState, SectionBorderMode, SlotSortDirection,
+        ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::classification::{
@@ -7378,6 +7420,51 @@ mod tests {
     }
 
     #[test]
+    fn global_settings_section_borders_row_cycles_mode_with_keys() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+
+        assert_eq!(app.section_border_mode, SectionBorderMode::Full);
+
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        assert_eq!(app.mode, Mode::GlobalSettings);
+
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("move to section borders");
+        assert_eq!(
+            app.global_settings_selected_kind(),
+            GlobalSettingsRow::SectionBorders
+        );
+
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("enter -> compact");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
+        assert_eq!(app.section_border_mode_label(), "compact");
+
+        app.handle_key(KeyCode::Right, &agenda)
+            .expect("right -> full");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Full);
+        assert_eq!(app.section_border_mode_label(), "full");
+
+        app.handle_key(KeyCode::Left, &agenda)
+            .expect("left -> compact");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
+        assert_eq!(app.section_border_mode_label(), "compact");
+
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("space -> full");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Full);
+        assert_eq!(app.section_border_mode_label(), "full");
+    }
+
+    #[test]
     fn auto_refresh_interval_persists_across_app_instances_for_same_db() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -7418,6 +7505,45 @@ mod tests {
     }
 
     #[test]
+    fn section_border_mode_persists_across_app_instances_for_same_db() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-section-borders-persist-roundtrip-{nanos}.ag"
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('g'), &agenda)
+            .expect("g prefix should start");
+        app.handle_normal_key(KeyCode::Char('s'), &agenda)
+            .expect("gs should open global settings");
+        app.handle_key(KeyCode::Char('j'), &agenda)
+            .expect("move to section borders");
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("enter should persist compact mode");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
+
+        let mut reopened_app = App::default();
+        reopened_app
+            .refresh(&store)
+            .expect("refresh app after reopen");
+        reopened_app
+            .load_section_border_mode(&store)
+            .expect("load persisted border mode");
+        assert_eq!(reopened_app.section_border_mode, SectionBorderMode::Compact);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn load_auto_refresh_interval_falls_back_to_off_for_missing_or_invalid_values() {
         let store = Store::open_memory().expect("memory store");
         let mut app = App::default();
@@ -7434,6 +7560,25 @@ mod tests {
         app.load_auto_refresh_interval(&store)
             .expect("invalid setting should load");
         assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
+    }
+
+    #[test]
+    fn load_section_border_mode_falls_back_to_full_for_missing_or_invalid_values() {
+        let store = Store::open_memory().expect("memory store");
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+
+        app.load_section_border_mode(&store)
+            .expect("missing setting should load");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Full);
+
+        store
+            .set_app_setting("tui.section_border_mode", "unexpected")
+            .expect("write invalid setting");
+        app.section_border_mode = SectionBorderMode::Compact;
+        app.load_section_border_mode(&store)
+            .expect("invalid setting should load");
+        assert_eq!(app.section_border_mode, SectionBorderMode::Full);
     }
 
     #[test]
@@ -7472,7 +7617,7 @@ mod tests {
             "toast should clear on next key: {rendered}"
         );
         assert!(
-            rendered.contains("Ready | Auto-refresh:1s"),
+            rendered.contains("Ready"),
             "footer should fall back to persistent status after toast clears: {rendered}"
         );
     }
@@ -7499,8 +7644,8 @@ mod tests {
             "toast should disappear after timeout: {rendered}"
         );
         assert!(
-            rendered.contains("Ready | Auto-refresh:1s"),
-            "footer should retain persistent indicator after timeout: {rendered}"
+            rendered.contains("Ready"),
+            "footer should retain persistent status after timeout: {rendered}"
         );
     }
 
@@ -7576,7 +7721,7 @@ mod tests {
     }
 
     #[test]
-    fn footer_shows_auto_refresh_mode_indicator() {
+    fn footer_omits_auto_refresh_mode_indicator() {
         let mut app = App {
             auto_refresh_interval: AutoRefreshInterval::FiveSeconds,
             status: "Ready".to_string(),
@@ -7589,9 +7734,110 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Auto-refresh:5s"),
-            "footer should include auto-refresh mode indicator: {rendered}"
+            !rendered.contains("Auto-refresh:5s"),
+            "footer should not include auto-refresh mode indicator: {rendered}"
         );
+    }
+
+    #[test]
+    fn compact_section_borders_remove_vertical_box_edges_in_main_view() {
+        let (store, db_path) = make_two_section_store("compact-section-borders");
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_view_selection_by_name("TestView");
+        app.refresh(&store).expect("refresh test view");
+        app.section_border_mode = SectionBorderMode::Compact;
+
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("render app");
+        let lines = terminal_buffer_lines(&terminal);
+
+        let work_line = lines
+            .iter()
+            .find(|line| line.contains("Fix timeout bug"))
+            .expect("work item line should render");
+        let personal_line = lines
+            .iter()
+            .find(|line| line.contains("Buy groceries"))
+            .expect("personal item line should render");
+
+        assert!(
+            !work_line.contains('│'),
+            "compact mode should remove vertical section borders from item rows: {work_line}"
+        );
+        assert!(
+            !personal_line.contains('│'),
+            "compact mode should remove vertical section borders from item rows: {personal_line}"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn compact_section_borders_keep_column_headers_in_top_border() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "agenda-tui-compact-inline-border-headers-{nanos}-{}.ag",
+            std::process::id()
+        ));
+        let store = Store::open(&db_path).expect("open temp db");
+
+        let item = Item::new("Verify Death Star".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Death Star".to_string(),
+            criteria: Query::default(),
+            columns: vec![],
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+        app.section_border_mode = SectionBorderMode::Compact;
+
+        let backend = TestBackend::new(96, 14);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| app.draw(frame))
+            .expect("render board");
+
+        let lines = terminal_buffer_lines(&terminal);
+        let border_line = lines
+            .iter()
+            .find(|line| line.contains("Death Star (1)"))
+            .expect("top border should include section title");
+        assert!(
+            border_line.contains("When"),
+            "compact top border should include the When label: {border_line}"
+        );
+        assert!(
+            border_line.contains("All Categories"),
+            "compact top border should include the categories label: {border_line}"
+        );
+        assert!(
+            !lines.iter().any(|line| {
+                line.contains("When")
+                    && line.contains("All Categories")
+                    && !line.contains("Death Star (1)")
+            }),
+            "compact mode should not render a separate header row: {}",
+            lines.join("\n")
+        );
+
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]

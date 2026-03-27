@@ -288,10 +288,7 @@ impl App {
         }
     }
 
-    fn inline_border_segment_text(
-        &self,
-        label: &str,
-    ) -> String {
+    fn inline_border_segment_text(&self, label: &str) -> String {
         label.to_string()
     }
 
@@ -2059,6 +2056,31 @@ impl App {
         }
     }
 
+    fn board_section_borders(&self) -> Borders {
+        match self.section_border_mode {
+            SectionBorderMode::Full => Borders::ALL,
+            SectionBorderMode::Compact => Borders::TOP,
+        }
+    }
+
+    fn board_section_block<'a>(&self, title: String, border_color: Color) -> Block<'a> {
+        Block::default()
+            .title(title)
+            .borders(self.board_section_borders())
+            .border_style(Style::default().fg(border_color))
+    }
+
+    fn board_section_block_with_line(
+        &self,
+        title: Line<'static>,
+        border_color: Color,
+    ) -> Block<'static> {
+        Block::default()
+            .title(title)
+            .borders(self.board_section_borders())
+            .border_style(Style::default().fg(border_color))
+    }
+
     pub(crate) fn render_board_columns(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         if self.slots.is_empty() {
             frame.render_widget(
@@ -2120,7 +2142,6 @@ impl App {
                     .unwrap_or(BoardDisplayMode::SingleLine),
             };
             let is_selected_slot = slot_index == self.slot_index;
-            let inner_width = columns[slot_index].width.saturating_sub(2);
             let selected_row = if is_selected_slot && !slot.items.is_empty() {
                 Some(self.item_index.min(slot.items.len().saturating_sub(1)))
             } else {
@@ -2141,6 +2162,8 @@ impl App {
             } else {
                 Color::Blue
             };
+            let slot_block = self.board_section_block(title.clone(), border_color);
+            let inner_width = slot_block.inner(columns[slot_index]).width;
             let (slot_columns_owned, slot_item_column_index) =
                 match (&slot.context, current_view.as_ref()) {
                     (SlotContext::Section { section_index }, Some(view))
@@ -2255,10 +2278,7 @@ impl App {
                 }
                 if item_board_column_index > 0 {
                     border_segments.push(InlineBorderSegment {
-                        start: offsets
-                            .get(2 + item_board_column_index)
-                            .copied()
-                            .unwrap_or(0),
+                        start: offsets.get(2 + item_board_column_index).copied().unwrap_or(0),
                         width: item_width,
                         text: self.inline_border_segment_text(&layout.item_label),
                         priority: self.inline_border_segment_priority(
@@ -2602,12 +2622,7 @@ impl App {
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
-                        .block(
-                            Block::default()
-                                .title(border_title)
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(border_color)),
-                        ),
+                        .block(self.board_section_block_with_line(border_title, border_color)),
                     table_area,
                     &mut state,
                 );
@@ -2636,10 +2651,8 @@ impl App {
                     widths.when,
                     widths.categories,
                 ];
-                let offsets = board_column_offsets(
-                    &legacy_column_widths,
-                    BOARD_TABLE_COLUMN_SPACING as usize,
-                );
+                let offsets =
+                    board_column_offsets(&legacy_column_widths, BOARD_TABLE_COLUMN_SPACING as usize);
                 let border_title = build_segmented_board_border_title_line(
                     &title,
                     &[
@@ -2795,12 +2808,7 @@ impl App {
                 frame.render_stateful_widget(
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
-                        .block(
-                            Block::default()
-                                .title(border_title)
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(border_color)),
-                        ),
+                        .block(self.board_section_block_with_line(border_title, border_color)),
                     columns[slot_index],
                     &mut state,
                 );
@@ -2848,8 +2856,9 @@ impl App {
             } else {
                 Color::Blue
             };
+            let block = self.board_section_block(title.clone(), border_color);
             let effective_display_mode = self.effective_board_display_mode_for_slot(slot);
-            let card_width = slot_area.width.saturating_sub(4) as usize;
+            let card_width = block.inner(slot_area).width.saturating_sub(2) as usize;
 
             if slot.items.is_empty() {
                 let has_filter = self
@@ -2891,10 +2900,6 @@ impl App {
                         )),
                     ]
                 };
-                let block = Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(border_color));
                 let inner = block.inner(slot_area);
                 frame.render_widget(block, slot_area);
                 let content_height = empty_lines.len() as u16;
@@ -3044,12 +3049,7 @@ impl App {
 
             frame.render_stateful_widget(
                 List::new(cards)
-                    .block(
-                        Block::default()
-                            .title(title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(border_color)),
-                    )
+                    .block(block)
                     .highlight_style(selected_board_row_style())
                     .highlight_symbol("> ")
                     .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
@@ -3624,11 +3624,7 @@ impl App {
     }
 
     pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
-        let status = format!(
-            "{} | Auto-refresh:{}",
-            self.footer_status_text(),
-            self.auto_refresh_mode_label()
-        );
+        let status = self.footer_status_text();
         let hint_pairs = self.footer_hint_pairs();
         // Build width-aware hint line with styled key:desc spans
         let available = width.saturating_sub(4) as usize; // borders + padding
@@ -5068,6 +5064,10 @@ impl App {
             ListItem::new(Line::from(format!(
                 "Auto-refresh        < {} >",
                 self.auto_refresh_mode_label()
+            ))),
+            ListItem::new(Line::from(format!(
+                "Section borders     < {} >",
+                self.section_border_mode_label()
             ))),
             ListItem::new(Line::from(format!(
                 "Literal classify    < {} >",
