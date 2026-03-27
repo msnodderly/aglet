@@ -8,7 +8,7 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm_0
 crossterm = "0.28"
 agenda-core = { path = "../agenda-core" }
 jiff = "0.2"
-tui_textarea = { package = "tui-textarea-2", version = "0.10.0", default-features = false, features = ["crossterm_0_28"] }
+tui_textarea = { package = "tui-textarea-2", version = "0.10.2", default-features = false, features = ["crossterm_0_28"] }
 rust_decimal = "1"
 shlex = "1"
 tempfile = "3"

@@ -205,7 +205,6 @@ impl App {
             parent_id,
             &parent_label,
         ));
-        self.input_panel_discard_confirm = false;
         // CategoryCreate uses InputPanel; clear any stale inline action first.
         self.set_category_manager_inline_action(None);
         self.name_input_context = Some(NameInputContext::CategoryCreate);

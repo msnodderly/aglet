@@ -34,8 +34,6 @@ pub(crate) enum InputPanelFocus {
     Categories,
     /// Tag/Numeric toggle (CategoryCreate only).
     TypePicker,
-    SaveButton,
-    CancelButton,
 }
 
 /// Action returned by InputPanel::handle_key. The caller interprets each action.
@@ -49,10 +47,8 @@ pub(crate) enum InputPanelAction {
     ToggleCategory,
     /// Move the category cursor by a delta.
     MoveCategoryCursor(i32),
-    /// Save / submit the panel contents.
+    /// Save / submit the panel contents (also triggered by Esc for auto-save).
     Save,
-    /// Cancel / discard.
-    Cancel,
     /// Toggle the value kind between Tag/Numeric (CategoryCreate).
     ToggleType,
     /// A text key was consumed internally.
@@ -349,8 +345,6 @@ impl InputPanel {
                 self.handle_categories_focus(code, current_row_is_assigned_numeric)
             }
             InputPanelFocus::TypePicker => self.handle_type_picker_focus(code),
-            InputPanelFocus::SaveButton => self.handle_save_button(code),
-            InputPanelFocus::CancelButton => self.handle_cancel_button(code),
         }
     }
 
@@ -368,7 +362,8 @@ impl InputPanel {
                 self.cycle_focus_backward();
                 Some(InputPanelAction::FocusPrev)
             }
-            KeyCode::Esc => Some(InputPanelAction::Cancel),
+            // Esc auto-saves everywhere (caller handles empty-text as cancel)
+            KeyCode::Esc => Some(InputPanelAction::Save),
             // Capital S saves only when not editing text fields or numeric value buffers
             KeyCode::Char('S')
                 if !(matches!(
@@ -442,19 +437,6 @@ impl InputPanel {
         }
     }
 
-    fn handle_save_button(&self, code: KeyCode) -> InputPanelAction {
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::Save,
-            _ => InputPanelAction::Unhandled,
-        }
-    }
-
-    fn handle_cancel_button(&self, code: KeyCode) -> InputPanelAction {
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => InputPanelAction::Cancel,
-            _ => InputPanelAction::Unhandled,
-        }
-    }
 
     fn active_buffer_mut(&mut self) -> &mut TextBuffer {
         match self.focus {
@@ -481,34 +463,30 @@ impl InputPanel {
             InputPanelFocus::Text => match self.kind {
                 InputPanelKind::NameInput
                 | InputPanelKind::WhenDate
-                | InputPanelKind::NumericValue => InputPanelFocus::SaveButton,
+                | InputPanelKind::NumericValue => InputPanelFocus::Text, // single field, no-op
                 InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
                 InputPanelKind::AddItem | InputPanelKind::EditItem => InputPanelFocus::When,
             },
             InputPanelFocus::When => InputPanelFocus::Note,
             InputPanelFocus::Note => InputPanelFocus::Categories,
-            InputPanelFocus::Categories => InputPanelFocus::SaveButton,
-            InputPanelFocus::TypePicker => InputPanelFocus::SaveButton,
-            InputPanelFocus::SaveButton => InputPanelFocus::CancelButton,
-            InputPanelFocus::CancelButton => InputPanelFocus::Text,
+            InputPanelFocus::Categories => InputPanelFocus::Text,
+            InputPanelFocus::TypePicker => InputPanelFocus::Text,
         };
     }
 
     fn cycle_focus_backward(&mut self) {
         self.focus = match self.focus {
-            InputPanelFocus::Text => InputPanelFocus::CancelButton,
+            InputPanelFocus::Text => match self.kind {
+                InputPanelKind::NameInput
+                | InputPanelKind::WhenDate
+                | InputPanelKind::NumericValue => InputPanelFocus::Text, // single field, no-op
+                InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
+                _ => InputPanelFocus::Categories,
+            },
             InputPanelFocus::When => InputPanelFocus::Text,
             InputPanelFocus::Note => InputPanelFocus::When,
             InputPanelFocus::Categories => InputPanelFocus::Note,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
-            InputPanelFocus::SaveButton => match self.kind {
-                InputPanelKind::NameInput
-                | InputPanelKind::WhenDate
-                | InputPanelKind::NumericValue => InputPanelFocus::Text,
-                InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
-                _ => InputPanelFocus::Categories,
-            },
-            InputPanelFocus::CancelButton => InputPanelFocus::SaveButton,
         };
     }
 }
@@ -549,10 +527,7 @@ mod tests {
         assert_eq!(p.focus, InputPanelFocus::Note);
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Categories);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
+        // Categories wraps back to Text (no Save/Cancel buttons)
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
@@ -560,10 +535,7 @@ mod tests {
     #[test]
     fn backtab_cycles_add_panel_backward() {
         let mut p = add_panel();
-        p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
+        // Text wraps to Categories (no Save/Cancel buttons)
         p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Categories);
         p.handle_key(KeyCode::BackTab, false);
@@ -575,87 +547,45 @@ mod tests {
     }
 
     #[test]
-    fn name_panel_tab_skips_note_and_categories() {
+    fn name_panel_tab_stays_on_text() {
         let mut p = name_panel();
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
+        // Single-field panel: Tab is a no-op
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
     #[test]
-    fn name_panel_backtab_skips_note_and_categories() {
+    fn name_panel_backtab_stays_on_text() {
         let mut p = name_panel();
-        p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
         p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
     #[test]
-    fn numeric_value_panel_tab_skips_note_and_categories() {
+    fn numeric_value_panel_tab_stays_on_text() {
         let mut p = numeric_value_panel();
         p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
-    // --- Esc cancels from any focus ---
+    // --- Esc auto-saves from any focus ---
 
     #[test]
-    fn esc_returns_cancel_from_any_focus() {
+    fn esc_returns_save_from_any_focus() {
         let mut p = add_panel();
         for focus in [
             InputPanelFocus::Text,
             InputPanelFocus::Note,
             InputPanelFocus::Categories,
-            InputPanelFocus::SaveButton,
-            InputPanelFocus::CancelButton,
         ] {
             p.focus = focus;
             assert_eq!(
                 p.handle_key(KeyCode::Esc, false),
-                InputPanelAction::Cancel,
-                "expected Cancel at focus {:?}",
+                InputPanelAction::Save,
+                "expected Save at focus {:?}",
                 focus
             );
         }
-    }
-
-    // --- Button activations ---
-
-    #[test]
-    fn enter_on_save_button_saves() {
-        let mut p = add_panel();
-        p.focus = InputPanelFocus::SaveButton;
-        assert_eq!(p.handle_key(KeyCode::Enter, false), InputPanelAction::Save);
-    }
-
-    #[test]
-    fn space_on_save_button_saves() {
-        let mut p = add_panel();
-        p.focus = InputPanelFocus::SaveButton;
-        assert_eq!(
-            p.handle_key(KeyCode::Char(' '), false),
-            InputPanelAction::Save
-        );
-    }
-
-    #[test]
-    fn enter_on_cancel_button_cancels() {
-        let mut p = add_panel();
-        p.focus = InputPanelFocus::CancelButton;
-        assert_eq!(
-            p.handle_key(KeyCode::Enter, false),
-            InputPanelAction::Cancel
-        );
     }
 
     // --- Categories focus ---
@@ -769,16 +699,6 @@ mod tests {
         assert_eq!(p.note.text(), "y");
     }
 
-    #[test]
-    fn char_not_consumed_on_save_button() {
-        let mut p = add_panel();
-        p.focus = InputPanelFocus::SaveButton;
-        assert_eq!(
-            p.handle_key(KeyCode::Char('z'), false),
-            InputPanelAction::Unhandled
-        );
-        assert!(p.text.is_empty());
-    }
 
     #[test]
     fn enter_in_text_focus_not_consumed() {
@@ -1007,10 +927,7 @@ mod tests {
         assert_eq!(p.focus, InputPanelFocus::Text);
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::TypePicker);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
+        // TypePicker wraps back to Text (no buttons)
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
@@ -1018,10 +935,7 @@ mod tests {
     #[test]
     fn category_create_backtab_cycles_backward() {
         let mut p = cat_create_panel();
-        p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::CancelButton);
-        p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::SaveButton);
+        // Text wraps to TypePicker (no buttons)
         p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::TypePicker);
         p.handle_key(KeyCode::BackTab, false);
