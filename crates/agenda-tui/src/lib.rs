@@ -740,6 +740,11 @@ enum DoneToggleOrigin {
     ItemAssignPicker,
 }
 
+#[derive(Clone)]
+enum ItemAssignReturnTarget {
+    EditPanel(input_panel::InputPanel),
+}
+
 #[derive(Clone, Debug)]
 enum DoneBlocksConfirmScope {
     Single {
@@ -1276,6 +1281,7 @@ struct App {
     item_assign_view_row_index: usize,
     view_assign_rows: Vec<ViewAssignRow>,
     item_assign_preview: AssignmentPreview,
+    item_assign_return_target: Option<ItemAssignReturnTarget>,
     input_panel: Option<input_panel::InputPanel>,
     link_wizard: Option<LinkWizardState>,
     name_input_context: Option<NameInputContext>,
@@ -1359,6 +1365,7 @@ impl Default for App {
             item_assign_view_row_index: 0,
             view_assign_rows: Vec::new(),
             item_assign_preview: AssignmentPreview::default(),
+            item_assign_return_target: None,
             input_panel: None,
             link_wizard: None,
             name_input_context: None,
@@ -5380,7 +5387,7 @@ mod tests {
     }
 
     #[test]
-    fn input_panel_cursor_position_stays_available_for_edit_item_categories_focus() {
+    fn input_panel_cursor_position_stays_hidden_for_edit_item_actions_focus() {
         let screen = Rect::new(0, 0, 120, 40);
         let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
         let mut panel = input_panel::InputPanel::new_edit_item(
@@ -5406,7 +5413,7 @@ mod tests {
         };
         assert_eq!(
             pos, None,
-            "categories focus without numeric edit should not place a text cursor"
+            "actions focus should not place a text cursor"
         );
     }
 
@@ -5553,14 +5560,14 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
-        // Tab -> Categories, then S to save
+        // Tab -> Actions, then S to save
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus categories");
+            .expect("focus actions");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
             input_panel::InputPanelFocus::Categories
         );
-        // Capital S saves from Categories focus
+        // Capital S saves from Actions focus
         app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save item edit");
         assert_eq!(app.mode, Mode::Normal);
@@ -19903,9 +19910,11 @@ mod tests {
     }
 
     #[test]
-    fn edit_panel_numeric_value_edit_and_save_persists() {
-        let (store, classifier, cost_id, item_id, db_path) = setup_edit_panel_numeric("save");
+    fn edit_panel_actions_open_assign_and_return_to_edit() {
+        let (store, classifier, _cost_id, item_id, db_path) = setup_edit_panel_numeric("save");
         let agenda = Agenda::new(&store, &classifier);
+        let extra = Category::new("Bug".to_string());
+        store.create_category(&extra).expect("create Bug");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
@@ -19915,7 +19924,7 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> When -> Note -> Categories
+        // Tab to Actions: Text -> When -> Note -> Actions
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
@@ -19924,53 +19933,47 @@ mod tests {
             input_panel::InputPanelFocus::Categories
         );
 
-        // Navigate to the Cost category row using j/k
-        // Find the index of Cost in category_rows
-        let cost_idx = app
+        app.handle_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker from edit");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+
+        let bug_idx = app
             .category_rows
             .iter()
-            .position(|r| r.id == cost_id)
-            .expect("Cost should be in category_rows");
-        // Navigate to it
-        for _ in 0..cost_idx {
-            app.handle_key(KeyCode::Char('j'), &agenda).expect("j");
-        }
+            .position(|r| r.id == extra.id)
+            .expect("Bug should be in category_rows");
+        app.item_assign_category_index = bug_idx;
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle bug in assign picker");
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("return to edit panel");
 
-        // Clear existing value and type new one
-        // The buffer has "42", clear it
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        for ch in "99.50".chars() {
-            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
-        }
-
-        // Esc auto-saves from Categories
-        app.handle_key(KeyCode::Esc, &agenda).expect("save");
-
-        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.mode, Mode::InputPanel);
         assert!(
-            app.status.contains("Item updated"),
+            app.status.contains("Added category Bug"),
             "status: {}",
             app.status
         );
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().kind,
+            input_panel::InputPanelKind::EditItem
+        );
 
-        // Verify persisted
         let assignments = store
             .get_assignments_for_item(item_id)
             .expect("assignments");
-        let value = assignments
-            .get(&cost_id)
-            .and_then(|a| a.numeric_value)
-            .expect("should have numeric value");
-        assert_eq!(value, rust_decimal::Decimal::new(9950, 2));
+        assert!(assignments.contains_key(&extra.id));
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn edit_panel_invalid_numeric_shows_error_keeps_panel_open() {
-        let (store, classifier, cost_id, _item_id, db_path) = setup_edit_panel_numeric("invalid");
+    fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
+        let (store, classifier, _cost_id, item_id, db_path) =
+            setup_edit_panel_numeric("invalid");
         let agenda = Agenda::new(&store, &classifier);
+        let extra = Category::new("Idea".to_string());
+        store.create_category(&extra).expect("create Idea");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
@@ -19980,44 +19983,40 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> When -> Note -> Categories
+        for ch in " updated".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("update title draft");
+        }
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
-
-        // Navigate to the Cost category row
-        let cost_idx = app
+        app.handle_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker from edit");
+        let idea_idx = app
             .category_rows
             .iter()
-            .position(|r| r.id == cost_id)
-            .expect("Cost should be in category_rows");
-        for _ in 0..cost_idx {
-            app.handle_key(KeyCode::Char('j'), &agenda).expect("j");
-        }
+            .position(|r| r.id == extra.id)
+            .expect("Idea should be in category_rows");
+        app.item_assign_category_index = idea_idx;
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("apply idea and return");
 
-        // Clear and type invalid
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        for ch in "abc".chars() {
-            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
-        }
-
-        // Esc auto-saves (triggers validation)
-        app.handle_key(KeyCode::Esc, &agenda).expect("attempt save");
-
-        // Panel should still be open with error
         assert_eq!(app.mode, Mode::InputPanel);
-        assert!(
-            app.status.contains("Invalid numeric value"),
-            "should show error, got: {}",
-            app.status
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().text.text(),
+            "Test item updated"
         );
+        app.handle_key(KeyCode::Esc, &agenda).expect("save edited text");
+
+        let saved = store.get_item(item_id).expect("load item");
+        assert_eq!(saved.text, "Test item updated");
+        assert!(saved.assignments.contains_key(&extra.id));
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn edit_panel_focus_cycle_categories_always_present() {
+    fn edit_panel_focus_cycle_actions_always_present() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -20054,7 +20053,7 @@ mod tests {
         let panel = app.input_panel.as_ref().unwrap();
         assert!(panel.numeric_buffers.is_empty());
 
-        // Tab cycle: Text -> When -> Note -> Categories -> Save
+        // Tab cycle: Text -> When -> Note -> Actions -> Text
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
@@ -20070,7 +20069,7 @@ mod tests {
             app.input_panel.as_ref().unwrap().focus,
             input_panel::InputPanelFocus::Categories
         );
-        // Tab from Categories wraps back to Text (no buttons)
+        // Tab from Actions wraps back to Text
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,

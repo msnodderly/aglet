@@ -393,6 +393,9 @@ impl InputPanel {
         code: KeyCode,
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
+        if self.kind == InputPanelKind::EditItem {
+            return InputPanelAction::Unhandled;
+        }
         match code {
             KeyCode::Down | KeyCode::Char('j') => InputPanelAction::MoveCategoryCursor(1),
             KeyCode::Up | KeyCode::Char('k') => InputPanelAction::MoveCategoryCursor(-1),
@@ -469,7 +472,10 @@ impl InputPanel {
                 InputPanelKind::AddItem | InputPanelKind::EditItem => InputPanelFocus::When,
             },
             InputPanelFocus::When => InputPanelFocus::Note,
-            InputPanelFocus::Note => InputPanelFocus::Categories,
+            InputPanelFocus::Note => match self.kind {
+                InputPanelKind::EditItem => InputPanelFocus::Categories,
+                _ => InputPanelFocus::Categories,
+            },
             InputPanelFocus::Categories => InputPanelFocus::Text,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
         };

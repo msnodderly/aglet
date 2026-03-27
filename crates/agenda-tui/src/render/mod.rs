@@ -1858,6 +1858,9 @@ impl App {
                 None
             }
             InputPanelFocus::Categories => {
+                if panel.kind == input_panel::InputPanelKind::EditItem {
+                    return None;
+                }
                 if panel.category_filter_editing {
                     let filter_rect = regions.categories_filter?;
                     let prefix = "> Filter> ";
@@ -1881,7 +1884,7 @@ impl App {
                 } else {
                     regions.categories_inner?
                 };
-                let selected_row = self.input_panel_selected_category_row()?;
+                let selected_row = self.input_panel_selected_category_row()?.row;
                 let is_assigned = panel.categories.contains(&selected_row.id);
                 let is_numeric =
                     selected_row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
@@ -4409,7 +4412,11 @@ impl App {
 
             frame.render_widget(
                 Block::default()
-                    .title(if cat_focused {
+                    .title(if cat_focused && panel.kind == InputPanelKind::EditItem {
+                        "> Actions"
+                    } else if panel.kind == InputPanelKind::EditItem {
+                        "Actions"
+                    } else if cat_focused {
                         "> Categories"
                     } else {
                         "Categories"
@@ -4419,7 +4426,37 @@ impl App {
                     .border_style(cat_border_style),
                 cat_rect,
             );
-            if panel.category_filter_editing {
+            if panel.kind == InputPanelKind::EditItem {
+                let lines = vec![
+                    Line::from(vec![
+                        Span::styled(
+                            "a",
+                            if cat_focused {
+                                Style::default().fg(Color::Black).bg(Color::Cyan)
+                            } else {
+                                Style::default().fg(Color::Yellow)
+                            },
+                        ),
+                        Span::raw("  Open Assign menu"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            "I",
+                            if cat_focused {
+                                Style::default().fg(Color::Black).bg(Color::Cyan)
+                            } else {
+                                Style::default().fg(Color::Yellow)
+                            },
+                        ),
+                        Span::raw("  Inspect details"),
+                    ]),
+                    Line::from(Span::styled(
+                        "Category edits now use the Assign picker.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                ];
+                frame.render_widget(Paragraph::new(lines), cat_inner);
+            } else if panel.category_filter_editing {
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         format!("> Filter> {}", panel.category_filter.text()),
@@ -4427,199 +4464,194 @@ impl App {
                     ))),
                     cat_filter_rect,
                 );
-            }
+            } else {
+                let mut lines: Vec<Line<'_>> = Vec::new();
 
-            let mut lines: Vec<Line<'_>> = Vec::new();
-
-            // Pending suggestions at the top (before categories)
-            let suggestion_len = panel.pending_suggestions.len();
-            if suggestion_len > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled("─── Suggested ", Style::default().fg(Color::Yellow)),
-                    Span::styled("(Space: toggle) ", Style::default().fg(Color::Gray)),
-                    Span::styled("───", Style::default().fg(Color::Yellow)),
-                ]));
-                let suggestion_cat_names = category_name_map(&self.categories);
-                for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate() {
-                    let is_cursor = cat_focused && panel.category_cursor == si;
-                    let marker = decision.marker();
-                    let marker_style = match decision {
-                        SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
-                        SuggestionDecision::Accept => Style::default().fg(Color::LightGreen),
-                        SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
-                    };
-                    let marker_style = if is_cursor {
-                        marker_style
-                            .bg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        marker_style
-                    };
-                    let cat_name =
-                        candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
-                    let provider_label = suggestion
-                        .model
-                        .as_ref()
-                        .map(|model| format!("{}:{model}", suggestion.provider_id))
-                        .unwrap_or_else(|| suggestion.provider_id.clone());
-                    let confidence_label = suggestion
-                        .confidence
-                        .map(|value| format!("{:.0}%", value * 100.0))
-                        .unwrap_or_else(|| "-".to_string());
-                    let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
-                    let base_style = if is_cursor {
-                        Style::default().fg(Color::White).bg(Color::DarkGray)
-                    } else {
-                        Style::default().fg(Color::White)
-                    };
-                    let dim_style = if is_cursor {
-                        Style::default().fg(Color::Gray).bg(Color::DarkGray)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    };
+                // Pending suggestions at the top (before categories)
+                let suggestion_len = panel.pending_suggestions.len();
+                if suggestion_len > 0 {
                     lines.push(Line::from(vec![
-                        Span::styled(format!("{marker} "), marker_style),
-                        Span::styled(cat_name.clone(), base_style),
-                        Span::styled(
-                            format!("  [{provider_label} {confidence_label}] ({rationale})"),
-                            dim_style,
-                        ),
+                        Span::styled("─── Suggested ", Style::default().fg(Color::Yellow)),
+                        Span::styled("(Space: toggle) ", Style::default().fg(Color::Gray)),
+                        Span::styled("───", Style::default().fg(Color::Yellow)),
                     ]));
-                }
-                lines.push(Line::from(Span::styled(
-                    "─────────────────",
-                    Style::default().fg(Color::Yellow),
-                )));
-            }
-
-            // Category rows
-            let cat_lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
-                vec![Line::from(Span::styled(
-                    "(no categories)",
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                ))]
-            } else if visible_indices.is_empty() {
-                vec![Line::from(Span::styled(
-                    "(no matching categories)",
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                ))]
-            } else {
-                visible_indices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, row_index)| {
-                        let row = &self.category_rows[*row_index];
-                        let is_assigned = panel.categories.contains(&row.id);
-                        let is_numeric =
-                            row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
-                        let is_cursor =
-                            cat_focused && (i + suggestion_len) == panel.category_cursor;
-
-                        let check = if is_assigned && is_numeric {
-                            "[#] "
-                        } else if is_assigned {
-                            "[x] "
-                        } else {
-                            "[ ] "
+                    let suggestion_cat_names = category_name_map(&self.categories);
+                    for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate() {
+                        let is_cursor = cat_focused && panel.category_cursor == si;
+                        let marker = decision.marker();
+                        let marker_style = match decision {
+                            SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
+                            SuggestionDecision::Accept => Style::default().fg(Color::LightGreen),
+                            SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
                         };
-
-                        let indent = "  ".repeat(row.depth);
-
+                        let marker_style = if is_cursor {
+                            marker_style
+                                .bg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            marker_style
+                        };
+                        let cat_name =
+                            candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
+                        let provider_label = suggestion
+                            .model
+                            .as_ref()
+                            .map(|model| format!("{}:{model}", suggestion.provider_id))
+                            .unwrap_or_else(|| suggestion.provider_id.clone());
+                        let confidence_label = suggestion
+                            .confidence
+                            .map(|value| format!("{:.0}%", value * 100.0))
+                            .unwrap_or_else(|| "-".to_string());
+                        let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
                         let base_style = if is_cursor {
-                            Style::default().fg(Color::Black).bg(Color::Cyan)
-                        } else if row.is_reserved {
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .add_modifier(Modifier::DIM)
+                            Style::default().fg(Color::White).bg(Color::DarkGray)
                         } else {
-                            Style::default()
+                            Style::default().fg(Color::White)
                         };
-
-                        let suffix_style = if is_cursor {
-                            // On cursor row, suffix keeps same bg but dims fg
-                            Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                        let dim_style = if is_cursor {
+                            Style::default().fg(Color::Gray).bg(Color::DarkGray)
                         } else {
-                            Style::default().fg(MUTED_TEXT_COLOR)
+                            Style::default().fg(Color::Gray)
                         };
-
-                        let type_suffix = if row.is_reserved {
-                            " [reserved]"
-                        } else if is_numeric {
-                            " [numeric]"
-                        } else {
-                            ""
-                        };
-
-                        let main_prefix = format!("{check}{indent}{}", row.name);
-
-                        // For assigned numeric categories, show value field on the right
-                        if is_assigned && is_numeric {
-                            if let Some(buf) = panel.numeric_buffers.get(&row.id) {
-                                let value_display = buf.text();
-                                let value_text = if value_display.is_empty() {
-                                    "________".to_string()
-                                } else {
-                                    value_display.to_string()
-                                };
-                                let left_len =
-                                    main_prefix.chars().count() + type_suffix.chars().count();
-                                // value: space + value
-                                let value_len = 1 + value_text.chars().count();
-                                let total_needed = left_len + value_len;
-                                let padding = if inner_width > total_needed {
-                                    " ".repeat(inner_width - total_needed)
-                                } else {
-                                    " ".to_string()
-                                };
-                                let value_style = if is_cursor {
-                                    Style::default().fg(Color::Black).bg(Color::LightCyan)
-                                } else {
-                                    Style::default().fg(Color::Cyan)
-                                };
-                                let mut spans = vec![Span::styled(main_prefix, base_style)];
-                                if !type_suffix.is_empty() {
-                                    spans.push(Span::styled(type_suffix.to_string(), suffix_style));
-                                }
-                                spans.push(Span::styled(padding, base_style));
-                                spans.push(Span::styled(value_text, value_style));
-                                return Line::from(spans);
-                            }
-                        }
-
-                        if type_suffix.is_empty() {
-                            Line::from(Span::styled(main_prefix, base_style))
-                        } else {
-                            Line::from(vec![
-                                Span::styled(main_prefix, base_style),
-                                Span::styled(type_suffix.to_string(), suffix_style),
-                            ])
-                        }
-                    })
-                    .collect()
-            };
-            lines.extend(cat_lines);
-
-            // Map cursor index to visual line (accounting for separator lines)
-            let visual_cursor = if suggestion_len > 0 {
-                if panel.category_cursor < suggestion_len {
-                    panel.category_cursor + 1 // after "─── Suggested" header
-                } else {
-                    panel.category_cursor + 2 // after header + closing separator
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("{marker} "), marker_style),
+                            Span::styled(cat_name.clone(), base_style),
+                            Span::styled(
+                                format!("  [{provider_label} {confidence_label}] ({rationale})"),
+                                dim_style,
+                            ),
+                        ]));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "─────────────────",
+                        Style::default().fg(Color::Yellow),
+                    )));
                 }
-            } else {
-                panel.category_cursor
-            };
-            let cat_scroll = list_scroll_for_selected_line(cat_list_rect, Some(visual_cursor));
-            let item_count = lines.len();
 
-            if cat_list_rect.width > 0 && cat_list_rect.height > 0 {
-                frame.render_widget(Paragraph::new(lines).scroll((cat_scroll, 0)), cat_list_rect);
-                Self::render_vertical_scrollbar(
-                    frame,
-                    cat_list_rect,
-                    item_count,
-                    cat_scroll as usize,
-                );
+                let cat_lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
+                    vec![Line::from(Span::styled(
+                        "(no categories)",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    ))]
+                } else if visible_indices.is_empty() {
+                    vec![Line::from(Span::styled(
+                        "(no matching categories)",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    ))]
+                } else {
+                    visible_indices
+                        .iter()
+                        .enumerate()
+                        .map(|(i, row_index)| {
+                            let row = &self.category_rows[*row_index];
+                            let is_assigned = panel.categories.contains(&row.id);
+                            let is_numeric =
+                                row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
+                            let is_cursor =
+                                cat_focused && (i + suggestion_len) == panel.category_cursor;
+
+                            let check = if is_assigned && is_numeric {
+                                "[#] "
+                            } else if is_assigned {
+                                "[x] "
+                            } else {
+                                "[ ] "
+                            };
+
+                            let indent = "  ".repeat(row.depth);
+
+                            let base_style = if is_cursor {
+                                Style::default().fg(Color::Black).bg(Color::Cyan)
+                            } else if row.is_reserved {
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            };
+
+                            let suffix_style = if is_cursor {
+                                Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                            } else {
+                                Style::default().fg(MUTED_TEXT_COLOR)
+                            };
+
+                            let type_suffix = if row.is_reserved {
+                                " [reserved]"
+                            } else if is_numeric {
+                                " [numeric]"
+                            } else {
+                                ""
+                            };
+
+                            let main_prefix = format!("{check}{indent}{}", row.name);
+
+                            if is_assigned && is_numeric {
+                                if let Some(buf) = panel.numeric_buffers.get(&row.id) {
+                                    let value_display = buf.text();
+                                    let value_text = if value_display.is_empty() {
+                                        "________".to_string()
+                                    } else {
+                                        value_display.to_string()
+                                    };
+                                    let left_len =
+                                        main_prefix.chars().count() + type_suffix.chars().count();
+                                    let value_len = 1 + value_text.chars().count();
+                                    let total_needed = left_len + value_len;
+                                    let padding = if inner_width > total_needed {
+                                        " ".repeat(inner_width - total_needed)
+                                    } else {
+                                        " ".to_string()
+                                    };
+                                    let value_style = if is_cursor {
+                                        Style::default().fg(Color::Black).bg(Color::LightCyan)
+                                    } else {
+                                        Style::default().fg(Color::Cyan)
+                                    };
+                                    let mut spans = vec![Span::styled(main_prefix, base_style)];
+                                    if !type_suffix.is_empty() {
+                                        spans.push(Span::styled(type_suffix.to_string(), suffix_style));
+                                    }
+                                    spans.push(Span::styled(padding, base_style));
+                                    spans.push(Span::styled(value_text, value_style));
+                                    return Line::from(spans);
+                                }
+                            }
+
+                            if type_suffix.is_empty() {
+                                Line::from(Span::styled(main_prefix, base_style))
+                            } else {
+                                Line::from(vec![
+                                    Span::styled(main_prefix, base_style),
+                                    Span::styled(type_suffix.to_string(), suffix_style),
+                                ])
+                            }
+                        })
+                        .collect()
+                };
+                lines.extend(cat_lines);
+
+                let visual_cursor = if suggestion_len > 0 {
+                    if panel.category_cursor < suggestion_len {
+                        panel.category_cursor + 1
+                    } else {
+                        panel.category_cursor + 2
+                    }
+                } else {
+                    panel.category_cursor
+                };
+                let cat_scroll = list_scroll_for_selected_line(cat_list_rect, Some(visual_cursor));
+                let item_count = lines.len();
+
+                if cat_list_rect.width > 0 && cat_list_rect.height > 0 {
+                    frame.render_widget(Paragraph::new(lines).scroll((cat_scroll, 0)), cat_list_rect);
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        cat_list_rect,
+                        item_count,
+                        cat_scroll as usize,
+                    );
+                }
             }
         }
 
@@ -4663,14 +4695,18 @@ impl App {
                 InputPanelKind::AddItem => "Type title  Enter/Esc:save  Tab:when",
             },
             InputPanelFocus::Note => {
-                "Type note  Enter:new line  Tab:categories  Esc:save and close"
+                if panel.kind == InputPanelKind::EditItem {
+                    "Type note  Enter:new line  Tab:actions  Esc:save and close"
+                } else {
+                    "Type note  Enter:new line  Tab:categories  Esc:save and close"
+                }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
                 "Type filter  Enter:keep  Esc:done  Tab:next"
             }
             InputPanelFocus::Categories => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "j/k:move  Space:toggle  /:filter  I:details  Tab:text  Esc:save and close"
+                    "a:assign  I:details  Tab:text  Esc:save and close"
                 } else {
                     "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close"
                 }
