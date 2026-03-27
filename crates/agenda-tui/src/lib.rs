@@ -740,6 +740,11 @@ enum DoneToggleOrigin {
     ItemAssignPicker,
 }
 
+#[derive(Clone)]
+enum ItemAssignReturnTarget {
+    EditPanel(input_panel::InputPanel),
+}
+
 #[derive(Clone, Debug)]
 enum DoneBlocksConfirmScope {
     Single {
@@ -1276,6 +1281,7 @@ struct App {
     item_assign_view_row_index: usize,
     view_assign_rows: Vec<ViewAssignRow>,
     item_assign_preview: AssignmentPreview,
+    item_assign_return_target: Option<ItemAssignReturnTarget>,
     input_panel: Option<input_panel::InputPanel>,
     link_wizard: Option<LinkWizardState>,
     name_input_context: Option<NameInputContext>,
@@ -1359,6 +1365,7 @@ impl Default for App {
             item_assign_view_row_index: 0,
             view_assign_rows: Vec::new(),
             item_assign_preview: AssignmentPreview::default(),
+            item_assign_return_target: None,
             input_panel: None,
             link_wizard: None,
             name_input_context: None,
@@ -1647,6 +1654,7 @@ mod tests {
         CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
         CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
         NameInputContext, OllamaModelPickerState, SectionBorderMode, SlotSortDirection,
+        SuggestionDecision,
         ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
     };
     use agenda_core::agenda::Agenda;
@@ -5321,7 +5329,7 @@ mod tests {
             input_panel: Some(panel),
             ..App::default()
         };
-        // Cursor should be positioned in the text row of the popup, after the "  Text> " prefix
+        // Cursor should be positioned in the text row of the popup, after the "  Description: " prefix
         // with 2 chars of cursor offset (TextBuffer::new puts cursor at end; we need with_cursor)
         // Just assert it's Some and within the popup bounds.
         let pos = if let Some(panel) = &app.input_panel {
@@ -5380,7 +5388,7 @@ mod tests {
     }
 
     #[test]
-    fn input_panel_cursor_position_stays_available_for_edit_item_categories_focus() {
+    fn input_panel_cursor_position_stays_hidden_for_edit_item_actions_focus() {
         let screen = Rect::new(0, 0, 120, 40);
         let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
         let mut panel = input_panel::InputPanel::new_edit_item(
@@ -5406,8 +5414,37 @@ mod tests {
         };
         assert_eq!(
             pos, None,
-            "categories focus without numeric edit should not place a text cursor"
+            "actions focus should not place a text cursor"
         );
+    }
+
+    #[test]
+    fn input_panel_cursor_position_is_set_for_when_focus() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let popup = input_panel_popup_area(screen, input_panel::InputPanelKind::EditItem);
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            agenda_core::model::ItemId::new_v4(),
+            "Title".to_string(),
+            String::new(),
+            "tomorrow".to_string(),
+            Default::default(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        panel.focus = input_panel::InputPanelFocus::When;
+        panel.when_buffer = text_buffer::TextBuffer::with_cursor("tomorrow".to_string(), 3);
+        let app = App {
+            mode: Mode::InputPanel,
+            input_panel: Some(panel),
+            ..App::default()
+        };
+
+        let pos = if let Some(panel) = &app.input_panel {
+            app.input_panel_cursor_position(popup, panel)
+        } else {
+            None
+        };
+        assert!(pos.is_some(), "when focus should place a cursor");
     }
 
     #[test]
@@ -5553,14 +5590,14 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
-        // Tab -> Categories, then S to save
+        // Tab -> Actions, then S to save
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus categories");
+            .expect("focus actions");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
-        // Capital S saves from Categories focus
+        // Capital S saves from Actions focus
         app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save item edit");
         assert_eq!(app.mode, Mode::Normal);
@@ -5755,7 +5792,7 @@ mod tests {
 
         let text_line = lines
             .iter()
-            .find(|line| line.contains("Text> Draft title"))
+            .find(|line| line.contains("Description: Draft title"))
             .expect("text input line should be rendered");
         assert!(
             !text_line.contains("Adding to"),
@@ -5947,6 +5984,86 @@ mod tests {
         assert_eq!(list_scroll_for_selected_line(area, Some(0)), 0);
         assert_eq!(list_scroll_for_selected_line(area, Some(7)), 0);
         assert_eq!(list_scroll_for_selected_line(area, Some(8)), 1);
+    }
+
+    #[test]
+    fn edit_item_when_enter_recalculates_without_closing_panel() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Plan travel".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            item.id,
+            "Plan travel".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        panel.when_buffer.set("tomorrow".to_string());
+        panel.focus = input_panel::InputPanelFocus::When;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+            .expect("recalculate when");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::When
+        );
+        assert_ne!(
+            app.input_panel.as_ref().unwrap().when_buffer.text(),
+            "tomorrow"
+        );
+        assert!(app.status.starts_with("When set to "));
+    }
+
+    #[test]
+    fn edit_item_when_tab_recalculates_and_advances_focus() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Plan travel".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        let mut panel = input_panel::InputPanel::new_edit_item(
+            item.id,
+            "Plan travel".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        panel.when_buffer.set("tomorrow".to_string());
+        panel.focus = input_panel::InputPanelFocus::When;
+        app.mode = Mode::InputPanel;
+        app.input_panel = Some(panel);
+
+        app.handle_input_panel_key(KeyCode::Tab, &agenda)
+            .expect("recalculate when and advance");
+
+        assert_eq!(app.mode, Mode::InputPanel);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Note
+        );
+        assert_ne!(
+            app.input_panel.as_ref().unwrap().when_buffer.text(),
+            "tomorrow"
+        );
+        assert!(app.status.starts_with("When set to "));
     }
 
     #[test]
@@ -19903,9 +20020,11 @@ mod tests {
     }
 
     #[test]
-    fn edit_panel_numeric_value_edit_and_save_persists() {
-        let (store, classifier, cost_id, item_id, db_path) = setup_edit_panel_numeric("save");
+    fn edit_panel_actions_open_assign_and_return_to_edit() {
+        let (store, classifier, _cost_id, item_id, db_path) = setup_edit_panel_numeric("save");
         let agenda = Agenda::new(&store, &classifier);
+        let extra = Category::new("Bug".to_string());
+        store.create_category(&extra).expect("create Bug");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
@@ -19915,62 +20034,56 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> When -> Note -> Categories
+        // Tab to Actions: Text -> When -> Note -> Actions
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
 
-        // Navigate to the Cost category row using j/k
-        // Find the index of Cost in category_rows
-        let cost_idx = app
+        app.handle_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker from edit");
+        assert_eq!(app.mode, Mode::ItemAssignPicker);
+
+        let bug_idx = app
             .category_rows
             .iter()
-            .position(|r| r.id == cost_id)
-            .expect("Cost should be in category_rows");
-        // Navigate to it
-        for _ in 0..cost_idx {
-            app.handle_key(KeyCode::Char('j'), &agenda).expect("j");
-        }
+            .position(|r| r.id == extra.id)
+            .expect("Bug should be in category_rows");
+        app.item_assign_category_index = bug_idx;
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle bug in assign picker");
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("return to edit panel");
 
-        // Clear existing value and type new one
-        // The buffer has "42", clear it
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        for ch in "99.50".chars() {
-            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
-        }
-
-        // Esc auto-saves from Categories
-        app.handle_key(KeyCode::Esc, &agenda).expect("save");
-
-        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.mode, Mode::InputPanel);
         assert!(
-            app.status.contains("Item updated"),
+            app.status.contains("Added category Bug"),
             "status: {}",
             app.status
         );
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().kind,
+            input_panel::InputPanelKind::EditItem
+        );
 
-        // Verify persisted
         let assignments = store
             .get_assignments_for_item(item_id)
             .expect("assignments");
-        let value = assignments
-            .get(&cost_id)
-            .and_then(|a| a.numeric_value)
-            .expect("should have numeric value");
-        assert_eq!(value, rust_decimal::Decimal::new(9950, 2));
+        assert!(assignments.contains_key(&extra.id));
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn edit_panel_invalid_numeric_shows_error_keeps_panel_open() {
-        let (store, classifier, cost_id, _item_id, db_path) = setup_edit_panel_numeric("invalid");
+    fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
+        let (store, classifier, _cost_id, item_id, db_path) =
+            setup_edit_panel_numeric("invalid");
         let agenda = Agenda::new(&store, &classifier);
+        let extra = Category::new("Idea".to_string());
+        store.create_category(&extra).expect("create Idea");
 
         let mut app = App::default();
         app.refresh(&store).expect("refresh");
@@ -19980,44 +20093,40 @@ mod tests {
         app.handle_key(KeyCode::Char('e'), &agenda)
             .expect("open edit panel");
 
-        // Tab to Categories: Text -> When -> Note -> Categories
+        for ch in " updated".chars() {
+            app.handle_key(KeyCode::Char(ch), &agenda)
+                .expect("update title draft");
+        }
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
-
-        // Navigate to the Cost category row
-        let cost_idx = app
+        app.handle_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker from edit");
+        let idea_idx = app
             .category_rows
             .iter()
-            .position(|r| r.id == cost_id)
-            .expect("Cost should be in category_rows");
-        for _ in 0..cost_idx {
-            app.handle_key(KeyCode::Char('j'), &agenda).expect("j");
-        }
+            .position(|r| r.id == extra.id)
+            .expect("Idea should be in category_rows");
+        app.item_assign_category_index = idea_idx;
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("apply idea and return");
 
-        // Clear and type invalid
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        app.handle_key(KeyCode::Backspace, &agenda).expect("bs");
-        for ch in "abc".chars() {
-            app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
-        }
-
-        // Esc auto-saves (triggers validation)
-        app.handle_key(KeyCode::Esc, &agenda).expect("attempt save");
-
-        // Panel should still be open with error
         assert_eq!(app.mode, Mode::InputPanel);
-        assert!(
-            app.status.contains("Invalid numeric value"),
-            "should show error, got: {}",
-            app.status
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().text.text(),
+            "Test item updated"
         );
+        app.handle_key(KeyCode::Esc, &agenda).expect("save edited text");
+
+        let saved = store.get_item(item_id).expect("load item");
+        assert_eq!(saved.text, "Test item updated");
+        assert!(saved.assignments.contains_key(&extra.id));
 
         let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn edit_panel_focus_cycle_categories_always_present() {
+    fn edit_panel_focus_cycle_actions_always_present() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -20054,7 +20163,7 @@ mod tests {
         let panel = app.input_panel.as_ref().unwrap();
         assert!(panel.numeric_buffers.is_empty());
 
-        // Tab cycle: Text -> When -> Note -> Categories -> Save
+        // Tab cycle: Text -> When -> Note -> Actions -> Text
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
@@ -20068,14 +20177,139 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
-        // Tab from Categories wraps back to Text (no buttons)
+        // Tab from Actions wraps back to Text
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
             input_panel::InputPanelFocus::Text
         );
+    }
+
+    #[test]
+    fn edit_panel_actions_support_arrow_selection_and_enter() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+
+        assert_eq!(app.input_panel.as_ref().unwrap().action_cursor, 0);
+        app.handle_key(KeyCode::Down, &agenda)
+            .expect("move to inspect action");
+        assert_eq!(app.input_panel.as_ref().unwrap().action_cursor, 1);
+        app.handle_key(KeyCode::Enter, &agenda)
+            .expect("open details from action menu");
+        assert!(app.input_panel.as_ref().unwrap().details_popup_open);
+    }
+
+    #[test]
+    fn edit_panel_suggestions_can_be_toggled_before_actions() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let category = Category::new("Travel".to_string());
+        store.create_category(&category).expect("create category");
+        let item = Item::new("Book flights".to_string());
+        store.create_item(&item).expect("create item");
+
+        store
+            .upsert_suggestion(&ClassificationSuggestion {
+                id: Uuid::new_v4(),
+                item_id: item.id,
+                assignment: CandidateAssignment::Category(category.id),
+                provider_id: "ollama_openai_compat".to_string(),
+                model: Some("mistral".to_string()),
+                confidence: Some(0.9),
+                rationale: Some("trip planning".to_string()),
+                status: SuggestionStatus::Pending,
+                context_hash: "ctx".to_string(),
+                item_revision_hash: "rev".to_string(),
+                created_at: Timestamp::now(),
+                decided_at: None,
+            })
+            .expect("persist suggestion");
+
+        let mut view = View::new("Board".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: std::collections::HashSet::new(),
+            on_remove_unassign: std::collections::HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        store.create_view(&view).expect("create view");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_view_selection_by_name("Board");
+        app.refresh(&store).expect("refresh board");
+
+        app.handle_key(KeyCode::Char('e'), &agenda)
+            .expect("open edit panel");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda).expect("tab");
+        app.handle_key(KeyCode::Tab, &agenda)
+            .expect("tab to suggestions");
+
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().focus,
+            input_panel::InputPanelFocus::Suggestions
+        );
+
+        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().pending_suggestions[0].1,
+            SuggestionDecision::Pending
+        );
+
+        app.handle_key(KeyCode::Char(' '), &agenda)
+            .expect("accept suggestion");
+
+        assert_eq!(
+            app.input_panel.as_ref().unwrap().pending_suggestions[0].1,
+            SuggestionDecision::Accept
+        );
+        assert!(
+            app.status.contains("Suggestion 'Travel': accept"),
+            "status: {}",
+            app.status
+        );
+
+        app.handle_key(KeyCode::Down, &agenda)
+            .expect("move within suggestions");
+        assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
     }
 
     #[test]
@@ -20118,7 +20352,7 @@ mod tests {
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::Categories
+            input_panel::InputPanelFocus::Actions
         );
         app.handle_key(KeyCode::Char('I'), &agenda)
             .expect("open details popup");

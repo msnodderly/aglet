@@ -1155,6 +1155,35 @@ impl App {
         self.clear_input();
     }
 
+    pub(crate) fn close_item_assign_session(
+        &mut self,
+        status: impl Into<String>,
+    ) {
+        let status = status.into();
+        let clear_selection = self.item_assign_dirty && self.has_selected_items();
+        let return_target = self.item_assign_return_target.take();
+        self.clear_item_assign_session();
+
+        if clear_selection {
+            self.clear_selected_items();
+        }
+
+        match return_target {
+            Some(ItemAssignReturnTarget::EditPanel(panel)) => {
+                if let Some(item_id) = panel.item_id {
+                    self.set_item_selection_by_id(item_id);
+                }
+                self.input_panel = Some(panel);
+                self.mode = Mode::InputPanel;
+            }
+            None => {
+                self.mode = Mode::Normal;
+            }
+        }
+
+        self.status = status;
+    }
+
     pub(crate) fn effective_action_item_ids(&self) -> Vec<ItemId> {
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput)
             && !self.item_assign_target_item_ids.is_empty()

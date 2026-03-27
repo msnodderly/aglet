@@ -1,6 +1,12 @@
 use crate::*;
 use agenda_core::error::AgendaError;
 
+#[derive(Clone)]
+pub(crate) struct InputPanelCategorySelection {
+    pub(crate) row_index: usize,
+    pub(crate) row: CategoryListRow,
+}
+
 /// Cycle: integer → 1dp → 2dp → 2dp+thousands → currency (2dp+thousands+$) → integer
 pub(super) fn cycle_numeric_format_preset(current: &NumericFormat) -> NumericFormat {
     let has_currency = current.currency_symbol.is_some();
@@ -238,27 +244,18 @@ impl App {
             .collect()
     }
 
-    pub(crate) fn input_panel_selected_category_row_index(&self) -> Option<usize> {
+    pub(crate) fn input_panel_selected_category_row(&self) -> Option<InputPanelCategorySelection> {
         let visible_indices = self.input_panel_visible_category_row_indices();
-        let suggestion_len = self
-            .input_panel
-            .as_ref()
-            .map(|p| p.pending_suggestions.len())
-            .unwrap_or(0);
-        let cursor = self
-            .input_panel
-            .as_ref()
-            .map(|panel| panel.category_cursor)?;
-        // Suggestions occupy indices 0..suggestion_len; categories start at suggestion_len
+        let panel = self.input_panel.as_ref()?;
+        let suggestion_len = panel.pending_suggestions.len();
+        let cursor = panel.category_cursor;
+        // Suggestions occupy indices 0..suggestion_len; categories start at suggestion_len.
         if cursor < suggestion_len {
-            return None; // cursor is on a suggestion row
+            return None;
         }
-        visible_indices.get(cursor - suggestion_len).copied()
-    }
-
-    pub(crate) fn input_panel_selected_category_row(&self) -> Option<&CategoryListRow> {
-        let row_index = self.input_panel_selected_category_row_index()?;
-        self.category_rows.get(row_index)
+        let row_index = *visible_indices.get(cursor - suggestion_len)?;
+        let row = self.category_rows.get(row_index)?.clone();
+        Some(InputPanelCategorySelection { row_index, row })
     }
 
     fn clamp_input_panel_category_cursor(&mut self) {
@@ -287,10 +284,8 @@ impl App {
             let Some(panel) = self.input_panel.as_mut() else {
                 return false;
             };
-            if !matches!(
-                panel.kind,
-                input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
-            ) || panel.focus != input_panel::InputPanelFocus::Categories
+            if panel.kind != input_panel::InputPanelKind::AddItem
+                || panel.focus != input_panel::InputPanelFocus::Categories
             {
                 return false;
             }
@@ -3973,6 +3968,82 @@ impl App {
         }
     }
 
+    fn open_item_assign_from_edit_panel(&mut self, agenda: &Agenda<'_>) {
+        let Some(panel) = self.input_panel.take() else {
+            self.status = "Assign failed: no edit panel".to_string();
+            return;
+        };
+        if panel.kind != input_panel::InputPanelKind::EditItem {
+            self.input_panel = Some(panel);
+            self.status = "Assign failed: edit panel not active".to_string();
+            return;
+        }
+        let Some(item_id) = panel.item_id else {
+            self.input_panel = Some(panel);
+            self.status = "Assign failed: no selected item".to_string();
+            return;
+        };
+        if self.item_assign_visible_category_row_indices().is_empty() {
+            self.input_panel = Some(panel);
+            self.status = "No categories available".to_string();
+            return;
+        }
+
+        self.item_assign_return_target = Some(ItemAssignReturnTarget::EditPanel(panel));
+        self.set_item_selection_by_id(item_id);
+        self.mode = Mode::ItemAssignPicker;
+        self.item_assign_anchor_item_id = Some(item_id);
+        self.item_assign_target_item_ids = vec![item_id];
+        self.item_assign_dirty = false;
+        self.clamp_item_assign_category_index();
+        self.item_assign_pane = ItemAssignPane::Categories;
+        self.view_assign_rows = build_view_assign_rows(&self.views);
+        self.item_assign_view_row_index = 0;
+        self.item_assign_preview = AssignmentPreview::default();
+        self.compute_assignment_preview(agenda);
+        self.clear_input();
+        self.status =
+            "Edit item categories: j/k select, Space apply, n or / type category, Enter back, Esc back"
+                .to_string();
+    }
+
+    fn recalculate_input_panel_when(&mut self) -> TuiResult<bool> {
+        let Some(panel) = self.input_panel.as_mut() else {
+            return Ok(false);
+        };
+        if !matches!(
+            panel.kind,
+            input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+        ) || panel.focus != input_panel::InputPanelFocus::When
+        {
+            return Ok(false);
+        }
+
+        let raw = panel.when_buffer.trimmed().to_string();
+        if raw.is_empty() {
+            self.status = "When cleared".to_string();
+            return Ok(true);
+        }
+
+        match Self::parse_when_datetime_input(&raw) {
+            Ok(Some(dt)) => {
+                let normalized = dt.strftime("%Y-%m-%d %H:%M").to_string();
+                panel.when_buffer.set(normalized.clone());
+                self.status = format!("When set to {normalized}");
+                Ok(true)
+            }
+            Ok(None) => {
+                panel.when_buffer.set(String::new());
+                self.status = "When cleared".to_string();
+                Ok(true)
+            }
+            Err(e) => {
+                self.status = format!("Could not parse when date: {e}");
+                Ok(false)
+            }
+        }
+    }
+
     /// Handle a key event while in Mode::InputPanel.
     pub(crate) fn handle_input_panel_key(
         &mut self,
@@ -3994,7 +4065,7 @@ impl App {
                 .map(|panel| self.input_panel_edit_details_line_count(panel))
                 .unwrap_or(1);
             match code {
-                KeyCode::Char('I') | KeyCode::Esc => {
+                KeyCode::Char('i') | KeyCode::Char('I') | KeyCode::Esc => {
                     if let Some(panel) = &mut self.input_panel {
                         panel.details_popup_open = false;
                     }
@@ -4061,7 +4132,7 @@ impl App {
             }
         }
 
-        if matches!(code, KeyCode::Char('I'))
+        if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
             && self.input_panel.as_ref().is_some_and(|panel| {
                 panel.kind == input_panel::InputPanelKind::EditItem
                     && !panel.details_popup_open
@@ -4078,7 +4149,47 @@ impl App {
                 panel.details_popup_open = true;
                 panel.details_scroll = 0;
             }
-            self.status = "Inspect item details: Esc or I closes".to_string();
+            self.status = "Inspect item details: Esc or i closes".to_string();
+            return Ok(false);
+        }
+
+        if matches!(code, KeyCode::Char('a'))
+            && self.input_panel.as_ref().is_some_and(|panel| {
+                panel.kind == input_panel::InputPanelKind::EditItem
+                    && matches!(
+                        panel.focus,
+                        input_panel::InputPanelFocus::Actions
+                            | input_panel::InputPanelFocus::Suggestions
+                    )
+                    && !panel.details_popup_open
+            })
+        {
+            if let Some(panel) = &mut self.input_panel {
+                panel.focus = input_panel::InputPanelFocus::Actions;
+                panel.action_cursor = 0;
+            }
+            self.open_item_assign_from_edit_panel(agenda);
+            return Ok(false);
+        }
+
+        if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
+            && self.input_panel.as_ref().is_some_and(|panel| {
+                panel.kind == input_panel::InputPanelKind::EditItem
+                    && matches!(
+                        panel.focus,
+                        input_panel::InputPanelFocus::Actions
+                            | input_panel::InputPanelFocus::Suggestions
+                    )
+                    && !panel.details_popup_open
+            })
+        {
+            if let Some(panel) = &mut self.input_panel {
+                panel.focus = input_panel::InputPanelFocus::Actions;
+                panel.action_cursor = 1;
+                panel.details_popup_open = true;
+                panel.details_scroll = 0;
+            }
+            self.status = "Inspect item details: Esc or i closes".to_string();
             return Ok(false);
         }
 
@@ -4086,16 +4197,49 @@ impl App {
             return Ok(false);
         }
 
-        // Determine if the current category row is an assigned numeric category
-        // (needed for key routing decisions in handle_key).
+        if self.input_panel.as_ref().is_some_and(|panel| {
+            panel.focus == input_panel::InputPanelFocus::When
+                && matches!(
+                    panel.kind,
+                    input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+                )
+        }) {
+            match code {
+                KeyCode::Enter => {
+                    self.recalculate_input_panel_when()?;
+                    return Ok(false);
+                }
+                KeyCode::Tab => {
+                    if self.recalculate_input_panel_when()? {
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.cycle_focus_forward();
+                        }
+                    }
+                    return Ok(false);
+                }
+                KeyCode::BackTab => {
+                    if self.recalculate_input_panel_when()? {
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.cycle_focus_backward();
+                        }
+                    }
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+
         let current_row_is_assigned_numeric = self
             .input_panel
             .as_ref()
             .and_then(|panel| {
-                if panel.focus != input_panel::InputPanelFocus::Categories {
+                if panel.kind == input_panel::InputPanelKind::EditItem
+                    || panel.focus != input_panel::InputPanelFocus::Categories
+                {
                     return Some(false);
                 }
-                self.input_panel_selected_category_row().map(|row| {
+                self.input_panel_selected_category_row().map(|selection| {
+                    let row = &selection.row;
                     panel.categories.contains(&row.id)
                         && row.value_kind == agenda_core::model::CategoryValueKind::Numeric
                 })
@@ -4141,6 +4285,63 @@ impl App {
                 }
             }
             InputPanelAction::ToggleCategory => {
+                if self.input_panel.as_ref().is_some_and(|panel| {
+                    panel.kind == input_panel::InputPanelKind::EditItem
+                        && panel.focus == input_panel::InputPanelFocus::Actions
+                }) {
+                    let action_index = self
+                        .input_panel
+                        .as_ref()
+                        .map(|p| p.action_cursor.min(1))
+                        .unwrap_or(0);
+                    match action_index {
+                        0 => self.open_item_assign_from_edit_panel(agenda),
+                        1 => {
+                            if let Some(panel) = &mut self.input_panel {
+                                panel.details_popup_open = true;
+                                panel.details_scroll = 0;
+                            }
+                            self.status = "Inspect item details: Esc or i closes".to_string();
+                        }
+                        _ => {}
+                    }
+                    return Ok(false);
+                }
+                if self.input_panel.as_ref().is_some_and(|panel| {
+                    panel.kind == input_panel::InputPanelKind::EditItem
+                        && panel.focus == input_panel::InputPanelFocus::Suggestions
+                }) {
+                    let cursor = self
+                        .input_panel
+                        .as_ref()
+                        .map(|p| p.category_cursor)
+                        .unwrap_or(0);
+                    let new_status = if let Some(panel) = &mut self.input_panel {
+                        if let Some(entry) = panel.pending_suggestions.get_mut(cursor) {
+                            entry.1 = entry.1.next();
+                            let cat_names = category_name_map(&self.categories);
+                            let cat_name =
+                                candidate_assignment_label(&entry.0.assignment, &cat_names);
+                            Some(format!(
+                                "Suggestion '{}': {}",
+                                cat_name,
+                                match entry.1 {
+                                    SuggestionDecision::Pending => "pending",
+                                    SuggestionDecision::Accept => "accept",
+                                    SuggestionDecision::Reject => "reject",
+                                }
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(status) = new_status {
+                        self.status = status;
+                    }
+                    return Ok(false);
+                }
                 // Suggestions occupy indices 0..suggestion_len; categories start after
                 let suggestion_len = self
                     .input_panel
@@ -4185,9 +4386,10 @@ impl App {
                         self.status = status;
                     }
                 } else {
-                    let idx = self.input_panel_selected_category_row_index();
-                    let row = self.input_panel_selected_category_row().cloned();
-                    if let Some(row) = row {
+                    let selection = self.input_panel_selected_category_row();
+                    if let Some(selection) = selection {
+                        let idx = selection.row_index;
+                        let row = selection.row;
                         if !row.is_reserved {
                             let is_adding = self
                                 .input_panel
@@ -4198,14 +4400,12 @@ impl App {
                                 row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
                             // If adding into an exclusive parent group, clear siblings first.
                             if is_adding {
-                                if let Some(idx) = idx {
-                                    let to_clear =
-                                        exclusive_siblings_to_clear(&self.category_rows, idx);
-                                    if let Some(panel) = &mut self.input_panel {
-                                        for sibling_id in &to_clear {
-                                            panel.categories.remove(sibling_id);
-                                            panel.numeric_buffers.remove(sibling_id);
-                                        }
+                                let to_clear =
+                                    exclusive_siblings_to_clear(&self.category_rows, idx);
+                                if let Some(panel) = &mut self.input_panel {
+                                    for sibling_id in &to_clear {
+                                        panel.categories.remove(sibling_id);
+                                        panel.numeric_buffers.remove(sibling_id);
                                     }
                                 }
                             }
@@ -4234,17 +4434,34 @@ impl App {
                 }
             }
             InputPanelAction::MoveCategoryCursor(delta) => {
-                let cat_len = self.input_panel_visible_category_row_indices().len();
-                let suggestion_len = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.pending_suggestions.len())
-                    .unwrap_or(0);
-                let total_len = cat_len + suggestion_len;
+                let add_panel_total_len = self.input_panel.as_ref().map_or(0, |panel| {
+                    let suggestion_len = panel.pending_suggestions.len();
+                    let cat_len = self.input_panel_visible_category_row_indices().len();
+                    cat_len + suggestion_len
+                });
                 if let Some(panel) = &mut self.input_panel {
-                    if total_len > 0 {
+                    if panel.kind == input_panel::InputPanelKind::EditItem {
+                        match panel.focus {
+                            input_panel::InputPanelFocus::Actions => {
+                                let len = 2i64;
+                                let current = panel.action_cursor as i64;
+                                panel.action_cursor =
+                                    ((current + delta as i64).rem_euclid(len)) as usize;
+                            }
+                            input_panel::InputPanelFocus::Suggestions => {
+                                let total_len = panel.pending_suggestions.len();
+                                if total_len > 0 {
+                                    let current = panel.category_cursor as i64;
+                                    let len = total_len as i64;
+                                    panel.category_cursor =
+                                        ((current + delta as i64).rem_euclid(len)) as usize;
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if add_panel_total_len > 0 {
                         let current = panel.category_cursor as i64;
-                        let len = total_len as i64;
+                        let len = add_panel_total_len as i64;
                         let new = ((current + delta as i64).rem_euclid(len)) as usize;
                         panel.category_cursor = new;
                     }
@@ -4254,7 +4471,9 @@ impl App {
                 // If we're on Categories focus and the row is an assigned numeric,
                 // route the key to the numeric buffer.
                 if current_row_is_assigned_numeric {
-                    let cat_id = self.input_panel_selected_category_row().map(|r| r.id);
+                    let cat_id = self
+                        .input_panel_selected_category_row()
+                        .map(|selection| selection.row.id);
                     if let Some(cat_id) = cat_id {
                         let input_key = self.text_key_event(code);
                         if let Some(panel) = &mut self.input_panel {
@@ -4406,7 +4625,7 @@ impl App {
         Ok(())
     }
 
-    /// Save an InputPanel(EditItem) to the store (text, note, and category diff).
+    /// Save an InputPanel(EditItem) to the store (text, note, when, suggestion decisions).
     pub(crate) fn save_input_panel_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let Some(panel) = &self.input_panel else {
             self.mode = Mode::Normal;
@@ -4428,34 +4647,12 @@ impl App {
         } else {
             Some(panel.note.text().to_string())
         };
-        let new_categories: HashSet<agenda_core::model::CategoryId> = panel.categories.clone();
-        let numeric_buffers = panel.numeric_buffers.clone();
-        let numeric_originals = panel.numeric_originals.clone();
-
         let mut item = agenda.store().get_item(item_id)?;
         let undo_old_text = item.text.clone();
         let undo_old_note = item.note.clone();
 
-        // Compute category diff: which to add, which to remove.
-        let existing_categories: HashSet<_> = item.assignments.keys().copied().collect();
-
-        // Check for numeric value changes.
-        let has_numeric_changes = numeric_buffers.iter().any(|(cat_id, buf)| {
-            let trimmed = buf.trimmed();
-            if trimmed.is_empty() {
-                return false; // empty = keep existing, no change
-            }
-            let original = numeric_originals.get(cat_id).copied().flatten();
-            match trimmed.replace(',', "").parse::<rust_decimal::Decimal>() {
-                Ok(new_val) => original != Some(new_val),
-                Err(_) => true, // invalid input counts as a "change" (will error on save)
-            }
-        });
-
         let no_text_change = item.text == updated_text;
         let no_note_change = item.note == updated_note;
-        let no_cat_change = existing_categories == new_categories;
-
         let when_text = panel.when_buffer.trimmed().to_string();
         let no_when_change = when_text == panel.original_when;
 
@@ -4467,9 +4664,7 @@ impl App {
 
         if no_text_change
             && no_note_change
-            && no_cat_change
             && no_when_change
-            && !has_numeric_changes
             && !has_suggestion_decisions
         {
             self.input_panel = None;
@@ -4495,28 +4690,6 @@ impl App {
             None // no change
         };
 
-        // Validate numeric values before making any changes.
-        for (cat_id, buf) in &numeric_buffers {
-            let trimmed = buf.trimmed();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed
-                .replace(',', "")
-                .parse::<rust_decimal::Decimal>()
-                .is_err()
-            {
-                let cat_name = self
-                    .categories
-                    .iter()
-                    .find(|c| c.id == *cat_id)
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("?");
-                self.status = format!("Invalid numeric value for '{}': '{}'", cat_name, trimmed);
-                return Ok(());
-            }
-        }
-
         // Update text and note.
         item.text = updated_text;
         item.note = updated_note;
@@ -4531,37 +4704,6 @@ impl App {
                 new_when,
                 Some("manual:input_panel.edit".to_string()),
             )?;
-        }
-
-        // Apply category changes.
-        for cat_id in new_categories.difference(&existing_categories) {
-            let _ = agenda.assign_item_manual(
-                item_id,
-                *cat_id,
-                Some("manual:input_panel.edit".to_string()),
-            );
-        }
-        for cat_id in existing_categories.difference(&new_categories) {
-            let _ = agenda.unassign_item_manual(item_id, *cat_id);
-        }
-
-        // Apply numeric value changes.
-        for (cat_id, buf) in &numeric_buffers {
-            let trimmed = buf.trimmed();
-            if trimmed.is_empty() {
-                continue; // keep existing value
-            }
-            let new_val: rust_decimal::Decimal = trimmed.replace(',', "").parse().unwrap();
-            let original = numeric_originals.get(cat_id).copied().flatten();
-            if original == Some(new_val) {
-                continue; // no change
-            }
-            let _ = agenda.assign_item_numeric_manual(
-                item_id,
-                *cat_id,
-                new_val,
-                Some("manual:input_panel.edit".to_string()),
-            );
         }
 
         // Apply suggestion decisions.
@@ -5050,15 +5192,7 @@ impl App {
                 self.compute_assignment_preview(agenda);
             }
             KeyCode::Esc => {
-                let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                self.mode = Mode::Normal;
-                if clear_selection {
-                    self.clear_selected_items();
-                }
-                self.clear_item_assign_session();
-                if !clear_selection {
-                    self.status = "Assign canceled".to_string();
-                }
+                self.close_item_assign_session("Assign canceled");
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let visible_len = self.item_assign_visible_category_row_indices().len();
@@ -5099,9 +5233,7 @@ impl App {
                     .item_assign_anchor_id()
                     .or_else(|| self.selected_item_id())
                 else {
-                    self.mode = Mode::Normal;
-                    self.clear_item_assign_session();
-                    self.status = "Assign failed: no selected item".to_string();
+                    self.close_item_assign_session("Assign failed: no selected item");
                     return Ok(false);
                 };
                 let Some(row) = self.item_assign_selected_category_row().cloned() else {
@@ -5236,21 +5368,11 @@ impl App {
             }
             KeyCode::Enter => {
                 if self.item_assign_dirty {
-                    let clear_selection = self.has_selected_items();
-                    self.mode = Mode::Normal;
-                    if clear_selection {
-                        self.clear_selected_items();
-                    }
-                    self.clear_item_assign_session();
+                    self.close_item_assign_session(self.status.clone());
                 } else {
                     self.handle_item_assign_category_key(KeyCode::Char(' '), agenda)?;
                     if self.mode == Mode::ItemAssignPicker {
-                        let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                        self.mode = Mode::Normal;
-                        if clear_selection {
-                            self.clear_selected_items();
-                        }
-                        self.clear_item_assign_session();
+                        self.close_item_assign_session(self.status.clone());
                     }
                 }
             }
@@ -5474,34 +5596,16 @@ impl App {
             }
             KeyCode::Enter => {
                 if self.item_assign_dirty {
-                    let clear_selection = self.has_selected_items();
-                    self.mode = Mode::Normal;
-                    if clear_selection {
-                        self.clear_selected_items();
-                    }
-                    self.clear_item_assign_session();
+                    self.close_item_assign_session(self.status.clone());
                 } else {
                     self.handle_item_assign_view_key(KeyCode::Char(' '), agenda)?;
                     if self.mode == Mode::ItemAssignPicker {
-                        let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                        self.mode = Mode::Normal;
-                        if clear_selection {
-                            self.clear_selected_items();
-                        }
-                        self.clear_item_assign_session();
+                        self.close_item_assign_session(self.status.clone());
                     }
                 }
             }
             KeyCode::Esc => {
-                let clear_selection = self.item_assign_dirty && self.has_selected_items();
-                self.mode = Mode::Normal;
-                if clear_selection {
-                    self.clear_selected_items();
-                }
-                self.clear_item_assign_session();
-                if !clear_selection {
-                    self.status = "Assign canceled".to_string();
-                }
+                self.close_item_assign_session("Assign canceled");
             }
             _ => {}
         }
@@ -5526,9 +5630,7 @@ impl App {
                     .item_assign_anchor_id()
                     .or_else(|| self.selected_item_id())
                 else {
-                    self.mode = Mode::Normal;
-                    self.clear_item_assign_session();
-                    self.status = "Assign failed: no selected item".to_string();
+                    self.close_item_assign_session("Assign failed: no selected item");
                     return Ok(false);
                 };
                 let name = self.input.trimmed().to_string();
@@ -6264,8 +6366,8 @@ mod tests {
         );
         assert_eq!(
             app.input_panel_selected_category_row()
-                .map(|row| row.name.as_str()),
-            Some("Beta")
+                .map(|selection| selection.row.name),
+            Some("Beta".to_string())
         );
 
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
@@ -6316,6 +6418,46 @@ mod tests {
         app.handle_input_panel_key(KeyCode::Esc, &agenda)
             .expect("cancel panel");
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn input_panel_selection_skips_hidden_reserved_rows() {
+        let when = Category::new("When".to_string());
+        let entry = Category::new("Entry".to_string());
+        let done = Category::new("Done".to_string());
+
+        let issue_type = Category::new("Issue type".to_string());
+        let mut bug = Category::new("Bug".to_string());
+        bug.parent = Some(issue_type.id);
+
+        let status = Category::new("Status".to_string());
+
+        let mut app = App {
+            categories: vec![when, entry, done, issue_type.clone(), bug.clone(), status.clone()],
+            ..App::default()
+        };
+        app.category_rows = build_category_rows(&app.categories);
+        app.input_panel = Some(input_panel::InputPanel::new_edit_item(
+            ItemId::new_v4(),
+            "Test".to_string(),
+            String::new(),
+            String::new(),
+            HashSet::from([bug.id]),
+            HashMap::new(),
+            HashMap::new(),
+        ));
+        app.mode = Mode::InputPanel;
+        if let Some(panel) = &mut app.input_panel {
+            panel.focus = input_panel::InputPanelFocus::Categories;
+            panel.category_cursor = 1;
+        }
+
+        let selection = app
+            .input_panel_selected_category_row()
+            .expect("visible category selection");
+        assert_eq!(selection.row.name, "Bug");
+        assert_eq!(selection.row.id, bug.id);
+        assert_ne!(selection.row.id, status.id);
     }
 
     #[test]

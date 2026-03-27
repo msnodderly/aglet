@@ -1169,8 +1169,8 @@ pub(super) fn input_panel_popup_regions(
             let halves = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(70), // note
-                    Constraint::Percentage(30), // categories
+                    Constraint::Percentage(73), // note
+                    Constraint::Percentage(27), // side pane
                 ])
                 .split(middle);
 
@@ -1361,7 +1361,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_item_popup_regions_keep_note_and_categories_split() {
+    fn edit_item_popup_regions_keep_note_and_side_pane_split() {
         let area = Rect::new(0, 0, 100, 30);
         let regions = input_panel_popup_regions(area, crate::input_panel::InputPanelKind::EditItem)
             .expect("regions");
@@ -1369,14 +1369,14 @@ mod tests {
         assert!(regions.note.is_some(), "edit popup should keep note pane");
         assert!(
             regions.categories.is_some(),
-            "edit popup should keep categories pane"
+            "edit popup should keep side pane"
         );
 
         let note = regions.note.expect("note");
-        let categories = regions.categories.expect("categories");
+        let categories = regions.categories.expect("side pane");
         assert!(
             categories.x >= note.x + note.width,
-            "categories should be right of note"
+            "side pane should be right of note"
         );
     }
 
