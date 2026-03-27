@@ -1001,7 +1001,6 @@ pub(super) struct InputPanelPopupRegions {
     pub(super) categories_list: Option<Rect>,
     /// Type picker field (CategoryCreate only).
     pub(super) type_picker: Option<Rect>,
-    pub(super) buttons: Rect,
     pub(super) help: Rect,
     /// Optional second help line (WhenDate format hints).
     pub(super) help2: Option<Rect>,
@@ -1028,8 +1027,8 @@ pub(super) fn input_panel_popup_regions(
     use crate::input_panel::InputPanelKind;
     match kind {
         InputPanelKind::NameInput => {
-            // text + buttons + help = 3 lines minimum
-            if inner.height < 3 {
+            // text + help = 2 lines minimum
+            if inner.height < 2 {
                 return None;
             }
             let chunks = Layout::default()
@@ -1038,9 +1037,9 @@ pub(super) fn input_panel_popup_regions(
                     Constraint::Length(1),
                     Constraint::Min(0),
                     Constraint::Length(1),
-                    Constraint::Length(1),
                 ])
                 .split(inner);
+
             Some(InputPanelPopupRegions {
                 context: None,
                 text: chunks[0],
@@ -1051,14 +1050,14 @@ pub(super) fn input_panel_popup_regions(
                 categories_filter: None,
                 categories_list: None,
                 type_picker: None,
-                buttons: chunks[2],
-                help: chunks[3],
+
+                help: chunks[2],
                 help2: None,
             })
         }
         InputPanelKind::NumericValue => {
-            // context + value text + buttons + help = 4 lines minimum
-            if inner.height < 4 {
+            // context + value text + help = 3 lines minimum
+            if inner.height < 3 {
                 return None;
             }
             let chunks = Layout::default()
@@ -1066,11 +1065,11 @@ pub(super) fn input_panel_popup_regions(
                 .constraints([
                     Constraint::Length(1), // context
                     Constraint::Length(1), // value input
-                    Constraint::Length(1), // buttons
                     Constraint::Length(1), // help
                     Constraint::Min(0),    // spacer
                 ])
                 .split(inner);
+
             Some(InputPanelPopupRegions {
                 context: Some(chunks[0]),
                 text: chunks[1],
@@ -1081,14 +1080,14 @@ pub(super) fn input_panel_popup_regions(
                 categories_filter: None,
                 categories_list: None,
                 type_picker: None,
-                buttons: chunks[2],
-                help: chunks[3],
+
+                help: chunks[2],
                 help2: None,
             })
         }
         InputPanelKind::WhenDate => {
-            // context + datetime text + buttons + key hints + format hints = 5 lines minimum
-            if inner.height < 5 {
+            // context + datetime text + key hints + format hints = 4 lines minimum
+            if inner.height < 4 {
                 return None;
             }
             let chunks = Layout::default()
@@ -1096,12 +1095,12 @@ pub(super) fn input_panel_popup_regions(
                 .constraints([
                     Constraint::Length(1), // context (item label)
                     Constraint::Length(1), // datetime input
-                    Constraint::Length(1), // buttons
                     Constraint::Length(1), // key hints (Enter/Tab/Esc)
                     Constraint::Length(1), // format hints (supported phrases)
                     Constraint::Min(0),    // spacer
                 ])
                 .split(inner);
+
             Some(InputPanelPopupRegions {
                 context: Some(chunks[0]),
                 text: chunks[1],
@@ -1112,14 +1111,14 @@ pub(super) fn input_panel_popup_regions(
                 categories_filter: None,
                 categories_list: None,
                 type_picker: None,
-                buttons: chunks[2],
-                help: chunks[3],
-                help2: Some(chunks[4]),
+
+                help: chunks[2],
+                help2: Some(chunks[3]),
             })
         }
         InputPanelKind::CategoryCreate => {
-            // name(1) + type(1) + buttons(1) + help(1) = 4 min
-            if inner.height < 4 {
+            // name(1) + type(1) + help(1) = 3 min
+            if inner.height < 3 {
                 return None;
             }
             let chunks = Layout::default()
@@ -1128,7 +1127,6 @@ pub(super) fn input_panel_popup_regions(
                     Constraint::Length(1), // name
                     Constraint::Length(1), // type picker
                     Constraint::Min(0),    // spacer
-                    Constraint::Length(1), // buttons
                     Constraint::Length(1), // help
                 ])
                 .split(inner);
@@ -1140,17 +1138,17 @@ pub(super) fn input_panel_popup_regions(
                 categories: None,
                 categories_inner: None,
                 type_picker: Some(chunks[1]),
-                buttons: chunks[3],
-                help: chunks[4],
+
+                help: chunks[3],
                 help2: None,
                 categories_filter: None,
                 categories_list: None,
             })
         }
         InputPanelKind::AddItem | InputPanelKind::EditItem => {
-            // text + when + context + [note | categories] (horizontal split) + buttons + help
-            // Minimum: text(1) + when(1) + context(1) + middle(3) + buttons(1) + help(1) = 8
-            if inner.height < 8 {
+            // text + when + context + [note | categories] (horizontal split) + help
+            // Minimum: text(1) + when(1) + context(1) + middle(3) + help(1) = 7
+            if inner.height < 7 {
                 return None;
             }
             let chunks = Layout::default()
@@ -1160,7 +1158,6 @@ pub(super) fn input_panel_popup_regions(
                     Constraint::Length(1), // when-date input
                     Constraint::Length(1), // static context
                     Constraint::Min(3),    // middle: note | categories side-by-side
-                    Constraint::Length(1), // buttons
                     Constraint::Length(1), // help
                 ])
                 .split(inner);
@@ -1170,8 +1167,8 @@ pub(super) fn input_panel_popup_regions(
             let halves = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(60), // note
-                    Constraint::Percentage(40), // categories
+                    Constraint::Percentage(70), // note
+                    Constraint::Percentage(30), // categories
                 ])
                 .split(middle);
 
@@ -1213,8 +1210,8 @@ pub(super) fn input_panel_popup_regions(
                 categories_filter: cat_filter,
                 categories_list: cat_list,
                 type_picker: None,
-                buttons: chunks[4],
-                help: chunks[5],
+
+                help: chunks[4],
                 help2: None,
             })
         }

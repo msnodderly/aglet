@@ -1262,7 +1262,6 @@ struct App {
     classification_ui: ClassificationUiState,
     suggestion_review: Option<SuggestionReviewState>,
     undo: UndoState,
-    input_panel_discard_confirm: bool,
     pending_external_edit: Option<ExternalEditorTarget>,
     classification_worker: async_classify::ClassificationWorker,
     in_flight_classifications: HashSet<ItemId>,
@@ -1345,7 +1344,6 @@ impl Default for App {
             classification_ui: ClassificationUiState::default(),
             suggestion_review: None,
             undo: UndoState::default(),
-            input_panel_discard_confirm: false,
             pending_external_edit: None,
             classification_worker: async_classify::ClassificationWorker::spawn(),
             in_flight_classifications: HashSet::new(),
@@ -5513,17 +5511,15 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note");
         }
-        // Tab -> Categories, Tab -> SaveButton
+        // Tab -> Categories, then S to save
         app.handle_input_panel_key(KeyCode::Tab, &agenda)
             .expect("focus categories");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus save button");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::SaveButton
+            input_panel::InputPanelFocus::Categories
         );
-        // Enter on SaveButton saves
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+        // Capital S saves from Categories focus
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save item edit");
         assert_eq!(app.mode, Mode::Normal);
 
@@ -5650,13 +5646,9 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type note line2");
         }
-        // Tab -> Categories, Tab -> Save, Enter -> save
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus categories");
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("focus save");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save");
+        // Esc auto-saves
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("auto-save");
         assert_eq!(app.mode, Mode::Normal);
 
         let saved = store.get_item(item.id).expect("load item");
@@ -5795,11 +5787,12 @@ mod tests {
         app.refresh(&store).expect("refresh");
         let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new());
         panel.text.set("Plan travel".to_string());
-        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        panel.focus = input_panel::InputPanelFocus::Categories;
         app.mode = Mode::InputPanel;
         app.input_panel = Some(panel);
 
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+        // S saves from Categories focus
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save item");
 
         // Save should happen immediately (no blocking overlay).
@@ -5890,11 +5883,12 @@ mod tests {
             HashMap::new(),
         );
         panel.when_buffer.set("next weem".to_string());
-        panel.focus = input_panel::InputPanelFocus::SaveButton;
+        panel.focus = input_panel::InputPanelFocus::Categories;
         app.mode = Mode::InputPanel;
         app.input_panel = Some(panel);
 
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+        // S saves from Categories focus
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("attempt edit save");
 
         assert_eq!(app.mode, Mode::InputPanel);
@@ -6244,7 +6238,7 @@ mod tests {
     }
 
     #[test]
-    fn view_picker_clone_rejects_empty_name() {
+    fn view_picker_clone_empty_name_cancels() {
         let (store, db_path) = make_test_store_with_view("picker-clone-empty");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -6261,11 +6255,13 @@ mod tests {
         app.handle_view_picker_key(KeyCode::Char('c'), &agenda)
             .expect("c opens clone");
 
+        // Enter/Esc with empty name cancels silently
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("save clone with empty name");
 
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert!(app.status.contains("cannot be empty"));
+        // Empty name closes the panel (auto-save with empty = cancel)
+        assert_eq!(app.mode, Mode::ViewPicker);
+        assert!(app.input_panel.is_none());
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -6315,9 +6311,7 @@ mod tests {
             app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
                 .expect("type view name");
         }
-        // Tab from Text to SaveButton, then Enter to save (S types into text when focus is Text)
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save button");
+        // Enter from Text focus saves NameInput directly
         app.handle_input_panel_key(KeyCode::Enter, &agenda)
             .expect("save name input");
 
@@ -7585,7 +7579,7 @@ mod tests {
 
     #[test]
     fn footer_shows_auto_refresh_mode_indicator() {
-        let app = App {
+        let mut app = App {
             auto_refresh_interval: AutoRefreshInterval::FiveSeconds,
             status: "Ready".to_string(),
             ..App::default()
@@ -7604,7 +7598,7 @@ mod tests {
 
     #[test]
     fn when_input_panel_surfaces_parse_feedback_inside_popup() {
-        let app = App {
+        let mut app = App {
             mode: Mode::InputPanel,
             status: "Could not parse 'next weem'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY".to_string(),
             input_panel: Some(input_panel::InputPanel::new_when_date_input(
@@ -7629,7 +7623,7 @@ mod tests {
     fn when_input_panel_shows_full_item_context_text() {
         let long_item_text =
             "change auto-refresh timer default from none to 1 sec END-CONTEXT-TOKEN";
-        let app = App {
+        let mut app = App {
             mode: Mode::InputPanel,
             input_panel: Some(input_panel::InputPanel::new_when_date_input(
                 "tomorrow",
@@ -7651,7 +7645,7 @@ mod tests {
 
     #[test]
     fn normal_mode_footer_hints_include_preview_shortcut() {
-        let app = App {
+        let mut app = App {
             mode: Mode::Normal,
             status: "Ready".to_string(),
             ..App::default()
@@ -7840,7 +7834,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_item_panel_footer_warns_that_esc_opens_discard_confirm() {
+    fn edit_item_panel_footer_shows_esc_save_and_close() {
         let mut panel = input_panel::InputPanel::new_edit_item(
             agenda_core::model::ItemId::new_v4(),
             "Title".to_string(),
@@ -7851,7 +7845,7 @@ mod tests {
             std::collections::HashMap::new(),
         );
         panel.focus = input_panel::InputPanelFocus::Note;
-        let app = App {
+        let mut app = App {
             mode: Mode::InputPanel,
             status: "Editing".to_string(),
             input_panel: Some(panel),
@@ -7864,8 +7858,8 @@ mod tests {
         let rendered = terminal_buffer_lines(&terminal).join("\n");
 
         assert!(
-            rendered.contains("Esc:discard?"),
-            "edit-item footer/help should warn that Esc opens discard confirm: {rendered}"
+            rendered.contains("Esc:save and close"),
+            "edit-item footer/help should indicate Esc auto-saves: {rendered}"
         );
     }
 
@@ -8443,7 +8437,7 @@ mod tests {
 
     #[test]
     fn help_panel_render_contains_shortcut_cheat_sheet() {
-        let app = App {
+        let mut app = App {
             mode: Mode::HelpPanel,
             ..App::default()
         };
@@ -10784,7 +10778,7 @@ mod tests {
     }
 
     #[test]
-    fn category_create_panel_esc_cancels_without_creating() {
+    fn category_create_panel_esc_with_empty_name_cancels() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
@@ -10802,18 +10796,49 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
             .expect("open create panel");
 
+        // Esc with empty text cancels without creating
+        app.handle_input_panel_key(KeyCode::Esc, &agenda)
+            .expect("cancel empty create");
+
+        assert_eq!(app.mode, Mode::CategoryManager);
+        assert!(app.input_panel.is_none());
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn category_create_panel_esc_with_name_auto_saves() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("agenda-tui-category-create-panel-esc-save-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+        app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+            .expect("open create panel");
+
         for c in "Score".chars() {
             app.handle_input_panel_key(KeyCode::Char(c), &agenda)
                 .expect("type create name");
         }
 
+        // Esc with non-empty text auto-saves
         app.handle_input_panel_key(KeyCode::Esc, &agenda)
-            .expect("cancel and discard");
+            .expect("auto-save create");
 
         assert_eq!(app.mode, Mode::CategoryManager);
         assert!(app.input_panel.is_none());
-        // Category should not have been created
-        assert!(!app.categories.iter().any(|c| c.name == "Score"));
+        // Category should have been created via auto-save
+        assert!(app.categories.iter().any(|c| c.name == "Score"));
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -19315,16 +19340,15 @@ mod tests {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
 
-        // Save with Tab to SaveButton then Enter
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
-        assert_eq!(
-            app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::SaveButton
-        );
-        app.handle_key(KeyCode::Enter, &agenda).expect("save");
+        // Esc auto-saves from Categories
+        app.handle_key(KeyCode::Esc, &agenda).expect("save");
 
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.status.contains("updated"), "status: {}", app.status);
+        assert!(
+            app.status.contains("Item updated"),
+            "status: {}",
+            app.status
+        );
 
         // Verify persisted
         let assignments = store
@@ -19374,9 +19398,8 @@ mod tests {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
 
-        // Tab to save button and press Enter
-        app.handle_key(KeyCode::Tab, &agenda).expect("tab to save");
-        app.handle_key(KeyCode::Enter, &agenda)
+        // Esc auto-saves (triggers validation)
+        app.handle_key(KeyCode::Esc, &agenda)
             .expect("attempt save");
 
         // Panel should still be open with error
@@ -19444,10 +19467,11 @@ mod tests {
             app.input_panel.as_ref().unwrap().focus,
             input_panel::InputPanelFocus::Categories
         );
+        // Tab from Categories wraps back to Text (no buttons)
         app.handle_key(KeyCode::Tab, &agenda).expect("tab");
         assert_eq!(
             app.input_panel.as_ref().unwrap().focus,
-            input_panel::InputPanelFocus::SaveButton
+            input_panel::InputPanelFocus::Text
         );
     }
 
@@ -19660,7 +19684,7 @@ mod tests {
         let mut view = View::new("Focus".to_string());
         view.hide_dependent_items = true;
 
-        let app = App {
+        let mut app = App {
             views: vec![view],
             view_index: 0,
             mode: Mode::Normal,

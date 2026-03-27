@@ -241,7 +241,7 @@ impl App {
         );
     }
 
-    pub(crate) fn draw(&self, frame: &mut ratatui::Frame<'_>) {
+    pub(crate) fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         let show_search_bar = !(matches!(
             self.mode,
             Mode::ViewEdit | Mode::CategoryManager | Mode::GlobalSettings
@@ -287,18 +287,19 @@ impl App {
             frame.set_cursor_position((x, y));
         }
         if self.mode == Mode::InputPanel {
-            if let Some(ref panel) = self.input_panel {
+            if let Some(mut panel) = self.input_panel.take() {
                 let popup_area = input_panel_popup_area(frame.area(), panel.kind);
-                self.render_input_panel(frame, popup_area, panel);
+                self.render_input_panel(frame, popup_area, &mut panel);
                 if panel.details_popup_open {
                     self.render_input_panel_details_popup(
                         frame,
                         centered_rect(58, 68, frame.area()),
-                        panel,
+                        &panel,
                     );
-                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
+                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, &panel) {
                     frame.set_cursor_position((x, y));
                 }
+                self.input_panel = Some(panel);
             }
         }
         if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
@@ -1700,9 +1701,7 @@ impl App {
                 None
             }
             InputPanelFocus::When
-            | InputPanelFocus::TypePicker
-            | InputPanelFocus::SaveButton
-            | InputPanelFocus::CancelButton => None,
+            | InputPanelFocus::TypePicker => None,
         }
     }
 
@@ -3468,8 +3467,6 @@ impl App {
                             InputPanelFocus::Note => "Note",
                             InputPanelFocus::Categories => "Categories",
                             InputPanelFocus::TypePicker => "Type",
-                            InputPanelFocus::SaveButton => "Save",
-                            InputPanelFocus::CancelButton => "Cancel",
                         }
                     )
                 } else {
@@ -3724,13 +3721,7 @@ impl App {
             }
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
             Mode::InputPanel => {
-                if self.input_panel_discard_confirm_active() {
-                    vec![
-                        ("y", "discard"),
-                        ("n", "keep editing"),
-                        ("Esc", "keep editing"),
-                    ]
-                } else if self
+                if self
                     .input_panel
                     .as_ref()
                     .map(|p| {
@@ -3741,9 +3732,7 @@ impl App {
                 {
                     vec![
                         ("Enter", "save"),
-                        ("S", "save"),
-                        ("Tab", "buttons"),
-                        ("Esc", "cancel"),
+                        ("Esc", "close"),
                     ]
                 } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
@@ -3760,30 +3749,16 @@ impl App {
                     .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
                 {
                     vec![
-                        ("S", "save"),
                         ("Tab", "next"),
                         ("/", "filter"),
                         ("Space", "toggle"),
-                        ("Esc", "cancel"),
+                        ("Esc", "close"),
                     ]
                 } else {
-                    let esc_hint = if self.input_panel.as_ref().is_some_and(|panel| {
-                        panel.kind == input_panel::InputPanelKind::EditItem
-                            && matches!(
-                                panel.focus,
-                                input_panel::InputPanelFocus::Text
-                                    | input_panel::InputPanelFocus::Note
-                            )
-                    }) {
-                        "discard?"
-                    } else {
-                        "cancel"
-                    };
                     vec![
-                        ("S", "save"),
                         ("Tab", "next"),
                         ("Ctrl-G", "$EDITOR"),
-                        ("Esc", esc_hint),
+                        ("Esc", "close"),
                     ]
                 }
             }
@@ -3955,7 +3930,7 @@ impl App {
         &self,
         frame: &mut ratatui::Frame<'_>,
         area: Rect,
-        panel: &input_panel::InputPanel,
+        panel: &mut input_panel::InputPanel,
     ) {
         use input_panel::{InputPanelFocus, InputPanelKind};
 
@@ -4086,7 +4061,7 @@ impl App {
             } else {
                 Style::default().fg(Color::Cyan)
             };
-            let mut note_widget = panel.note.widget().clone();
+            let note_widget = panel.note.widget_mut();
             note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
             note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
             note_widget.set_style(Style::default());
@@ -4107,7 +4082,7 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(note_border_style),
             );
-            frame.render_widget(&note_widget, note_rect);
+            frame.render_widget(panel.note.widget(), note_rect);
             let note_scroll =
                 list_scroll_for_selected_line(note_rect, Some(panel.note.line_col().0));
             Self::render_vertical_scrollbar(
@@ -4381,105 +4356,37 @@ impl App {
             );
         }
 
-        // Buttons row
-        let save_button = if panel.focus == InputPanelFocus::SaveButton {
-            "[> Save <]"
-        } else {
-            "[Save]"
-        };
-        let cancel_button = if panel.focus == InputPanelFocus::CancelButton {
-            "[> Cancel <]"
-        } else {
-            "[Cancel]"
-        };
-        let save_style = if panel.focus == InputPanelFocus::SaveButton {
-            selected_row_style().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        let cancel_style = if panel.focus == InputPanelFocus::CancelButton {
-            selected_row_style().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        let actions_focused = matches!(
-            panel.focus,
-            InputPanelFocus::SaveButton | InputPanelFocus::CancelButton
-        );
-        let actions_prefix = if actions_focused { "> " } else { "  " };
-        let actions_prefix_style = if actions_focused {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(actions_prefix, actions_prefix_style),
-                Span::styled(save_button, save_style),
-                Span::raw("  "),
-                Span::styled(cancel_button, cancel_style),
-            ])),
-            regions.buttons,
-        );
 
         // Help row
-        let base_help = if self.input_panel_discard_confirm_active() {
-            "Discard unsaved item edits?  y:discard  n/Esc:keep editing"
-        } else {
-            match panel.focus {
-                InputPanelFocus::Text => match panel.kind {
-                    InputPanelKind::NumericValue => {
-                        "Type value  Enter:save  Tab:actions  Esc:cancel"
-                    }
-                    InputPanelKind::NameInput => "Type name  Enter:save  Tab:actions  Esc:cancel",
-                    InputPanelKind::WhenDate => {
-                        "Enter natural language or ISO datetime  Enter:save  Tab:actions  Esc:cancel"
-                    }
-                    InputPanelKind::CategoryCreate => "Type name  Tab:next  S:save  Esc:cancel",
-                    InputPanelKind::EditItem => "Type title  Tab:note  S:save  Esc:discard?",
-                    InputPanelKind::AddItem => "Type title  Tab:note  S:save  Esc:cancel",
-                },
-                InputPanelFocus::Note => {
-                    if panel.kind == InputPanelKind::EditItem {
-                        "Type note  Enter:new line  Tab:categories  S:save  Esc:discard?"
-                    } else {
-                        "Type note  Enter:new line  Tab:categories  S:save  Esc:cancel"
-                    }
+        let base_help = match panel.focus {
+            InputPanelFocus::Text => match panel.kind {
+                InputPanelKind::NumericValue => "Type value  Enter:save  Esc:close",
+                InputPanelKind::NameInput => "Type name  Enter:save  Esc:close",
+                InputPanelKind::WhenDate => {
+                    "Enter natural language or ISO datetime  Enter:save  Esc:close"
                 }
-                InputPanelFocus::Categories if panel.category_filter_editing => {
-                    "Type filter  Enter:keep  Esc:done  Tab:next"
+                InputPanelKind::CategoryCreate => "Type name  Enter/Esc:save  Tab:next",
+                InputPanelKind::EditItem => {
+                    "Type title  Enter/Esc:save and close  Tab:when"
                 }
-                InputPanelFocus::Categories => {
-                    if panel.kind == InputPanelKind::EditItem {
-                        "j/k:move  Space:toggle  /:filter  I:details  Tab:actions  S:save"
-                    } else {
-                        "j/k:move  Space:toggle  /:filter  Tab:actions  S:save"
-                    }
+                InputPanelKind::AddItem => "Type title  Enter/Esc:save  Tab:when",
+            },
+            InputPanelFocus::Note => {
+                "Type note  Enter:new line  Tab:categories  Esc:save and close"
+            }
+            InputPanelFocus::Categories if panel.category_filter_editing => {
+                "Type filter  Enter:keep  Esc:done  Tab:next"
+            }
+            InputPanelFocus::Categories => {
+                if panel.kind == InputPanelKind::EditItem {
+                    "j/k:move  Space:toggle  /:filter  I:details  Tab:text  Esc:save and close"
+                } else {
+                    "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close"
                 }
-                InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:actions",
-                InputPanelFocus::SaveButton => {
-                    if panel.kind == InputPanelKind::EditItem {
-                        "Enter save  I:details  Tab:cancel  Shift-Tab:categories"
-                    } else {
-                        "Enter save  Tab:cancel  Shift-Tab:categories"
-                    }
-                }
-                InputPanelFocus::When => {
-                    if panel.kind == InputPanelKind::EditItem {
-                        "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:discard?"
-                    } else {
-                        "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:cancel"
-                    }
-                }
-                InputPanelFocus::CancelButton => {
-                    if panel.kind == InputPanelKind::EditItem {
-                        "Enter cancel  I:details  Tab:text  Shift-Tab:save"
-                    } else {
-                        "Enter cancel  Tab:text  Shift-Tab:save"
-                    }
-                }
+            }
+            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
+            InputPanelFocus::When => {
+                "When date (today, tomorrow, 2026-03-25, …)  Enter/Esc:save  Tab:note"
             }
         };
         let mut help_style = Style::default();

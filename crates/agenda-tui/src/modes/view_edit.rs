@@ -47,7 +47,7 @@ impl App {
                 self.view_pending_edit_name = None;
                 self.input_panel =
                     Some(input_panel::InputPanel::new_name_input("", "New view name"));
-                self.input_panel_discard_confirm = false;
+
                 self.name_input_context = Some(NameInputContext::ViewCreate);
                 self.mode = Mode::InputPanel;
                 self.status =
@@ -64,7 +64,7 @@ impl App {
                         &view.name,
                         "Rename view",
                     ));
-                    self.input_panel_discard_confirm = false;
+    
                     self.name_input_context = Some(NameInputContext::ViewRename);
                     self.mode = Mode::InputPanel;
                     self.status = format!(
@@ -108,7 +108,7 @@ impl App {
                         "",
                         &format!("Clone view '{}'", view.name),
                     ));
-                    self.input_panel_discard_confirm = false;
+    
                     self.name_input_context = Some(NameInputContext::ViewClone);
                     self.mode = Mode::InputPanel;
                     self.status = format!(

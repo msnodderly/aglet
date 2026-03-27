@@ -75,25 +75,10 @@ fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyActi
 }
 
 impl App {
-    pub(crate) fn input_panel_discard_confirm_active(&self) -> bool {
-        self.input_panel_discard_confirm
-            && self
-                .input_panel
-                .as_ref()
-                .is_some_and(|panel| panel.kind == input_panel::InputPanelKind::EditItem)
-    }
-
-    fn begin_input_panel_discard_confirm(&mut self) {
-        self.input_panel_discard_confirm = true;
-        self.status = "Discard unsaved item edits? y:discard n:keep editing".to_string();
-    }
-
     fn cancel_input_panel_with_status(
         &mut self,
         kind: input_panel::InputPanelKind,
-        was_dirty: bool,
     ) {
-        self.input_panel_discard_confirm = false;
         self.input_panel = None;
         match kind {
             input_panel::InputPanelKind::NameInput
@@ -109,11 +94,7 @@ impl App {
                 self.mode = Mode::Normal;
             }
         }
-        self.status = if was_dirty {
-            "Changes discarded".to_string()
-        } else {
-            "Canceled".to_string()
-        };
+        self.status = "Canceled".to_string();
     }
 
     pub(crate) fn category_column_picker_state(&self) -> Option<&CategoryColumnPickerState> {
@@ -1536,7 +1517,6 @@ impl App {
             &current_value,
             &meta.item_label,
         ));
-        self.input_panel_discard_confirm = false;
         self.name_input_context = Some(NameInputContext::WhenDateEdit);
         self.mode = Mode::InputPanel;
         self.status = String::new();
@@ -1566,7 +1546,6 @@ impl App {
                 truncate_board_cell(&meta.item_label, 32)
             ),
         ));
-        self.input_panel_discard_confirm = false;
         self.name_input_context = Some(NameInputContext::NumericValueEdit);
         self.mode = Mode::InputPanel;
         self.status = format!(
@@ -3678,10 +3657,9 @@ impl App {
             &section_title,
             &on_insert_assign,
         ));
-        self.input_panel_discard_confirm = false;
         self.mode = Mode::InputPanel;
         self.status =
-            "Add item: type text, S to save, Tab for note/categories, Esc to cancel".to_string();
+            "Add item: type text, Tab for note/categories, Esc to close".to_string();
     }
 
     pub(crate) fn handle_board_add_column_key(
@@ -3987,10 +3965,9 @@ impl App {
                     .collect();
             }
             self.input_panel = Some(panel);
-            self.input_panel_discard_confirm = false;
             self.mode = Mode::InputPanel;
             self.status =
-                "Edit item: S to save, Tab cycles fields, Esc asks before discard".to_string();
+                "Edit item: Tab cycles fields, Esc to save and close".to_string();
         } else {
             self.status = "No selected item to edit".to_string();
         }
@@ -4007,23 +3984,6 @@ impl App {
             self.status = "InputPanel error: no panel state".to_string();
             return Ok(false);
         };
-
-        if self.input_panel_discard_confirm_active() {
-            match code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    self.cancel_input_panel_with_status(
-                        input_panel::InputPanelKind::EditItem,
-                        true,
-                    );
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.input_panel_discard_confirm = false;
-                    self.status = "Continue editing item".to_string();
-                }
-                _ => {}
-            }
-            return Ok(false);
-        }
 
         if self.input_panel.as_ref().is_some_and(|panel| {
             panel.kind == input_panel::InputPanelKind::EditItem && panel.details_popup_open
@@ -4153,25 +4113,7 @@ impl App {
 
         use input_panel::InputPanelAction;
         match action {
-            InputPanelAction::Cancel => {
-                let was_dirty = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.is_dirty())
-                    .unwrap_or(false);
-                let kind = self
-                    .input_panel
-                    .as_ref()
-                    .map(|p| p.kind)
-                    .unwrap_or(input_panel::InputPanelKind::AddItem);
-                if kind == input_panel::InputPanelKind::EditItem && was_dirty {
-                    self.begin_input_panel_discard_confirm();
-                    return Ok(false);
-                }
-                self.cancel_input_panel_with_status(kind, was_dirty);
-            }
             InputPanelAction::Save => {
-                self.input_panel_discard_confirm = false;
                 let kind = self
                     .input_panel
                     .as_ref()
@@ -4362,7 +4304,10 @@ impl App {
         };
         let text = panel.text.trimmed().to_string();
         if text.is_empty() {
-            self.status = "Cannot save: text cannot be empty".to_string();
+            // Empty text on add: silently close (nothing to save)
+            self.input_panel = None;
+            self.mode = Mode::Normal;
+            self.status = "Canceled".to_string();
             return Ok(());
         }
         let note_raw = panel.note.trimmed().to_string();
@@ -4726,7 +4671,7 @@ impl App {
         match self.name_input_context {
             Some(NameInputContext::ViewCreate) => {
                 if input_text.is_empty() {
-                    self.status = "Name cannot be empty".to_string();
+                    self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);
                     return Ok(());
                 }
                 let name = input_text.clone();
@@ -4750,7 +4695,7 @@ impl App {
             }
             Some(NameInputContext::ViewClone) => {
                 if input_text.is_empty() {
-                    self.status = "Name cannot be empty".to_string();
+                    self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);
                     return Ok(());
                 }
                 let name = input_text.clone();
@@ -4788,7 +4733,7 @@ impl App {
             }
             Some(NameInputContext::ViewRename) => {
                 if input_text.is_empty() {
-                    self.status = "Name cannot be empty".to_string();
+                    self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);
                     return Ok(());
                 }
                 let name = input_text.clone();
@@ -4859,8 +4804,10 @@ impl App {
                 };
 
                 if name.is_empty() {
-                    self.status =
-                        "Value cannot be empty. Enter a number (for example 12.50).".to_string();
+                    self.input_panel = None;
+                    self.name_input_context = None;
+                    self.mode = Mode::Normal;
+                    self.status = "Canceled".to_string();
                     return Ok(());
                 }
 
@@ -5027,7 +4974,9 @@ impl App {
         };
         let name = panel.text.trimmed().to_string();
         if name.is_empty() {
-            self.status = "Name cannot be empty".to_string();
+            self.cancel_input_panel_with_status(
+                input_panel::InputPanelKind::CategoryCreate,
+            );
             return Ok(());
         }
         if is_reserved_category_name(&name) {
@@ -6408,26 +6357,6 @@ mod tests {
         assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Note));
     }
 
-    #[test]
-    fn ctrl_g_not_allowed_from_non_text_focus_in_name_input() {
-        let mut panel = input_panel::InputPanel::new_name_input("test", "label");
-        panel.focus = input_panel::InputPanelFocus::SaveButton;
-        let mut app = App {
-            input_panel: Some(panel),
-            mode: Mode::InputPanel,
-            current_key_modifiers: KeyModifiers::CONTROL,
-            ..App::default()
-        };
-
-        let store = Store::open_memory().expect("open store");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-        // NameInput kind with SaveButton focus — not allowed (only AddItem/EditItem
-        // allow Ctrl+G from any focus; other kinds require Text focus).
-        app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
-            .expect("ctrl+g");
-        assert_eq!(app.pending_external_edit, None);
-    }
 
     #[test]
     fn ctrl_g_allowed_from_text_focus_in_name_input() {
@@ -6446,106 +6375,6 @@ mod tests {
         assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Text));
     }
 
-    #[test]
-    fn edit_item_esc_from_note_focus_warns_about_discarded_text_edits() {
-        let store = Store::open_memory().expect("open store");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut panel = input_panel::InputPanel::new_edit_item(
-            ItemId::new_v4(),
-            "Original".to_string(),
-            "Existing note".to_string(),
-            String::new(),
-            HashSet::new(),
-            HashMap::new(),
-            HashMap::new(),
-        );
-        panel.focus = input_panel::InputPanelFocus::Note;
-        panel.note.set("Updated note".to_string());
-
-        let mut app = App {
-            input_panel: Some(panel),
-            mode: Mode::InputPanel,
-            ..App::default()
-        };
-
-        app.handle_input_panel_key(KeyCode::Esc, &agenda)
-            .expect("open discard confirm");
-
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert!(app.input_panel_discard_confirm);
-        assert_eq!(
-            app.status,
-            "Discard unsaved item edits? y:discard n:keep editing"
-        );
-    }
-
-    #[test]
-    fn edit_item_discard_confirm_n_keeps_panel_open() {
-        let store = Store::open_memory().expect("open store");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut panel = input_panel::InputPanel::new_edit_item(
-            ItemId::new_v4(),
-            "Original".to_string(),
-            "Existing note".to_string(),
-            String::new(),
-            HashSet::new(),
-            HashMap::new(),
-            HashMap::new(),
-        );
-        panel.note.set("Updated note".to_string());
-
-        let mut app = App {
-            input_panel: Some(panel),
-            mode: Mode::InputPanel,
-            input_panel_discard_confirm: true,
-            ..App::default()
-        };
-
-        app.handle_input_panel_key(KeyCode::Char('n'), &agenda)
-            .expect("keep editing");
-
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert!(!app.input_panel_discard_confirm);
-        assert!(app.input_panel.is_some());
-        assert_eq!(app.status, "Continue editing item");
-    }
-
-    #[test]
-    fn edit_item_discard_confirm_y_discards_changes() {
-        let store = Store::open_memory().expect("open store");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let mut panel = input_panel::InputPanel::new_edit_item(
-            ItemId::new_v4(),
-            "Original".to_string(),
-            "Existing note".to_string(),
-            String::new(),
-            HashSet::new(),
-            HashMap::new(),
-            HashMap::new(),
-        );
-        panel.note.set("Updated note".to_string());
-
-        let mut app = App {
-            input_panel: Some(panel),
-            mode: Mode::InputPanel,
-            input_panel_discard_confirm: true,
-            ..App::default()
-        };
-
-        app.handle_input_panel_key(KeyCode::Char('y'), &agenda)
-            .expect("discard changes");
-
-        assert_eq!(app.mode, Mode::Normal);
-        assert!(!app.input_panel_discard_confirm);
-        assert!(app.input_panel.is_none());
-        assert_eq!(app.status, "Changes discarded");
-    }
 
     #[test]
     fn add_item_in_ready_section_with_no_children_assigns_ready_category() {
@@ -6591,9 +6420,10 @@ mod tests {
         app.open_input_panel_add_item();
         if let Some(panel) = &mut app.input_panel {
             panel.text.set("Ready task".to_string());
-            panel.focus = input_panel::InputPanelFocus::SaveButton;
+            panel.focus = input_panel::InputPanelFocus::Categories;
         }
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
+        // Capital S saves from Categories focus
+        app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
             .expect("save add item");
 
         let created = store
