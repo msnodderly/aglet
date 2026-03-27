@@ -1362,6 +1362,26 @@ mod tests {
     }
 
     #[test]
+    fn edit_item_popup_regions_keep_note_and_categories_split() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = input_panel_popup_regions(area, crate::input_panel::InputPanelKind::EditItem)
+            .expect("regions");
+
+        assert!(regions.note.is_some(), "edit popup should keep note pane");
+        assert!(
+            regions.categories.is_some(),
+            "edit popup should keep categories pane"
+        );
+
+        let note = regions.note.expect("note");
+        let categories = regions.categories.expect("categories");
+        assert!(
+            categories.x >= note.x + note.width,
+            "categories should be right of note"
+        );
+    }
+
+    #[test]
     fn is_valid_column_heading_accepts_numeric_leaf() {
         let mut cat = make_category("Cost");
         cat.value_kind = CategoryValueKind::Numeric;

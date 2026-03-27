@@ -4025,6 +4025,62 @@ impl App {
             return Ok(false);
         }
 
+        if self.input_panel.as_ref().is_some_and(|panel| {
+            panel.kind == input_panel::InputPanelKind::EditItem && panel.details_popup_open
+        }) {
+            let max_scroll = self
+                .input_panel
+                .as_ref()
+                .map(|panel| self.input_panel_edit_details_line_count(panel))
+                .unwrap_or(1);
+            match code {
+                KeyCode::Char('I') | KeyCode::Esc => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_popup_open = false;
+                    }
+                    self.status = "Closed item details".to_string();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_scroll = panel
+                            .details_scroll
+                            .saturating_add(1)
+                            .min(max_scroll.saturating_sub(1));
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_scroll = panel.details_scroll.saturating_sub(1);
+                    }
+                }
+                KeyCode::PageDown => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_scroll = panel
+                            .details_scroll
+                            .saturating_add(8)
+                            .min(max_scroll.saturating_sub(1));
+                    }
+                }
+                KeyCode::PageUp => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_scroll = panel.details_scroll.saturating_sub(8);
+                    }
+                }
+                KeyCode::Home => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_scroll = 0;
+                    }
+                }
+                KeyCode::End => {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.details_scroll = max_scroll.saturating_sub(1);
+                    }
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         // Ctrl+G: open the focused text buffer in $EDITOR.
         if self.current_key_modifiers.contains(KeyModifiers::CONTROL)
             && matches!(code, KeyCode::Char('g') | KeyCode::Char('G'))
@@ -4043,6 +4099,27 @@ impl App {
                     return Ok(false);
                 }
             }
+        }
+
+        if matches!(code, KeyCode::Char('I'))
+            && self.input_panel.as_ref().is_some_and(|panel| {
+                panel.kind == input_panel::InputPanelKind::EditItem
+                    && !panel.details_popup_open
+                    && !panel.category_filter_editing
+                    && !matches!(
+                        panel.focus,
+                        input_panel::InputPanelFocus::Text
+                            | input_panel::InputPanelFocus::Note
+                            | input_panel::InputPanelFocus::When
+                    )
+            })
+        {
+            if let Some(panel) = &mut self.input_panel {
+                panel.details_popup_open = true;
+                panel.details_scroll = 0;
+            }
+            self.status = "Inspect item details: Esc or I closes".to_string();
+            return Ok(false);
         }
 
         if self.handle_input_panel_category_filter_key(code) {

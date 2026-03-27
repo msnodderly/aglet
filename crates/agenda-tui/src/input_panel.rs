@@ -96,6 +96,10 @@ pub(crate) struct InputPanel {
     pub(crate) pending_suggestions: Vec<(ClassificationSuggestion, SuggestionDecision)>,
     /// When-date editor buffer (AddItem/EditItem only).
     pub(crate) when_buffer: TextBuffer,
+    /// Scroll offset for the EditItem details popup.
+    pub(crate) details_scroll: usize,
+    /// Whether the EditItem details popup is currently open.
+    pub(crate) details_popup_open: bool,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -126,6 +130,8 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            details_scroll: 0,
+            details_popup_open: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: on_insert_assign.clone(),
@@ -164,6 +170,8 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::new(when_value),
+            details_scroll: 0,
+            details_popup_open: false,
             original_text,
             original_note,
             original_categories,
@@ -190,6 +198,8 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            details_scroll: 0,
+            details_popup_open: false,
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -216,6 +226,8 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            details_scroll: 0,
+            details_popup_open: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -242,6 +254,8 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            details_scroll: 0,
+            details_popup_open: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -268,6 +282,8 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            details_scroll: 0,
+            details_popup_open: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -877,6 +893,45 @@ mod tests {
         assert_eq!(p.note.text(), "My note");
         assert_eq!(p.categories, cats);
         assert_eq!(p.item_id, Some(id));
+        assert_eq!(p.details_scroll, 0);
+        assert!(!p.details_popup_open);
+    }
+
+    #[test]
+    fn edit_item_tab_cycles_directly_to_categories() {
+        let mut p = InputPanel::new_edit_item(
+            ItemId::new_v4(),
+            "My item".into(),
+            "My note".into(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        assert_eq!(p.focus, InputPanelFocus::Text);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::When);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::Note);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::Categories);
+    }
+
+    #[test]
+    fn edit_item_backtab_returns_from_categories_to_note() {
+        let mut p = InputPanel::new_edit_item(
+            ItemId::new_v4(),
+            "My item".into(),
+            "My note".into(),
+            String::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        p.focus = InputPanelFocus::Categories;
+        p.handle_key(KeyCode::BackTab, false);
+        assert_eq!(p.focus, InputPanelFocus::Note);
     }
 
     #[test]

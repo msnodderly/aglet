@@ -290,7 +290,13 @@ impl App {
             if let Some(ref panel) = self.input_panel {
                 let popup_area = input_panel_popup_area(frame.area(), panel.kind);
                 self.render_input_panel(frame, popup_area, panel);
-                if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
+                if panel.details_popup_open {
+                    self.render_input_panel_details_popup(
+                        frame,
+                        centered_rect(58, 68, frame.area()),
+                        panel,
+                    );
+                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
                     frame.set_cursor_position((x, y));
                 }
             }
@@ -2854,6 +2860,95 @@ impl App {
         lines
     }
 
+    pub(crate) fn input_panel_edit_details_lines(
+        &self,
+        panel: &input_panel::InputPanel,
+    ) -> Vec<Line<'static>> {
+        let Some(item_id) = panel.item_id else {
+            return vec![Line::from("(missing item)")];
+        };
+        let Some(item) = self.all_items.iter().find(|item| item.id == item_id) else {
+            return vec![Line::from("(missing item)")];
+        };
+
+        let mut lines = Vec::new();
+
+        let mut info_lines = self.item_info_header_lines_for_item(item);
+        if info_lines.len() >= 2 {
+            info_lines.truncate(info_lines.len() - 2);
+        }
+        for line in info_lines.into_iter().skip(3) {
+            lines.push(Line::from(line));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from("Assignment Provenance"));
+        let rows = self.inspect_assignment_rows_for_item(item);
+        if rows.is_empty() {
+            lines.push(Line::from("  (none)"));
+        } else {
+            for row in rows {
+                lines.push(Line::from(format!(
+                    "  {} | source={} | origin={}",
+                    row.category_name, row.source_label, row.origin_label
+                )));
+            }
+        }
+        lines
+    }
+
+    pub(crate) fn input_panel_edit_details_line_count(
+        &self,
+        panel: &input_panel::InputPanel,
+    ) -> usize {
+        self.input_panel_edit_details_lines(panel).len().max(1)
+    }
+
+    pub(crate) fn render_input_panel_details_popup(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        panel: &input_panel::InputPanel,
+    ) {
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title("Item Details")
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.width < 3 || inner.height < 3 {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(self.input_panel_edit_details_lines(panel))
+                .scroll((panel.details_scroll.min(u16::MAX as usize) as u16, 0))
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            chunks[0],
+            self.input_panel_edit_details_line_count(panel),
+            panel.details_scroll,
+        );
+        frame.render_widget(
+            Paragraph::new("Esc/I close | j/k or PgUp/PgDn scroll")
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
+    }
+
     pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
         let mut lines = vec![
             "Info".to_string(),
@@ -4357,10 +4452,20 @@ impl App {
                     "Type filter  Enter:keep  Esc:done  Tab:next"
                 }
                 InputPanelFocus::Categories => {
-                    "j/k:move  Space:toggle  /:filter  Tab:actions  S:save"
+                    if panel.kind == InputPanelKind::EditItem {
+                        "j/k:move  Space:toggle  /:filter  I:details  Tab:actions  S:save"
+                    } else {
+                        "j/k:move  Space:toggle  /:filter  Tab:actions  S:save"
+                    }
                 }
                 InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:actions",
-                InputPanelFocus::SaveButton => "Enter save  Tab:cancel  Shift-Tab:categories",
+                InputPanelFocus::SaveButton => {
+                    if panel.kind == InputPanelKind::EditItem {
+                        "Enter save  I:details  Tab:cancel  Shift-Tab:categories"
+                    } else {
+                        "Enter save  Tab:cancel  Shift-Tab:categories"
+                    }
+                }
                 InputPanelFocus::When => {
                     if panel.kind == InputPanelKind::EditItem {
                         "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:discard?"
@@ -4368,7 +4473,13 @@ impl App {
                         "When date (today, tomorrow, 2026-03-25, …)  Tab:note  S:save  Esc:cancel"
                     }
                 }
-                InputPanelFocus::CancelButton => "Enter cancel  Tab:text  Shift-Tab:save",
+                InputPanelFocus::CancelButton => {
+                    if panel.kind == InputPanelKind::EditItem {
+                        "Enter cancel  I:details  Tab:text  Shift-Tab:save"
+                    } else {
+                        "Enter cancel  Tab:text  Shift-Tab:save"
+                    }
+                }
             }
         };
         let mut help_style = Style::default();

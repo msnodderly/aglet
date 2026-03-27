@@ -673,6 +673,23 @@ Practical implications:
 - If you edit normal footer hints, preserve preview discoverability and update
   rendering tests that assert `p:preview` is visible.
 
+## Edit Item Inspector Is Popup-Only (Current)
+
+`Mode::InputPanel` for `EditItem` no longer keeps an always-visible `Details`
+pane in the main edit layout. Instead, `I` opens a separate read-only inspector
+popup from non-text edit focus states.
+
+Practical implications:
+- Edit-item tab cycle is back to `Text -> When -> Note -> Categories -> Save -> Cancel`
+- The inspector popup omits note text and note preview; keep note editing in the
+  main edit panel and reserve the popup for metadata, links, and assignment
+  provenance
+- While the popup is open, `Esc` and `I` close it, and `j/k`, `PgUp/PgDn`,
+  `Home`, and `End` scroll it
+- If you change popup-open eligibility or footer hints, update
+  `handle_input_panel_key`, edit-panel help text, and tests that cover the
+  inspector flow
+
 ## Global Search `g/` Uses Temporary All-Items Session (Behavior)
 
 In `Mode::Normal`, `g/` now starts a temporary global search session:
