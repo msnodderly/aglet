@@ -241,7 +241,7 @@ impl App {
         );
     }
 
-    pub(crate) fn draw(&self, frame: &mut ratatui::Frame<'_>) {
+    pub(crate) fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
         let show_search_bar = !(matches!(
             self.mode,
             Mode::ViewEdit | Mode::CategoryManager | Mode::GlobalSettings
@@ -287,18 +287,19 @@ impl App {
             frame.set_cursor_position((x, y));
         }
         if self.mode == Mode::InputPanel {
-            if let Some(ref panel) = self.input_panel {
+            if let Some(mut panel) = self.input_panel.take() {
                 let popup_area = input_panel_popup_area(frame.area(), panel.kind);
-                self.render_input_panel(frame, popup_area, panel);
+                self.render_input_panel(frame, popup_area, &mut panel);
                 if panel.details_popup_open {
                     self.render_input_panel_details_popup(
                         frame,
                         centered_rect(58, 68, frame.area()),
-                        panel,
+                        &panel,
                     );
-                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, panel) {
+                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, &panel) {
                     frame.set_cursor_position((x, y));
                 }
+                self.input_panel = Some(panel);
             }
         }
         if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
@@ -3929,7 +3930,7 @@ impl App {
         &self,
         frame: &mut ratatui::Frame<'_>,
         area: Rect,
-        panel: &input_panel::InputPanel,
+        panel: &mut input_panel::InputPanel,
     ) {
         use input_panel::{InputPanelFocus, InputPanelKind};
 
@@ -4060,7 +4061,7 @@ impl App {
             } else {
                 Style::default().fg(Color::Cyan)
             };
-            let mut note_widget = panel.note.widget().clone();
+            let note_widget = panel.note.widget_mut();
             note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
             note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
             note_widget.set_style(Style::default());
@@ -4081,7 +4082,7 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(note_border_style),
             );
-            frame.render_widget(&note_widget, note_rect);
+            frame.render_widget(panel.note.widget(), note_rect);
             let note_scroll =
                 list_scroll_for_selected_line(note_rect, Some(panel.note.line_col().0));
             Self::render_vertical_scrollbar(

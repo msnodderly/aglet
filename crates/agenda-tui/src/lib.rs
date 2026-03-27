@@ -7579,7 +7579,7 @@ mod tests {
 
     #[test]
     fn footer_shows_auto_refresh_mode_indicator() {
-        let app = App {
+        let mut app = App {
             auto_refresh_interval: AutoRefreshInterval::FiveSeconds,
             status: "Ready".to_string(),
             ..App::default()
@@ -7598,7 +7598,7 @@ mod tests {
 
     #[test]
     fn when_input_panel_surfaces_parse_feedback_inside_popup() {
-        let app = App {
+        let mut app = App {
             mode: Mode::InputPanel,
             status: "Could not parse 'next weem'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY".to_string(),
             input_panel: Some(input_panel::InputPanel::new_when_date_input(
@@ -7623,7 +7623,7 @@ mod tests {
     fn when_input_panel_shows_full_item_context_text() {
         let long_item_text =
             "change auto-refresh timer default from none to 1 sec END-CONTEXT-TOKEN";
-        let app = App {
+        let mut app = App {
             mode: Mode::InputPanel,
             input_panel: Some(input_panel::InputPanel::new_when_date_input(
                 "tomorrow",
@@ -7645,7 +7645,7 @@ mod tests {
 
     #[test]
     fn normal_mode_footer_hints_include_preview_shortcut() {
-        let app = App {
+        let mut app = App {
             mode: Mode::Normal,
             status: "Ready".to_string(),
             ..App::default()
@@ -7845,7 +7845,7 @@ mod tests {
             std::collections::HashMap::new(),
         );
         panel.focus = input_panel::InputPanelFocus::Note;
-        let app = App {
+        let mut app = App {
             mode: Mode::InputPanel,
             status: "Editing".to_string(),
             input_panel: Some(panel),
@@ -8437,7 +8437,7 @@ mod tests {
 
     #[test]
     fn help_panel_render_contains_shortcut_cheat_sheet() {
-        let app = App {
+        let mut app = App {
             mode: Mode::HelpPanel,
             ..App::default()
         };
@@ -19684,7 +19684,7 @@ mod tests {
         let mut view = View::new("Focus".to_string());
         view.hide_dependent_items = true;
 
-        let app = App {
+        let mut app = App {
             views: vec![view],
             view_index: 0,
             mode: Mode::Normal,

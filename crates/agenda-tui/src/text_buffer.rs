@@ -79,6 +79,11 @@ impl TextBuffer {
         &self.textarea
     }
 
+    /// Mutable access to the backing textarea (for setting styles before render).
+    pub(crate) fn widget_mut(&mut self) -> &mut TextArea<'static> {
+        &mut self.textarea
+    }
+
     /// Dispatch a full key event into the buffer.
     ///
     /// When `multiline` is true, Enter and vertical motion are enabled.
