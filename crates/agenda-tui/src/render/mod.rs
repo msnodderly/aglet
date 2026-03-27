@@ -4442,7 +4442,7 @@ impl App {
             if panel.kind == InputPanelKind::EditItem {
                 let sidebar = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(5), Constraint::Min(7)])
+                    .constraints([Constraint::Length(4), Constraint::Min(0)])
                     .split(cat_rect);
                 let actions_rect = sidebar[0];
                 let suggestions_rect = sidebar[1];
@@ -4471,17 +4471,32 @@ impl App {
                         .border_style(actions_border_style),
                     actions_rect,
                 );
-                frame.render_widget(
-                    Block::default()
-                        .title(if suggestions_focused {
-                            "> Suggestions"
-                        } else {
-                            "Suggestions"
-                        })
-                        .borders(Borders::ALL)
-                        .border_style(suggestions_border_style),
-                    suggestions_rect,
-                );
+                if suggestion_len == 0 {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            "No pending suggestions",
+                            Style::default().fg(Color::DarkGray),
+                        ))),
+                        Rect {
+                            x: suggestions_rect.x,
+                            y: suggestions_rect.y.saturating_add(1),
+                            width: suggestions_rect.width,
+                            height: 1,
+                        },
+                    );
+                } else {
+                    frame.render_widget(
+                        Block::default()
+                            .title(if suggestions_focused {
+                                "> Suggestions"
+                            } else {
+                                "Suggestions"
+                            })
+                            .borders(Borders::ALL)
+                            .border_style(suggestions_border_style),
+                        suggestions_rect,
+                    );
+                }
 
                 let actions_inner = Rect {
                     x: actions_rect.x.saturating_add(1),
@@ -4525,10 +4540,7 @@ impl App {
                 }
 
                 let suggestion_lines: Vec<Line<'_>> = if suggestion_len == 0 {
-                    vec![Line::from(Span::styled(
-                        "No pending suggestions",
-                        Style::default().fg(Color::DarkGray),
-                    ))]
+                    Vec::new()
                 } else {
                     panel
                         .pending_suggestions
@@ -4590,7 +4602,7 @@ impl App {
                         })
                         .collect()
                 };
-                if suggestions_inner.width > 0 && suggestions_inner.height > 0 {
+                if suggestion_len > 0 && suggestions_inner.width > 0 && suggestions_inner.height > 0 {
                     let rendered_suggestion_lines = if suggestion_len == 0 {
                         1
                     } else {
