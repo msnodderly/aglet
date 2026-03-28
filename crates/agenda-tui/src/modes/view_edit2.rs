@@ -407,22 +407,14 @@ impl App {
         }
     }
 
-    fn cycle_view_edit_pane_focus(&mut self, forward: bool) {
+    fn cycle_view_edit_pane_focus(&mut self, _forward: bool) {
         if let Some(state) = &mut self.view_edit_state {
-            let next = if state.preview_visible {
-                match (state.pane_focus, forward) {
-                    (ViewEditPaneFocus::Sections, true) => ViewEditPaneFocus::Details,
-                    (ViewEditPaneFocus::Details, true) => ViewEditPaneFocus::Preview,
-                    (ViewEditPaneFocus::Preview, true) => ViewEditPaneFocus::Sections,
-                    (ViewEditPaneFocus::Sections, false) => ViewEditPaneFocus::Preview,
-                    (ViewEditPaneFocus::Details, false) => ViewEditPaneFocus::Sections,
-                    (ViewEditPaneFocus::Preview, false) => ViewEditPaneFocus::Details,
-                }
-            } else {
-                match state.pane_focus {
-                    ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
-                    ViewEditPaneFocus::Details => ViewEditPaneFocus::Sections,
-                    ViewEditPaneFocus::Preview => ViewEditPaneFocus::Sections,
+            // Tab always alternates between Sections and Details.
+            // Preview is accessible via P (shift) when visible.
+            let next = match state.pane_focus {
+                ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
+                ViewEditPaneFocus::Details | ViewEditPaneFocus::Preview => {
+                    ViewEditPaneFocus::Sections
                 }
             };
             state.pane_focus = next;
@@ -1105,8 +1097,18 @@ impl App {
             KeyCode::Char('S') => {
                 return self.handle_view_edit_save(agenda);
             }
-            KeyCode::Char('p') | KeyCode::Char('P') => {
+            KeyCode::Char('p') => {
                 self.toggle_view_edit_preview_visible();
+                return Ok(true);
+            }
+            KeyCode::Char('P') => {
+                // Shift-P: focus preview pane (if visible) or toggle it on
+                if let Some(state) = &mut self.view_edit_state {
+                    if !state.preview_visible {
+                        state.preview_visible = true;
+                    }
+                    state.pane_focus = ViewEditPaneFocus::Preview;
+                }
                 return Ok(true);
             }
             KeyCode::Char('/') => {

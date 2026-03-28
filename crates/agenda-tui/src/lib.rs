@@ -6514,25 +6514,34 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
 
+        // N now opens ViewEdit directly with inline name editing
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
-            .expect("open create name input");
-        for ch in "Scratch".chars() {
-            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
-                .expect("type view name");
-        }
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save button");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("open wizard");
+            .expect("open view editor directly");
         assert_eq!(app.mode, Mode::ViewEdit);
 
-        // First Esc exits inline section-title editing.
+        // Type a name
+        for ch in "Scratch".chars() {
+            app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm name");
+
+        // Esc triggers discard confirm because typing a name made it dirty.
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("exit inline section title");
+            .expect("trigger discard confirm");
         assert_eq!(app.mode, Mode::ViewEdit);
-        // Second Esc cancels the unsaved new-view wizard.
-        app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("cancel wizard");
+        assert!(
+            app.view_edit_state
+                .as_ref()
+                .map(|s| s.discard_confirm)
+                .unwrap_or(false),
+            "discard_confirm should be set"
+        );
+
+        // 'n' discards the unsaved draft.
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("discard draft");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
 
@@ -6559,21 +6568,20 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
 
+        // N now opens ViewEdit directly with inline name editing
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
-            .expect("open create name input");
-        for ch in "Roadmap".chars() {
-            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
-                .expect("type view name");
-        }
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save button");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("open wizard");
+            .expect("open view editor directly");
         assert_eq!(app.mode, Mode::ViewEdit);
 
-        // Exit initial inline section-title input before using global save key.
-        app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("exit inline section title");
+        // Type the view name and confirm
+        for ch in "Roadmap".chars() {
+            app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm name");
+
+        // Save the new view
         app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
             .expect("save new view");
         assert_eq!(app.mode, Mode::ViewPicker);
@@ -17752,26 +17760,38 @@ mod tests {
             ViewEditPaneFocus::Details
         );
 
+        // p toggles preview visibility
         app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
             .expect("show preview");
         assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
 
+        // Tab skips preview — goes Details -> Sections (not Preview)
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("details -> preview");
+            .expect("details -> sections");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
+        );
+
+        // Shift-P focuses preview directly
+        app.handle_view_edit_key(KeyCode::Char('P'), &agenda)
+            .expect("P focuses preview");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().pane_focus,
             ViewEditPaneFocus::Preview
         );
 
-        app.handle_view_edit_key(KeyCode::BackTab, &agenda)
-            .expect("preview -> details");
+        // Tab from preview returns to sections
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("preview -> sections via tab");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().pane_focus,
-            ViewEditPaneFocus::Details
+            ViewEditPaneFocus::Sections
         );
 
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("details -> preview again");
+        // Focus preview again, then hide it with p
+        app.handle_view_edit_key(KeyCode::Char('P'), &agenda)
+            .expect("P focuses preview again");
         app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
             .expect("hide preview while preview focused");
         let state = app.view_edit_state.as_ref().unwrap();
