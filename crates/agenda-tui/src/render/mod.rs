@@ -3953,31 +3953,82 @@ impl App {
                             ("n", "discard"),
                             ("Esc", "keep editing"),
                         ]
+                    } else if state.section_delete_confirm.is_some() {
+                        vec![("y", "confirm"), ("Esc", "cancel")]
+                    } else if state.inline_input.is_some() {
+                        vec![("Enter", "confirm"), ("Esc", "cancel")]
+                    } else if state.overlay.is_some() {
+                        let is_criteria = matches!(
+                            &state.overlay,
+                            Some(ViewEditOverlay::CategoryPicker {
+                                target: CategoryEditTarget::ViewCriteria
+                                    | CategoryEditTarget::SectionCriteria
+                            })
+                        );
+                        if is_criteria {
+                            vec![
+                                ("Sp/1", "include"),
+                                ("2", "exclude"),
+                                ("3", "any"),
+                                ("0", "clear"),
+                                ("/", "filter"),
+                                ("Esc", "done"),
+                            ]
+                        } else {
+                            vec![
+                                ("Space", "toggle"),
+                                ("/", "filter"),
+                                ("Esc", "done"),
+                            ]
+                        }
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
-                        vec![
-                            ("S", "save"),
-                            ("n", "new"),
-                            ("x", "del"),
-                            ("Enter", "details"),
-                            ("Tab", "pane"),
-                            ("Esc", "close"),
-                        ]
+                        if state.sections_view_row_selected {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "details"),
+                                ("n", "add section"),
+                                ("Tab", "details"),
+                                ("Esc", "close"),
+                            ]
+                        } else {
+                            vec![
+                                ("S", "save"),
+                                ("e", "title"),
+                                ("n", "add"),
+                                ("x", "del"),
+                                ("J/K", "move"),
+                                ("Tab", "details"),
+                                ("Esc", "close"),
+                            ]
+                        }
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
                         vec![
                             ("S", "save"),
                             ("p", "hide"),
-                            ("Tab", "pane"),
+                            ("Tab", "sections"),
                             ("Esc", "close"),
                         ]
                     } else {
-                        vec![
-                            ("S", "save"),
-                            ("n", "new"),
-                            ("x", "del"),
-                            ("Space", "toggle"),
-                            ("Tab", "pane"),
-                            ("Esc", "close"),
-                        ]
+                        // Details pane
+                        if state.sections_view_row_selected {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "edit"),
+                                ("r", "name"),
+                                ("p", "preview"),
+                                ("Tab", "sections"),
+                                ("Esc", "close"),
+                            ]
+                        } else {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "edit"),
+                                ("Space", "toggle"),
+                                ("p", "preview"),
+                                ("Tab", "sections"),
+                                ("Esc", "close"),
+                            ]
+                        }
                     }
                 } else {
                     vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
