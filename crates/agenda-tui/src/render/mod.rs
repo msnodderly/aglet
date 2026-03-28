@@ -7430,6 +7430,7 @@ impl App {
             if resolved.sections.is_empty() {
                 preview_items.push(ListItem::new(Line::from("  (no section lanes)")));
             } else {
+                let sample_limit = 3usize;
                 for section in &resolved.sections {
                     let subsection_count = section.subsections.len();
                     let section_count = if subsection_count == 0 {
@@ -7445,6 +7446,25 @@ impl App {
                         preview_items.push(ListItem::new(Line::from(format!(
                             "    generated: {}",
                             subsection_count
+                        ))));
+                    }
+                    // Show sample items
+                    let sample_items = &section.items;
+                    for item in sample_items.iter().take(sample_limit) {
+                        let truncated = if item.text.len() > 30 {
+                            format!("{}…", &item.text[..29])
+                        } else {
+                            item.text.clone()
+                        };
+                        preview_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("    {truncated}"),
+                            Style::default().fg(Color::DarkGray),
+                        ))));
+                    }
+                    if section_count > sample_limit {
+                        preview_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("    ({} more)", section_count - sample_limit),
+                            Style::default().fg(Color::DarkGray),
                         ))));
                     }
                 }
