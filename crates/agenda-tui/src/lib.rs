@@ -437,7 +437,6 @@ struct LinkWizardState {
 /// is open.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameInputContext {
-    ViewCreate,
     ViewRename,
     /// Cloning an existing view with a new name.
     ViewClone,
@@ -493,7 +492,7 @@ enum ViewEditInlineInput {
     ViewName,
     SectionsFilter,
     CategoryAlias { category_id: CategoryId },
-    SectionTitle { section_index: usize },
+    SectionTitle { section_index: usize, is_new: bool },
     UnmatchedLabel,
 }
 
@@ -6288,9 +6287,14 @@ mod tests {
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
             .expect("n opens create view");
 
-        // After Phase 5d: 'n' in ViewPicker now opens InputPanel(NameInput) instead of ViewCreateName
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
+        // N now opens ViewEdit directly with inline name editing
+        assert_eq!(app.mode, Mode::ViewEdit);
+        let state = app.view_edit_state.as_ref().expect("view_edit_state");
+        assert!(state.is_new_view, "should be flagged as new view");
+        assert!(
+            matches!(state.inline_input, Some(super::ViewEditInlineInput::ViewName)),
+            "should be editing view name inline"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -6459,22 +6463,26 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
 
+        // N now opens ViewEdit directly with inline name editing
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
-            .expect("open create name input");
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
-
-        for ch in "Mixed".chars() {
-            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
-                .expect("type view name");
-        }
-        // Enter from Text focus saves NameInput directly
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save name input");
-
+            .expect("open view editor directly");
         assert_eq!(app.mode, Mode::ViewEdit);
         let state = app.view_edit_state.as_ref().expect("view edit state");
-        assert_eq!(state.region, ViewEditRegion::Sections);
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::ViewName)
+        ));
+
+        // Type the view name
+        for ch in "Mixed".chars() {
+            app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        // Enter confirms the name
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm name");
+
+        let state = app.view_edit_state.as_ref().expect("view edit state");
         assert_eq!(state.draft.name, "Mixed");
         assert!(
             state.is_new_view,
@@ -6482,10 +6490,6 @@ mod tests {
         );
         assert_eq!(state.draft.criteria.criteria.len(), 0);
         assert_eq!(state.draft.sections.len(), 1);
-        assert!(matches!(
-            state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
-        ));
 
         let persisted = store
             .list_views()
@@ -6510,25 +6514,34 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
 
+        // N now opens ViewEdit directly with inline name editing
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
-            .expect("open create name input");
-        for ch in "Scratch".chars() {
-            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
-                .expect("type view name");
-        }
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save button");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("open wizard");
+            .expect("open view editor directly");
         assert_eq!(app.mode, Mode::ViewEdit);
 
-        // First Esc exits inline section-title editing.
+        // Type a name
+        for ch in "Scratch".chars() {
+            app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm name");
+
+        // Esc triggers discard confirm because typing a name made it dirty.
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("exit inline section title");
+            .expect("trigger discard confirm");
         assert_eq!(app.mode, Mode::ViewEdit);
-        // Second Esc cancels the unsaved new-view wizard.
-        app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("cancel wizard");
+        assert!(
+            app.view_edit_state
+                .as_ref()
+                .map(|s| s.discard_confirm)
+                .unwrap_or(false),
+            "discard_confirm should be set"
+        );
+
+        // 'n' discards the unsaved draft.
+        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
+            .expect("discard draft");
         assert_eq!(app.mode, Mode::ViewPicker);
         assert!(app.view_edit_state.is_none());
 
@@ -6555,21 +6568,20 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
 
+        // N now opens ViewEdit directly with inline name editing
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
-            .expect("open create name input");
-        for ch in "Roadmap".chars() {
-            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
-                .expect("type view name");
-        }
-        app.handle_input_panel_key(KeyCode::Tab, &agenda)
-            .expect("tab to save button");
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("open wizard");
+            .expect("open view editor directly");
         assert_eq!(app.mode, Mode::ViewEdit);
 
-        // Exit initial inline section-title input before using global save key.
-        app.handle_view_edit_key(KeyCode::Esc, &agenda)
-            .expect("exit inline section title");
+        // Type the view name and confirm
+        for ch in "Roadmap".chars() {
+            app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm name");
+
+        // Save the new view
         app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
             .expect("save new view");
         assert_eq!(app.mode, Mode::ViewPicker);
@@ -15875,8 +15887,8 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render");
         let text = terminal_buffer_lines(&terminal).join("\n");
 
-        let medium_pos = text.find("Include: Medium").expect("Include row");
-        let critical_pos = text.find("Match any: Critical").expect("Match any row");
+        let medium_pos = text.find("Require: Medium").expect("Require row");
+        let critical_pos = text.find("Or: Critical").expect("Or row");
         let low_pos = text.find("Exclude: Low").expect("Exclude row");
         assert!(
             medium_pos < critical_pos && critical_pos < low_pos,
@@ -15969,59 +15981,81 @@ mod tests {
             .expect("Complete in category_rows");
         app.view_edit_state.as_mut().unwrap().picker_index = complete_picker_idx;
 
-        // First Space in picker: off → Include
+        // Space cycles: off → Require → Exclude → Or → off
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
             .expect("picker space 1");
-        let state = app.view_edit_state.as_ref().unwrap();
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::And),
-            "first press should set Include"
+            "Space from off → Require"
         );
 
-        // Second Space in picker: Include → Exclude
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
             .expect("picker space 2");
-        let state = app.view_edit_state.as_ref().unwrap();
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::Not),
-            "second press should set Exclude"
+            "Space from Require → Exclude"
         );
 
-        // Third Space in picker: Exclude → Match any
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
             .expect("picker space 3");
-        let state = app.view_edit_state.as_ref().unwrap();
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::Or),
-            "third press should set Match any"
+            "Space from Exclude → Or"
         );
 
-        // Fourth Space in picker: Match any → off (removed)
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
             .expect("picker space 4");
-        let state = app.view_edit_state.as_ref().unwrap();
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             None,
-            "fourth press should remove criterion"
+            "Space from Or → off"
         );
 
-        // Set it to Exclude and close the picker
-        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("set include");
-        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("set exclude");
+        // '+' key: sets Require directly
+        app.handle_view_edit_key(KeyCode::Char('+'), &agenda)
+            .expect("picker + for require");
         assert_eq!(
-            app.view_edit_state
-                .as_ref()
-                .unwrap()
-                .draft
-                .criteria
-                .mode_for(complete.id),
-            Some(CriterionMode::Not)
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::And),
+            "'+' should set Require"
+        );
+
+        // '-' key: sets Exclude directly
+        app.handle_view_edit_key(KeyCode::Char('-'), &agenda)
+            .expect("picker - for exclude");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Not),
+            "'-' should set Exclude"
+        );
+
+        // '3' key: sets Or
+        app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+            .expect("picker 3 for one-of");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Or),
+            "'3' should set Or"
+        );
+
+        // '0' key: clears
+        app.handle_view_edit_key(KeyCode::Char('0'), &agenda)
+            .expect("picker 0 clears");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            None,
+            "'0' should clear"
+        );
+
+        // Set Exclude via '-' so we have a criterion for inline cycling test
+        app.handle_view_edit_key(KeyCode::Char('-'), &agenda)
+            .expect("picker - sets exclude");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Not),
         );
 
         // Close picker with Esc
@@ -16813,7 +16847,11 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("close picker");
 
-        // Field 3: On insert assign
+        // Field 3: Display mode (no picker, just toggle)
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to display mode field");
+
+        // Field 4: On insert assign
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to on-insert field");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -16827,7 +16865,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("close picker");
 
-        // Field 4: On remove unassign
+        // Field 5: On remove unassign
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to on-remove field");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -16877,7 +16915,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("to details");
 
-        for _ in 0..5 {
+        for _ in 0..6 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move to section layout field");
         }
@@ -16886,7 +16924,7 @@ mod tests {
                 .as_ref()
                 .expect("view edit state")
                 .section_details_field_index,
-            5
+            6
         );
         assert!(
             !app.view_edit_state
@@ -16944,7 +16982,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("to details");
 
-        for _ in 0..5 {
+        for _ in 0..6 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move to section layout field");
         }
@@ -16953,7 +16991,7 @@ mod tests {
                 .as_ref()
                 .expect("view edit state")
                 .section_details_field_index,
-            5
+            6
         );
 
         app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
@@ -17188,62 +17226,7 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
-    #[test]
-    fn view_edit_category_picker_type_filter_updates_selected_match() {
-        let (store, db_path) = make_test_store_with_view("picker-type-filter");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let work = Category::new("Work".to_string());
-        let home = Category::new("Home".to_string());
-        store.create_category(&work).expect("create work category");
-        store.create_category(&home).expect("create home category");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh");
-        let view = app
-            .views
-            .iter()
-            .find(|v| v.name == "TestView")
-            .cloned()
-            .expect("TestView should exist");
-        app.open_view_edit(view);
-
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
-            .expect("open category picker");
-        let home_idx = app
-            .category_rows
-            .iter()
-            .position(|r| r.name == "Home")
-            .expect("home row");
-
-        if let Some(state) = &mut app.view_edit_state {
-            state.picker_index = home_idx;
-        }
-        app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
-            .expect("type picker filter");
-        app.handle_view_edit_key(KeyCode::Char('o'), &agenda)
-            .expect("type picker filter");
-        let state = app.view_edit_state.as_ref().expect("view edit state");
-        assert_eq!(state.overlay_filter_buf.text(), "ho");
-        assert_eq!(
-            state.picker_index, home_idx,
-            "filter should select first matching row"
-        );
-
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("toggle filtered category");
-        assert!(app
-            .view_edit_state
-            .as_ref()
-            .unwrap()
-            .draft
-            .criteria
-            .mode_for(home.id)
-            .is_some());
-
-        let _ = std::fs::remove_file(&db_path);
-    }
+    // type-to-filter test removed: category picker no longer supports inline filtering
 
     #[test]
     fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
@@ -17279,7 +17262,7 @@ mod tests {
         );
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0, .. })
         ));
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
             .expect("confirm default section title");
@@ -17323,7 +17306,7 @@ mod tests {
 
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17356,7 +17339,7 @@ mod tests {
         assert_eq!(state.section_index, 0);
         assert!(matches!(
             state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17417,7 +17400,7 @@ mod tests {
         assert_eq!(state.draft.sections[2].title, "Bravo");
         assert!(matches!(
             state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17477,7 +17460,7 @@ mod tests {
         assert_eq!(state.draft.sections[2].title, "Bravo");
         assert!(matches!(
             state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17734,32 +17717,50 @@ mod tests {
             .expect("TestView should exist");
         app.open_view_edit(view);
 
-        assert!(!app.view_edit_state.as_ref().unwrap().preview_visible);
+        // Preview starts visible by default
+        assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().pane_focus,
             ViewEditPaneFocus::Details
         );
 
+        // p toggles preview off
         app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
-            .expect("show preview");
+            .expect("hide preview");
+        assert!(!app.view_edit_state.as_ref().unwrap().preview_visible);
+
+        // p toggles it back on
+        app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
+            .expect("show preview again");
         assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
 
+        // Tab skips preview — goes Details -> Sections (not Preview)
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("details -> preview");
+            .expect("details -> sections");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
+        );
+
+        // Shift-P focuses preview directly
+        app.handle_view_edit_key(KeyCode::Char('P'), &agenda)
+            .expect("P focuses preview");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().pane_focus,
             ViewEditPaneFocus::Preview
         );
 
-        app.handle_view_edit_key(KeyCode::BackTab, &agenda)
-            .expect("preview -> details");
+        // Tab from preview returns to sections
+        app.handle_view_edit_key(KeyCode::Tab, &agenda)
+            .expect("preview -> sections via tab");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().pane_focus,
-            ViewEditPaneFocus::Details
+            ViewEditPaneFocus::Sections
         );
 
-        app.handle_view_edit_key(KeyCode::Tab, &agenda)
-            .expect("details -> preview again");
+        // Focus preview again, then hide it with p
+        app.handle_view_edit_key(KeyCode::Char('P'), &agenda)
+            .expect("P focuses preview again");
         app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
             .expect("hide preview while preview focused");
         let state = app.view_edit_state.as_ref().unwrap();
@@ -18097,6 +18098,11 @@ mod tests {
             .expect("N adds section");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
             .expect("confirm default section title");
+        // After confirming new section title, focus auto-moves to Details pane
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle section display override");
         assert_eq!(
@@ -18108,19 +18114,14 @@ mod tests {
             Some(BoardDisplayMode::SingleLine)
         );
 
-        // Move from section details back to view criteria details
-        app.handle_view_edit_key(KeyCode::BackTab, &agenda)
-            .expect("backtab to details pane");
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().pane_focus,
-            ViewEditPaneFocus::Details
-        );
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
-        );
+        // Move from section details to view criteria details
+        // Tab goes Details → Sections
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab to sections pane");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
+        );
         app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
             .expect("select view properties row");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)

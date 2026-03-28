@@ -3953,31 +3953,81 @@ impl App {
                             ("n", "discard"),
                             ("Esc", "keep editing"),
                         ]
+                    } else if state.section_delete_confirm.is_some() {
+                        vec![("y", "confirm"), ("Esc", "cancel")]
+                    } else if state.inline_input.is_some() {
+                        vec![("Enter", "confirm"), ("Esc", "cancel")]
+                    } else if state.overlay.is_some() {
+                        let is_criteria = matches!(
+                            &state.overlay,
+                            Some(ViewEditOverlay::CategoryPicker {
+                                target: CategoryEditTarget::ViewCriteria
+                                    | CategoryEditTarget::SectionCriteria
+                            })
+                        );
+                        if is_criteria {
+                            vec![
+                                ("Sp", "cycle"),
+                                ("+/1", "require"),
+                                ("-/2", "exclude"),
+                                ("3", "or"),
+                                ("0", "clear"),
+                                ("Esc", "done"),
+                            ]
+                        } else {
+                            vec![
+                                ("Space", "toggle"),
+                                ("Esc", "done"),
+                            ]
+                        }
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
-                        vec![
-                            ("S", "save"),
-                            ("n", "new"),
-                            ("x", "del"),
-                            ("Enter", "details"),
-                            ("Tab", "pane"),
-                            ("Esc", "close"),
-                        ]
+                        if state.sections_view_row_selected {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "details"),
+                                ("n", "add section"),
+                                ("Tab", "details"),
+                                ("Esc", "close"),
+                            ]
+                        } else {
+                            vec![
+                                ("S", "save"),
+                                ("e", "title"),
+                                ("n", "add"),
+                                ("x", "del"),
+                                ("J/K", "move"),
+                                ("Tab", "details"),
+                                ("Esc", "close"),
+                            ]
+                        }
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
                         vec![
                             ("S", "save"),
                             ("p", "hide"),
-                            ("Tab", "pane"),
+                            ("Tab", "sections"),
                             ("Esc", "close"),
                         ]
                     } else {
-                        vec![
-                            ("S", "save"),
-                            ("n", "new"),
-                            ("x", "del"),
-                            ("Space", "toggle"),
-                            ("Tab", "pane"),
-                            ("Esc", "close"),
-                        ]
+                        // Details pane
+                        if state.sections_view_row_selected {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "edit"),
+                                ("r", "name"),
+                                ("p", "preview"),
+                                ("Tab", "sections"),
+                                ("Esc", "close"),
+                            ]
+                        } else {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "edit"),
+                                ("Space", "toggle"),
+                                ("p", "preview"),
+                                ("Tab", "sections"),
+                                ("Esc", "close"),
+                            ]
+                        }
                     }
                 } else {
                     vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
@@ -6615,21 +6665,30 @@ impl App {
         };
 
         let focused_border = Color::Cyan;
-        let inactive_border = Color::Blue;
+        let inactive_border = Color::Rgb(60, 70, 90);
 
         let category_names = category_name_map(&self.categories);
+        let dim = Color::Rgb(110, 118, 138); // visible mid-gray for dimmed text
 
         // ── Details pane (row-based, view or selected section) ──────────────
         {
             let criterion_mode_label = |mode: CriterionMode| -> &'static str {
                 match mode {
-                    CriterionMode::And => "Include",
+                    CriterionMode::And => "Require",
                     CriterionMode::Not => "Exclude",
-                    CriterionMode::Or => "Match any",
+                    CriterionMode::Or => "Or",
                 }
             };
 
-            let summarize_query = |query: &Query| -> Vec<String> {
+            let criterion_mode_color = |mode: CriterionMode| -> Color {
+                match mode {
+                    CriterionMode::And => Color::Green,
+                    CriterionMode::Not => Color::Red,
+                    CriterionMode::Or => Color::Yellow,
+                }
+            };
+
+            let summarize_query = |query: &Query| -> Vec<(CriterionMode, String)> {
                 query
                     .criteria
                     .iter()
@@ -6638,7 +6697,7 @@ impl App {
                             .get(&criterion.category_id)
                             .cloned()
                             .unwrap_or_else(|| "(deleted)".to_string());
-                        format!("{}: {}", criterion_mode_label(criterion.mode), name)
+                        (criterion.mode, format!("{}: {}", criterion_mode_label(criterion.mode), name))
                     })
                     .collect()
             };
@@ -6672,17 +6731,30 @@ impl App {
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
-            let title = if show_view_details {
-                format!(" DETAILS: View  matches:{} ", state.preview_count)
-            } else {
-                let section_name = state
-                    .draft
-                    .sections
-                    .get(state.section_index)
-                    .map(|s| s.title.as_str())
-                    .unwrap_or("?");
-                format!(" DETAILS: {} ", section_name)
-            };
+            let title = " DETAILS ".to_string();
+
+            // Context banner: full-width colored bar distinguishing view vs section
+            {
+                let banner = if show_view_details {
+                    let view_name = &state.draft.name;
+                    ListItem::new(Line::from(vec![Span::styled(
+                        format!(" VIEW: {} ", view_name),
+                        Style::default().fg(Color::Black).bg(Color::Cyan),
+                    )]))
+                } else {
+                    let section_name = state
+                        .draft
+                        .sections
+                        .get(state.section_index)
+                        .map(|s| s.title.as_str())
+                        .unwrap_or("?");
+                    ListItem::new(Line::from(vec![Span::styled(
+                        format!(" SECTION: {} ", section_name),
+                        Style::default().fg(Color::Black).bg(Color::Green),
+                    )]))
+                };
+                items.push(banner);
+            }
 
             if show_view_details {
                 let display_mode_label = match state.draft.board_display_mode {
@@ -6694,9 +6766,13 @@ impl App {
                     SectionFlow::Horizontal => "horizontal (kanban lanes)",
                 };
 
-                let separator_style = Style::default().fg(Color::DarkGray);
+                let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
 
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
                 // Helper: style + track selected_line for unmatched-region fields
                 let style_for_unmatched_field =
                     |field_index: usize,
@@ -6707,7 +6783,7 @@ impl App {
                             && state.unmatched_field_index == field_index
                         {
                             *selected_line_ref = Some(items.len());
-                            Style::default().add_modifier(Modifier::REVERSED)
+                            sel_style
                         } else {
                             Style::default()
                         }
@@ -6722,8 +6798,8 @@ impl App {
                     state.draft.name.clone()
                 };
                 let view_name_style = if editing_view_name {
-                    selected_line = Some(0);
-                    Style::default().add_modifier(Modifier::REVERSED)
+                    selected_line = Some(items.len());
+                    sel_style
                 } else {
                     Style::default()
                 };
@@ -6751,7 +6827,7 @@ impl App {
                 if criteria_lines.is_empty() {
                     let style = if details_focused && state.region == ViewEditRegion::Criteria {
                         selected_line = Some(criteria_row_start);
-                        Style::default().add_modifier(Modifier::REVERSED)
+                        sel_style
                     } else {
                         Style::default()
                     };
@@ -6760,19 +6836,28 @@ impl App {
                             .style(style),
                     );
                 } else {
-                    for (i, criterion) in criteria_lines.iter().enumerate() {
-                        let style = if details_focused
+                    for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
+                        let is_selected = details_focused
                             && state.region == ViewEditRegion::Criteria
-                            && i == state.criteria_index
-                        {
+                            && i == state.criteria_index;
+                        if is_selected {
                             selected_line = Some(criteria_row_start + i);
-                            Style::default().add_modifier(Modifier::REVERSED)
+                        }
+                        let text_color = if is_selected {
+                            Color::Black
+                        } else {
+                            criterion_mode_color(*mode)
+                        };
+                        let line = Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(criterion.clone(), Style::default().fg(text_color)),
+                        ]);
+                        let style = if is_selected {
+                            sel_style
                         } else {
                             Style::default()
                         };
-                        items.push(
-                            ListItem::new(Line::from(format!("    {criterion}"))).style(style),
-                        );
+                        items.push(ListItem::new(line).style(style));
                     }
                 }
 
@@ -6975,7 +7060,7 @@ impl App {
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
                     state.inline_input,
-                    Some(ViewEditInlineInput::SectionTitle { section_index })
+                    Some(ViewEditInlineInput::SectionTitle { section_index, .. })
                     if section_index == state.section_index
                 );
                 let title_text = if editing_title {
@@ -6984,8 +7069,13 @@ impl App {
                     section.title.clone()
                 };
 
-                let separator_style = Style::default().fg(Color::DarkGray);
+                let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
+
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
 
                 // Helper: style + track selected_line for a given field index
                 let style_for_section_field =
@@ -6997,7 +7087,7 @@ impl App {
                             && state.section_details_field_index == field_index
                         {
                             *selected_line_ref = Some(items.len());
-                            Style::default().add_modifier(Modifier::REVERSED)
+                            sel_style
                         } else {
                             Style::default()
                         }
@@ -7019,24 +7109,44 @@ impl App {
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
-                let criteria_value = if criteria_lines.is_empty() {
-                    "(none)".to_string()
+                let is_filter_selected = details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 1;
+                if criteria_lines.is_empty() {
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "  {:<width$}(none)",
+                            "Filter",
+                            width = pad
+                        )))
+                        .style(style_for_section_field(
+                            1,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
                 } else {
-                    criteria_lines.join("; ")
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
-                        "Filter",
-                        criteria_value,
-                        width = pad
-                    )))
-                    .style(style_for_section_field(
-                        1,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
+                    let mut spans = vec![Span::raw(format!("  {:<width$}", "Filter", width = pad))];
+                    for (idx, (mode, text)) in criteria_lines.iter().enumerate() {
+                        if idx > 0 {
+                            spans.push(Span::raw("; "));
+                        }
+                        let text_color = if is_filter_selected {
+                            Color::Black
+                        } else {
+                            criterion_mode_color(*mode)
+                        };
+                        spans.push(Span::styled(text.clone(), Style::default().fg(text_color)));
+                    }
+                    let line = Line::from(spans);
+                    let style = if is_filter_selected {
+                        selected_line = Some(items.len());
+                        sel_style
+                    } else {
+                        Style::default()
+                    };
+                    items.push(ListItem::new(line).style(style));
+                }
 
                 // ── Separator ──
                 items.push(ListItem::new(Line::from(Span::styled(
@@ -7086,7 +7196,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        6,
+                        3,
                         &items,
                         &mut selected_line,
                     )),
@@ -7107,7 +7217,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        3,
+                        4,
                         &items,
                         &mut selected_line,
                     )),
@@ -7120,7 +7230,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -7133,14 +7243,14 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
                 );
                 if details_focused
                     && state.region == ViewEditRegion::Sections
-                    && state.section_details_field_index == 5
+                    && state.section_details_field_index == 6
                 {
                     let help_style = Style::default().fg(Color::Rgb(170, 178, 198));
                     items.push(ListItem::new(Line::from(Span::styled(
@@ -7181,7 +7291,7 @@ impl App {
         // ── Sections region ──────────────────────────────────────────────────
         {
             let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
-                if let ViewEditInlineInput::SectionTitle { section_index } = inp {
+                if let ViewEditInlineInput::SectionTitle { section_index, .. } = inp {
                     Some(*section_index)
                 } else {
                     None
@@ -7194,18 +7304,19 @@ impl App {
                 Some(ViewEditInlineInput::SectionsFilter)
             );
             let dirty_marker = if state.dirty { " *" } else { "" };
+            let view_label = format!("VIEW: {}", state.draft.name);
             let sections_title = if filter_editing {
                 format!(
-                    " SECTIONS{dirty_marker}  /{}◀ ",
+                    " {view_label}{dirty_marker}  /{}◀ ",
                     state.sections_filter_buf.text()
                 )
             } else if filter_active {
                 format!(
-                    " SECTIONS{dirty_marker}  /{} ",
+                    " {view_label}{dirty_marker}  /{} ",
                     state.sections_filter_buf.text()
                 )
             } else {
-                format!(" SECTIONS{dirty_marker} ")
+                format!(" {view_label}{dirty_marker} ")
             };
             let block = Block::default()
                 .title(sections_title)
@@ -7227,16 +7338,20 @@ impl App {
                 selected_line = Some(0);
             }
             let view_row_style = if view_row_focused && sections_pane_focused {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else {
                 Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if view_row_focused {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::default().fg(dim)
             };
             items.push(
-                ListItem::new(Line::from(format!(
-                    "{}  View: {}",
-                    if view_row_focused { ">" } else { " " },
-                    state.draft.name,
-                )))
+                ListItem::new(Line::from(
+                    " ⚙ View settings".to_string(),
+                ))
                 .style(view_row_style),
             );
 
@@ -7266,40 +7381,47 @@ impl App {
             } else if visible_section_indices.is_empty() {
                 items.push(ListItem::new(Line::from("  (no matching sections)")));
             } else {
+                let last_visible = visible_section_indices.last().copied();
                 for i in visible_section_indices {
                     let section = &state.draft.sections[i];
-                    if i == state.section_index
-                        && !state.sections_view_row_selected
-                        && sections_pane_focused
-                    {
+                    let is_active_section =
+                        i == state.section_index && !state.sections_view_row_selected;
+                    if is_active_section {
                         selected_line = Some(items.len());
                     }
-                    let cursor = if i == state.section_index
+                    // Tree connector: ├── for intermediate, └── for last
+                    let connector = if Some(i) == last_visible {
+                        "└──"
+                    } else {
+                        "├──"
+                    };
+                    let cursor = if is_active_section
                         && state.region == ViewEditRegion::Sections
-                        && sections_pane_focused
-                        && !state.sections_view_row_selected
                     {
-                        ">"
+                        "▸"
                     } else {
                         " "
                     };
                     let title = if inline_editing_section == Some(i) {
                         format!(
-                            "{}  {}. {} ◀ editing",
+                            " {} {} {}. {} ◀",
+                            connector,
                             cursor,
                             i + 1,
                             state.inline_buf.text()
                         )
                     } else {
-                        format!("{} {}. {}", cursor, i + 1, section.title)
+                        format!(" {} {} {}. {}", connector, cursor, i + 1, section.title)
                     };
 
-                    let style = if i == state.section_index
-                        && state.region == ViewEditRegion::Sections
-                        && sections_pane_focused
-                        && !state.sections_view_row_selected
-                    {
-                        Style::default().add_modifier(Modifier::REVERSED)
+                    let style = if is_active_section && sections_pane_focused {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else if is_active_section {
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
                     };
@@ -7347,6 +7469,7 @@ impl App {
             if resolved.sections.is_empty() {
                 preview_items.push(ListItem::new(Line::from("  (no section lanes)")));
             } else {
+                let sample_limit = 3usize;
                 for section in &resolved.sections {
                     let subsection_count = section.subsections.len();
                     let section_count = if subsection_count == 0 {
@@ -7362,6 +7485,25 @@ impl App {
                         preview_items.push(ListItem::new(Line::from(format!(
                             "    generated: {}",
                             subsection_count
+                        ))));
+                    }
+                    // Show sample items
+                    let sample_items = &section.items;
+                    for item in sample_items.iter().take(sample_limit) {
+                        let truncated = if item.text.len() > 30 {
+                            format!("{}…", &item.text[..29])
+                        } else {
+                            item.text.clone()
+                        };
+                        preview_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("    {truncated}"),
+                            Style::default().fg(dim),
+                        ))));
+                    }
+                    if section_count > sample_limit {
+                        preview_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("    ({} more)", section_count - sample_limit),
+                            Style::default().fg(dim),
                         ))));
                     }
                 }
@@ -7411,7 +7553,10 @@ impl App {
                             .border_style(Style::default().fg(preview_border)),
                     )
                     .highlight_style(if preview_focused {
-                        Style::default().add_modifier(Modifier::REVERSED)
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     }),
@@ -7430,7 +7575,6 @@ impl App {
             frame.render_widget(Clear, overlay_area);
             match overlay {
                 ViewEditOverlay::CategoryPicker { target } => {
-                    let overlay_filter = state.overlay_filter_buf.text();
                     let filtered_indices = self.view_edit_filtered_category_row_indices(state);
                     let selected_filtered_index = filtered_indices
                         .iter()
@@ -7444,24 +7588,58 @@ impl App {
                     let toggle_hint = if is_alias_picker {
                         "A/Enter edit alias"
                     } else if is_criteria_picker {
-                        "Space/Enter cycle mode"
+                        "Sp:cycle +/-:req/exc 0:clr"
                     } else {
                         "Space/Enter toggle"
                     };
-                    let title = if overlay_filter.trim().is_empty() {
-                        format!(
-                            " Pick categories  {}/{}  (type filter, {toggle_hint}, Esc done) ",
-                            (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
-                            filtered_indices.len()
-                        )
-                    } else {
-                        format!(
-                            " Pick categories /{}  {}/{} ",
-                            overlay_filter,
-                            (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
-                            filtered_indices.len()
-                        )
+                    let context_label = match target {
+                        CategoryEditTarget::ViewCriteria => "View criteria".to_string(),
+                        CategoryEditTarget::ViewAliases => "View aliases".to_string(),
+                        CategoryEditTarget::SectionCriteria => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" criteria")
+                        }
+                        CategoryEditTarget::SectionColumns => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" columns")
+                        }
+                        CategoryEditTarget::SectionOnInsertAssign => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" auto-assign")
+                        }
+                        CategoryEditTarget::SectionOnRemoveUnassign => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" auto-unassign")
+                        }
                     };
+                    let pos_label = format!(
+                        "{}/{}",
+                        (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
+                        filtered_indices.len()
+                    );
+                    let title = format!(
+                        " {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",
+                    );
                     let section_index = state.section_index;
                     let items: Vec<ListItem<'_>> = self
                         .category_rows
@@ -7488,14 +7666,41 @@ impl App {
                             } else {
                                 None
                             };
-                            let label = if is_criteria_target {
-                                let tag = match criterion_mode {
-                                    None => "   ",
-                                    Some(CriterionMode::And) => "Inc",
-                                    Some(CriterionMode::Not) => "Exc",
-                                    Some(CriterionMode::Or) => "Any",
+                            let selected_style = if i == state.picker_index {
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                            };
+                            if is_criteria_target {
+                                let is_selected = i == state.picker_index;
+                                let (glyph, label, glyph_color) = match criterion_mode {
+                                    None => (" ", "", dim),
+                                    Some(CriterionMode::And) => ("+", " Require", Color::Green),
+                                    Some(CriterionMode::Not) => ("-", " Exclude", Color::Red),
+                                    Some(CriterionMode::Or) => ("*", " Or", Color::Yellow),
                                 };
-                                format!("{indent}[{tag}] {}", row.name)
+                                let fg = if is_selected { Color::Black } else { glyph_color };
+                                let glyph_style = Style::default().fg(fg);
+                                let label_style = if is_selected {
+                                    Style::default().fg(Color::Black)
+                                } else {
+                                    Style::default().fg(glyph_color).add_modifier(Modifier::DIM)
+                                };
+                                let name_style = if is_selected {
+                                    Style::default().fg(Color::Black)
+                                } else {
+                                    Style::default()
+                                };
+                                let line = Line::from(vec![
+                                    Span::raw(indent.to_string()),
+                                    Span::styled(format!("[{glyph}]"), glyph_style),
+                                    Span::styled(format!(" {}", row.name), name_style),
+                                    Span::styled(label.to_string(), label_style),
+                                ]);
+                                ListItem::new(line).style(selected_style)
                             } else if is_alias_picker {
                                 let active_alias_edit = matches!(
                                     state.inline_input,
@@ -7518,7 +7723,8 @@ impl App {
                                     current_alias
                                 };
                                 let edit_marker = if active_alias_edit { " ◀" } else { "" };
-                                format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name)
+                                let label = format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name);
+                                ListItem::new(Line::from(label)).style(selected_style)
                             } else {
                                 let checked = match target {
                                     CategoryEditTarget::ViewAliases => false,
@@ -7544,18 +7750,13 @@ impl App {
                                         .unwrap_or(false),
                                     _ => false,
                                 };
-                                format!(
+                                let label = format!(
                                     "{indent}[{}] {}",
                                     if checked { "x" } else { " " },
                                     row.name
-                                )
-                            };
-                            let style = if i == state.picker_index {
-                                Style::default().add_modifier(Modifier::REVERSED)
-                            } else {
-                                Style::default()
-                            };
-                            ListItem::new(Line::from(label)).style(style)
+                                );
+                                ListItem::new(Line::from(label)).style(selected_style)
+                            }
                         })
                         .collect();
                     let block = Block::default()
@@ -7584,7 +7785,10 @@ impl App {
                         .map(|(i, bucket)| {
                             let label = format!("  {}", when_bucket_label(*bucket));
                             let style = if i == state.picker_index {
-                                Style::default().add_modifier(Modifier::REVERSED)
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default()
                             };

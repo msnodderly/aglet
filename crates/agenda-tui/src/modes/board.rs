@@ -4756,8 +4756,7 @@ impl App {
     /// Returns the mode to return to when a NameInput panel is canceled or completed.
     fn name_input_return_mode(&self) -> Mode {
         match self.name_input_context {
-            Some(NameInputContext::ViewCreate)
-            | Some(NameInputContext::ViewRename)
+            Some(NameInputContext::ViewRename)
             | Some(NameInputContext::ViewClone) => Mode::ViewPicker,
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
@@ -4811,30 +4810,6 @@ impl App {
             .unwrap_or_default();
 
         match self.name_input_context {
-            Some(NameInputContext::ViewCreate) => {
-                if input_text.is_empty() {
-                    self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);
-                    return Ok(());
-                }
-                let name = input_text.clone();
-                if self
-                    .views
-                    .iter()
-                    .any(|view| view.name.eq_ignore_ascii_case(&name))
-                {
-                    self.status = format!("View \"{name}\" already exists");
-                    return Ok(());
-                }
-                let mut view = View::new(name.clone());
-                if view.sections.is_empty() {
-                    view.sections.push(Self::view_edit_default_section(
-                        Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
-                    ));
-                }
-                self.input_panel = None;
-                self.name_input_context = None;
-                self.open_view_edit_new_view_focus_first_section(view);
-            }
             Some(NameInputContext::ViewClone) => {
                 if input_text.is_empty() {
                     self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);

@@ -123,6 +123,14 @@ impl App {
     }
 
     fn begin_view_edit_section_title_input(&mut self, section_index: usize) {
+        self.begin_view_edit_section_title_input_inner(section_index, false);
+    }
+
+    fn begin_view_edit_new_section_title_input(&mut self, section_index: usize) {
+        self.begin_view_edit_section_title_input_inner(section_index, true);
+    }
+
+    fn begin_view_edit_section_title_input_inner(&mut self, section_index: usize, is_new: bool) {
         if let Some(state) = &mut self.view_edit_state {
             if let Some(section) = state.draft.sections.get(section_index) {
                 state.region = ViewEditRegion::Sections;
@@ -130,7 +138,8 @@ impl App {
                 state.section_index = section_index;
                 state.sections_view_row_selected = false;
                 state.section_details_field_index = 0;
-                state.inline_input = Some(ViewEditInlineInput::SectionTitle { section_index });
+                state.inline_input =
+                    Some(ViewEditInlineInput::SectionTitle { section_index, is_new });
                 state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
                 state.discard_confirm = false;
                 self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
@@ -210,7 +219,7 @@ impl App {
             picker_index: 0,
             overlay_filter_buf: text_buffer::TextBuffer::empty(),
             preview_count,
-            preview_visible: false,
+            preview_visible: true,
             preview_scroll: 0,
             sections_filter_buf: text_buffer::TextBuffer::empty(),
             dirty: false,
@@ -226,9 +235,18 @@ impl App {
         self.open_view_edit_with_mode(view, false);
     }
 
-    pub(crate) fn open_view_edit_new_view_focus_first_section(&mut self, view: View) {
+    pub(crate) fn open_view_edit_new_view_focus_name(&mut self, view: View) {
         self.open_view_edit_with_mode(view, true);
-        self.begin_view_edit_section_title_input(0);
+        // Select all text so the user can immediately type a new name
+        if let Some(state) = &mut self.view_edit_state {
+            state.sections_view_row_selected = true;
+            state.region = ViewEditRegion::Criteria;
+            state.pane_focus = ViewEditPaneFocus::Details;
+            state.inline_input = Some(ViewEditInlineInput::ViewName);
+            state.inline_buf = text_buffer::TextBuffer::new(String::new());
+            state.discard_confirm = false;
+        }
+        self.status = "New view: type name, Enter to confirm, Esc to cancel".to_string();
     }
 
     fn view_details_criteria_row_count(state: &ViewEditState) -> usize {
@@ -398,22 +416,14 @@ impl App {
         }
     }
 
-    fn cycle_view_edit_pane_focus(&mut self, forward: bool) {
+    fn cycle_view_edit_pane_focus(&mut self, _forward: bool) {
         if let Some(state) = &mut self.view_edit_state {
-            let next = if state.preview_visible {
-                match (state.pane_focus, forward) {
-                    (ViewEditPaneFocus::Sections, true) => ViewEditPaneFocus::Details,
-                    (ViewEditPaneFocus::Details, true) => ViewEditPaneFocus::Preview,
-                    (ViewEditPaneFocus::Preview, true) => ViewEditPaneFocus::Sections,
-                    (ViewEditPaneFocus::Sections, false) => ViewEditPaneFocus::Preview,
-                    (ViewEditPaneFocus::Details, false) => ViewEditPaneFocus::Sections,
-                    (ViewEditPaneFocus::Preview, false) => ViewEditPaneFocus::Details,
-                }
-            } else {
-                match state.pane_focus {
-                    ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
-                    ViewEditPaneFocus::Details => ViewEditPaneFocus::Sections,
-                    ViewEditPaneFocus::Preview => ViewEditPaneFocus::Sections,
+            // Tab always alternates between Sections and Details.
+            // Preview is accessible via P (shift) when visible.
+            let next = match state.pane_focus {
+                ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
+                ViewEditPaneFocus::Details | ViewEditPaneFocus::Preview => {
+                    ViewEditPaneFocus::Sections
                 }
             };
             state.pane_focus = next;
@@ -509,13 +519,26 @@ impl App {
         self.status = Self::view_edit_default_status();
     }
 
-    /// Cycle a criterion through: off → Include → Exclude → Match any → off.
+    /// Toggle a specific criterion mode on/off (used in picker overlay).
+    /// If the category already has this mode, remove it; otherwise set it.
+    fn toggle_criterion_mode(query: &mut Query, cat_id: CategoryId, mode: CriterionMode) {
+        if query.mode_for(cat_id) == Some(mode) {
+            query.remove_criterion(cat_id);
+        } else {
+            query.set_criterion(mode, cat_id);
+        }
+    }
+
     fn cycle_criterion_mode(query: &mut Query, cat_id: CategoryId) {
-        match query.mode_for(cat_id) {
-            None => query.set_criterion(CriterionMode::And, cat_id),
-            Some(CriterionMode::And) => query.set_criterion(CriterionMode::Not, cat_id),
-            Some(CriterionMode::Not) => query.set_criterion(CriterionMode::Or, cat_id),
-            Some(CriterionMode::Or) => query.remove_criterion(cat_id),
+        let next = match query.mode_for(cat_id) {
+            None => Some(CriterionMode::And),
+            Some(CriterionMode::And) => Some(CriterionMode::Not),
+            Some(CriterionMode::Not) => Some(CriterionMode::Or),
+            Some(CriterionMode::Or) => None,
+        };
+        match next {
+            Some(mode) => query.set_criterion(mode, cat_id),
+            None => query.remove_criterion(cat_id),
         }
     }
 
@@ -524,16 +547,21 @@ impl App {
         target: CategoryEditTarget,
         section_index: usize,
         cat_id: CategoryId,
+        mode: Option<CriterionMode>,
     ) {
         if let Some(state) = &mut self.view_edit_state {
             match target {
                 CategoryEditTarget::ViewCriteria => {
-                    Self::cycle_criterion_mode(&mut state.draft.criteria, cat_id);
+                    if let Some(mode) = mode {
+                        Self::toggle_criterion_mode(&mut state.draft.criteria, cat_id, mode);
+                    }
                 }
                 CategoryEditTarget::ViewAliases => {}
                 CategoryEditTarget::SectionCriteria => {
                     if let Some(section) = state.draft.sections.get_mut(section_index) {
-                        Self::cycle_criterion_mode(&mut section.criteria, cat_id);
+                        if let Some(mode) = mode {
+                            Self::toggle_criterion_mode(&mut section.criteria, cat_id, mode);
+                        }
                     }
                 }
                 CategoryEditTarget::SectionColumns => {
@@ -731,10 +759,16 @@ impl App {
                         changed = state.draft.name != text;
                         state.draft.name = text;
                     }
-                    Some(ViewEditInlineInput::SectionTitle { section_index }) => {
+                    Some(ViewEditInlineInput::SectionTitle { section_index, is_new }) => {
                         if let Some(section) = state.draft.sections.get_mut(*section_index) {
                             changed = section.title != text;
                             section.title = text;
+                        }
+                        if *is_new {
+                            // Auto-focus the filter field in Details pane
+                            state.pane_focus = ViewEditPaneFocus::Details;
+                            state.region = ViewEditRegion::Sections;
+                            state.section_details_field_index = 1; // Filter field
                         }
                     }
                     Some(ViewEditInlineInput::UnmatchedLabel) => {
@@ -776,10 +810,16 @@ impl App {
                     self.status = status;
                     return Ok(true);
                 }
+                let new_section_created = matches!(
+                    inline,
+                    Some(ViewEditInlineInput::SectionTitle { is_new: true, .. })
+                );
                 self.status = if let Some(status) = alias_status {
                     status
                 } else if matches!(inline, Some(ViewEditInlineInput::CategoryAlias { .. })) {
                     Self::view_edit_alias_picker_status()
+                } else if new_section_created {
+                    "Section created — configure filter below, or Tab to go back".to_string()
                 } else {
                     Self::view_edit_default_status()
                 };
@@ -825,6 +865,10 @@ impl App {
 
         match overlay {
             Some(ViewEditOverlay::CategoryPicker { target }) => {
+                let is_criteria_picker = matches!(
+                    target,
+                    CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                );
                 let filtered_indices = self
                     .view_edit_state
                     .as_ref()
@@ -870,6 +914,30 @@ impl App {
                                     self.begin_view_edit_alias_input(row.id);
                                 }
                             }
+                        } else if is_criteria_picker {
+                            // Cycle: off → Require → Exclude → Or → off
+                            if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                                if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                    if let Some(state) = &mut self.view_edit_state {
+                                        let query = match target {
+                                            CategoryEditTarget::ViewCriteria => {
+                                                Some(&mut state.draft.criteria)
+                                            }
+                                            CategoryEditTarget::SectionCriteria => state
+                                                .draft
+                                                .sections
+                                                .get_mut(section_index)
+                                                .map(|s| &mut s.criteria),
+                                            _ => None,
+                                        };
+                                        if let Some(query) = query {
+                                            Self::cycle_criterion_mode(query, row.id);
+                                        }
+                                    }
+                                    self.set_view_edit_dirty();
+                                    self.refresh_view_edit_preview();
+                                }
+                            }
                         } else if let Some(&actual_idx) = filtered_indices.get(current_visible_pos)
                         {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
@@ -877,32 +945,83 @@ impl App {
                                     target,
                                     section_index,
                                     row.id,
+                                    Some(CriterionMode::And),
                                 );
+                            }
+                        }
+                    }
+                    KeyCode::Char('1') | KeyCode::Char('+')
+                        if is_criteria_picker =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_index,
+                                    row.id,
+                                    Some(CriterionMode::And),
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Char('2') | KeyCode::Char('-')
+                        if is_criteria_picker =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_index,
+                                    row.id,
+                                    Some(CriterionMode::Not),
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Char('3')
+                        if is_criteria_picker =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_index,
+                                    row.id,
+                                    Some(CriterionMode::Or),
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Char('0')
+                        if is_criteria_picker =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                if let Some(state) = &mut self.view_edit_state {
+                                    let query = match target {
+                                        CategoryEditTarget::ViewCriteria => {
+                                            Some(&mut state.draft.criteria)
+                                        }
+                                        CategoryEditTarget::SectionCriteria => state
+                                            .draft
+                                            .sections
+                                            .get_mut(section_index)
+                                            .map(|s| &mut s.criteria),
+                                        _ => None,
+                                    };
+                                    if let Some(query) = query {
+                                        query.remove_criterion(row.id);
+                                    }
+                                }
+                                self.set_view_edit_dirty();
+                                self.refresh_view_edit_preview();
                             }
                         }
                     }
                     KeyCode::Esc => {
                         self.close_view_edit_overlay();
                     }
-                    _ => {
-                        let mut consumed = false;
-                        let text_key = self.text_key_event(code);
-                        if let Some(state) = &mut self.view_edit_state {
-                            consumed = state.overlay_filter_buf.handle_key_event(text_key, false);
-                        }
-                        if consumed {
-                            let filtered = self
-                                .view_edit_state
-                                .as_ref()
-                                .map(|s| self.view_edit_filtered_category_row_indices(s))
-                                .unwrap_or_default();
-                            if let Some(&actual_idx) = filtered.first() {
-                                if let Some(state) = &mut self.view_edit_state {
-                                    state.picker_index = actual_idx;
-                                }
-                            }
-                        }
-                    }
+                    _ => {}
                 }
             }
             Some(ViewEditOverlay::BucketPicker { target }) => {
@@ -1010,8 +1129,18 @@ impl App {
             KeyCode::Char('S') => {
                 return self.handle_view_edit_save(agenda);
             }
-            KeyCode::Char('p') | KeyCode::Char('P') => {
+            KeyCode::Char('p') => {
                 self.toggle_view_edit_preview_visible();
+                return Ok(true);
+            }
+            KeyCode::Char('P') => {
+                // Shift-P: focus preview pane (if visible) or toggle it on
+                if let Some(state) = &mut self.view_edit_state {
+                    if !state.preview_visible {
+                        state.preview_visible = true;
+                    }
+                    state.pane_focus = ViewEditPaneFocus::Preview;
+                }
                 return Ok(true);
             }
             KeyCode::Char('/') => {
@@ -1204,7 +1333,8 @@ impl App {
             state.picker_index = first;
         }
         self.status =
-            "Criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done".to_string();
+            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
+                .to_string();
     }
 
     fn open_view_edit_alias_picker(&mut self) {
@@ -1257,16 +1387,16 @@ impl App {
                     0 => Some(KeyCode::Char('e')),
                     1 => Some(KeyCode::Char('f')),
                     2 => Some(KeyCode::Char('c')),
-                    3 => Some(KeyCode::Char('a')),
-                    4 => Some(KeyCode::Char('r')),
-                    5 => None,
-                    6 => Some(KeyCode::Char('m')),
+                    3 => Some(KeyCode::Char('m')),
+                    4 => Some(KeyCode::Char('a')),
+                    5 => Some(KeyCode::Char('r')),
+                    6 => None,
                     _ => None,
                 };
                 if let Some(mapped) = mapped {
                     return self.handle_view_edit_sections_key(mapped);
                 }
-                if current_index == 5 {
+                if current_index == 6 {
                     self.toggle_view_edit_section_show_children(section_index);
                     return Ok(true);
                 }
@@ -1346,7 +1476,7 @@ impl App {
                     (idx + 1).min(len)
                 };
                 if let Some(new_index) = self.insert_view_edit_section(insert_index) {
-                    self.begin_view_edit_section_title_input(new_index);
+                    self.begin_view_edit_new_section_title_input(new_index);
                 }
             }
             KeyCode::Char('N') => {
@@ -1364,7 +1494,7 @@ impl App {
                     idx.min(len)
                 };
                 if let Some(new_index) = self.insert_view_edit_section(insert_index) {
-                    self.begin_view_edit_section_title_input(new_index);
+                    self.begin_view_edit_new_section_title_input(new_index);
                 }
             }
             KeyCode::Char('x') => {
@@ -1436,7 +1566,7 @@ impl App {
                         });
                         state.picker_index = first;
                     }
-                    self.status = "Section criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done"
+                    self.status = "Section criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
                         .to_string();
                 }
             }
