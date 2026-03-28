@@ -7531,18 +7531,59 @@ impl App {
                     } else {
                         "Space/Enter toggle"
                     };
+                    let context_label = match target {
+                        CategoryEditTarget::ViewCriteria => "View criteria".to_string(),
+                        CategoryEditTarget::ViewAliases => "View aliases".to_string(),
+                        CategoryEditTarget::SectionCriteria => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" criteria")
+                        }
+                        CategoryEditTarget::SectionColumns => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" columns")
+                        }
+                        CategoryEditTarget::SectionOnInsertAssign => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" auto-assign")
+                        }
+                        CategoryEditTarget::SectionOnRemoveUnassign => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" auto-unassign")
+                        }
+                    };
+                    let pos_label = format!(
+                        "{}/{}",
+                        (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
+                        filtered_indices.len()
+                    );
                     let title = if overlay_filter.trim().is_empty() {
                         format!(
-                            " Pick categories  {}/{}  (type filter, {toggle_hint}, Esc done) ",
-                            (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
-                            filtered_indices.len()
+                            " {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",
                         )
                     } else {
                         format!(
-                            " Pick categories /{}  {}/{} ",
+                            " {context_label} /{}  {pos_label} ",
                             overlay_filter,
-                            (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
-                            filtered_indices.len()
                         )
                     };
                     let section_index = state.section_index;
