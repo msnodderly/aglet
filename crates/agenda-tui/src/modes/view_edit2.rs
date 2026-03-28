@@ -219,7 +219,7 @@ impl App {
             picker_index: 0,
             overlay_filter_buf: text_buffer::TextBuffer::empty(),
             preview_count,
-            preview_visible: false,
+            preview_visible: true,
             preview_scroll: 0,
             sections_filter_buf: text_buffer::TextBuffer::empty(),
             dirty: false,
@@ -526,6 +526,19 @@ impl App {
             query.remove_criterion(cat_id);
         } else {
             query.set_criterion(mode, cat_id);
+        }
+    }
+
+    fn cycle_criterion_mode(query: &mut Query, cat_id: CategoryId) {
+        let next = match query.mode_for(cat_id) {
+            None => Some(CriterionMode::And),
+            Some(CriterionMode::And) => Some(CriterionMode::Not),
+            Some(CriterionMode::Not) => Some(CriterionMode::Or),
+            Some(CriterionMode::Or) => None,
+        };
+        match next {
+            Some(mode) => query.set_criterion(mode, cat_id),
+            None => query.remove_criterion(cat_id),
         }
     }
 
@@ -852,6 +865,10 @@ impl App {
 
         match overlay {
             Some(ViewEditOverlay::CategoryPicker { target }) => {
+                let is_criteria_picker = matches!(
+                    target,
+                    CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                );
                 let filtered_indices = self
                     .view_edit_state
                     .as_ref()
@@ -897,6 +914,30 @@ impl App {
                                     self.begin_view_edit_alias_input(row.id);
                                 }
                             }
+                        } else if is_criteria_picker {
+                            // Cycle: off → Require → Exclude → One of → off
+                            if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                                if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                    if let Some(state) = &mut self.view_edit_state {
+                                        let query = match target {
+                                            CategoryEditTarget::ViewCriteria => {
+                                                Some(&mut state.draft.criteria)
+                                            }
+                                            CategoryEditTarget::SectionCriteria => state
+                                                .draft
+                                                .sections
+                                                .get_mut(section_index)
+                                                .map(|s| &mut s.criteria),
+                                            _ => None,
+                                        };
+                                        if let Some(query) = query {
+                                            Self::cycle_criterion_mode(query, row.id);
+                                        }
+                                    }
+                                    self.set_view_edit_dirty();
+                                    self.refresh_view_edit_preview();
+                                }
+                            }
                         } else if let Some(&actual_idx) = filtered_indices.get(current_visible_pos)
                         {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
@@ -909,11 +950,8 @@ impl App {
                             }
                         }
                     }
-                    KeyCode::Char('1')
-                        if matches!(
-                            target,
-                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
-                        ) =>
+                    KeyCode::Char('1') | KeyCode::Char('+')
+                        if is_criteria_picker =>
                     {
                         if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
@@ -926,11 +964,8 @@ impl App {
                             }
                         }
                     }
-                    KeyCode::Char('2')
-                        if matches!(
-                            target,
-                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
-                        ) =>
+                    KeyCode::Char('2') | KeyCode::Char('-')
+                        if is_criteria_picker =>
                     {
                         if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
@@ -944,10 +979,7 @@ impl App {
                         }
                     }
                     KeyCode::Char('3')
-                        if matches!(
-                            target,
-                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
-                        ) =>
+                        if is_criteria_picker =>
                     {
                         if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
@@ -961,10 +993,7 @@ impl App {
                         }
                     }
                     KeyCode::Char('0')
-                        if matches!(
-                            target,
-                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
-                        ) =>
+                        if is_criteria_picker =>
                     {
                         if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                             if let Some(row) = self.category_rows.get(actual_idx).cloned() {
@@ -992,25 +1021,7 @@ impl App {
                     KeyCode::Esc => {
                         self.close_view_edit_overlay();
                     }
-                    _ => {
-                        let mut consumed = false;
-                        let text_key = self.text_key_event(code);
-                        if let Some(state) = &mut self.view_edit_state {
-                            consumed = state.overlay_filter_buf.handle_key_event(text_key, false);
-                        }
-                        if consumed {
-                            let filtered = self
-                                .view_edit_state
-                                .as_ref()
-                                .map(|s| self.view_edit_filtered_category_row_indices(s))
-                                .unwrap_or_default();
-                            if let Some(&actual_idx) = filtered.first() {
-                                if let Some(state) = &mut self.view_edit_state {
-                                    state.picker_index = actual_idx;
-                                }
-                            }
-                        }
-                    }
+                    _ => {}
                 }
             }
             Some(ViewEditOverlay::BucketPicker { target }) => {
@@ -1322,7 +1333,8 @@ impl App {
             state.picker_index = first;
         }
         self.status =
-            "Criteria: Space/1:include  2:exclude  3:match-any  0:clear  Esc:done".to_string();
+            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:one-of  0:clear  Esc:done"
+                .to_string();
     }
 
     fn open_view_edit_alias_picker(&mut self) {
@@ -1554,7 +1566,7 @@ impl App {
                         });
                         state.picker_index = first;
                     }
-                    self.status = "Section criteria: Space/1:include  2:exclude  3:match-any  0:clear  Esc:done"
+                    self.status = "Section criteria: Space:cycle  +/1:require  -/2:exclude  3:one-of  0:clear  Esc:done"
                         .to_string();
                 }
             }

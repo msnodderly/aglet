@@ -3967,17 +3967,16 @@ impl App {
                         );
                         if is_criteria {
                             vec![
-                                ("Sp/1", "include"),
-                                ("2", "exclude"),
-                                ("3", "any"),
+                                ("Sp", "cycle"),
+                                ("+/1", "require"),
+                                ("-/2", "exclude"),
+                                ("3", "one of"),
                                 ("0", "clear"),
-                                ("/", "filter"),
                                 ("Esc", "done"),
                             ]
                         } else {
                             vec![
                                 ("Space", "toggle"),
-                                ("/", "filter"),
                                 ("Esc", "done"),
                             ]
                         }
@@ -6674,9 +6673,9 @@ impl App {
         {
             let criterion_mode_label = |mode: CriterionMode| -> &'static str {
                 match mode {
-                    CriterionMode::And => "Include",
+                    CriterionMode::And => "Require",
                     CriterionMode::Not => "Exclude",
-                    CriterionMode::Or => "Match any",
+                    CriterionMode::Or => "One of",
                 }
             };
 
@@ -7533,7 +7532,6 @@ impl App {
             frame.render_widget(Clear, overlay_area);
             match overlay {
                 ViewEditOverlay::CategoryPicker { target } => {
-                    let overlay_filter = state.overlay_filter_buf.text();
                     let filtered_indices = self.view_edit_filtered_category_row_indices(state);
                     let selected_filtered_index = filtered_indices
                         .iter()
@@ -7547,7 +7545,7 @@ impl App {
                     let toggle_hint = if is_alias_picker {
                         "A/Enter edit alias"
                     } else if is_criteria_picker {
-                        "Sp:inc 2:exc 3:any 0:clr"
+                        "Sp:cycle +/-:req/exc 0:clr"
                     } else {
                         "Space/Enter toggle"
                     };
@@ -7596,16 +7594,9 @@ impl App {
                         (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
                         filtered_indices.len()
                     );
-                    let title = if overlay_filter.trim().is_empty() {
-                        format!(
-                            " {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",
-                        )
-                    } else {
-                        format!(
-                            " {context_label} /{}  {pos_label} ",
-                            overlay_filter,
-                        )
-                    };
+                    let title = format!(
+                        " {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",
+                    );
                     let section_index = state.section_index;
                     let items: Vec<ListItem<'_>> = self
                         .category_rows
@@ -7638,16 +7629,16 @@ impl App {
                                 Style::default()
                             };
                             if is_criteria_target {
-                                let (tag, tag_color) = match criterion_mode {
-                                    None => (" ", Color::DarkGray),
-                                    Some(CriterionMode::And) => ("+", Color::Green),
-                                    Some(CriterionMode::Not) => ("-", Color::Red),
-                                    Some(CriterionMode::Or) => ("*", Color::Yellow),
+                                let (pill, pill_color) = match criterion_mode {
+                                    None => ("       ", Color::DarkGray),
+                                    Some(CriterionMode::And) => ("Require", Color::Green),
+                                    Some(CriterionMode::Not) => ("Exclude", Color::Red),
+                                    Some(CriterionMode::Or) => ("One of ", Color::Yellow),
                                 };
-                                let bracket_style = Style::default().fg(tag_color);
+                                let pill_style = Style::default().fg(pill_color);
                                 let line = Line::from(vec![
                                     Span::raw(indent.to_string()),
-                                    Span::styled(format!("[{tag}]"), bracket_style),
+                                    Span::styled(format!("[{pill}]"), pill_style),
                                     Span::raw(format!(" {}", row.name)),
                                 ]);
                                 ListItem::new(line).style(selected_style)

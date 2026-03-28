@@ -15887,8 +15887,8 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).expect("render");
         let text = terminal_buffer_lines(&terminal).join("\n");
 
-        let medium_pos = text.find("Include: Medium").expect("Include row");
-        let critical_pos = text.find("Match any: Critical").expect("Match any row");
+        let medium_pos = text.find("Require: Medium").expect("Require row");
+        let critical_pos = text.find("One of: Critical").expect("One of row");
         let low_pos = text.find("Exclude: Low").expect("Exclude row");
         assert!(
             medium_pos < critical_pos && critical_pos < low_pos,
@@ -15981,67 +15981,81 @@ mod tests {
             .expect("Complete in category_rows");
         app.view_edit_state.as_mut().unwrap().picker_index = complete_picker_idx;
 
-        // Space in picker: toggles Include on
+        // Space cycles: off → Require → Exclude → One of → off
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space");
-        let state = app.view_edit_state.as_ref().unwrap();
+            .expect("picker space 1");
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::And),
-            "Space should set Include"
+            "Space from off → Require"
         );
 
-        // Space again: toggles Include off
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space toggle off");
-        let state = app.view_edit_state.as_ref().unwrap();
+            .expect("picker space 2");
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
-            None,
-            "Space again should remove Include"
-        );
-
-        // '2' key: sets Exclude directly
-        app.handle_view_edit_key(KeyCode::Char('2'), &agenda)
-            .expect("picker 2 for exclude");
-        let state = app.view_edit_state.as_ref().unwrap();
-        assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::Not),
-            "'2' should set Exclude directly"
+            "Space from Require → Exclude"
         );
 
-        // '3' key: switches to Match-any (replaces Exclude)
-        app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
-            .expect("picker 3 for match-any");
-        let state = app.view_edit_state.as_ref().unwrap();
-        assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
-            Some(CriterionMode::Or),
-            "'3' should set Match-any"
-        );
-
-        // Space: switches from Match-any to Include
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space to include");
-        let state = app.view_edit_state.as_ref().unwrap();
+            .expect("picker space 3");
         assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
-            Some(CriterionMode::And),
-            "Space on Match-any should set Include"
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Or),
+            "Space from Exclude → One of"
         );
 
-        // '2' key: switch directly from Include to Exclude
-        app.handle_view_edit_key(KeyCode::Char('2'), &agenda)
-            .expect("picker 2 from include");
+        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+            .expect("picker space 4");
         assert_eq!(
-            app.view_edit_state
-                .as_ref()
-                .unwrap()
-                .draft
-                .criteria
-                .mode_for(complete.id),
-            Some(CriterionMode::Not)
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            None,
+            "Space from One of → off"
+        );
+
+        // '+' key: sets Require directly
+        app.handle_view_edit_key(KeyCode::Char('+'), &agenda)
+            .expect("picker + for require");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::And),
+            "'+' should set Require"
+        );
+
+        // '-' key: sets Exclude directly
+        app.handle_view_edit_key(KeyCode::Char('-'), &agenda)
+            .expect("picker - for exclude");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Not),
+            "'-' should set Exclude"
+        );
+
+        // '3' key: sets One of
+        app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+            .expect("picker 3 for one-of");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Or),
+            "'3' should set One of"
+        );
+
+        // '0' key: clears
+        app.handle_view_edit_key(KeyCode::Char('0'), &agenda)
+            .expect("picker 0 clears");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            None,
+            "'0' should clear"
+        );
+
+        // Set Exclude via '-' so we have a criterion for inline cycling test
+        app.handle_view_edit_key(KeyCode::Char('-'), &agenda)
+            .expect("picker - sets exclude");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Not),
         );
 
         // Close picker with Esc
@@ -17212,62 +17226,7 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
-    #[test]
-    fn view_edit_category_picker_type_filter_updates_selected_match() {
-        let (store, db_path) = make_test_store_with_view("picker-type-filter");
-        let classifier = SubstringClassifier;
-        let agenda = Agenda::new(&store, &classifier);
-
-        let work = Category::new("Work".to_string());
-        let home = Category::new("Home".to_string());
-        store.create_category(&work).expect("create work category");
-        store.create_category(&home).expect("create home category");
-
-        let mut app = App::default();
-        app.refresh(&store).expect("refresh");
-        let view = app
-            .views
-            .iter()
-            .find(|v| v.name == "TestView")
-            .cloned()
-            .expect("TestView should exist");
-        app.open_view_edit(view);
-
-        app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
-            .expect("open category picker");
-        let home_idx = app
-            .category_rows
-            .iter()
-            .position(|r| r.name == "Home")
-            .expect("home row");
-
-        if let Some(state) = &mut app.view_edit_state {
-            state.picker_index = home_idx;
-        }
-        app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
-            .expect("type picker filter");
-        app.handle_view_edit_key(KeyCode::Char('o'), &agenda)
-            .expect("type picker filter");
-        let state = app.view_edit_state.as_ref().expect("view edit state");
-        assert_eq!(state.overlay_filter_buf.text(), "ho");
-        assert_eq!(
-            state.picker_index, home_idx,
-            "filter should select first matching row"
-        );
-
-        app.handle_view_edit_key(KeyCode::Enter, &agenda)
-            .expect("toggle filtered category");
-        assert!(app
-            .view_edit_state
-            .as_ref()
-            .unwrap()
-            .draft
-            .criteria
-            .mode_for(home.id)
-            .is_some());
-
-        let _ = std::fs::remove_file(&db_path);
-    }
+    // type-to-filter test removed: category picker no longer supports inline filtering
 
     #[test]
     fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
@@ -17758,15 +17717,21 @@ mod tests {
             .expect("TestView should exist");
         app.open_view_edit(view);
 
-        assert!(!app.view_edit_state.as_ref().unwrap().preview_visible);
+        // Preview starts visible by default
+        assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().pane_focus,
             ViewEditPaneFocus::Details
         );
 
-        // p toggles preview visibility
+        // p toggles preview off
         app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
-            .expect("show preview");
+            .expect("hide preview");
+        assert!(!app.view_edit_state.as_ref().unwrap().preview_visible);
+
+        // p toggles it back on
+        app.handle_view_edit_key(KeyCode::Char('p'), &agenda)
+            .expect("show preview again");
         assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
 
         // Tab skips preview — goes Details -> Sections (not Preview)
