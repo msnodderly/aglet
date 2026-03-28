@@ -6629,7 +6629,15 @@ impl App {
                 }
             };
 
-            let summarize_query = |query: &Query| -> Vec<String> {
+            let criterion_mode_color = |mode: CriterionMode| -> Color {
+                match mode {
+                    CriterionMode::And => Color::Green,
+                    CriterionMode::Not => Color::Red,
+                    CriterionMode::Or => Color::Yellow,
+                }
+            };
+
+            let summarize_query = |query: &Query| -> Vec<(CriterionMode, String)> {
                 query
                     .criteria
                     .iter()
@@ -6638,7 +6646,7 @@ impl App {
                             .get(&criterion.category_id)
                             .cloned()
                             .unwrap_or_else(|| "(deleted)".to_string());
-                        format!("{}: {}", criterion_mode_label(criterion.mode), name)
+                        (criterion.mode, format!("{}: {}", criterion_mode_label(criterion.mode), name))
                     })
                     .collect()
             };
@@ -6760,19 +6768,24 @@ impl App {
                             .style(style),
                     );
                 } else {
-                    for (i, criterion) in criteria_lines.iter().enumerate() {
-                        let style = if details_focused
+                    for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
+                        let is_selected = details_focused
                             && state.region == ViewEditRegion::Criteria
-                            && i == state.criteria_index
-                        {
+                            && i == state.criteria_index;
+                        if is_selected {
                             selected_line = Some(criteria_row_start + i);
+                        }
+                        let color = criterion_mode_color(*mode);
+                        let line = Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(criterion.clone(), Style::default().fg(color)),
+                        ]);
+                        let style = if is_selected {
                             Style::default().add_modifier(Modifier::REVERSED)
                         } else {
                             Style::default()
                         };
-                        items.push(
-                            ListItem::new(Line::from(format!("    {criterion}"))).style(style),
-                        );
+                        items.push(ListItem::new(line).style(style));
                     }
                 }
 
@@ -7019,24 +7032,39 @@ impl App {
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
-                let criteria_value = if criteria_lines.is_empty() {
-                    "(none)".to_string()
+                let is_filter_selected = details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 1;
+                if criteria_lines.is_empty() {
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "  {:<width$}(none)",
+                            "Filter",
+                            width = pad
+                        )))
+                        .style(style_for_section_field(
+                            1,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
                 } else {
-                    criteria_lines.join("; ")
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
-                        "Filter",
-                        criteria_value,
-                        width = pad
-                    )))
-                    .style(style_for_section_field(
-                        1,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
+                    let mut spans = vec![Span::raw(format!("  {:<width$}", "Filter", width = pad))];
+                    for (idx, (mode, text)) in criteria_lines.iter().enumerate() {
+                        if idx > 0 {
+                            spans.push(Span::raw("; "));
+                        }
+                        spans.push(Span::styled(text.clone(), Style::default().fg(criterion_mode_color(*mode))));
+                    }
+                    let line = Line::from(spans);
+                    let style = if is_filter_selected {
+                        selected_line = Some(items.len());
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    items.push(ListItem::new(line).style(style));
+                }
 
                 // ── Separator ──
                 items.push(ListItem::new(Line::from(Span::styled(
@@ -7444,7 +7472,7 @@ impl App {
                     let toggle_hint = if is_alias_picker {
                         "A/Enter edit alias"
                     } else if is_criteria_picker {
-                        "Space/Enter cycle mode"
+                        "Sp:inc 2:exc 3:any 0:clr"
                     } else {
                         "Space/Enter toggle"
                     };
@@ -7488,14 +7516,25 @@ impl App {
                             } else {
                                 None
                             };
-                            let label = if is_criteria_target {
-                                let tag = match criterion_mode {
-                                    None => "   ",
-                                    Some(CriterionMode::And) => "Inc",
-                                    Some(CriterionMode::Not) => "Exc",
-                                    Some(CriterionMode::Or) => "Any",
+                            let selected_style = if i == state.picker_index {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            };
+                            if is_criteria_target {
+                                let (tag, tag_color) = match criterion_mode {
+                                    None => (" ", Color::DarkGray),
+                                    Some(CriterionMode::And) => ("+", Color::Green),
+                                    Some(CriterionMode::Not) => ("-", Color::Red),
+                                    Some(CriterionMode::Or) => ("*", Color::Yellow),
                                 };
-                                format!("{indent}[{tag}] {}", row.name)
+                                let bracket_style = Style::default().fg(tag_color);
+                                let line = Line::from(vec![
+                                    Span::raw(indent.to_string()),
+                                    Span::styled(format!("[{tag}]"), bracket_style),
+                                    Span::raw(format!(" {}", row.name)),
+                                ]);
+                                ListItem::new(line).style(selected_style)
                             } else if is_alias_picker {
                                 let active_alias_edit = matches!(
                                     state.inline_input,
@@ -7518,7 +7557,8 @@ impl App {
                                     current_alias
                                 };
                                 let edit_marker = if active_alias_edit { " ◀" } else { "" };
-                                format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name)
+                                let label = format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name);
+                                ListItem::new(Line::from(label)).style(selected_style)
                             } else {
                                 let checked = match target {
                                     CategoryEditTarget::ViewAliases => false,
@@ -7544,18 +7584,13 @@ impl App {
                                         .unwrap_or(false),
                                     _ => false,
                                 };
-                                format!(
+                                let label = format!(
                                     "{indent}[{}] {}",
                                     if checked { "x" } else { " " },
                                     row.name
-                                )
-                            };
-                            let style = if i == state.picker_index {
-                                Style::default().add_modifier(Modifier::REVERSED)
-                            } else {
-                                Style::default()
-                            };
-                            ListItem::new(Line::from(label)).style(style)
+                                );
+                                ListItem::new(Line::from(label)).style(selected_style)
+                            }
                         })
                         .collect();
                     let block = Block::default()

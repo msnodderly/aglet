@@ -15969,51 +15969,59 @@ mod tests {
             .expect("Complete in category_rows");
         app.view_edit_state.as_mut().unwrap().picker_index = complete_picker_idx;
 
-        // First Space in picker: off → Include
+        // Space in picker: toggles Include on
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space 1");
+            .expect("picker space");
         let state = app.view_edit_state.as_ref().unwrap();
         assert_eq!(
             state.draft.criteria.mode_for(complete.id),
             Some(CriterionMode::And),
-            "first press should set Include"
+            "Space should set Include"
         );
 
-        // Second Space in picker: Include → Exclude
+        // Space again: toggles Include off
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space 2");
-        let state = app.view_edit_state.as_ref().unwrap();
-        assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
-            Some(CriterionMode::Not),
-            "second press should set Exclude"
-        );
-
-        // Third Space in picker: Exclude → Match any
-        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space 3");
-        let state = app.view_edit_state.as_ref().unwrap();
-        assert_eq!(
-            state.draft.criteria.mode_for(complete.id),
-            Some(CriterionMode::Or),
-            "third press should set Match any"
-        );
-
-        // Fourth Space in picker: Match any → off (removed)
-        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("picker space 4");
+            .expect("picker space toggle off");
         let state = app.view_edit_state.as_ref().unwrap();
         assert_eq!(
             state.draft.criteria.mode_for(complete.id),
             None,
-            "fourth press should remove criterion"
+            "Space again should remove Include"
         );
 
-        // Set it to Exclude and close the picker
+        // '2' key: sets Exclude directly
+        app.handle_view_edit_key(KeyCode::Char('2'), &agenda)
+            .expect("picker 2 for exclude");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Not),
+            "'2' should set Exclude directly"
+        );
+
+        // '3' key: switches to Match-any (replaces Exclude)
+        app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+            .expect("picker 3 for match-any");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::Or),
+            "'3' should set Match-any"
+        );
+
+        // Space: switches from Match-any to Include
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("set include");
-        app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
-            .expect("set exclude");
+            .expect("picker space to include");
+        let state = app.view_edit_state.as_ref().unwrap();
+        assert_eq!(
+            state.draft.criteria.mode_for(complete.id),
+            Some(CriterionMode::And),
+            "Space on Match-any should set Include"
+        );
+
+        // '2' key: switch directly from Include to Exclude
+        app.handle_view_edit_key(KeyCode::Char('2'), &agenda)
+            .expect("picker 2 from include");
         assert_eq!(
             app.view_edit_state
                 .as_ref()

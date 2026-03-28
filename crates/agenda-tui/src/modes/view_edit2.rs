@@ -509,13 +509,13 @@ impl App {
         self.status = Self::view_edit_default_status();
     }
 
-    /// Cycle a criterion through: off → Include → Exclude → Match any → off.
-    fn cycle_criterion_mode(query: &mut Query, cat_id: CategoryId) {
-        match query.mode_for(cat_id) {
-            None => query.set_criterion(CriterionMode::And, cat_id),
-            Some(CriterionMode::And) => query.set_criterion(CriterionMode::Not, cat_id),
-            Some(CriterionMode::Not) => query.set_criterion(CriterionMode::Or, cat_id),
-            Some(CriterionMode::Or) => query.remove_criterion(cat_id),
+    /// Toggle a specific criterion mode on/off (used in picker overlay).
+    /// If the category already has this mode, remove it; otherwise set it.
+    fn toggle_criterion_mode(query: &mut Query, cat_id: CategoryId, mode: CriterionMode) {
+        if query.mode_for(cat_id) == Some(mode) {
+            query.remove_criterion(cat_id);
+        } else {
+            query.set_criterion(mode, cat_id);
         }
     }
 
@@ -524,16 +524,21 @@ impl App {
         target: CategoryEditTarget,
         section_index: usize,
         cat_id: CategoryId,
+        mode: Option<CriterionMode>,
     ) {
         if let Some(state) = &mut self.view_edit_state {
             match target {
                 CategoryEditTarget::ViewCriteria => {
-                    Self::cycle_criterion_mode(&mut state.draft.criteria, cat_id);
+                    if let Some(mode) = mode {
+                        Self::toggle_criterion_mode(&mut state.draft.criteria, cat_id, mode);
+                    }
                 }
                 CategoryEditTarget::ViewAliases => {}
                 CategoryEditTarget::SectionCriteria => {
                     if let Some(section) = state.draft.sections.get_mut(section_index) {
-                        Self::cycle_criterion_mode(&mut section.criteria, cat_id);
+                        if let Some(mode) = mode {
+                            Self::toggle_criterion_mode(&mut section.criteria, cat_id, mode);
+                        }
                     }
                 }
                 CategoryEditTarget::SectionColumns => {
@@ -877,7 +882,88 @@ impl App {
                                     target,
                                     section_index,
                                     row.id,
+                                    Some(CriterionMode::And),
                                 );
+                            }
+                        }
+                    }
+                    KeyCode::Char('1')
+                        if matches!(
+                            target,
+                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                        ) =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_index,
+                                    row.id,
+                                    Some(CriterionMode::And),
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Char('2')
+                        if matches!(
+                            target,
+                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                        ) =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_index,
+                                    row.id,
+                                    Some(CriterionMode::Not),
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Char('3')
+                        if matches!(
+                            target,
+                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                        ) =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                self.toggle_category_picker_selection(
+                                    target,
+                                    section_index,
+                                    row.id,
+                                    Some(CriterionMode::Or),
+                                );
+                            }
+                        }
+                    }
+                    KeyCode::Char('0')
+                        if matches!(
+                            target,
+                            CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                        ) =>
+                    {
+                        if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                            if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                                if let Some(state) = &mut self.view_edit_state {
+                                    let query = match target {
+                                        CategoryEditTarget::ViewCriteria => {
+                                            Some(&mut state.draft.criteria)
+                                        }
+                                        CategoryEditTarget::SectionCriteria => state
+                                            .draft
+                                            .sections
+                                            .get_mut(section_index)
+                                            .map(|s| &mut s.criteria),
+                                        _ => None,
+                                    };
+                                    if let Some(query) = query {
+                                        query.remove_criterion(row.id);
+                                    }
+                                }
+                                self.set_view_edit_dirty();
+                                self.refresh_view_edit_preview();
                             }
                         }
                     }
@@ -1204,7 +1290,7 @@ impl App {
             state.picker_index = first;
         }
         self.status =
-            "Criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done".to_string();
+            "Criteria: Space/1:include  2:exclude  3:match-any  0:clear  Esc:done".to_string();
     }
 
     fn open_view_edit_alias_picker(&mut self) {
@@ -1436,7 +1522,7 @@ impl App {
                         });
                         state.picker_index = first;
                     }
-                    self.status = "Section criteria: j/k select  Space/Enter:cycle (Inc→Exc→Any→off)  Esc:done"
+                    self.status = "Section criteria: Space/1:include  2:exclude  3:match-any  0:clear  Esc:done"
                         .to_string();
                 }
             }
