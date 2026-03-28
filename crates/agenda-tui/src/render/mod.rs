@@ -7039,7 +7039,7 @@ impl App {
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
                     state.inline_input,
-                    Some(ViewEditInlineInput::SectionTitle { section_index })
+                    Some(ViewEditInlineInput::SectionTitle { section_index, .. })
                     if section_index == state.section_index
                 );
                 let title_text = if editing_title {
@@ -7260,7 +7260,7 @@ impl App {
         // ── Sections region ──────────────────────────────────────────────────
         {
             let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
-                if let ViewEditInlineInput::SectionTitle { section_index } = inp {
+                if let ViewEditInlineInput::SectionTitle { section_index, .. } = inp {
                     Some(*section_index)
                 } else {
                     None

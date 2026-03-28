@@ -492,7 +492,7 @@ enum ViewEditInlineInput {
     ViewName,
     SectionsFilter,
     CategoryAlias { category_id: CategoryId },
-    SectionTitle { section_index: usize },
+    SectionTitle { section_index: usize, is_new: bool },
     UnmatchedLabel,
 }
 
@@ -17299,7 +17299,7 @@ mod tests {
         );
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0, .. })
         ));
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
             .expect("confirm default section title");
@@ -17343,7 +17343,7 @@ mod tests {
 
         assert!(matches!(
             app.view_edit_state.as_ref().unwrap().inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17376,7 +17376,7 @@ mod tests {
         assert_eq!(state.section_index, 0);
         assert!(matches!(
             state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17437,7 +17437,7 @@ mod tests {
         assert_eq!(state.draft.sections[2].title, "Bravo");
         assert!(matches!(
             state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -17497,7 +17497,7 @@ mod tests {
         assert_eq!(state.draft.sections[2].title, "Bravo");
         assert!(matches!(
             state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1 })
+            Some(super::ViewEditInlineInput::SectionTitle { section_index: 1, .. })
         ));
 
         let _ = std::fs::remove_file(&db_path);
@@ -18129,6 +18129,11 @@ mod tests {
             .expect("N adds section");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
             .expect("confirm default section title");
+        // After confirming new section title, focus auto-moves to Details pane
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Details
+        );
         app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
             .expect("toggle section display override");
         assert_eq!(
@@ -18140,19 +18145,14 @@ mod tests {
             Some(BoardDisplayMode::SingleLine)
         );
 
-        // Move from section details back to view criteria details
-        app.handle_view_edit_key(KeyCode::BackTab, &agenda)
-            .expect("backtab to details pane");
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().pane_focus,
-            ViewEditPaneFocus::Details
-        );
-        assert_eq!(
-            app.view_edit_state.as_ref().unwrap().region,
-            ViewEditRegion::Sections
-        );
+        // Move from section details to view criteria details
+        // Tab goes Details → Sections
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("tab to sections pane");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().pane_focus,
+            ViewEditPaneFocus::Sections
+        );
         app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
             .expect("select view properties row");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)

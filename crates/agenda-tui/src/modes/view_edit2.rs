@@ -123,6 +123,14 @@ impl App {
     }
 
     fn begin_view_edit_section_title_input(&mut self, section_index: usize) {
+        self.begin_view_edit_section_title_input_inner(section_index, false);
+    }
+
+    fn begin_view_edit_new_section_title_input(&mut self, section_index: usize) {
+        self.begin_view_edit_section_title_input_inner(section_index, true);
+    }
+
+    fn begin_view_edit_section_title_input_inner(&mut self, section_index: usize, is_new: bool) {
         if let Some(state) = &mut self.view_edit_state {
             if let Some(section) = state.draft.sections.get(section_index) {
                 state.region = ViewEditRegion::Sections;
@@ -130,7 +138,8 @@ impl App {
                 state.section_index = section_index;
                 state.sections_view_row_selected = false;
                 state.section_details_field_index = 0;
-                state.inline_input = Some(ViewEditInlineInput::SectionTitle { section_index });
+                state.inline_input =
+                    Some(ViewEditInlineInput::SectionTitle { section_index, is_new });
                 state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
                 state.discard_confirm = false;
                 self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();
@@ -737,10 +746,16 @@ impl App {
                         changed = state.draft.name != text;
                         state.draft.name = text;
                     }
-                    Some(ViewEditInlineInput::SectionTitle { section_index }) => {
+                    Some(ViewEditInlineInput::SectionTitle { section_index, is_new }) => {
                         if let Some(section) = state.draft.sections.get_mut(*section_index) {
                             changed = section.title != text;
                             section.title = text;
+                        }
+                        if *is_new {
+                            // Auto-focus the filter field in Details pane
+                            state.pane_focus = ViewEditPaneFocus::Details;
+                            state.region = ViewEditRegion::Sections;
+                            state.section_details_field_index = 1; // Filter field
                         }
                     }
                     Some(ViewEditInlineInput::UnmatchedLabel) => {
@@ -782,10 +797,16 @@ impl App {
                     self.status = status;
                     return Ok(true);
                 }
+                let new_section_created = matches!(
+                    inline,
+                    Some(ViewEditInlineInput::SectionTitle { is_new: true, .. })
+                );
                 self.status = if let Some(status) = alias_status {
                     status
                 } else if matches!(inline, Some(ViewEditInlineInput::CategoryAlias { .. })) {
                     Self::view_edit_alias_picker_status()
+                } else if new_section_created {
+                    "Section created — configure filter below, or Tab to go back".to_string()
                 } else {
                     Self::view_edit_default_status()
                 };
@@ -1443,7 +1464,7 @@ impl App {
                     (idx + 1).min(len)
                 };
                 if let Some(new_index) = self.insert_view_edit_section(insert_index) {
-                    self.begin_view_edit_section_title_input(new_index);
+                    self.begin_view_edit_new_section_title_input(new_index);
                 }
             }
             KeyCode::Char('N') => {
@@ -1461,7 +1482,7 @@ impl App {
                     idx.min(len)
                 };
                 if let Some(new_index) = self.insert_view_edit_section(insert_index) {
-                    self.begin_view_edit_section_title_input(new_index);
+                    self.begin_view_edit_new_section_title_input(new_index);
                 }
             }
             KeyCode::Char('x') => {
