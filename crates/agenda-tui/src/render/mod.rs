@@ -6665,7 +6665,7 @@ impl App {
         };
 
         let focused_border = Color::Cyan;
-        let inactive_border = Color::Blue;
+        let inactive_border = Color::Rgb(60, 70, 90);
 
         let category_names = category_name_map(&self.categories);
         let dim = Color::Rgb(110, 118, 138); // visible mid-gray for dimmed text
@@ -6731,17 +6731,30 @@ impl App {
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
-            let title = if show_view_details {
-                format!(" DETAILS: View  matches:{} ", state.preview_count)
-            } else {
-                let section_name = state
-                    .draft
-                    .sections
-                    .get(state.section_index)
-                    .map(|s| s.title.as_str())
-                    .unwrap_or("?");
-                format!(" DETAILS: {} ", section_name)
-            };
+            let title = " DETAILS ".to_string();
+
+            // Context banner: full-width colored bar distinguishing view vs section
+            {
+                let banner = if show_view_details {
+                    let view_name = &state.draft.name;
+                    ListItem::new(Line::from(vec![Span::styled(
+                        format!(" VIEW: {} ", view_name),
+                        Style::default().fg(Color::Black).bg(Color::Cyan),
+                    )]))
+                } else {
+                    let section_name = state
+                        .draft
+                        .sections
+                        .get(state.section_index)
+                        .map(|s| s.title.as_str())
+                        .unwrap_or("?");
+                    ListItem::new(Line::from(vec![Span::styled(
+                        format!(" SECTION: {} ", section_name),
+                        Style::default().fg(Color::Black).bg(Color::Green),
+                    )]))
+                };
+                items.push(banner);
+            }
 
             if show_view_details {
                 let display_mode_label = match state.draft.board_display_mode {
@@ -6756,6 +6769,10 @@ impl App {
                 let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
 
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
                 // Helper: style + track selected_line for unmatched-region fields
                 let style_for_unmatched_field =
                     |field_index: usize,
@@ -6766,7 +6783,7 @@ impl App {
                             && state.unmatched_field_index == field_index
                         {
                             *selected_line_ref = Some(items.len());
-                            Style::default().add_modifier(Modifier::REVERSED)
+                            sel_style
                         } else {
                             Style::default()
                         }
@@ -6781,8 +6798,8 @@ impl App {
                     state.draft.name.clone()
                 };
                 let view_name_style = if editing_view_name {
-                    selected_line = Some(0);
-                    Style::default().add_modifier(Modifier::REVERSED)
+                    selected_line = Some(items.len());
+                    sel_style
                 } else {
                     Style::default()
                 };
@@ -6810,7 +6827,7 @@ impl App {
                 if criteria_lines.is_empty() {
                     let style = if details_focused && state.region == ViewEditRegion::Criteria {
                         selected_line = Some(criteria_row_start);
-                        Style::default().add_modifier(Modifier::REVERSED)
+                        sel_style
                     } else {
                         Style::default()
                     };
@@ -6826,13 +6843,17 @@ impl App {
                         if is_selected {
                             selected_line = Some(criteria_row_start + i);
                         }
-                        let color = criterion_mode_color(*mode);
+                        let text_color = if is_selected {
+                            Color::Black
+                        } else {
+                            criterion_mode_color(*mode)
+                        };
                         let line = Line::from(vec![
                             Span::raw("    "),
-                            Span::styled(criterion.clone(), Style::default().fg(color)),
+                            Span::styled(criterion.clone(), Style::default().fg(text_color)),
                         ]);
                         let style = if is_selected {
-                            Style::default().add_modifier(Modifier::REVERSED)
+                            sel_style
                         } else {
                             Style::default()
                         };
@@ -7051,6 +7072,11 @@ impl App {
                 let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
 
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
+
                 // Helper: style + track selected_line for a given field index
                 let style_for_section_field =
                     |field_index: usize,
@@ -7061,7 +7087,7 @@ impl App {
                             && state.section_details_field_index == field_index
                         {
                             *selected_line_ref = Some(items.len());
-                            Style::default().add_modifier(Modifier::REVERSED)
+                            sel_style
                         } else {
                             Style::default()
                         }
@@ -7105,12 +7131,17 @@ impl App {
                         if idx > 0 {
                             spans.push(Span::raw("; "));
                         }
-                        spans.push(Span::styled(text.clone(), Style::default().fg(criterion_mode_color(*mode))));
+                        let text_color = if is_filter_selected {
+                            Color::Black
+                        } else {
+                            criterion_mode_color(*mode)
+                        };
+                        spans.push(Span::styled(text.clone(), Style::default().fg(text_color)));
                     }
                     let line = Line::from(spans);
                     let style = if is_filter_selected {
                         selected_line = Some(items.len());
-                        Style::default().add_modifier(Modifier::REVERSED)
+                        sel_style
                     } else {
                         Style::default()
                     };
@@ -7273,18 +7304,19 @@ impl App {
                 Some(ViewEditInlineInput::SectionsFilter)
             );
             let dirty_marker = if state.dirty { " *" } else { "" };
+            let view_label = format!("VIEW: {}", state.draft.name);
             let sections_title = if filter_editing {
                 format!(
-                    " SECTIONS{dirty_marker}  /{}◀ ",
+                    " {view_label}{dirty_marker}  /{}◀ ",
                     state.sections_filter_buf.text()
                 )
             } else if filter_active {
                 format!(
-                    " SECTIONS{dirty_marker}  /{} ",
+                    " {view_label}{dirty_marker}  /{} ",
                     state.sections_filter_buf.text()
                 )
             } else {
-                format!(" SECTIONS{dirty_marker} ")
+                format!(" {view_label}{dirty_marker} ")
             };
             let block = Block::default()
                 .title(sections_title)
@@ -7306,22 +7338,22 @@ impl App {
                 selected_line = Some(0);
             }
             let view_row_style = if view_row_focused && sections_pane_focused {
-                Style::default().add_modifier(Modifier::REVERSED)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if view_row_focused {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
             } else {
                 Style::default().fg(dim)
             };
             items.push(
-                ListItem::new(Line::from(format!(
-                    "{}  View: {}",
-                    if view_row_focused { ">" } else { " " },
-                    state.draft.name,
-                )))
+                ListItem::new(Line::from(
+                    " ⚙ View settings".to_string(),
+                ))
                 .style(view_row_style),
             );
-            // Separator between View header and sections list
-            items.push(ListItem::new(Line::from(
-                Span::styled("  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─", Style::default().fg(dim)),
-            )));
 
             let visible_section_indices: Vec<usize> = {
                 let q = state.sections_filter_buf.trimmed().to_ascii_lowercase();
@@ -7349,40 +7381,47 @@ impl App {
             } else if visible_section_indices.is_empty() {
                 items.push(ListItem::new(Line::from("  (no matching sections)")));
             } else {
+                let last_visible = visible_section_indices.last().copied();
                 for i in visible_section_indices {
                     let section = &state.draft.sections[i];
-                    if i == state.section_index
-                        && !state.sections_view_row_selected
-                        && sections_pane_focused
-                    {
+                    let is_active_section =
+                        i == state.section_index && !state.sections_view_row_selected;
+                    if is_active_section {
                         selected_line = Some(items.len());
                     }
-                    let cursor = if i == state.section_index
+                    // Tree connector: ├── for intermediate, └── for last
+                    let connector = if Some(i) == last_visible {
+                        "└──"
+                    } else {
+                        "├──"
+                    };
+                    let cursor = if is_active_section
                         && state.region == ViewEditRegion::Sections
-                        && sections_pane_focused
-                        && !state.sections_view_row_selected
                     {
-                        ">"
+                        "▸"
                     } else {
                         " "
                     };
                     let title = if inline_editing_section == Some(i) {
                         format!(
-                            "{}  {}. {} ◀ editing",
+                            " {} {} {}. {} ◀",
+                            connector,
                             cursor,
                             i + 1,
                             state.inline_buf.text()
                         )
                     } else {
-                        format!("{} {}. {}", cursor, i + 1, section.title)
+                        format!(" {} {} {}. {}", connector, cursor, i + 1, section.title)
                     };
 
-                    let style = if i == state.section_index
-                        && state.region == ViewEditRegion::Sections
-                        && sections_pane_focused
-                        && !state.sections_view_row_selected
-                    {
-                        Style::default().add_modifier(Modifier::REVERSED)
+                    let style = if is_active_section && sections_pane_focused {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else if is_active_section {
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
                     };
@@ -7514,7 +7553,10 @@ impl App {
                             .border_style(Style::default().fg(preview_border)),
                     )
                     .highlight_style(if preview_focused {
-                        Style::default().add_modifier(Modifier::REVERSED)
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     }),
@@ -7625,23 +7667,37 @@ impl App {
                                 None
                             };
                             let selected_style = if i == state.picker_index {
-                                Style::default().add_modifier(Modifier::REVERSED)
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default()
                             };
                             if is_criteria_target {
+                                let is_selected = i == state.picker_index;
                                 let (glyph, label, glyph_color) = match criterion_mode {
                                     None => (" ", "", dim),
                                     Some(CriterionMode::And) => ("+", " Require", Color::Green),
                                     Some(CriterionMode::Not) => ("-", " Exclude", Color::Red),
                                     Some(CriterionMode::Or) => ("*", " Or", Color::Yellow),
                                 };
-                                let glyph_style = Style::default().fg(glyph_color);
-                                let label_style = Style::default().fg(glyph_color).add_modifier(Modifier::DIM);
+                                let fg = if is_selected { Color::Black } else { glyph_color };
+                                let glyph_style = Style::default().fg(fg);
+                                let label_style = if is_selected {
+                                    Style::default().fg(Color::Black)
+                                } else {
+                                    Style::default().fg(glyph_color).add_modifier(Modifier::DIM)
+                                };
+                                let name_style = if is_selected {
+                                    Style::default().fg(Color::Black)
+                                } else {
+                                    Style::default()
+                                };
                                 let line = Line::from(vec![
                                     Span::raw(indent.to_string()),
                                     Span::styled(format!("[{glyph}]"), glyph_style),
-                                    Span::raw(format!(" {}", row.name)),
+                                    Span::styled(format!(" {}", row.name), name_style),
                                     Span::styled(label.to_string(), label_style),
                                 ]);
                                 ListItem::new(line).style(selected_style)
@@ -7729,7 +7785,10 @@ impl App {
                         .map(|(i, bucket)| {
                             let label = format!("  {}", when_bucket_label(*bucket));
                             let style = if i == state.picker_index {
-                                Style::default().add_modifier(Modifier::REVERSED)
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default()
                             };
