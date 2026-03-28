@@ -7257,7 +7257,7 @@ impl App {
             let view_row_style = if view_row_focused && sections_pane_focused {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
-                Style::default()
+                Style::default().fg(Color::DarkGray)
             };
             items.push(
                 ListItem::new(Line::from(format!(
@@ -7267,6 +7267,10 @@ impl App {
                 )))
                 .style(view_row_style),
             );
+            // Separator between View header and sections list
+            items.push(ListItem::new(Line::from(
+                Span::styled("  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─", Style::default().fg(Color::DarkGray)),
+            )));
 
             let visible_section_indices: Vec<usize> = {
                 let q = state.sections_filter_buf.trimmed().to_ascii_lowercase();
