@@ -1375,16 +1375,16 @@ impl App {
                     0 => Some(KeyCode::Char('e')),
                     1 => Some(KeyCode::Char('f')),
                     2 => Some(KeyCode::Char('c')),
-                    3 => Some(KeyCode::Char('a')),
-                    4 => Some(KeyCode::Char('r')),
-                    5 => None,
-                    6 => Some(KeyCode::Char('m')),
+                    3 => Some(KeyCode::Char('m')),
+                    4 => Some(KeyCode::Char('a')),
+                    5 => Some(KeyCode::Char('r')),
+                    6 => None,
                     _ => None,
                 };
                 if let Some(mapped) = mapped {
                     return self.handle_view_edit_sections_key(mapped);
                 }
-                if current_index == 5 {
+                if current_index == 6 {
                     self.toggle_view_edit_section_show_children(section_index);
                     return Ok(true);
                 }

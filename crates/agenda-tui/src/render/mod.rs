@@ -7165,7 +7165,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        6,
+                        3,
                         &items,
                         &mut selected_line,
                     )),
@@ -7186,7 +7186,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        3,
+                        4,
                         &items,
                         &mut selected_line,
                     )),
@@ -7199,7 +7199,7 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -7212,14 +7212,14 @@ impl App {
                         width = pad
                     )))
                     .style(style_for_section_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
                 );
                 if details_focused
                     && state.region == ViewEditRegion::Sections
-                    && state.section_details_field_index == 5
+                    && state.section_details_field_index == 6
                 {
                     let help_style = Style::default().fg(Color::Rgb(170, 178, 198));
                     items.push(ListItem::new(Line::from(Span::styled(

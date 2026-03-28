@@ -16833,7 +16833,11 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("close picker");
 
-        // Field 3: On insert assign
+        // Field 3: Display mode (no picker, just toggle)
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("to display mode field");
+
+        // Field 4: On insert assign
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to on-insert field");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -16847,7 +16851,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Esc, &agenda)
             .expect("close picker");
 
-        // Field 4: On remove unassign
+        // Field 5: On remove unassign
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("to on-remove field");
         app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -16897,7 +16901,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("to details");
 
-        for _ in 0..5 {
+        for _ in 0..6 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move to section layout field");
         }
@@ -16906,7 +16910,7 @@ mod tests {
                 .as_ref()
                 .expect("view edit state")
                 .section_details_field_index,
-            5
+            6
         );
         assert!(
             !app.view_edit_state
@@ -16964,7 +16968,7 @@ mod tests {
         app.handle_view_edit_key(KeyCode::Tab, &agenda)
             .expect("to details");
 
-        for _ in 0..5 {
+        for _ in 0..6 {
             app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
                 .expect("move to section layout field");
         }
@@ -16973,7 +16977,7 @@ mod tests {
                 .as_ref()
                 .expect("view edit state")
                 .section_details_field_index,
-            5
+            6
         );
 
         app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
