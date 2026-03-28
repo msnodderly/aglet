@@ -226,9 +226,18 @@ impl App {
         self.open_view_edit_with_mode(view, false);
     }
 
-    pub(crate) fn open_view_edit_new_view_focus_first_section(&mut self, view: View) {
+    pub(crate) fn open_view_edit_new_view_focus_name(&mut self, view: View) {
         self.open_view_edit_with_mode(view, true);
-        self.begin_view_edit_section_title_input(0);
+        // Select all text so the user can immediately type a new name
+        if let Some(state) = &mut self.view_edit_state {
+            state.sections_view_row_selected = true;
+            state.region = ViewEditRegion::Criteria;
+            state.pane_focus = ViewEditPaneFocus::Details;
+            state.inline_input = Some(ViewEditInlineInput::ViewName);
+            state.inline_buf = text_buffer::TextBuffer::new(String::new());
+            state.discard_confirm = false;
+        }
+        self.status = "New view: type name, Enter to confirm, Esc to cancel".to_string();
     }
 
     fn view_details_criteria_row_count(state: &ViewEditState) -> usize {

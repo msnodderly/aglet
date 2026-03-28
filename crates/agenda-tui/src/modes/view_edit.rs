@@ -44,14 +44,13 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.view_pending_edit_name = None;
-                self.input_panel =
-                    Some(input_panel::InputPanel::new_name_input("", "New view name"));
-
-                self.name_input_context = Some(NameInputContext::ViewCreate);
-                self.mode = Mode::InputPanel;
-                self.status =
-                    "Create view: type name, Tab/Save to confirm, Esc to cancel".to_string();
+                let mut view = View::new("Untitled View".to_string());
+                if view.sections.is_empty() {
+                    view.sections.push(Self::view_edit_default_section(
+                        Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
+                    ));
+                }
+                self.open_view_edit_new_view_focus_name(view);
             }
             KeyCode::Char('r') => {
                 if let Some(view) = self.selected_view_from_picker() {

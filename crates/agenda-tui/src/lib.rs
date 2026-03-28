@@ -437,7 +437,6 @@ struct LinkWizardState {
 /// is open.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameInputContext {
-    ViewCreate,
     ViewRename,
     /// Cloning an existing view with a new name.
     ViewClone,
@@ -6288,9 +6287,14 @@ mod tests {
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
             .expect("n opens create view");
 
-        // After Phase 5d: 'n' in ViewPicker now opens InputPanel(NameInput) instead of ViewCreateName
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
+        // N now opens ViewEdit directly with inline name editing
+        assert_eq!(app.mode, Mode::ViewEdit);
+        let state = app.view_edit_state.as_ref().expect("view_edit_state");
+        assert!(state.is_new_view, "should be flagged as new view");
+        assert!(
+            matches!(state.inline_input, Some(super::ViewEditInlineInput::ViewName)),
+            "should be editing view name inline"
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -6459,22 +6463,26 @@ mod tests {
         app.refresh(&store).expect("refresh");
         app.mode = Mode::ViewPicker;
 
+        // N now opens ViewEdit directly with inline name editing
         app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
-            .expect("open create name input");
-        assert_eq!(app.mode, Mode::InputPanel);
-        assert_eq!(app.name_input_context, Some(NameInputContext::ViewCreate));
-
-        for ch in "Mixed".chars() {
-            app.handle_input_panel_key(KeyCode::Char(ch), &agenda)
-                .expect("type view name");
-        }
-        // Enter from Text focus saves NameInput directly
-        app.handle_input_panel_key(KeyCode::Enter, &agenda)
-            .expect("save name input");
-
+            .expect("open view editor directly");
         assert_eq!(app.mode, Mode::ViewEdit);
         let state = app.view_edit_state.as_ref().expect("view edit state");
-        assert_eq!(state.region, ViewEditRegion::Sections);
+        assert!(matches!(
+            state.inline_input,
+            Some(super::ViewEditInlineInput::ViewName)
+        ));
+
+        // Type the view name
+        for ch in "Mixed".chars() {
+            app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+                .expect("type view name");
+        }
+        // Enter confirms the name
+        app.handle_view_edit_key(KeyCode::Enter, &agenda)
+            .expect("confirm name");
+
+        let state = app.view_edit_state.as_ref().expect("view edit state");
         assert_eq!(state.draft.name, "Mixed");
         assert!(
             state.is_new_view,
@@ -6482,10 +6490,6 @@ mod tests {
         );
         assert_eq!(state.draft.criteria.criteria.len(), 0);
         assert_eq!(state.draft.sections.len(), 1);
-        assert!(matches!(
-            state.inline_input,
-            Some(super::ViewEditInlineInput::SectionTitle { section_index: 0 })
-        ));
 
         let persisted = store
             .list_views()
