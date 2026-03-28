@@ -6668,6 +6668,7 @@ impl App {
         let inactive_border = Color::Blue;
 
         let category_names = category_name_map(&self.categories);
+        let dim = Color::Rgb(110, 118, 138); // visible mid-gray for dimmed text
 
         // ── Details pane (row-based, view or selected section) ──────────────
         {
@@ -6752,7 +6753,7 @@ impl App {
                     SectionFlow::Horizontal => "horizontal (kanban lanes)",
                 };
 
-                let separator_style = Style::default().fg(Color::DarkGray);
+                let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
 
                 // Helper: style + track selected_line for unmatched-region fields
@@ -7047,7 +7048,7 @@ impl App {
                     section.title.clone()
                 };
 
-                let separator_style = Style::default().fg(Color::DarkGray);
+                let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
 
                 // Helper: style + track selected_line for a given field index
@@ -7307,7 +7308,7 @@ impl App {
             let view_row_style = if view_row_focused && sections_pane_focused {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(dim)
             };
             items.push(
                 ListItem::new(Line::from(format!(
@@ -7319,7 +7320,7 @@ impl App {
             );
             // Separator between View header and sections list
             items.push(ListItem::new(Line::from(
-                Span::styled("  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─", Style::default().fg(Color::DarkGray)),
+                Span::styled("  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─", Style::default().fg(dim)),
             )));
 
             let visible_section_indices: Vec<usize> = {
@@ -7457,13 +7458,13 @@ impl App {
                         };
                         preview_items.push(ListItem::new(Line::from(Span::styled(
                             format!("    {truncated}"),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(dim),
                         ))));
                     }
                     if section_count > sample_limit {
                         preview_items.push(ListItem::new(Line::from(Span::styled(
                             format!("    ({} more)", section_count - sample_limit),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(dim),
                         ))));
                     }
                 }
@@ -7629,17 +7630,19 @@ impl App {
                                 Style::default()
                             };
                             if is_criteria_target {
-                                let (pill, pill_color) = match criterion_mode {
-                                    None => ("       ", Color::DarkGray),
-                                    Some(CriterionMode::And) => ("Require", Color::Green),
-                                    Some(CriterionMode::Not) => ("Exclude", Color::Red),
-                                    Some(CriterionMode::Or) => ("One of ", Color::Yellow),
+                                let (glyph, label, glyph_color) = match criterion_mode {
+                                    None => (" ", "", dim),
+                                    Some(CriterionMode::And) => ("+", " Require", Color::Green),
+                                    Some(CriterionMode::Not) => ("-", " Exclude", Color::Red),
+                                    Some(CriterionMode::Or) => ("*", " One of", Color::Yellow),
                                 };
-                                let pill_style = Style::default().fg(pill_color);
+                                let glyph_style = Style::default().fg(glyph_color);
+                                let label_style = Style::default().fg(glyph_color).add_modifier(Modifier::DIM);
                                 let line = Line::from(vec![
                                     Span::raw(indent.to_string()),
-                                    Span::styled(format!("[{pill}]"), pill_style),
+                                    Span::styled(format!("[{glyph}]"), glyph_style),
                                     Span::raw(format!(" {}", row.name)),
+                                    Span::styled(label.to_string(), label_style),
                                 ]);
                                 ListItem::new(line).style(selected_style)
                             } else if is_alias_picker {
