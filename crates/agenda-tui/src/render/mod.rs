@@ -3970,7 +3970,7 @@ impl App {
                                 ("Sp", "cycle"),
                                 ("+/1", "require"),
                                 ("-/2", "exclude"),
-                                ("3", "one of"),
+                                ("3", "or"),
                                 ("0", "clear"),
                                 ("Esc", "done"),
                             ]
@@ -6676,7 +6676,7 @@ impl App {
                 match mode {
                     CriterionMode::And => "Require",
                     CriterionMode::Not => "Exclude",
-                    CriterionMode::Or => "One of",
+                    CriterionMode::Or => "Or",
                 }
             };
 
@@ -7634,7 +7634,7 @@ impl App {
                                     None => (" ", "", dim),
                                     Some(CriterionMode::And) => ("+", " Require", Color::Green),
                                     Some(CriterionMode::Not) => ("-", " Exclude", Color::Red),
-                                    Some(CriterionMode::Or) => ("*", " One of", Color::Yellow),
+                                    Some(CriterionMode::Or) => ("*", " Or", Color::Yellow),
                                 };
                                 let glyph_style = Style::default().fg(glyph_color);
                                 let label_style = Style::default().fg(glyph_color).add_modifier(Modifier::DIM);

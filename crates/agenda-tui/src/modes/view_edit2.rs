@@ -915,7 +915,7 @@ impl App {
                                 }
                             }
                         } else if is_criteria_picker {
-                            // Cycle: off → Require → Exclude → One of → off
+                            // Cycle: off → Require → Exclude → Or → off
                             if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                                 if let Some(row) = self.category_rows.get(actual_idx).cloned() {
                                     if let Some(state) = &mut self.view_edit_state {
@@ -1333,7 +1333,7 @@ impl App {
             state.picker_index = first;
         }
         self.status =
-            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:one-of  0:clear  Esc:done"
+            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
                 .to_string();
     }
 
@@ -1566,7 +1566,7 @@ impl App {
                         });
                         state.picker_index = first;
                     }
-                    self.status = "Section criteria: Space:cycle  +/1:require  -/2:exclude  3:one-of  0:clear  Esc:done"
+                    self.status = "Section criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
                         .to_string();
                 }
             }

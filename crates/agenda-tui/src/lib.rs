@@ -15888,7 +15888,7 @@ mod tests {
         let text = terminal_buffer_lines(&terminal).join("\n");
 
         let medium_pos = text.find("Require: Medium").expect("Require row");
-        let critical_pos = text.find("One of: Critical").expect("One of row");
+        let critical_pos = text.find("Or: Critical").expect("Or row");
         let low_pos = text.find("Exclude: Low").expect("Exclude row");
         assert!(
             medium_pos < critical_pos && critical_pos < low_pos,
@@ -15981,7 +15981,7 @@ mod tests {
             .expect("Complete in category_rows");
         app.view_edit_state.as_mut().unwrap().picker_index = complete_picker_idx;
 
-        // Space cycles: off → Require → Exclude → One of → off
+        // Space cycles: off → Require → Exclude → Or → off
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
             .expect("picker space 1");
         assert_eq!(
@@ -16003,7 +16003,7 @@ mod tests {
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::Or),
-            "Space from Exclude → One of"
+            "Space from Exclude → Or"
         );
 
         app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
@@ -16011,7 +16011,7 @@ mod tests {
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             None,
-            "Space from One of → off"
+            "Space from Or → off"
         );
 
         // '+' key: sets Require directly
@@ -16032,13 +16032,13 @@ mod tests {
             "'-' should set Exclude"
         );
 
-        // '3' key: sets One of
+        // '3' key: sets Or
         app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
             .expect("picker 3 for one-of");
         assert_eq!(
             app.view_edit_state.as_ref().unwrap().draft.criteria.mode_for(complete.id),
             Some(CriterionMode::Or),
-            "'3' should set One of"
+            "'3' should set Or"
         );
 
         // '0' key: clears
