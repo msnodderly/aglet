@@ -93,12 +93,12 @@ We reuse this same pattern for category profile condition editing.
 
 ## TODO
 
-- [ ] 1. Add CLI `category add-condition` command
-- [ ] 2. Add CLI `category remove-condition` command
+- [x] 1. Add CLI `category add-condition` command
+- [x] 2. Add CLI `category remove-condition` command
 - [ ] 3. Add profile condition display improvements to CLI `category show`
-- [ ] 4. Add TUI condition list view in category manager
+- [x] 4. Add TUI condition list view in category manager
 - [ ] 5. Add TUI criteria editor (reusing view_edit2 pattern)
-- [ ] 6. Write engine tests for brainstormed scenarios
+- [x] 6. Write engine tests for brainstormed scenarios
 - [ ] 7. Write CLI integration tests
 - [ ] 8. Write TUI mode tests
 

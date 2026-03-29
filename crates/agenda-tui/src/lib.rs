@@ -8786,6 +8786,17 @@ mod tests {
         );
 
         app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to conditions");
+        assert_eq!(
+            app.category_manager_focus(),
+            Some(CategoryManagerFocus::Details)
+        );
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Conditions)
+        );
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
             .expect("tab to note");
         assert_eq!(
             app.category_manager_focus(),
@@ -8816,6 +8827,64 @@ mod tests {
         assert_eq!(
             app.category_manager_focus(),
             Some(CategoryManagerFocus::Filter)
+        );
+    }
+
+    #[test]
+    fn category_manager_conditions_focus_shows_rule_count() {
+        use agenda_core::model::{Condition, Criterion, CriterionMode, Query};
+
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        store.create_category(&urgent).expect("create urgent");
+
+        let mut escalated = Category::new("Escalated".to_string());
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(Query {
+                criteria: vec![Criterion {
+                    mode: CriterionMode::And,
+                    category_id: urgent.id,
+                }],
+                ..Query::default()
+            }),
+        });
+        store
+            .create_category(&escalated)
+            .expect("create escalated");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        // Navigate to "Escalated" in the category list (past reserved categories)
+        loop {
+            let row = app.selected_category_row().expect("selected row");
+            if row.name == "Escalated" {
+                break;
+            }
+            app.handle_category_manager_key(KeyCode::Down, &agenda)
+                .expect("navigate down");
+        }
+
+        // Verify has_conditions is true in the row
+        let row = app.selected_category_row().expect("selected row");
+        assert!(row.has_conditions);
+
+        // Navigate to conditions focus
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        // Tab through sections: Exclusive -> AlsoMatch -> Conditions
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to also-match");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to conditions");
+        assert_eq!(
+            app.category_manager_details_focus(),
+            Some(CategoryManagerDetailsFocus::Conditions)
         );
     }
 

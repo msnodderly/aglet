@@ -515,7 +515,12 @@ impl App {
                         | CategoryManagerDetailsFocus::Actionable => {
                             CategoryManagerDetailsFocus::AlsoMatch
                         }
-                        CategoryManagerDetailsFocus::AlsoMatch => CategoryManagerDetailsFocus::Note,
+                        CategoryManagerDetailsFocus::AlsoMatch => {
+                            CategoryManagerDetailsFocus::Conditions
+                        }
+                        CategoryManagerDetailsFocus::Conditions => {
+                            CategoryManagerDetailsFocus::Note
+                        }
                         CategoryManagerDetailsFocus::Note => {
                             self.set_category_manager_focus(CategoryManagerFocus::Filter);
                             return;
@@ -544,7 +549,12 @@ impl App {
                     }
                 } else {
                     match details_focus {
-                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::AlsoMatch,
+                        CategoryManagerDetailsFocus::Note => {
+                            CategoryManagerDetailsFocus::Conditions
+                        }
+                        CategoryManagerDetailsFocus::Conditions => {
+                            CategoryManagerDetailsFocus::AlsoMatch
+                        }
                         CategoryManagerDetailsFocus::AlsoMatch => {
                             CategoryManagerDetailsFocus::Actionable
                         }
