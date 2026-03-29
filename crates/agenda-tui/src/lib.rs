@@ -8976,8 +8976,8 @@ mod tests {
         let edit = app.category_manager_condition_edit().unwrap();
         assert_eq!(edit.draft_query.mode_for(urgent.id), Some(CriterionMode::And));
 
-        // Press Esc to save the condition
-        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+        // Press Enter to save the condition
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
             .expect("save condition");
 
         // Verify condition was saved to the category
@@ -8999,6 +8999,203 @@ mod tests {
         app.handle_category_manager_key(KeyCode::Esc, &agenda)
             .expect("close condition list");
         assert!(app.category_manager_condition_edit().is_none());
+    }
+
+    #[test]
+    fn category_manager_condition_edit_cancel_discards_draft() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create");
+        store.create_category(&escalated).expect("create");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        loop {
+            let row = app.selected_category_row().expect("row");
+            if row.name == "Escalated" {
+                break;
+            }
+            app.handle_category_manager_key(KeyCode::Down, &agenda)
+                .expect("down");
+        }
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to also-match");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to conditions");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open condition list");
+        app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
+            .expect("add condition");
+
+        loop {
+            let edit = app.category_manager_condition_edit().unwrap();
+            let idx = edit.picker_index;
+            if let Some(row) = app.category_rows.get(idx) {
+                if row.name == "Urgent" {
+                    break;
+                }
+            }
+            app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+                .expect("navigate picker");
+        }
+        app.handle_category_manager_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle urgent as AND");
+
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("cancel picker");
+
+        let cat = store.get_category(escalated.id).expect("load");
+        assert!(
+            cat.conditions.is_empty(),
+            "cancel should discard unsaved condition draft"
+        );
+        let edit = app.category_manager_condition_edit().expect("condition list open");
+        assert!(!edit.picker_open, "cancel should return to condition list");
+        assert!(
+            app.status.contains("Conditions: a:add"),
+            "status should return to condition list hints: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn category_manager_condition_edit_focuses_first_selected_criterion_when_editing() {
+        use agenda_core::model::{Condition, Criterion, CriterionMode, Query};
+
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let project = Category::new("Project Alpha".to_string());
+        let mut escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create");
+        store.create_category(&project).expect("create");
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(Query {
+                criteria: vec![
+                    Criterion {
+                        mode: CriterionMode::And,
+                        category_id: urgent.id,
+                    },
+                    Criterion {
+                        mode: CriterionMode::And,
+                        category_id: project.id,
+                    },
+                ],
+                ..Query::default()
+            }),
+        });
+        store.create_category(&escalated).expect("create");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        loop {
+            let row = app.selected_category_row().expect("row");
+            if row.name == "Escalated" {
+                break;
+            }
+            app.handle_category_manager_key(KeyCode::Down, &agenda)
+                .expect("down");
+        }
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to also-match");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to conditions");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open condition list");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("edit condition");
+
+        let edit = app.category_manager_condition_edit().expect("condition edit");
+        assert!(edit.picker_open, "editing should open picker");
+        let focused_row = app
+            .category_rows
+            .get(edit.picker_index)
+            .expect("focused picker row");
+        assert_eq!(
+            focused_row.name, "Urgent",
+            "picker should focus the first selected criterion when editing"
+        );
+    }
+
+    #[test]
+    fn category_manager_condition_edit_blocks_self_referential_criteria() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create");
+        store.create_category(&escalated).expect("create");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        loop {
+            let row = app.selected_category_row().expect("row");
+            if row.name == "Escalated" {
+                break;
+            }
+            app.handle_category_manager_key(KeyCode::Down, &agenda)
+                .expect("down");
+        }
+
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to also-match");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to conditions");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open condition list");
+        app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
+            .expect("add condition");
+
+        loop {
+            let edit = app.category_manager_condition_edit().unwrap();
+            let idx = edit.picker_index;
+            if let Some(row) = app.category_rows.get(idx) {
+                if row.name == "Escalated" {
+                    break;
+                }
+            }
+            app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+                .expect("navigate picker");
+        }
+
+        app.handle_category_manager_key(KeyCode::Char(' '), &agenda)
+            .expect("attempt self reference");
+
+        let edit = app.category_manager_condition_edit().expect("condition edit");
+        assert!(
+            edit.draft_query.mode_for(escalated.id).is_none(),
+            "current category should not be addable to its own rule"
+        );
+        assert!(
+            app.status.contains("can't depend on itself"),
+            "status should explain self-reference block: {}",
+            app.status
+        );
     }
 
     #[test]

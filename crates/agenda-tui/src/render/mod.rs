@@ -5658,6 +5658,7 @@ impl App {
         let category = self
             .selected_category_row()
             .and_then(|row| self.categories.iter().find(|c| c.id == row.id));
+        let selected_category_id = category.map(|c| c.id);
 
         let w = area.width.min(60);
         let h = area.height.min(24);
@@ -5735,17 +5736,26 @@ impl App {
                 .filter_map(|idx| self.category_rows.get(*idx))
                 .map(|row| {
                     let mode = edit.draft_query.mode_for(row.id);
-                    let (prefix, color) = match mode {
-                        Some(CriterionMode::And) => ("[+] ", Color::Green),
-                        Some(CriterionMode::Not) => ("[-] ", Color::Red),
-                        Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
-                        None => ("    ", Color::White),
+                    let is_self = Some(row.id) == selected_category_id;
+                    let (prefix, color) = if is_self {
+                        match mode {
+                            Some(_) => ("[!] ", MUTED_TEXT_COLOR),
+                            None => ("[ ] ", MUTED_TEXT_COLOR),
+                        }
+                    } else {
+                        match mode {
+                            Some(CriterionMode::And) => ("[+] ", Color::Green),
+                            Some(CriterionMode::Not) => ("[-] ", Color::Red),
+                            Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
+                            None => ("    ", Color::White),
+                        }
                     };
                     let label = format!(
-                        "{}{}{}",
+                        "{}{}{}{}",
                         "  ".repeat(row.depth),
                         prefix,
-                        row.name
+                        row.name,
+                        if is_self { " (self)" } else { "" }
                     );
                     ListItem::new(Line::from(Span::styled(label, Style::default().fg(color))))
                 })
@@ -5767,7 +5777,7 @@ impl App {
 
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "Space:cycle  +/-/3:set  0:clear  Esc:save & close",
+                    "Space:cycle  +/-/3:set  0:clear  Enter:save  Esc:cancel",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 ))),
                 chunks[2],

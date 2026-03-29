@@ -2027,6 +2027,16 @@ impl App {
         self.status = "j/k: focus field  Enter/Space: toggle/edit".to_string();
     }
 
+    fn condition_list_status(&mut self) {
+        self.status = "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+    }
+
+    fn condition_picker_status(&mut self) {
+        self.status =
+            "Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Enter:save  Esc:cancel"
+                .to_string();
+    }
+
     fn open_condition_edit_picker(&mut self, condition_index: Option<usize>) {
         let draft = if let Some(idx) = condition_index {
             // Load existing condition's query
@@ -2041,17 +2051,26 @@ impl App {
         } else {
             Query::default()
         };
-        let first = first_non_reserved_category_index(&self.category_rows);
+        let initial_picker_index = draft
+            .criteria
+            .first()
+            .and_then(|criterion| {
+                self.category_rows
+                    .iter()
+                    .enumerate()
+                    .find(|(_, row)| row.id == criterion.category_id && !row.is_reserved)
+                    .map(|(idx, _)| idx)
+            })
+            .unwrap_or_else(|| first_non_reserved_category_index(&self.category_rows));
         if let Some(state) = &mut self.category_manager {
             if let Some(edit) = &mut state.condition_edit {
                 edit.condition_index = condition_index;
                 edit.draft_query = draft;
                 edit.picker_open = true;
-                edit.picker_index = first;
+                edit.picker_index = initial_picker_index;
             }
         }
-        self.status =
-            "Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done".to_string();
+        self.condition_picker_status();
     }
 
     fn save_condition_from_picker(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
@@ -2068,8 +2087,7 @@ impl App {
             if let Some(edit) = self.category_manager_condition_edit_mut() {
                 edit.picker_open = false;
             }
-            self.status =
-                "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+            self.condition_list_status();
             return Ok(true);
         }
 
@@ -2112,6 +2130,18 @@ impl App {
             action, result.processed_items, result.affected_items
         );
         Ok(true)
+    }
+
+    fn cancel_condition_picker(&mut self) -> bool {
+        let Some(edit) = self.category_manager_condition_edit_mut() else {
+            return false;
+        };
+        if !edit.picker_open {
+            return false;
+        }
+        edit.picker_open = false;
+        self.condition_list_status();
+        true
     }
 
     fn delete_condition_at_list_index(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
@@ -2168,6 +2198,62 @@ impl App {
             .filter(|(_, row)| !row.is_reserved)
             .map(|(i, _)| i)
             .collect()
+    }
+
+    fn set_condition_picker_mode(
+        &mut self,
+        row: &CategoryListRow,
+        requested_mode: Option<CriterionMode>,
+    ) {
+        let Some(category_id) = self.selected_category_row().map(|selected| selected.id) else {
+            return;
+        };
+        let status_override = {
+            let Some(edit) = self.category_manager_condition_edit_mut() else {
+                return;
+            };
+            let current_mode = edit.draft_query.mode_for(row.id);
+
+            if row.id == category_id {
+                match (current_mode, requested_mode) {
+                    (_, None) => {
+                        edit.draft_query.remove_criterion(row.id);
+                        None
+                    }
+                    (None, Some(_)) => Some(format!(
+                        "{} can't depend on itself  0:clear  Enter:save  Esc:cancel",
+                        row.name
+                    )),
+                    (Some(current), Some(mode)) if current == mode => {
+                        edit.draft_query.remove_criterion(row.id);
+                        None
+                    }
+                    (Some(_), Some(_)) => Some(format!(
+                        "{} can't depend on itself  0:clear  Enter:save  Esc:cancel",
+                        row.name
+                    )),
+                }
+            } else {
+                match requested_mode {
+                    Some(mode) if current_mode == Some(mode) => {
+                        edit.draft_query.remove_criterion(row.id);
+                    }
+                    Some(mode) => {
+                        edit.draft_query.set_criterion(mode, row.id);
+                    }
+                    None => {
+                        edit.draft_query.remove_criterion(row.id);
+                    }
+                }
+                None
+            }
+        };
+
+        if let Some(status) = status_override {
+            self.status = status;
+        } else {
+            self.condition_picker_status();
+        }
     }
 
     fn handle_condition_edit_key(
@@ -2286,75 +2372,55 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char(' ') | KeyCode::Enter => {
-                // Cycle: off → And → Not → Or → off
+            KeyCode::Char(' ') => {
                 if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                     if let Some(row) = self.category_rows.get(actual_idx).cloned() {
-                        if let Some(e) = self.category_manager_condition_edit_mut() {
-                            let next = match e.draft_query.mode_for(row.id) {
-                                None => Some(CriterionMode::And),
-                                Some(CriterionMode::And) => Some(CriterionMode::Not),
-                                Some(CriterionMode::Not) => Some(CriterionMode::Or),
-                                Some(CriterionMode::Or) => None,
-                            };
-                            match next {
-                                Some(mode) => e.draft_query.set_criterion(mode, row.id),
-                                None => e.draft_query.remove_criterion(row.id),
-                            }
-                        }
+                        let current_mode = self
+                            .category_manager_condition_edit()
+                            .and_then(|e| e.draft_query.mode_for(row.id));
+                        let next = match current_mode {
+                            None => Some(CriterionMode::And),
+                            Some(CriterionMode::And) => Some(CriterionMode::Not),
+                            Some(CriterionMode::Not) => Some(CriterionMode::Or),
+                            Some(CriterionMode::Or) => None,
+                        };
+                        self.set_condition_picker_mode(&row, next);
                     }
                 }
+            }
+            KeyCode::Enter => {
+                self.save_condition_from_picker(agenda)?;
             }
             KeyCode::Char('1') | KeyCode::Char('+') => {
                 if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                     if let Some(row) = self.category_rows.get(actual_idx).cloned() {
-                        if let Some(e) = self.category_manager_condition_edit_mut() {
-                            if e.draft_query.mode_for(row.id) == Some(CriterionMode::And) {
-                                e.draft_query.remove_criterion(row.id);
-                            } else {
-                                e.draft_query.set_criterion(CriterionMode::And, row.id);
-                            }
-                        }
+                        self.set_condition_picker_mode(&row, Some(CriterionMode::And));
                     }
                 }
             }
             KeyCode::Char('2') | KeyCode::Char('-') => {
                 if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                     if let Some(row) = self.category_rows.get(actual_idx).cloned() {
-                        if let Some(e) = self.category_manager_condition_edit_mut() {
-                            if e.draft_query.mode_for(row.id) == Some(CriterionMode::Not) {
-                                e.draft_query.remove_criterion(row.id);
-                            } else {
-                                e.draft_query.set_criterion(CriterionMode::Not, row.id);
-                            }
-                        }
+                        self.set_condition_picker_mode(&row, Some(CriterionMode::Not));
                     }
                 }
             }
             KeyCode::Char('3') => {
                 if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                     if let Some(row) = self.category_rows.get(actual_idx).cloned() {
-                        if let Some(e) = self.category_manager_condition_edit_mut() {
-                            if e.draft_query.mode_for(row.id) == Some(CriterionMode::Or) {
-                                e.draft_query.remove_criterion(row.id);
-                            } else {
-                                e.draft_query.set_criterion(CriterionMode::Or, row.id);
-                            }
-                        }
+                        self.set_condition_picker_mode(&row, Some(CriterionMode::Or));
                     }
                 }
             }
             KeyCode::Char('0') => {
                 if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
                     if let Some(row) = self.category_rows.get(actual_idx).cloned() {
-                        if let Some(e) = self.category_manager_condition_edit_mut() {
-                            e.draft_query.remove_criterion(row.id);
-                        }
+                        self.set_condition_picker_mode(&row, None);
                     }
                 }
             }
             KeyCode::Esc => {
-                self.save_condition_from_picker(agenda)?;
+                self.cancel_condition_picker();
             }
             _ => {}
         }
