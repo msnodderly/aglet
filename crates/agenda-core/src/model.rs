@@ -351,6 +351,40 @@ impl Query {
             .find(|c| c.category_id == category_id)
             .map(|c| c.mode)
     }
+
+    /// Format criteria as a human-readable trigger description.
+    ///
+    /// `resolve` maps CategoryId → display name.
+    ///
+    /// Examples:
+    ///   - "Waiting/Blocked" (single OR)
+    ///   - "Bug + Core" (multiple AND)
+    ///   - "Work, not in Delegated" (AND + NOT)
+    ///   - "Mom or Dad" (multiple OR)
+    pub fn format_trigger(&self, resolve: &impl Fn(CategoryId) -> String) -> String {
+        let and_names: Vec<String> = self.and_category_ids().map(&resolve).collect();
+        let not_names: Vec<String> = self.not_category_ids().map(&resolve).collect();
+        let or_names: Vec<String> = self.or_category_ids().map(&resolve).collect();
+
+        let mut parts = Vec::new();
+
+        if !and_names.is_empty() {
+            parts.push(and_names.join(" + "));
+        }
+        if !or_names.is_empty() {
+            parts.push(or_names.join(" or "));
+        }
+        if !not_names.is_empty() {
+            let not_part = format!("not in {}", not_names.join(", "));
+            parts.push(not_part);
+        }
+
+        if parts.is_empty() {
+            "(empty)".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
 }
 
 // Custom serde for Query: serializes the new `criteria` format, but can

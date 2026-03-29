@@ -1972,35 +1972,25 @@ fn cmd_category(
             }
             if !category.conditions.is_empty() {
                 println!("conditions:");
+                let resolve = |id: CategoryId| {
+                    category_names
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| "(deleted)".to_string())
+                };
                 for (i, condition) in category.conditions.iter().enumerate() {
                     match condition {
                         agenda_core::model::Condition::ImplicitString => {
                             println!("  {}. ImplicitString", i + 1);
                         }
                         agenda_core::model::Condition::Profile { criteria } => {
-                            let and_names: Vec<&str> = criteria
-                                .and_category_ids()
-                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                                .collect();
-                            let not_names: Vec<&str> = criteria
-                                .not_category_ids()
-                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                                .collect();
-                            let or_names: Vec<&str> = criteria
-                                .or_category_ids()
-                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                                .collect();
-                            let mut parts = Vec::new();
-                            if !and_names.is_empty() {
-                                parts.push(format!("AND: {}", and_names.join(", ")));
-                            }
-                            if !not_names.is_empty() {
-                                parts.push(format!("NOT: {}", not_names.join(", ")));
-                            }
-                            if !or_names.is_empty() {
-                                parts.push(format!("OR: {}", or_names.join(", ")));
-                            }
-                            println!("  {}. {}", i + 1, parts.join(" / "));
+                            let trigger = criteria.format_trigger(&resolve);
+                            println!(
+                                "  {}. {} -> {}",
+                                i + 1,
+                                trigger,
+                                category.name
+                            );
                         }
                     }
                 }
@@ -2420,11 +2410,13 @@ fn cmd_category(
                 Condition::ImplicitString => "ImplicitString".to_string(),
                 Condition::Profile { criteria } => {
                     let category_names = category_name_map(&categories);
-                    let and_names: Vec<&str> = criteria
-                        .and_category_ids()
-                        .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                        .collect();
-                    format!("Profile (and=[{}])", and_names.join(", "))
+                    let resolve = |id: CategoryId| {
+                        category_names
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string())
+                    };
+                    criteria.format_trigger(&resolve)
                 }
             };
             println!(

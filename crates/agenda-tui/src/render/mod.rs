@@ -5690,26 +5690,17 @@ impl App {
                 .split(overlay_area);
 
             // Summary of current draft criteria
-            let summary: Vec<String> = edit
-                .draft_query
-                .criteria
-                .iter()
-                .map(|c| {
-                    let mode_label = match c.mode {
-                        CriterionMode::And => "Require",
-                        CriterionMode::Not => "Exclude",
-                        CriterionMode::Or => "Or",
-                    };
-                    let name = category_names
-                        .get(&c.category_id)
-                        .unwrap_or(&"(deleted)");
-                    format!("{}: {}", mode_label, name)
-                })
-                .collect();
-            let summary_text = if summary.is_empty() {
+            let resolve = |id: CategoryId| -> String {
+                category_names
+                    .get(&id)
+                    .unwrap_or(&"(deleted)")
+                    .to_string()
+            };
+            let trigger = edit.draft_query.format_trigger(&resolve);
+            let summary_text = if edit.draft_query.criteria.is_empty() {
                 "(no criteria selected yet)".to_string()
             } else {
-                summary.join(", ")
+                format!("{} -> {}", trigger, category_name)
             };
             frame.render_widget(
                 Paragraph::new(vec![Line::from(Span::styled(
@@ -5807,15 +5798,12 @@ impl App {
 
             frame.render_widget(
                 Paragraph::new(vec![Line::from(Span::styled(
-                    format!(
-                        "Auto-assign to \"{}\" when ANY rule matches:",
-                        category_name
-                    ),
+                    "Items matching ANY rule get assigned:",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 ))])
                 .block(
                     Block::default()
-                        .title(format!(" Conditions: {} ", category_name))
+                        .title(format!(" Rules: {} ", category_name))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
                 )
@@ -5823,9 +5811,15 @@ impl App {
                 chunks[0],
             );
 
+            let resolve = |id: CategoryId| -> String {
+                category_names
+                    .get(&id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "(deleted)".to_string())
+            };
             let items: Vec<ListItem<'_>> = if profile_conditions.is_empty() {
                 vec![ListItem::new(Line::from(Span::styled(
-                    "(no conditions — press 'a' to add)",
+                    "(no rules — press 'a' to add)",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 )))]
             } else {
@@ -5833,29 +5827,13 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(display_idx, (_actual_idx, query))| {
-                        let mut parts = Vec::new();
-                        let and_names: Vec<&str> = query
-                            .and_category_ids()
-                            .filter_map(|id| category_names.get(&id).copied())
-                            .collect();
-                        let not_names: Vec<&str> = query
-                            .not_category_ids()
-                            .filter_map(|id| category_names.get(&id).copied())
-                            .collect();
-                        let or_names: Vec<&str> = query
-                            .or_category_ids()
-                            .filter_map(|id| category_names.get(&id).copied())
-                            .collect();
-                        if !and_names.is_empty() {
-                            parts.push(format!("AND: {}", and_names.join(", ")));
-                        }
-                        if !not_names.is_empty() {
-                            parts.push(format!("NOT: {}", not_names.join(", ")));
-                        }
-                        if !or_names.is_empty() {
-                            parts.push(format!("OR: {}", or_names.join(", ")));
-                        }
-                        let label = format!("{}. {}", display_idx + 1, parts.join(" / "));
+                        let trigger = query.format_trigger(&resolve);
+                        let label = format!(
+                            "{}. {} -> {}",
+                            display_idx + 1,
+                            trigger,
+                            category_name
+                        );
                         ListItem::new(Line::from(label))
                     })
                     .collect()
@@ -6574,6 +6552,12 @@ impl App {
                             .iter()
                             .map(|c| (c.id, c.name.as_str()))
                             .collect();
+                        let resolve = |id: CategoryId| -> String {
+                            category_names
+                                .get(&id)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "(deleted)".to_string())
+                        };
                         self.categories
                             .iter()
                             .find(|c| c.id == row.id)
@@ -6582,44 +6566,11 @@ impl App {
                                     .iter()
                                     .filter_map(|cond| match cond {
                                         Condition::Profile { criteria } => {
-                                            let mut parts = Vec::new();
-                                            let and_names: Vec<&str> = criteria
-                                                .and_category_ids()
-                                                .filter_map(|id| {
-                                                    category_names.get(&id).copied()
-                                                })
-                                                .collect();
-                                            let not_names: Vec<&str> = criteria
-                                                .not_category_ids()
-                                                .filter_map(|id| {
-                                                    category_names.get(&id).copied()
-                                                })
-                                                .collect();
-                                            let or_names: Vec<&str> = criteria
-                                                .or_category_ids()
-                                                .filter_map(|id| {
-                                                    category_names.get(&id).copied()
-                                                })
-                                                .collect();
-                                            if !and_names.is_empty() {
-                                                parts.push(format!(
-                                                    "AND: {}",
-                                                    and_names.join(", ")
-                                                ));
-                                            }
-                                            if !not_names.is_empty() {
-                                                parts.push(format!(
-                                                    "NOT: {}",
-                                                    not_names.join(", ")
-                                                ));
-                                            }
-                                            if !or_names.is_empty() {
-                                                parts.push(format!(
-                                                    "OR: {}",
-                                                    or_names.join(", ")
-                                                ));
-                                            }
-                                            Some(format!("  {}", parts.join(" / ")))
+                                            Some(format!(
+                                                "  {} -> {}",
+                                                criteria.format_trigger(&resolve),
+                                                row.name
+                                            ))
                                         }
                                         _ => None,
                                     })
