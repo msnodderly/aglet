@@ -1216,10 +1216,14 @@ impl App {
     }
 
     pub(crate) fn item_assign_visible_category_row_indices(&self) -> Vec<usize> {
+        let query = self.input.trimmed().to_ascii_lowercase();
         self.category_rows
             .iter()
             .enumerate()
-            .filter(|(_, row)| !row.is_reserved)
+            .filter(|(_, row)| {
+                !row.is_reserved
+                    && (query.is_empty() || row.name.to_ascii_lowercase().contains(&query))
+            })
             .map(|(idx, _)| idx)
             .collect()
     }

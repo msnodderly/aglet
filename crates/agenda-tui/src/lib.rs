@@ -2937,6 +2937,7 @@ mod tests {
             app.handle_key(KeyCode::Char(ch), &agenda)
                 .expect("type cli");
         }
+        app.handle_key(KeyCode::Tab, &agenda).expect("focus list");
         app.handle_key(KeyCode::Char(' '), &agenda)
             .expect("toggle cli on");
 
@@ -2948,6 +2949,7 @@ mod tests {
         for ch in "UX".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type ux");
         }
+        app.handle_key(KeyCode::Tab, &agenda).expect("focus list");
         app.handle_key(KeyCode::Char(' '), &agenda)
             .expect("toggle ux off");
 
@@ -3088,6 +3090,7 @@ mod tests {
         for ch in "Deferred".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
+        app.handle_key(KeyCode::Tab, &agenda).expect("focus list");
         app.handle_key(KeyCode::Char(' '), &agenda)
             .expect("select deferred");
         {
@@ -3108,7 +3111,7 @@ mod tests {
     }
 
     #[test]
-    fn category_column_picker_create_child_confirm_selects_and_then_saves() {
+    fn category_column_picker_enter_creates_child_and_saves() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
@@ -3159,13 +3162,7 @@ mod tests {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
         app.handle_key(KeyCode::Enter, &agenda)
-            .expect("open create confirm");
-        let state = app.category_column_picker.as_ref().expect("picker");
-        assert_eq!(state.create_confirm_name.as_deref(), Some("Docs"));
-        assert_eq!(app.mode, Mode::CategoryColumnPicker);
-
-        app.handle_key(KeyCode::Char('y'), &agenda)
-            .expect("confirm create");
+            .expect("create and save");
         let created = store
             .get_hierarchy()
             .expect("hierarchy")
@@ -3173,14 +3170,9 @@ mod tests {
             .find(|c| c.name == "Docs")
             .expect("created category");
         assert_eq!(created.parent, Some(area.id));
-        let state = app.category_column_picker.as_ref().expect("picker");
-        assert!(state.selected_ids.contains(&created.id));
-        assert_eq!(state.create_confirm_name, None);
-
-        app.handle_key(KeyCode::Enter, &agenda)
-            .expect("save picker");
         let saved = store.get_item(item.id).expect("load item");
         assert!(saved.assignments.contains_key(&created.id));
+        assert_eq!(app.mode, Mode::Normal);
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
@@ -3199,9 +3191,8 @@ mod tests {
         for cat in [&area, &cli] {
             store.create_category(cat).expect("create category");
         }
-        store
-            .create_item(&Item::new("Demo".to_string()))
-            .expect("create item");
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
 
         let mut view = View::new("Board".to_string());
         view.sections.push(Section {
@@ -3236,12 +3227,13 @@ mod tests {
             .expect("attempt create");
 
         let state = app.category_column_picker.as_ref().expect("picker");
-        assert_eq!(state.create_confirm_name, None);
+        assert_eq!(state.filter.text(), "Done");
+        assert_eq!(app.mode, Mode::CategoryColumnPicker);
         assert!(app.status.contains("reserved"));
     }
 
     #[test]
-    fn category_column_picker_create_cancel_preserves_filter_text() {
+    fn category_column_picker_accepts_spaces_in_new_category_names() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
         let agenda = Agenda::new(&store, &classifier);
@@ -3253,9 +3245,8 @@ mod tests {
         for cat in [&area, &cli] {
             store.create_category(cat).expect("create category");
         }
-        store
-            .create_item(&Item::new("Demo".to_string()))
-            .expect("create item");
+        let item = Item::new("Demo".to_string());
+        store.create_item(&item).expect("create item");
 
         let mut view = View::new("Board".to_string());
         view.sections.push(Section {
@@ -3283,18 +3274,22 @@ mod tests {
 
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("open picker");
-        for ch in "NewTag".chars() {
+        for ch in "New Tag".chars() {
             app.handle_key(KeyCode::Char(ch), &agenda).expect("type");
         }
         app.handle_key(KeyCode::Enter, &agenda)
-            .expect("open create confirm");
-        app.handle_key(KeyCode::Esc, &agenda)
-            .expect("cancel create confirm");
+            .expect("create and save");
 
-        let state = app.category_column_picker.as_ref().expect("picker");
-        assert_eq!(state.create_confirm_name, None);
-        assert_eq!(state.filter.text(), "NewTag");
-        assert_eq!(app.mode, Mode::CategoryColumnPicker);
+        let created = store
+            .get_hierarchy()
+            .expect("hierarchy")
+            .into_iter()
+            .find(|c| c.name == "New Tag")
+            .expect("created category");
+        let saved = store.get_item(item.id).expect("reload item");
+        assert_eq!(created.parent, Some(area.id));
+        assert!(saved.assignments.contains_key(&created.id));
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]
@@ -6962,6 +6957,109 @@ mod tests {
         assert!(
             app.status.contains("Created and assigned category wor"),
             "status should clearly report create + assign outcome"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_picker_filter_limits_rows_and_enter_uses_exact_match() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path =
+            std::env::temp_dir().join(format!("agenda-tui-assign-picker-filter-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let workshop = Category::new("Workshop".to_string());
+        let personal = Category::new("Personal".to_string());
+        store.create_category(&work).expect("create Work");
+        store.create_category(&workshop).expect("create Workshop");
+        store.create_category(&personal).expect("create Personal");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.set_input("Work".to_string());
+
+        let visible_names: Vec<String> = app
+            .item_assign_visible_category_row_indices()
+            .into_iter()
+            .filter_map(|row_index| app.category_rows.get(row_index))
+            .map(|row| row.name.clone())
+            .collect();
+        assert_eq!(visible_names, vec!["Work".to_string(), "Workshop".to_string()]);
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("enter should resolve exact match and close");
+
+        let updated = store.get_item(item.id).expect("load updated item");
+        assert!(updated.assignments.contains_key(&work.id));
+        assert!(!updated.assignments.contains_key(&workshop.id));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("Assigned category Work"),
+            "status should report exact-match assignment: {}",
+            app.status
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn item_assign_picker_enter_creates_category_from_filter_text() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("agenda-tui-assign-picker-create-from-filter-{nanos}.ag"));
+        let store = Store::open(&db_path).expect("open temp db");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let workshop = Category::new("Workshop".to_string());
+        store.create_category(&work).expect("create Work");
+        store.create_category(&workshop).expect("create Workshop");
+        let item = Item::new("demo item".to_string());
+        store.create_item(&item).expect("create item");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh app");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.set_input("wor".to_string());
+
+        app.handle_item_assign_category_key(KeyCode::Enter, &agenda)
+            .expect("enter should create category from filter text and close");
+
+        let created = app
+            .categories
+            .iter()
+            .find(|category| category.name == "wor")
+            .cloned()
+            .expect("new category should be created");
+        let updated = store.get_item(item.id).expect("load updated item");
+        assert!(updated.assignments.contains_key(&created.id));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(
+            app.status.contains("Created and assigned category wor"),
+            "status should report create+assign outcome: {}",
+            app.status
         );
 
         drop(store);

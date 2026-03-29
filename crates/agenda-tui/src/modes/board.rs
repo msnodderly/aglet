@@ -81,6 +81,166 @@ fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyActi
 }
 
 impl App {
+    fn resolve_item_assign_category_enter(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<(CategoryId, String, bool)> {
+        let name = self.input.trimmed().to_string();
+        let exact_match = self
+            .categories
+            .iter()
+            .find(|category| category.name.eq_ignore_ascii_case(&name))
+            .map(|category| (category.id, category.name.clone()));
+        if exact_match
+            .as_ref()
+            .is_some_and(|(_, category_name)| is_reserved_category_name(category_name))
+        {
+            return Err(TuiError::App(format!(
+                "Reserved category '{}' cannot be assigned from this menu",
+                name
+            )));
+        }
+        let single_visible_match = if exact_match.is_none() {
+            let query = name.to_ascii_lowercase();
+            let mut matching_rows = self
+                .item_assign_visible_category_row_indices()
+                .into_iter()
+                .filter_map(|row_index| self.category_rows.get(row_index))
+                .filter(|row| row.name.to_ascii_lowercase().contains(&query));
+            match (matching_rows.next(), matching_rows.next()) {
+                (Some(row), None) => Some((row.id, row.name.clone())),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some((category_id, category_name)) = exact_match.or(single_visible_match) {
+            return Ok((category_id, category_name, false));
+        }
+        if is_reserved_category_name(&name) {
+            return Err(TuiError::App(format!(
+                "Reserved category '{}' cannot be created or assigned here",
+                name
+            )));
+        }
+        let mut category = Category::new(name.clone());
+        category.enable_implicit_string = true;
+        let category_id = category.id;
+        agenda.store().create_category(&category)?;
+        Ok((category_id, category.name, true))
+    }
+
+    fn apply_item_assign_category_by_name(
+        &mut self,
+        agenda: &Agenda<'_>,
+        return_mode: Mode,
+        empty_status: &str,
+    ) -> TuiResult<bool> {
+        let action_item_ids = self.effective_action_item_ids();
+        let Some(item_id) = self
+            .item_assign_anchor_id()
+            .or_else(|| self.selected_item_id())
+        else {
+            self.close_item_assign_session("Assign failed: no selected item");
+            return Ok(false);
+        };
+        if self.input.trimmed().is_empty() {
+            self.mode = return_mode;
+            self.clear_input();
+            self.status = empty_status.to_string();
+            return Ok(false);
+        }
+
+        let (category_id, category_name, created_new_category) =
+            match self.resolve_item_assign_category_enter(agenda) {
+                Ok(result) => result,
+                Err(err) => {
+                    self.mode = return_mode;
+                    self.clear_input();
+                    self.status = err.to_string();
+                    return Ok(false);
+                }
+            };
+
+        let mut assigned = 0usize;
+        let mut already_had = 0usize;
+        let mut failed = 0usize;
+        let mut first_error = None;
+
+        for action_item_id in &action_item_ids {
+            let item = agenda.store().get_item(*action_item_id)?;
+            if item.assignments.contains_key(&category_id) {
+                already_had += 1;
+                continue;
+            }
+
+            match agenda.assign_item_manual(
+                *action_item_id,
+                category_id,
+                Some("manual:tui.assign".to_string()),
+            ) {
+                Ok(_) => assigned += 1,
+                Err(err) => {
+                    failed += 1;
+                    if first_error.is_none() {
+                        first_error = Some(err.to_string());
+                    }
+                }
+            }
+        }
+
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(item_id);
+        self.set_item_assign_category_selection_by_id(category_id);
+        self.set_item_selection_by_id(item_id);
+        self.mode = return_mode;
+        if assigned > 0 && failed == 0 {
+            self.item_assign_dirty = true;
+        }
+        self.clear_input();
+        self.status = if action_item_ids.len() > 1 {
+            let mut summary = format!(
+                "{} category {} to {} items (assigned={}, already={}, failed={})",
+                if created_new_category {
+                    "Created and applied"
+                } else {
+                    "Applied"
+                },
+                category_name,
+                action_item_ids.len(),
+                assigned,
+                already_had,
+                failed
+            );
+            if let Some(err) = first_error {
+                summary.push_str(&format!(" first_error={err}"));
+            }
+            summary
+        } else if failed > 0 {
+            if created_new_category {
+                format!(
+                    "Created category {} but could not assign: {}",
+                    category_name,
+                    first_error.unwrap_or_else(|| "unknown error".to_string())
+                )
+            } else {
+                format!(
+                    "Could not assign category {}: {}",
+                    category_name,
+                    first_error.unwrap_or_else(|| "unknown error".to_string())
+                )
+            }
+        } else if created_new_category {
+            format!("Created and assigned category {}", category_name)
+        } else if already_had > 0 {
+            format!("Category {} already assigned", category_name)
+        } else {
+            format!("Assigned category {}", category_name)
+        };
+
+        Ok(false)
+    }
+
     fn cancel_input_panel_with_status(
         &mut self,
         kind: input_panel::InputPanelKind,
@@ -166,22 +326,6 @@ impl App {
 
     fn category_column_picker_filter_text(&self) -> Option<&str> {
         self.category_column_picker_state().map(|s| s.filter.text())
-    }
-
-    fn category_column_picker_create_confirm_name(&self) -> Option<&str> {
-        self.category_column_picker_state()?
-            .create_confirm_name
-            .as_deref()
-    }
-
-    fn category_column_picker_create_confirm_open(&self) -> bool {
-        self.category_column_picker_create_confirm_name().is_some()
-    }
-
-    fn set_category_column_picker_create_confirm_name(&mut self, name: Option<String>) {
-        if let Some(state) = self.category_column_picker_state_mut() {
-            state.create_confirm_name = name;
-        }
     }
 
     pub(crate) fn category_column_picker_matches(&self) -> Vec<CategoryId> {
@@ -1493,7 +1637,7 @@ impl App {
         self.clear_input();
         self.clamp_category_column_picker_list_index();
         self.status = format!(
-            "Set {}: type to filter, Space toggle, Enter save, Esc cancel",
+            "Set {}: search or create in the text field, Tab browses the list, Enter uses an exact match or creates a new child, Esc cancels",
             meta.parent_name
         );
     }
@@ -1615,78 +1759,43 @@ impl App {
         };
     }
 
-    fn open_category_column_picker_create_confirm(&mut self) {
+    fn resolve_category_column_picker_typed_category(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<Option<CategoryId>> {
         let typed = self
             .category_column_picker_filter_text()
             .unwrap_or("")
             .trim()
             .to_string();
         if typed.is_empty() {
-            self.status = "Type a category name first".to_string();
-            return;
+            return Ok(None);
         }
         if is_reserved_category_name(&typed) {
             self.status = format!(
                 "Cannot create reserved category '{}'. Use a different name.",
                 typed
             );
-            return;
+            return Ok(None);
         }
-        if let Some(existing_cat) = self
+        let Some(parent_id) = self.category_column_picker_state().map(|s| s.parent_id) else {
+            return Ok(None);
+        };
+        if let Some(existing_id) = self
             .categories
             .iter()
-            .find(|c| c.name.eq_ignore_ascii_case(&typed))
+            .find(|c| c.parent == Some(parent_id) && c.name.eq_ignore_ascii_case(&typed))
+            .map(|c| c.id)
         {
-            let parent_name = existing_cat
-                .parent
-                .and_then(|pid| self.categories.iter().find(|c| c.id == pid))
-                .map(|c| c.name.as_str())
-                .unwrap_or("(root)");
-            self.status = format!(
-                "Category '{}' exists under '{}'. Cannot create duplicate.",
-                typed, parent_name
-            );
-            return;
+            return Ok(Some(existing_id));
         }
-        self.set_category_column_picker_create_confirm_name(Some(typed.clone()));
-        self.status = format!(
-            "Create new category '{}' in this column? y:confirm Esc:cancel",
-            typed
-        );
-    }
 
-    fn confirm_inline_create_category_column_picker(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
-        let Some(name) = self
-            .category_column_picker_create_confirm_name()
-            .map(str::to_string)
-        else {
-            return Ok(());
-        };
-        let Some(parent_id) = self.category_column_picker_state().map(|s| s.parent_id) else {
-            self.set_category_column_picker_create_confirm_name(None);
-            return Ok(());
-        };
-
-        let mut category = Category::new(name.clone());
+        let mut category = Category::new(typed);
         category.parent = Some(parent_id);
         category.enable_implicit_string = true;
-        let cat_id = category.id;
         agenda.create_category(&category)?;
         self.refresh_category_cache(agenda.store())?;
-        if let Some(state) = self.category_column_picker_state_mut() {
-            if state.is_exclusive {
-                state.selected_ids.clear();
-            }
-            state.selected_ids.insert(cat_id);
-            state.create_confirm_name = None;
-            state.focus = CategoryColumnPickerFocus::FilterInput;
-        }
-        self.clamp_category_column_picker_list_index();
-        self.status = format!("Created category '{}' and selected it (Enter saves)", name);
-        Ok(())
+        Ok(Some(category.id))
     }
 
     fn apply_category_column_picker_selection(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
@@ -1747,25 +1856,6 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> TuiResult<bool> {
-        if self.category_column_picker_create_confirm_open() {
-            match inline_create_confirm_key_action(code) {
-                InlineCreateConfirmKeyAction::Confirm => {
-                    self.confirm_inline_create_category_column_picker(agenda)?;
-                    return Ok(false);
-                }
-                InlineCreateConfirmKeyAction::Cancel => {
-                    self.set_category_column_picker_create_confirm_name(None);
-                    self.status = "Create canceled. Continue editing category.".to_string();
-                    return Ok(false);
-                }
-                InlineCreateConfirmKeyAction::DismissAndContinue => {
-                    self.set_category_column_picker_create_confirm_name(None);
-                    self.status = "Create canceled. Continue editing category.".to_string();
-                }
-                InlineCreateConfirmKeyAction::None => {}
-            }
-        }
-
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -1774,14 +1864,35 @@ impl App {
                 return Ok(false);
             }
             KeyCode::Enter => {
+                if matches!(
+                    self.category_column_picker_state().map(|s| &s.focus),
+                    Some(CategoryColumnPickerFocus::List)
+                ) {
+                    self.apply_category_column_picker_selection(agenda)?;
+                    return Ok(false);
+                }
                 let typed = self
                     .category_column_picker_filter_text()
                     .unwrap_or("")
                     .trim()
                     .to_string();
-                if self.category_column_picker_matches().is_empty() && !typed.is_empty() {
-                    self.open_category_column_picker_create_confirm();
-                } else {
+                if typed.is_empty() {
+                    self.apply_category_column_picker_selection(agenda)?;
+                    return Ok(false);
+                }
+
+                if let Some(category_id) = self.resolve_category_column_picker_typed_category(agenda)?
+                {
+                    if let Some(state) = self.category_column_picker_state_mut() {
+                        if state.is_exclusive {
+                            state.selected_ids.clear();
+                        }
+                        state.selected_ids.insert(category_id);
+                        state.focus = CategoryColumnPickerFocus::FilterInput;
+                        state.filter.clear();
+                        state.create_confirm_name = None;
+                    }
+                    self.clamp_category_column_picker_list_index();
                     self.apply_category_column_picker_selection(agenda)?;
                 }
                 return Ok(false);
@@ -1829,7 +1940,12 @@ impl App {
                 self.move_category_column_picker_list(1);
                 return Ok(false);
             }
-            KeyCode::Char(' ') => {
+            KeyCode::Char(' ')
+                if !matches!(
+                    self.category_column_picker_state().map(|s| &s.focus),
+                    Some(CategoryColumnPickerFocus::FilterInput)
+                ) =>
+            {
                 self.toggle_category_column_picker_selected();
                 return Ok(false);
             }
@@ -1855,11 +1971,13 @@ impl App {
                 .to_string();
             let no_matches = self.category_column_picker_matches().is_empty();
             self.status = if typed.is_empty() {
-                "Type to filter categories. Space toggles highlighted row, Enter saves".to_string()
+                "Search existing categories or type a new one. Enter uses an exact match or creates it."
+                    .to_string()
             } else if no_matches {
-                "No categories found. Enter creates a new child category.".to_string()
+                format!("Press Enter to create '{}' in this column and save it.", typed)
             } else {
-                "Space toggles highlighted category. Enter saves, Esc cancels".to_string()
+                "Press Enter to use the exact name, or Tab to browse the filtered list."
+                    .to_string()
             };
         }
         Ok(false)
@@ -4003,7 +4121,7 @@ impl App {
         self.compute_assignment_preview(agenda);
         self.clear_input();
         self.status =
-            "Edit item categories: j/k select, Space apply, n or / type category, Enter back, Esc back"
+            "Edit item categories: type to filter/create, Space apply, n or / type category, Enter resolve/back, Esc back"
                 .to_string();
     }
 
@@ -5342,6 +5460,17 @@ impl App {
                 }
             }
             KeyCode::Enter => {
+                if !self.input.trimmed().is_empty() {
+                    self.apply_item_assign_category_by_name(
+                        agenda,
+                        Mode::ItemAssignPicker,
+                        "Category name entry canceled (empty)",
+                    )?;
+                    if self.mode == Mode::ItemAssignPicker {
+                        self.close_item_assign_session(self.status.clone());
+                    }
+                    return Ok(false);
+                }
                 if self.item_assign_dirty {
                     self.close_item_assign_session(self.status.clone());
                 } else {
@@ -5600,152 +5729,11 @@ impl App {
                 self.status = "Category name entry canceled".to_string();
             }
             KeyCode::Enter => {
-                let action_item_ids = self.effective_action_item_ids();
-                let Some(item_id) = self
-                    .item_assign_anchor_id()
-                    .or_else(|| self.selected_item_id())
-                else {
-                    self.close_item_assign_session("Assign failed: no selected item");
-                    return Ok(false);
-                };
-                let name = self.input.trimmed().to_string();
-                if name.is_empty() {
-                    self.mode = Mode::ItemAssignPicker;
-                    self.clear_input();
-                    self.status = "Category name entry canceled (empty)".to_string();
-                    return Ok(false);
-                }
-
-                let exact_match = self
-                    .categories
-                    .iter()
-                    .find(|category| category.name.eq_ignore_ascii_case(&name))
-                    .map(|category| (category.id, category.name.clone()));
-                if exact_match
-                    .as_ref()
-                    .is_some_and(|(_, category_name)| is_reserved_category_name(category_name))
-                {
-                    self.mode = Mode::ItemAssignPicker;
-                    self.clear_input();
-                    self.status = format!(
-                        "Reserved category '{}' cannot be assigned from this menu",
-                        name
-                    );
-                    return Ok(false);
-                }
-                let single_visible_match = if exact_match.is_none() {
-                    let query = name.to_ascii_lowercase();
-                    let mut matching_rows = self
-                        .item_assign_visible_category_row_indices()
-                        .into_iter()
-                        .filter_map(|row_index| self.category_rows.get(row_index))
-                        .filter(|row| row.name.to_ascii_lowercase().contains(&query));
-                    match (matching_rows.next(), matching_rows.next()) {
-                        (Some(row), None) => Some((row.id, row.name.clone())),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-
-                let mut created_new_category = false;
-                let (category_id, category_name) =
-                    if let Some((category_id, category_name)) = exact_match {
-                        (category_id, category_name)
-                    } else if let Some((category_id, category_name)) = single_visible_match {
-                        (category_id, category_name)
-                    } else {
-                        if is_reserved_category_name(&name) {
-                            self.mode = Mode::ItemAssignPicker;
-                            self.clear_input();
-                            self.status = format!(
-                                "Reserved category '{}' cannot be created or assigned here",
-                                name
-                            );
-                            return Ok(false);
-                        }
-                        let mut category = Category::new(name.clone());
-                        category.enable_implicit_string = true;
-                        let category_id = category.id;
-                        agenda.store().create_category(&category)?;
-                        created_new_category = true;
-                        (category_id, category.name)
-                    };
-                let mut assigned = 0usize;
-                let mut already_had = 0usize;
-                let mut failed = 0usize;
-                let mut first_error = None;
-
-                for action_item_id in &action_item_ids {
-                    let item = agenda.store().get_item(*action_item_id)?;
-                    if item.assignments.contains_key(&category_id) {
-                        already_had += 1;
-                        continue;
-                    }
-
-                    match agenda.assign_item_manual(
-                        *action_item_id,
-                        category_id,
-                        Some("manual:tui.assign".to_string()),
-                    ) {
-                        Ok(_) => assigned += 1,
-                        Err(err) => {
-                            failed += 1;
-                            if first_error.is_none() {
-                                first_error = Some(err.to_string());
-                            }
-                        }
-                    }
-                }
-
-                self.refresh(agenda.store())?;
-                self.set_item_selection_by_id(item_id);
-                self.set_item_assign_category_selection_by_id(category_id);
-                self.set_item_selection_by_id(item_id);
-                self.mode = Mode::ItemAssignPicker;
-                if assigned > 0 && failed == 0 {
-                    self.item_assign_dirty = true;
-                }
-                self.clear_input();
-                self.status = if action_item_ids.len() > 1 {
-                    let mut summary = format!(
-                        "{} category {} to {} items (assigned={}, already={}, failed={})",
-                        if created_new_category {
-                            "Created and applied"
-                        } else {
-                            "Applied"
-                        },
-                        category_name,
-                        action_item_ids.len(),
-                        assigned,
-                        already_had,
-                        failed
-                    );
-                    if let Some(err) = first_error {
-                        summary.push_str(&format!(" first_error={err}"));
-                    }
-                    summary
-                } else if failed > 0 {
-                    if created_new_category {
-                        format!(
-                            "Created category {} but could not assign: {}",
-                            category_name,
-                            first_error.unwrap_or_else(|| "unknown error".to_string())
-                        )
-                    } else {
-                        format!(
-                            "Could not assign category {}: {}",
-                            category_name,
-                            first_error.unwrap_or_else(|| "unknown error".to_string())
-                        )
-                    }
-                } else if created_new_category {
-                    format!("Created and assigned category {}", category_name)
-                } else if already_had > 0 {
-                    format!("Category {} already assigned", category_name)
-                } else {
-                    format!("Assigned category {}", category_name)
-                };
+                return self.apply_item_assign_category_by_name(
+                    agenda,
+                    Mode::ItemAssignPicker,
+                    "Category name entry canceled (empty)",
+                );
             }
             _ if self.handle_text_input_key(code) => {}
             _ => {}

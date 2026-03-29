@@ -1306,7 +1306,7 @@ impl App {
             .constraints([
                 Constraint::Length(2),
                 Constraint::Length(5),
-                Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Min(4),
                 Constraint::Length(2),
             ])
@@ -1354,94 +1354,91 @@ impl App {
             Style::default()
         };
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("Filter> ", Style::default().fg(Color::Yellow)),
-                Span::raw(state.filter.text()),
-            ]))
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::styled("Search or create> ", Style::default().fg(Color::Yellow)),
+                    Span::raw(state.filter.text()),
+                ]),
+                Line::from(vec![Span::styled(
+                    "Enter reuses an exact match or creates a new child category and saves it.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )]),
+            ])
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Filter")
+                    .title("Search or Create")
                     .border_style(input_border),
             ),
             chunks[2],
         );
 
-        if let Some(name) = state.create_confirm_name.as_deref() {
-            self.render_category_create_confirm_panel(
-                frame,
-                chunks[3],
-                name,
-                "as a new child category in this column?",
-            );
+        let matches = self.category_column_picker_matches();
+        let items: Vec<ListItem<'_>> = if matches.is_empty() {
+            let msg = if state.filter.text().trim().is_empty() {
+                "(type to search existing child categories)"
+            } else {
+                "(no exact match yet; Enter will create this as a new child)"
+            };
+            vec![ListItem::new(msg)]
         } else {
-            let matches = self.category_column_picker_matches();
-            let items: Vec<ListItem<'_>> = if matches.is_empty() {
-                let msg = if state.filter.text().trim().is_empty() {
-                    "(type to filter child categories)"
-                } else {
-                    "(no matches)"
-                };
-                vec![ListItem::new(msg)]
-            } else {
-                matches
-                    .iter()
-                    .map(|id| {
-                        let label = self
-                            .categories
-                            .iter()
-                            .find(|c| c.id == *id)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("(missing)");
-                        let mark = if state.is_exclusive {
-                            if state.selected_ids.contains(id) {
-                                "(*)"
-                            } else {
-                                "( )"
-                            }
-                        } else if state.selected_ids.contains(id) {
-                            "[x]"
+            matches
+                .iter()
+                .map(|id| {
+                    let label = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == *id)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("(missing)");
+                    let mark = if state.is_exclusive {
+                        if state.selected_ids.contains(id) {
+                            "(*)"
                         } else {
-                            "[ ]"
-                        };
-                        ListItem::new(format!("{mark} {label}"))
-                    })
-                    .collect()
-            };
-            let selected = if matches.is_empty() {
-                None
-            } else {
-                Some(state.list_index.min(matches.len() - 1))
-            };
-            let mut list_state = Self::list_state_for(chunks[3], selected);
-            frame.render_stateful_widget(
-                List::new(items)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Categories")
-                            .border_style(if state.focus == CategoryColumnPickerFocus::List {
-                                Style::default().fg(Color::Cyan)
-                            } else {
-                                Style::default()
-                            }),
-                    )
-                    .highlight_symbol("> ")
-                    .highlight_style(selected_row_style()),
-                chunks[3],
-                &mut list_state,
-            );
-            Self::render_vertical_scrollbar(
-                frame,
-                chunks[3],
-                matches.len().max(1),
-                list_state.offset(),
-            );
-        }
+                            "( )"
+                        }
+                    } else if state.selected_ids.contains(id) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    ListItem::new(format!("{mark} {label}"))
+                })
+                .collect()
+        };
+        let selected = if matches.is_empty() {
+            None
+        } else {
+            Some(state.list_index.min(matches.len() - 1))
+        };
+        let mut list_state = Self::list_state_for(chunks[3], selected);
+        frame.render_stateful_widget(
+            List::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Categories")
+                        .border_style(if state.focus == CategoryColumnPickerFocus::List {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
+                )
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style()),
+            chunks[3],
+            &mut list_state,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            chunks[3],
+            matches.len().max(1),
+            list_state.offset(),
+        );
 
         frame.render_widget(
             Paragraph::new(
-                "Type filter | j/k or Up/Down move | PgUp/PgDn item | Space toggle | Enter save | Esc cancel",
+                "Type to search or name a new category | Tab list | Space toggle in list | Enter use/create+save | Esc cancel",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR))
             .wrap(Wrap { trim: true }),
@@ -1468,7 +1465,7 @@ impl App {
             .constraints([
                 Constraint::Length(2),
                 Constraint::Length(5),
-                Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Min(4),
                 Constraint::Length(2),
             ])
@@ -1476,7 +1473,10 @@ impl App {
         let input_area = chunks[2];
         let input_x = input_area.x.saturating_add(1);
         let input_y = input_area.y.saturating_add(1);
-        let prefix_len = "Filter> ".chars().count().min(u16::MAX as usize) as u16;
+        let prefix_len = "Search or create> "
+            .chars()
+            .count()
+            .min(u16::MAX as usize) as u16;
         let cursor_chars = state.filter.cursor().min(u16::MAX as usize) as u16;
         let max_x = input_area
             .x
@@ -3749,7 +3749,7 @@ impl App {
             }
             Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
             Mode::ItemAssignPicker => {
-                "Assign categories (Enter applies+closes; Space applies; Esc closes)".to_string()
+                "Assign categories (type to filter/create; Enter resolves+closes; Space toggles; Esc closes)".to_string()
             }
             Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
             Mode::LinkWizard => {
@@ -4038,7 +4038,7 @@ impl App {
                     ("Tab/S-Tab", "pane"),
                     ("Space", "toggle"),
                     ("n", "new"),
-                    ("Enter", "apply+close"),
+                    ("Enter", "resolve+close"),
                     ("Esc", "close"),
                 ],
                 ItemAssignPane::ViewSection => vec![
@@ -5115,7 +5115,12 @@ impl App {
         let visible_category_indices = self.item_assign_visible_category_row_indices();
 
         let cat_items: Vec<ListItem<'_>> = if visible_category_indices.is_empty() {
-            vec![ListItem::new(Line::from("(no categories)"))]
+            let empty_label = if self.input.trimmed().is_empty() {
+                "(no categories)"
+            } else {
+                "(no matching categories)"
+            };
+            vec![ListItem::new(Line::from(empty_label))]
         } else {
             visible_category_indices
                 .iter()
