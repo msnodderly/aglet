@@ -180,6 +180,7 @@ struct CategoryListRow {
     enable_semantic_classification: bool,
     match_category_name: bool,
     value_kind: CategoryValueKind,
+    has_conditions: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -536,6 +537,7 @@ enum CategoryManagerDetailsFocus {
     MatchCategoryName,
     Actionable,
     AlsoMatch,
+    Conditions,
     Integer,
     DecimalPlaces,
     CurrencySymbol,
@@ -567,7 +569,8 @@ impl CategoryManagerDetailsFocus {
                 Self::SemanticMatch => Self::MatchCategoryName,
                 Self::MatchCategoryName => Self::Actionable,
                 Self::Actionable => Self::AlsoMatch,
-                Self::AlsoMatch => Self::Note,
+                Self::AlsoMatch => Self::Conditions,
+                Self::Conditions => Self::Note,
                 Self::Note => Self::Exclusive,
                 _ => Self::Exclusive,
             }
@@ -598,7 +601,8 @@ impl CategoryManagerDetailsFocus {
                 Self::MatchCategoryName => Self::SemanticMatch,
                 Self::Actionable => Self::MatchCategoryName,
                 Self::AlsoMatch => Self::Actionable,
-                Self::Note => Self::AlsoMatch,
+                Self::Conditions => Self::AlsoMatch,
+                Self::Note => Self::Conditions,
                 _ => Self::Actionable,
             }
         }
@@ -5192,6 +5196,7 @@ mod tests {
             enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
+            has_conditions: false,
         };
         let user = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -5205,6 +5210,7 @@ mod tests {
             enable_semantic_classification: true,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
+            has_conditions: false,
         };
 
         assert_eq!(
@@ -5227,6 +5233,7 @@ mod tests {
             enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
+            has_conditions: false,
         };
         let when = CategoryListRow {
             id: CategoryId::new_v4(),
@@ -5240,6 +5247,7 @@ mod tests {
             enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
+            has_conditions: false,
         };
 
         assert_eq!(first_non_reserved_category_index(&[done, when]), 0);

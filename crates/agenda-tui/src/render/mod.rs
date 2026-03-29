@@ -5811,6 +5811,9 @@ impl App {
                             badges.push("claim-target");
                         }
                     }
+                    if row.has_conditions {
+                        badges.push("rules");
+                    }
                     if !badges.is_empty() {
                         label.push(' ');
                         label.push_str(
@@ -5957,7 +5960,7 @@ impl App {
                 let flags_height = if is_numeric_category {
                     7
                 } else {
-                    7 + workflow_role_height
+                    8 + workflow_role_height
                 };
                 let details_chunks = if is_numeric_category {
                     Layout::default()
@@ -6179,6 +6182,37 @@ impl App {
                             row.is_actionable,
                         ),
                     ];
+                    // Conditions summary line
+                    let conditions_focused =
+                        details_focus == CategoryManagerDetailsFocus::Conditions;
+                    let conditions_count = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .map(|c| c.conditions.len())
+                        .unwrap_or(0);
+                    let conditions_label = if conditions_count == 0 {
+                        "Conditions: none".to_string()
+                    } else {
+                        format!("Conditions: {} rule{}", conditions_count, if conditions_count == 1 { "" } else { "s" })
+                    };
+                    let conditions_style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if conditions_focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "{}{}",
+                            focus_prefix(conditions_focused && !is_reserved_category),
+                            conditions_label
+                        ),
+                        conditions_style,
+                    )));
                     if is_ready_queue_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Ready Queue",
@@ -6217,7 +6251,9 @@ impl App {
                 let flags_border_focused = !is_reserved_category
                     && !matches!(
                         details_focus,
-                        CategoryManagerDetailsFocus::Note | CategoryManagerDetailsFocus::AlsoMatch
+                        CategoryManagerDetailsFocus::Note
+                            | CategoryManagerDetailsFocus::AlsoMatch
+                            | CategoryManagerDetailsFocus::Conditions
                     );
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
@@ -6417,6 +6453,9 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::ThousandsSeparator => {
                             "Enter/Space: toggle thousands separator"
+                        }
+                        CategoryManagerDetailsFocus::Conditions => {
+                            "Profile conditions auto-assign items  Enter: details"
                         }
                         CategoryManagerDetailsFocus::Note => {
                             "j/k: focus field  Enter/Space: toggle/edit"

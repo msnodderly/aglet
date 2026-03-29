@@ -801,6 +801,10 @@ impl App {
                     self.set_category_manager_focus(CategoryManagerFocus::Tree);
                     return Ok(true);
                 }
+                CategoryManagerDetailsFocus::Conditions => {
+                    self.status = "Use CLI: agenda category add-condition / remove-condition".to_string();
+                    return Ok(true);
+                }
                 CategoryManagerDetailsFocus::Note => {
                     self.start_category_manager_details_note_edit();
                     return Ok(true);
@@ -841,6 +845,10 @@ impl App {
                 }
                 CategoryManagerDetailsFocus::ThousandsSeparator => {
                     self.toggle_selected_category_thousands_separator(agenda)?;
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Conditions => {
+                    self.status = "Use CLI: agenda category add-condition / remove-condition".to_string();
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Note => {
