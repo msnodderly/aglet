@@ -1655,6 +1655,7 @@ impl App {
             visible_row_indices: Vec::new(),
             selected_category_id,
             inline_action: None,
+            condition_edit: None,
         });
         self.rebuild_category_manager_visible_rows();
     }
@@ -1948,6 +1949,20 @@ impl App {
         if let Some(state) = &mut self.category_manager {
             state.details_inline_input = input;
         }
+    }
+
+    pub(crate) fn category_manager_condition_edit(&self) -> Option<&ConditionEditState> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.condition_edit.as_ref())
+    }
+
+    pub(crate) fn category_manager_condition_edit_mut(
+        &mut self,
+    ) -> Option<&mut ConditionEditState> {
+        self.category_manager
+            .as_mut()
+            .and_then(|state| state.condition_edit.as_mut())
     }
 
     pub(crate) fn selected_category_numeric_format(&self) -> Option<NumericFormat> {

@@ -12,8 +12,8 @@ use agenda_core::classification::{
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind,
-    Column, ColumnKind, CriterionMode, Item, ItemId, ItemLinkKind, ItemLinksForItem, NumericFormat,
-    Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
+    Column, ColumnKind, Condition, CriterionMode, Item, ItemId, ItemLinkKind, ItemLinksForItem,
+    NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -634,6 +634,25 @@ enum CategoryInlineAction {
     },
 }
 
+/// State for the profile condition editor overlay in the category manager.
+///
+/// Two-level UI:
+/// - `picker_open == false`: condition list (add/remove/edit conditions)
+/// - `picker_open == true`: criteria picker (select categories for a condition)
+#[derive(Clone)]
+struct ConditionEditState {
+    /// Index of the condition being edited, or None if adding a new one.
+    condition_index: Option<usize>,
+    /// Draft query being built/edited.
+    draft_query: Query,
+    /// Selected row in the condition list (level 1).
+    list_index: usize,
+    /// Whether the category picker overlay is open (level 2).
+    picker_open: bool,
+    /// Selected row in the category picker.
+    picker_index: usize,
+}
+
 #[derive(Clone)]
 struct CategoryManagerState {
     focus: CategoryManagerFocus,
@@ -655,6 +674,7 @@ struct CategoryManagerState {
     visible_row_indices: Vec<usize>,
     selected_category_id: Option<CategoryId>,
     inline_action: Option<CategoryInlineAction>,
+    condition_edit: Option<ConditionEditState>,
 }
 
 #[derive(Clone, Debug)]
@@ -8886,6 +8906,155 @@ mod tests {
             app.category_manager_details_focus(),
             Some(CategoryManagerDetailsFocus::Conditions)
         );
+    }
+
+    #[test]
+    fn category_manager_condition_edit_add_and_save() {
+        use agenda_core::model::{Condition, CriterionMode};
+
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let project = Category::new("Project Alpha".to_string());
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create");
+        store.create_category(&project).expect("create");
+        store.create_category(&escalated).expect("create");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        // Navigate to Escalated
+        loop {
+            let row = app.selected_category_row().expect("row");
+            if row.name == "Escalated" {
+                break;
+            }
+            app.handle_category_manager_key(KeyCode::Down, &agenda)
+                .expect("down");
+        }
+
+        // Tab to details → AlsoMatch → Conditions → Enter to open editor
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to details");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to also-match");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab to conditions");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open condition list");
+
+        // Verify condition edit state is open
+        assert!(app.category_manager_condition_edit().is_some());
+        assert!(!app.category_manager_condition_edit().unwrap().picker_open);
+
+        // Press 'a' to add new condition → opens picker
+        app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
+            .expect("add condition");
+        assert!(app.category_manager_condition_edit().unwrap().picker_open);
+
+        // Navigate to "Urgent" in the picker and press Space to set as AND
+        loop {
+            let edit = app.category_manager_condition_edit().unwrap();
+            let idx = edit.picker_index;
+            if let Some(row) = app.category_rows.get(idx) {
+                if row.name == "Urgent" {
+                    break;
+                }
+            }
+            app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+                .expect("navigate picker");
+        }
+        app.handle_category_manager_key(KeyCode::Char(' '), &agenda)
+            .expect("toggle urgent as AND");
+
+        // Verify the draft query has the criterion
+        let edit = app.category_manager_condition_edit().unwrap();
+        assert_eq!(edit.draft_query.mode_for(urgent.id), Some(CriterionMode::And));
+
+        // Press Esc to save the condition
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("save condition");
+
+        // Verify condition was saved to the category
+        let cat = store.get_category(escalated.id).expect("load");
+        assert_eq!(cat.conditions.len(), 1);
+        match &cat.conditions[0] {
+            Condition::Profile { criteria } => {
+                let and_ids: Vec<_> = criteria.and_category_ids().collect();
+                assert_eq!(and_ids, vec![urgent.id]);
+            }
+            other => panic!("expected Profile, got {:?}", other),
+        }
+
+        // Verify we're back in the condition list (not the picker)
+        assert!(app.category_manager_condition_edit().is_some());
+        assert!(!app.category_manager_condition_edit().unwrap().picker_open);
+
+        // Press Esc to close the condition editor
+        app.handle_category_manager_key(KeyCode::Esc, &agenda)
+            .expect("close condition list");
+        assert!(app.category_manager_condition_edit().is_none());
+    }
+
+    #[test]
+    fn category_manager_condition_edit_delete_condition() {
+        use agenda_core::model::{Condition, Criterion, CriterionMode, Query};
+
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let mut escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create");
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(Query {
+                criteria: vec![Criterion {
+                    mode: CriterionMode::And,
+                    category_id: urgent.id,
+                }],
+                ..Query::default()
+            }),
+        });
+        store.create_category(&escalated).expect("create");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.handle_normal_key(KeyCode::Char('c'), &agenda)
+            .expect("open category manager");
+
+        // Navigate to Escalated
+        loop {
+            let row = app.selected_category_row().expect("row");
+            if row.name == "Escalated" {
+                break;
+            }
+            app.handle_category_manager_key(KeyCode::Down, &agenda)
+                .expect("down");
+        }
+
+        // Open conditions editor
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        app.handle_category_manager_key(KeyCode::Tab, &agenda)
+            .expect("tab");
+        app.handle_category_manager_key(KeyCode::Enter, &agenda)
+            .expect("open");
+
+        // Delete the condition
+        app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+            .expect("delete condition");
+
+        // Verify it was removed
+        let cat = store.get_category(escalated.id).expect("load");
+        assert!(cat.conditions.is_empty());
     }
 
     #[test]

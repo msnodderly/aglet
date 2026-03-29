@@ -812,7 +812,7 @@ impl App {
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Conditions => {
-                    self.status = "Use CLI: agenda category add-condition / remove-condition".to_string();
+                    self.open_condition_edit_list();
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Note => {
@@ -858,7 +858,7 @@ impl App {
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Conditions => {
-                    self.status = "Use CLI: agenda category add-condition / remove-condition".to_string();
+                    self.open_condition_edit_list();
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Note => {
@@ -1503,6 +1503,10 @@ impl App {
             self.handle_workflow_setup_key(code, agenda)?;
             return Ok(false);
         }
+        if self.category_manager_condition_edit().is_some() {
+            self.handle_condition_edit_key(code, agenda)?;
+            return Ok(false);
+        }
         if self.handle_category_manager_details_key(code, agenda)? {
             return Ok(false);
         }
@@ -1996,5 +2000,364 @@ impl App {
             prep.as_ref(),
         );
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Condition editing (profile conditions)
+    // -------------------------------------------------------------------------
+
+    fn open_condition_edit_list(&mut self) {
+        if let Some(state) = &mut self.category_manager {
+            state.condition_edit = Some(ConditionEditState {
+                condition_index: None,
+                draft_query: Query::default(),
+                list_index: 0,
+                picker_open: false,
+                picker_index: 0,
+            });
+        }
+        self.status =
+            "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+    }
+
+    fn close_condition_edit(&mut self) {
+        if let Some(state) = &mut self.category_manager {
+            state.condition_edit = None;
+        }
+        self.status = "j/k: focus field  Enter/Space: toggle/edit".to_string();
+    }
+
+    fn open_condition_edit_picker(&mut self, condition_index: Option<usize>) {
+        let draft = if let Some(idx) = condition_index {
+            // Load existing condition's query
+            self.selected_category_row()
+                .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+                .and_then(|cat| cat.conditions.get(idx))
+                .and_then(|cond| match cond {
+                    Condition::Profile { criteria } => Some(criteria.as_ref().clone()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        } else {
+            Query::default()
+        };
+        let first = first_non_reserved_category_index(&self.category_rows);
+        if let Some(state) = &mut self.category_manager {
+            if let Some(edit) = &mut state.condition_edit {
+                edit.condition_index = condition_index;
+                edit.draft_query = draft;
+                edit.picker_open = true;
+                edit.picker_index = first;
+            }
+        }
+        self.status =
+            "Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done".to_string();
+    }
+
+    fn save_condition_from_picker(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let (condition_index, draft_query) = {
+            let edit = match self.category_manager_condition_edit() {
+                Some(e) => e,
+                None => return Ok(false),
+            };
+            (edit.condition_index, edit.draft_query.clone())
+        };
+
+        if draft_query.criteria.is_empty() {
+            // Nothing to save — just close the picker
+            if let Some(edit) = self.category_manager_condition_edit_mut() {
+                edit.picker_open = false;
+            }
+            self.status =
+                "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+            return Ok(true);
+        }
+
+        let category_id = match self.selected_category_row() {
+            Some(r) => r.id,
+            None => return Ok(false),
+        };
+        let mut category = match self.categories.iter().find(|c| c.id == category_id) {
+            Some(c) => c.clone(),
+            None => return Ok(false),
+        };
+
+        let new_condition = Condition::Profile {
+            criteria: Box::new(draft_query),
+        };
+
+        if let Some(idx) = condition_index {
+            if idx < category.conditions.len() {
+                category.conditions[idx] = new_condition;
+            }
+        } else {
+            category.conditions.push(new_condition);
+        }
+
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+
+        // Close picker, stay in list
+        if let Some(edit) = self.category_manager_condition_edit_mut() {
+            edit.picker_open = false;
+        }
+        let action = if condition_index.is_some() {
+            "updated"
+        } else {
+            "added"
+        };
+        self.status = format!(
+            "Condition {} (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
+            action, result.processed_items, result.affected_items
+        );
+        Ok(true)
+    }
+
+    fn delete_condition_at_list_index(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let list_index = match self.category_manager_condition_edit() {
+            Some(e) => e.list_index,
+            None => return Ok(false),
+        };
+        let category_id = match self.selected_category_row() {
+            Some(r) => r.id,
+            None => return Ok(false),
+        };
+        let mut category = match self.categories.iter().find(|c| c.id == category_id) {
+            Some(c) => c.clone(),
+            None => return Ok(false),
+        };
+
+        // Only count Profile conditions for indexing
+        let profile_indices: Vec<usize> = category
+            .conditions
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c, Condition::Profile { .. }))
+            .map(|(i, _)| i)
+            .collect();
+
+        if list_index >= profile_indices.len() {
+            return Ok(false);
+        }
+        let actual_index = profile_indices[list_index];
+        category.conditions.remove(actual_index);
+
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+
+        // Adjust list_index if it's now out of bounds
+        if let Some(edit) = self.category_manager_condition_edit_mut() {
+            let new_count = profile_indices.len() - 1;
+            if edit.list_index >= new_count && new_count > 0 {
+                edit.list_index = new_count - 1;
+            }
+        }
+        self.status = format!(
+            "Condition removed (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
+            result.processed_items, result.affected_items
+        );
+        Ok(true)
+    }
+
+    fn condition_edit_filtered_category_indices(&self) -> Vec<usize> {
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| !row.is_reserved)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn handle_condition_edit_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        let edit = match self.category_manager_condition_edit() {
+            Some(e) => e.clone(),
+            None => return Ok(false),
+        };
+
+        if edit.picker_open {
+            self.handle_condition_picker_key(code, agenda, &edit)
+        } else {
+            self.handle_condition_list_key(code, agenda, &edit)
+        }
+    }
+
+    fn handle_condition_list_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+        edit: &ConditionEditState,
+    ) -> TuiResult<bool> {
+        let condition_count = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+            .map(|cat| {
+                cat.conditions
+                    .iter()
+                    .filter(|c| matches!(c, Condition::Profile { .. }))
+                    .count()
+            })
+            .unwrap_or(0);
+
+        match code {
+            KeyCode::Esc => {
+                self.close_condition_edit();
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if condition_count > 0 {
+                    if let Some(e) = self.category_manager_condition_edit_mut() {
+                        e.list_index = (e.list_index + 1).min(condition_count.saturating_sub(1));
+                    }
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(e) = self.category_manager_condition_edit_mut() {
+                    e.list_index = e.list_index.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.open_condition_edit_picker(None);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if condition_count > 0 && edit.list_index < condition_count {
+                    // Map list_index to actual condition index
+                    let actual_index = self
+                        .selected_category_row()
+                        .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+                        .and_then(|cat| {
+                            cat.conditions
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, c)| matches!(c, Condition::Profile { .. }))
+                                .map(|(i, _)| i)
+                                .nth(edit.list_index)
+                        });
+                    if let Some(idx) = actual_index {
+                        self.open_condition_edit_picker(Some(idx));
+                    }
+                } else {
+                    // No conditions — open picker to add
+                    self.open_condition_edit_picker(None);
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Char('d') => {
+                if condition_count > 0 && edit.list_index < condition_count {
+                    self.delete_condition_at_list_index(agenda)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn handle_condition_picker_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+        edit: &ConditionEditState,
+    ) -> TuiResult<bool> {
+        let filtered_indices = self.condition_edit_filtered_category_indices();
+        let current_visible_pos = filtered_indices
+            .iter()
+            .position(|&idx| idx == edit.picker_index)
+            .unwrap_or(0);
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(&actual_idx) = filtered_indices
+                    .get((current_visible_pos + 1).min(filtered_indices.len().saturating_sub(1)))
+                {
+                    if let Some(e) = self.category_manager_condition_edit_mut() {
+                        e.picker_index = actual_idx;
+                    }
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(&actual_idx) =
+                    filtered_indices.get(current_visible_pos.saturating_sub(1))
+                {
+                    if let Some(e) = self.category_manager_condition_edit_mut() {
+                        e.picker_index = actual_idx;
+                    }
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                // Cycle: off → And → Not → Or → off
+                if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                    if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                        if let Some(e) = self.category_manager_condition_edit_mut() {
+                            let next = match e.draft_query.mode_for(row.id) {
+                                None => Some(CriterionMode::And),
+                                Some(CriterionMode::And) => Some(CriterionMode::Not),
+                                Some(CriterionMode::Not) => Some(CriterionMode::Or),
+                                Some(CriterionMode::Or) => None,
+                            };
+                            match next {
+                                Some(mode) => e.draft_query.set_criterion(mode, row.id),
+                                None => e.draft_query.remove_criterion(row.id),
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('1') | KeyCode::Char('+') => {
+                if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                    if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                        if let Some(e) = self.category_manager_condition_edit_mut() {
+                            if e.draft_query.mode_for(row.id) == Some(CriterionMode::And) {
+                                e.draft_query.remove_criterion(row.id);
+                            } else {
+                                e.draft_query.set_criterion(CriterionMode::And, row.id);
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('2') | KeyCode::Char('-') => {
+                if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                    if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                        if let Some(e) = self.category_manager_condition_edit_mut() {
+                            if e.draft_query.mode_for(row.id) == Some(CriterionMode::Not) {
+                                e.draft_query.remove_criterion(row.id);
+                            } else {
+                                e.draft_query.set_criterion(CriterionMode::Not, row.id);
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('3') => {
+                if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                    if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                        if let Some(e) = self.category_manager_condition_edit_mut() {
+                            if e.draft_query.mode_for(row.id) == Some(CriterionMode::Or) {
+                                e.draft_query.remove_criterion(row.id);
+                            } else {
+                                e.draft_query.set_criterion(CriterionMode::Or, row.id);
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('0') => {
+                if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                    if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                        if let Some(e) = self.category_manager_condition_edit_mut() {
+                            e.draft_query.remove_criterion(row.id);
+                        }
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.save_condition_from_picker(agenda)?;
+            }
+            _ => {}
+        }
+        Ok(true)
     }
 }

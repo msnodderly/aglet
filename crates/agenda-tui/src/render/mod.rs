@@ -5647,6 +5647,249 @@ impl App {
         );
     }
 
+    fn render_condition_edit_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(edit) = self.category_manager_condition_edit() else {
+            return;
+        };
+        let category_name = self
+            .selected_category_row()
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let category = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id));
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let category_names: std::collections::HashMap<CategoryId, &str> = self
+            .categories
+            .iter()
+            .map(|c| (c.id, c.name.as_str()))
+            .collect();
+
+        if edit.picker_open {
+            // Level 2: criteria picker
+            let title = if edit.condition_index.is_some() {
+                format!(" Edit Condition: {} ", category_name)
+            } else {
+                format!(" New Condition: {} ", category_name)
+            };
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(8),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            // Summary of current draft criteria
+            let summary: Vec<String> = edit
+                .draft_query
+                .criteria
+                .iter()
+                .map(|c| {
+                    let mode_label = match c.mode {
+                        CriterionMode::And => "Require",
+                        CriterionMode::Not => "Exclude",
+                        CriterionMode::Or => "Or",
+                    };
+                    let name = category_names
+                        .get(&c.category_id)
+                        .unwrap_or(&"(deleted)");
+                    format!("{}: {}", mode_label, name)
+                })
+                .collect();
+            let summary_text = if summary.is_empty() {
+                "(no criteria selected yet)".to_string()
+            } else {
+                summary.join(", ")
+            };
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    summary_text,
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            // Category picker list
+            let filtered_indices: Vec<usize> = self
+                .category_rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| !row.is_reserved)
+                .map(|(i, _)| i)
+                .collect();
+            let selected_row = filtered_indices
+                .iter()
+                .position(|&idx| idx == edit.picker_index)
+                .unwrap_or(0);
+
+            let items: Vec<ListItem<'_>> = filtered_indices
+                .iter()
+                .filter_map(|idx| self.category_rows.get(*idx))
+                .map(|row| {
+                    let mode = edit.draft_query.mode_for(row.id);
+                    let (prefix, color) = match mode {
+                        Some(CriterionMode::And) => ("[+] ", Color::Green),
+                        Some(CriterionMode::Not) => ("[-] ", Color::Red),
+                        Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
+                        None => ("    ", Color::White),
+                    };
+                    let label = format!(
+                        "{}{}{}",
+                        "  ".repeat(row.depth),
+                        prefix,
+                        row.name
+                    );
+                    ListItem::new(Line::from(Span::styled(label, Style::default().fg(color))))
+                })
+                .collect();
+
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "Space:cycle  +/-/3:set  0:clear  Esc:save & close",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        } else {
+            // Level 1: condition list
+            let profile_conditions: Vec<(usize, &Query)> = category
+                .map(|cat| {
+                    cat.conditions
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| match c {
+                            Condition::Profile { criteria } => Some((i, criteria.as_ref())),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(5),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    format!(
+                        "Auto-assign to \"{}\" when ANY rule matches:",
+                        category_name
+                    ),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(format!(" Conditions: {} ", category_name))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let items: Vec<ListItem<'_>> = if profile_conditions.is_empty() {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "(no conditions — press 'a' to add)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                profile_conditions
+                    .iter()
+                    .enumerate()
+                    .map(|(display_idx, (_actual_idx, query))| {
+                        let mut parts = Vec::new();
+                        let and_names: Vec<&str> = query
+                            .and_category_ids()
+                            .filter_map(|id| category_names.get(&id).copied())
+                            .collect();
+                        let not_names: Vec<&str> = query
+                            .not_category_ids()
+                            .filter_map(|id| category_names.get(&id).copied())
+                            .collect();
+                        let or_names: Vec<&str> = query
+                            .or_category_ids()
+                            .filter_map(|id| category_names.get(&id).copied())
+                            .collect();
+                        if !and_names.is_empty() {
+                            parts.push(format!("AND: {}", and_names.join(", ")));
+                        }
+                        if !not_names.is_empty() {
+                            parts.push(format!("NOT: {}", not_names.join(", ")));
+                        }
+                        if !or_names.is_empty() {
+                            parts.push(format!("OR: {}", or_names.join(", ")));
+                        }
+                        let label = format!("{}. {}", display_idx + 1, parts.join(" / "));
+                        ListItem::new(Line::from(label))
+                    })
+                    .collect()
+            };
+
+            let selected_row = if profile_conditions.is_empty() {
+                0
+            } else {
+                edit.list_index.min(profile_conditions.len().saturating_sub(1))
+            };
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "a:add  Enter:edit  x:delete  Esc:close",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        }
+    }
+
     pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
@@ -6590,6 +6833,10 @@ impl App {
 
         if self.workflow_role_picker.is_some() {
             self.render_workflow_role_picker_overlay(frame, area);
+        }
+
+        if self.category_manager_condition_edit().is_some() {
+            self.render_condition_edit_overlay(frame, area);
         }
 
         if self.classification_mode_picker_open {
