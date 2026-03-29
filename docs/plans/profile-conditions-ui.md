@@ -97,7 +97,7 @@ We reuse this same pattern for category profile condition editing.
 - [x] 2. Add CLI `category remove-condition` command
 - [x] 3. Add profile condition display improvements to CLI `category show`
 - [x] 4. Add TUI condition list view in category manager
-- [ ] 5. Add TUI criteria editor (reusing view_edit2 pattern)
+- [x] 5. Add TUI criteria editor (reusing view_edit2 pattern)
 - [x] 6. Write engine tests for brainstormed scenarios
 - [x] 7. Write CLI integration tests
 - [x] 8. Write TUI mode tests
