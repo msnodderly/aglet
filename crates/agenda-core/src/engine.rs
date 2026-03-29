@@ -1621,4 +1621,450 @@ mod tests {
             "assignment made inside a successful savepoint should be persisted"
         );
     }
+
+    // ---------------------------------------------------------------
+    // Profile condition test scenarios (brainstormed from Beeswax spec)
+    // ---------------------------------------------------------------
+
+    /// Helper to create a category with profile condition including OR criteria.
+    fn category_with_profile_or(
+        name: &str,
+        include: &[CategoryId],
+        exclude: &[CategoryId],
+        or: &[CategoryId],
+    ) -> Category {
+        let mut cat = category(name, false);
+        let mut criteria = Query::default();
+        for &id in include {
+            criteria.set_criterion(CriterionMode::And, id);
+        }
+        for &id in exclude {
+            criteria.set_criterion(CriterionMode::Not, id);
+        }
+        for &id in or {
+            criteria.set_criterion(CriterionMode::Or, id);
+        }
+        cat.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        cat
+    }
+
+    #[test]
+    fn profile_single_criterion_delegation() {
+        // "If Project A → assign to Mary"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let project_a = category("Project A", true);
+        create_category(&store, &project_a);
+        let mary = category_with_profile("Mary", &[project_a.id], &[]);
+        create_category(&store, &mary);
+
+        let item = create_item(&store, "Review the Project A docs");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&project_a.id));
+        assert!(result.new_assignments.contains(&mary.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&mary.id).unwrap().origin.as_deref(),
+            Some("profile:Mary")
+        );
+    }
+
+    #[test]
+    fn profile_compound_and_trigger() {
+        // "If Urgent AND Project Alpha → assign to Escalated"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", true);
+        let project_alpha = category("Project Alpha", true);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "Urgent Project Alpha deploy is failing");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&urgent.id));
+        assert!(result.new_assignments.contains(&project_alpha.id));
+        assert!(result.new_assignments.contains(&escalated.id));
+    }
+
+    #[test]
+    fn profile_partial_match_does_not_fire() {
+        // Item in Urgent but NOT Project Alpha → Escalated should NOT fire
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", true);
+        let project_alpha = category("Project Alpha", true);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "Urgent fix the login page");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&urgent.id));
+        assert!(!result.new_assignments.contains(&project_alpha.id));
+        assert!(!result.new_assignments.contains(&escalated.id));
+    }
+
+    #[test]
+    fn profile_exclude_pattern() {
+        // "If Work AND NOT Delegated → assign to My-Tasks"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let work = category("Work", true);
+        let delegated = category("Delegated", false);
+        let my_tasks = category_with_profile("My-Tasks", &[work.id], &[delegated.id]);
+        create_category(&store, &work);
+        create_category(&store, &delegated);
+        create_category(&store, &my_tasks);
+
+        // Item with "Work" but not "Delegated" → should match
+        let item = create_item(&store, "Work on the API refactor");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&work.id));
+        assert!(result.new_assignments.contains(&my_tasks.id));
+    }
+
+    #[test]
+    fn profile_exclude_blocks_when_present() {
+        // "If Work AND NOT Delegated → assign to My-Tasks" — but item IS Delegated
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let work = category("Work", true);
+        let delegated = category("Delegated", false);
+        let my_tasks = category_with_profile("My-Tasks", &[work.id], &[delegated.id]);
+        create_category(&store, &work);
+        create_category(&store, &delegated);
+        create_category(&store, &my_tasks);
+
+        let item = create_item(&store, "Work stuff");
+        store
+            .assign_item(item.id, delegated.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(!result.new_assignments.contains(&my_tasks.id));
+    }
+
+    #[test]
+    fn profile_cascading_chain() {
+        // Escalated → Notify:Manager (cascading two profile conditions)
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", true);
+        let project_alpha = category("Project Alpha", true);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        let notify = category_with_profile("Notify-Manager", &[escalated.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+        create_category(&store, &notify);
+
+        let item = create_item(&store, "Urgent Project Alpha outage");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&escalated.id));
+        assert!(result.new_assignments.contains(&notify.id));
+    }
+
+    #[test]
+    fn profile_late_satisfaction() {
+        // Assign Urgent first (no fire), then assign Project Alpha → rule fires
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", false);
+        let project_alpha = category("Project Alpha", false);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "some neutral text");
+
+        // Manual assign Urgent only — Escalated should NOT fire
+        store
+            .assign_item(item.id, urgent.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(!result.new_assignments.contains(&escalated.id));
+
+        // Now also assign Project Alpha — Escalated should fire
+        store
+            .assign_item(item.id, project_alpha.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&escalated.id));
+    }
+
+    #[test]
+    fn profile_order_independence() {
+        // Assign B then A vs A then B → same result
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        let target = category_with_profile("Target", &[cat_a.id, cat_b.id], &[]);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+        create_category(&store, &target);
+
+        // Order 1: A then B
+        let item1 = create_item(&store, "neutral text one");
+        store
+            .assign_item(item1.id, cat_a.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item1.id, cat_b.id, &manual_assignment())
+            .unwrap();
+        let result1 = process_item(&store, &classifier, item1.id).unwrap();
+
+        // Order 2: B then A
+        let item2 = create_item(&store, "neutral text two");
+        store
+            .assign_item(item2.id, cat_b.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item2.id, cat_a.id, &manual_assignment())
+            .unwrap();
+        let result2 = process_item(&store, &classifier, item2.id).unwrap();
+
+        assert!(result1.new_assignments.contains(&target.id));
+        assert!(result2.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_idempotent_when_already_assigned() {
+        // Item already in target → no duplicate assignment
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let trigger = category("Trigger", false);
+        let target = category_with_profile("Target", &[trigger.id], &[]);
+        create_category(&store, &trigger);
+        create_category(&store, &target);
+
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, trigger.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item.id, target.id, &manual_assignment())
+            .unwrap();
+
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        // Target already assigned, so it shouldn't appear in new_assignments
+        assert!(!result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_provenance_tracking() {
+        // Auto-assigned via profile gets origin="profile:CategoryName"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let trigger = category("Trigger", false);
+        let target = category_with_profile("Target", &[trigger.id], &[]);
+        create_category(&store, &trigger);
+        create_category(&store, &target);
+
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, trigger.id, &manual_assignment())
+            .unwrap();
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let target_assignment = assignments.get(&target.id).unwrap();
+        assert_eq!(target_assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(
+            target_assignment.origin.as_deref(),
+            Some("profile:Target")
+        );
+    }
+
+    #[test]
+    fn profile_or_criteria() {
+        // "If CatA OR CatB → assign to Target"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        let target = category_with_profile_or("Target", &[], &[], &[cat_a.id, cat_b.id]);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+        create_category(&store, &target);
+
+        // Only CatA assigned — should still fire (OR)
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, cat_a.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_or_criteria_no_match() {
+        // OR criteria but none present → should NOT fire
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        let target = category_with_profile_or("Target", &[], &[], &[cat_a.id, cat_b.id]);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+        create_category(&store, &target);
+
+        let item = create_item(&store, "neutral");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(!result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_multiple_conditions_or_semantics() {
+        // Category with two profile conditions — either one matching should fire
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+
+        // Target has TWO separate profile conditions (OR'd across conditions)
+        let mut target = category("Target", false);
+        let mut criteria1 = Query::default();
+        criteria1.set_criterion(CriterionMode::And, cat_a.id);
+        target.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria1),
+        });
+        let mut criteria2 = Query::default();
+        criteria2.set_criterion(CriterionMode::And, cat_b.id);
+        target.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria2),
+        });
+        create_category(&store, &target);
+
+        // Only CatB assigned — second condition matches
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, cat_b.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&target.id));
+    }
+
+    // ---------------------------------------------------------------
+    // "Mom OR Dad → Family" scenarios — two ways to express OR
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn profile_mom_or_dad_via_or_criteria() {
+        // Single condition with OR criteria: --or Mom --or Dad
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mom = category("Mom", false);
+        let dad = category("Dad", false);
+        let family = category_with_profile_or("Family", &[], &[], &[mom.id, dad.id]);
+        create_category(&store, &mom);
+        create_category(&store, &dad);
+        create_category(&store, &family);
+
+        // Only Mom assigned → Family fires
+        let item1 = create_item(&store, "neutral one");
+        store
+            .assign_item(item1.id, mom.id, &manual_assignment())
+            .unwrap();
+        let result1 = process_item(&store, &classifier, item1.id).unwrap();
+        assert!(result1.new_assignments.contains(&family.id));
+
+        // Only Dad assigned → Family fires
+        let item2 = create_item(&store, "neutral two");
+        store
+            .assign_item(item2.id, dad.id, &manual_assignment())
+            .unwrap();
+        let result2 = process_item(&store, &classifier, item2.id).unwrap();
+        assert!(result2.new_assignments.contains(&family.id));
+
+        // Neither assigned → Family does NOT fire
+        let item3 = create_item(&store, "neutral three");
+        let result3 = process_item(&store, &classifier, item3.id).unwrap();
+        assert!(!result3.new_assignments.contains(&family.id));
+    }
+
+    #[test]
+    fn profile_mom_or_dad_via_multiple_conditions() {
+        // Two separate profile conditions: condition1 = --and Mom, condition2 = --and Dad
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mom = category("Mom", false);
+        let dad = category("Dad", false);
+        create_category(&store, &mom);
+        create_category(&store, &dad);
+
+        let mut family = category("Family", false);
+        let mut c1 = Query::default();
+        c1.set_criterion(CriterionMode::And, mom.id);
+        family.conditions.push(Condition::Profile {
+            criteria: Box::new(c1),
+        });
+        let mut c2 = Query::default();
+        c2.set_criterion(CriterionMode::And, dad.id);
+        family.conditions.push(Condition::Profile {
+            criteria: Box::new(c2),
+        });
+        create_category(&store, &family);
+
+        // Only Mom assigned → Family fires (first condition matches)
+        let item1 = create_item(&store, "neutral one");
+        store
+            .assign_item(item1.id, mom.id, &manual_assignment())
+            .unwrap();
+        let result1 = process_item(&store, &classifier, item1.id).unwrap();
+        assert!(result1.new_assignments.contains(&family.id));
+
+        // Only Dad assigned → Family fires (second condition matches)
+        let item2 = create_item(&store, "neutral two");
+        store
+            .assign_item(item2.id, dad.id, &manual_assignment())
+            .unwrap();
+        let result2 = process_item(&store, &classifier, item2.id).unwrap();
+        assert!(result2.new_assignments.contains(&family.id));
+
+        // Both assigned → Family fires (both conditions match)
+        let item3 = create_item(&store, "neutral three");
+        store
+            .assign_item(item3.id, mom.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item3.id, dad.id, &manual_assignment())
+            .unwrap();
+        let result3 = process_item(&store, &classifier, item3.id).unwrap();
+        assert!(result3.new_assignments.contains(&family.id));
+
+        // Neither assigned → Family does NOT fire
+        let item4 = create_item(&store, "neutral four");
+        let result4 = process_item(&store, &classifier, item4.id).unwrap();
+        assert!(!result4.new_assignments.contains(&family.id));
+    }
 }
