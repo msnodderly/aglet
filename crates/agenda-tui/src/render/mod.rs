@@ -6203,7 +6203,7 @@ impl App {
                 let flags_height = if is_numeric_category {
                     7
                 } else {
-                    8 + workflow_role_height
+                    7 + workflow_role_height
                 };
                 let details_chunks = if is_numeric_category {
                     Layout::default()
@@ -6222,13 +6222,15 @@ impl App {
                             Constraint::Length(info_height),
                             Constraint::Length(flags_height),
                             Constraint::Length(6),
+                            Constraint::Length(4),
                             Constraint::Min(5),
                             Constraint::Length(2),
                         ])
                         .split(details_inner)
                 };
-                let note_chunk_index = if is_numeric_category { 2 } else { 3 };
-                let hint_chunk_index = if is_numeric_category { 3 } else { 4 };
+                let conditions_chunk_index: usize = 3;
+                let note_chunk_index = if is_numeric_category { 2 } else { 4 };
+                let hint_chunk_index = if is_numeric_category { 3 } else { 5 };
 
                 let assigned_item_count = self
                     .category_assignment_counts
@@ -6425,37 +6427,6 @@ impl App {
                             row.is_actionable,
                         ),
                     ];
-                    // Conditions summary line
-                    let conditions_focused =
-                        details_focus == CategoryManagerDetailsFocus::Conditions;
-                    let conditions_count = self
-                        .categories
-                        .iter()
-                        .find(|c| c.id == row.id)
-                        .map(|c| c.conditions.len())
-                        .unwrap_or(0);
-                    let conditions_label = if conditions_count == 0 {
-                        "Conditions: none".to_string()
-                    } else {
-                        format!("Conditions: {} rule{}", conditions_count, if conditions_count == 1 { "" } else { "s" })
-                    };
-                    let conditions_style = if is_reserved_category {
-                        Style::default()
-                            .fg(MUTED_TEXT_COLOR)
-                            .add_modifier(Modifier::DIM)
-                    } else if conditions_focused {
-                        focused_cell_style()
-                    } else {
-                        Style::default()
-                    };
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "{}{}",
-                            focus_prefix(conditions_focused && !is_reserved_category),
-                            conditions_label
-                        ),
-                        conditions_style,
-                    )));
                     if is_ready_queue_role {
                         lines.push(Line::from(Span::styled(
                             "  Workflow: Ready Queue",
@@ -6578,6 +6549,118 @@ impl App {
                             also_match_scroll as usize,
                         );
                     }
+                }
+
+                // Conditions subpane (non-numeric only)
+                if !is_numeric_category {
+                    let conditions_focused = !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::Conditions;
+                    let conditions_count = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .map(|c| {
+                            c.conditions
+                                .iter()
+                                .filter(|cond| matches!(cond, Condition::Profile { .. }))
+                                .count()
+                        })
+                        .unwrap_or(0);
+                    let conditions_summary = if conditions_count == 0 {
+                        "  (none — Enter to add)".to_string()
+                    } else {
+                        let category_names: std::collections::HashMap<CategoryId, &str> = self
+                            .categories
+                            .iter()
+                            .map(|c| (c.id, c.name.as_str()))
+                            .collect();
+                        self.categories
+                            .iter()
+                            .find(|c| c.id == row.id)
+                            .map(|cat| {
+                                cat.conditions
+                                    .iter()
+                                    .filter_map(|cond| match cond {
+                                        Condition::Profile { criteria } => {
+                                            let mut parts = Vec::new();
+                                            let and_names: Vec<&str> = criteria
+                                                .and_category_ids()
+                                                .filter_map(|id| {
+                                                    category_names.get(&id).copied()
+                                                })
+                                                .collect();
+                                            let not_names: Vec<&str> = criteria
+                                                .not_category_ids()
+                                                .filter_map(|id| {
+                                                    category_names.get(&id).copied()
+                                                })
+                                                .collect();
+                                            let or_names: Vec<&str> = criteria
+                                                .or_category_ids()
+                                                .filter_map(|id| {
+                                                    category_names.get(&id).copied()
+                                                })
+                                                .collect();
+                                            if !and_names.is_empty() {
+                                                parts.push(format!(
+                                                    "AND: {}",
+                                                    and_names.join(", ")
+                                                ));
+                                            }
+                                            if !not_names.is_empty() {
+                                                parts.push(format!(
+                                                    "NOT: {}",
+                                                    not_names.join(", ")
+                                                ));
+                                            }
+                                            if !or_names.is_empty() {
+                                                parts.push(format!(
+                                                    "OR: {}",
+                                                    or_names.join(", ")
+                                                ));
+                                            }
+                                            Some(format!("  {}", parts.join(" / ")))
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            })
+                            .unwrap_or_default()
+                    };
+                    let conditions_title = if conditions_count == 0 {
+                        "Conditions"
+                    } else {
+                        "Conditions (Enter to edit)"
+                    };
+                    let conditions_title_display = if conditions_focused {
+                        format!("> {conditions_title}")
+                    } else {
+                        conditions_title.to_string()
+                    };
+                    frame.render_widget(
+                        Paragraph::new(conditions_summary)
+                            .style(if is_reserved_category {
+                                Style::default()
+                                    .fg(MUTED_TEXT_COLOR)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            })
+                            .block(
+                                Block::default()
+                                    .title(conditions_title_display)
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(
+                                        if conditions_focused {
+                                            CATEGORY_MANAGER_EDIT_FOCUS
+                                        } else {
+                                            pane_idle
+                                        },
+                                    )),
+                            ),
+                        details_chunks[conditions_chunk_index],
+                    );
                 }
 
                 let note_block_focus =
