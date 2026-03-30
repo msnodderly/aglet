@@ -2251,10 +2251,10 @@ impl App {
                     self.status = "No selected item to toggle".to_string();
                 }
             }
-            KeyCode::Down if self.current_key_modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Down if self.transient.key_modifiers.contains(KeyModifiers::SHIFT) => {
                 self.move_selected_item_between_slots(1, agenda)?;
             }
-            KeyCode::Up if self.current_key_modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Up if self.transient.key_modifiers.contains(KeyModifiers::SHIFT) => {
                 self.move_selected_item_between_slots(-1, agenda)?;
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -4066,7 +4066,8 @@ impl App {
             );
             // Populate pending classification suggestions for inline review.
             if let Some(review_item) = self
-                .classification_ui
+                .classification
+                .ui
                 .review_items
                 .iter()
                 .find(|ri| ri.item_id == item_id)
@@ -4231,7 +4232,7 @@ impl App {
         }
 
         // Ctrl+G: open the focused text buffer in $EDITOR.
-        if self.current_key_modifiers.contains(KeyModifiers::CONTROL)
+        if self.transient.key_modifiers.contains(KeyModifiers::CONTROL)
             && matches!(code, KeyCode::Char('g') | KeyCode::Char('G'))
         {
             if let Some(panel) = &self.input_panel {
@@ -4244,7 +4245,7 @@ impl App {
                     input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
                 ) || matches!(panel.focus, input_panel::InputPanelFocus::Text);
                 if allowed {
-                    self.pending_external_edit = Some(target);
+                    self.transient.pending_external_edit = Some(target);
                     return Ok(false);
                 }
             }
@@ -5149,7 +5150,7 @@ impl App {
                     self.status = "Ollama base URL cannot be empty".to_string();
                     return Ok(());
                 }
-                let mut config = self.classification_ui.config.clone();
+                let mut config = self.classification.ui.config.clone();
                 config.ollama.base_url = input_text.clone();
                 agenda.store().set_classification_config(&config)?;
                 self.refresh(agenda.store())?;
@@ -5163,7 +5164,7 @@ impl App {
                     self.status = "Ollama model cannot be empty".to_string();
                     return Ok(());
                 }
-                let mut config = self.classification_ui.config.clone();
+                let mut config = self.classification.ui.config.clone();
                 config.ollama.model = input_text.clone();
                 agenda.store().set_classification_config(&config)?;
                 self.refresh(agenda.store())?;
@@ -5181,7 +5182,7 @@ impl App {
                     self.status = "Timeout must be at least 1 second".to_string();
                     return Ok(());
                 }
-                let mut config = self.classification_ui.config.clone();
+                let mut config = self.classification.ui.config.clone();
                 config.ollama.timeout_secs = secs;
                 agenda.store().set_classification_config(&config)?;
                 self.refresh(agenda.store())?;
@@ -6438,7 +6439,10 @@ mod tests {
                 &HashSet::new(),
             )),
             mode: Mode::InputPanel,
-            current_key_modifiers: KeyModifiers::CONTROL,
+            transient: TransientUiState {
+                key_modifiers: KeyModifiers::CONTROL,
+                ..TransientUiState::default()
+            },
             ..App::default()
         };
 
@@ -6447,7 +6451,10 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
         app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
             .expect("ctrl+g");
-        assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Text));
+        assert_eq!(
+            app.transient.pending_external_edit,
+            Some(ExternalEditorTarget::Text)
+        );
     }
 
     #[test]
@@ -6457,7 +6464,10 @@ mod tests {
         let mut app = App {
             input_panel: Some(panel),
             mode: Mode::InputPanel,
-            current_key_modifiers: KeyModifiers::CONTROL,
+            transient: TransientUiState {
+                key_modifiers: KeyModifiers::CONTROL,
+                ..TransientUiState::default()
+            },
             ..App::default()
         };
 
@@ -6466,7 +6476,10 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
         app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
             .expect("ctrl+g");
-        assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Note));
+        assert_eq!(
+            app.transient.pending_external_edit,
+            Some(ExternalEditorTarget::Note)
+        );
     }
 
 
@@ -6475,7 +6488,10 @@ mod tests {
         let mut app = App {
             input_panel: Some(input_panel::InputPanel::new_name_input("test", "label")),
             mode: Mode::InputPanel,
-            current_key_modifiers: KeyModifiers::CONTROL,
+            transient: TransientUiState {
+                key_modifiers: KeyModifiers::CONTROL,
+                ..TransientUiState::default()
+            },
             ..App::default()
         };
 
@@ -6484,7 +6500,10 @@ mod tests {
         let agenda = Agenda::new(&store, &classifier);
         app.handle_input_panel_key(KeyCode::Char('g'), &agenda)
             .expect("ctrl+g");
-        assert_eq!(app.pending_external_edit, Some(ExternalEditorTarget::Text));
+        assert_eq!(
+            app.transient.pending_external_edit,
+            Some(ExternalEditorTarget::Text)
+        );
     }
 
 

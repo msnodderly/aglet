@@ -7,7 +7,8 @@ impl App {
         self.refresh(agenda.store())?;
 
         let items: Vec<SuggestionReviewItem> = self
-            .classification_ui
+            .classification
+            .ui
             .review_items
             .iter()
             .filter(|item| !item.suggestions.is_empty())
@@ -32,7 +33,7 @@ impl App {
             return Ok(());
         }
 
-        self.suggestion_review = Some(SuggestionReviewState {
+        self.classification.suggestion_review = Some(SuggestionReviewState {
             items,
             item_index: 0,
             suggestion_cursor: 0,
@@ -54,7 +55,7 @@ impl App {
     ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc => {
-                self.suggestion_review = None;
+                self.classification.suggestion_review = None;
                 self.mode = Mode::Normal;
                 self.status = "Suggestion review closed".to_string();
             }
@@ -62,7 +63,7 @@ impl App {
                 self.mode = Mode::HelpPanel;
             }
             KeyCode::Tab | KeyCode::BackTab => {
-                if let Some(state) = &mut self.suggestion_review {
+                if let Some(state) = &mut self.classification.suggestion_review {
                     state.focus = match state.focus {
                         SuggestionReviewFocus::Items => SuggestionReviewFocus::Suggestions,
                         SuggestionReviewFocus::Suggestions => SuggestionReviewFocus::Items,
@@ -70,7 +71,7 @@ impl App {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(state) = &mut self.suggestion_review {
+                if let Some(state) = &mut self.classification.suggestion_review {
                     match state.focus {
                         SuggestionReviewFocus::Items => {
                             let len = state.items.len();
@@ -91,7 +92,7 @@ impl App {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(state) = &mut self.suggestion_review {
+                if let Some(state) = &mut self.classification.suggestion_review {
                     match state.focus {
                         SuggestionReviewFocus::Items => {
                             let len = state.items.len();
@@ -113,7 +114,7 @@ impl App {
                 }
             }
             KeyCode::Char(' ') => {
-                if let Some(state) = &mut self.suggestion_review {
+                if let Some(state) = &mut self.classification.suggestion_review {
                     if state.focus == SuggestionReviewFocus::Suggestions {
                         if let Some(item) = state.items.get_mut(state.item_index) {
                             if let Some(s) = item.suggestions.get_mut(state.suggestion_cursor) {
@@ -124,7 +125,7 @@ impl App {
                 }
             }
             KeyCode::Char('A') => {
-                if let Some(state) = &mut self.suggestion_review {
+                if let Some(state) = &mut self.classification.suggestion_review {
                     if let Some(item) = state.items.get_mut(state.item_index) {
                         for s in &mut item.suggestions {
                             s.accepted = true;
@@ -135,7 +136,7 @@ impl App {
             }
             KeyCode::Char('s') => {
                 // Skip: advance to next item without confirming
-                if let Some(state) = &mut self.suggestion_review {
+                if let Some(state) = &mut self.classification.suggestion_review {
                     let len = state.items.len();
                     if len > 1 {
                         state.item_index = (state.item_index + 1) % len;
@@ -158,7 +159,7 @@ impl App {
     fn confirm_suggestion_review_item(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         // Collect decisions and mutate state in a scoped borrow, then refresh after.
         let outcome = {
-            let state = match &mut self.suggestion_review {
+            let state = match &mut self.classification.suggestion_review {
                 Some(s) => s,
                 None => return Ok(()),
             };
@@ -208,7 +209,7 @@ impl App {
         if let Some((count, resolved_items, accepted, rejected, is_done)) = outcome {
             self.refresh(agenda.store())?;
             if is_done {
-                self.suggestion_review = None;
+                self.classification.suggestion_review = None;
                 self.mode = Mode::Normal;
                 self.status = format!(
                     "Review complete: {} suggestion{} resolved across {} item{}",

@@ -2,7 +2,7 @@ use crate::*;
 
 impl App {
     pub(crate) fn global_settings_selected_row(&self) -> usize {
-        self.global_settings
+        self.settings.global_settings
             .as_ref()
             .map(|state| state.selected_row)
             .unwrap_or(0)
@@ -10,10 +10,10 @@ impl App {
 
     fn set_global_settings_selected_row(&mut self, selected_row: usize) {
         let selected_row = selected_row.min(GlobalSettingsRow::count().saturating_sub(1));
-        if let Some(state) = self.global_settings.as_mut() {
+        if let Some(state) = self.settings.global_settings.as_mut() {
             state.selected_row = selected_row;
         } else {
-            self.global_settings = Some(GlobalSettingsState { selected_row });
+            self.settings.global_settings = Some(GlobalSettingsState { selected_row });
         }
     }
 
@@ -59,11 +59,11 @@ impl App {
         forward: bool,
     ) -> TuiResult<()> {
         let current_index =
-            modes::classification::literal_mode_index(self.classification_ui.config.literal_mode);
+            modes::classification::literal_mode_index(self.classification.ui.config.literal_mode);
         let next_index = next_index(current_index, 3, if forward { 1 } else { -1 });
         let mode = modes::classification::literal_mode_from_index(next_index);
 
-        let mut config = self.classification_ui.config.clone();
+        let mut config = self.classification.ui.config.clone();
         config.literal_mode = mode;
         config.sync_enabled_flag();
         agenda.store().set_classification_config(&config)?;
@@ -81,11 +81,11 @@ impl App {
         forward: bool,
     ) -> TuiResult<()> {
         let current_index =
-            modes::classification::semantic_mode_index(self.classification_ui.config.semantic_mode);
+            modes::classification::semantic_mode_index(self.classification.ui.config.semantic_mode);
         let next_index = next_index(current_index, 2, if forward { 1 } else { -1 });
         let mode = modes::classification::semantic_mode_from_index(next_index);
 
-        let mut config = self.classification_ui.config.clone();
+        let mut config = self.classification.ui.config.clone();
         config.semantic_mode = mode;
         config.sync_enabled_flag();
         agenda.store().set_classification_config(&config)?;
@@ -98,7 +98,7 @@ impl App {
     }
 
     fn toggle_global_settings_ollama_enabled(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
-        let mut config = self.classification_ui.config.clone();
+        let mut config = self.classification.ui.config.clone();
         config.ollama.enabled = !config.ollama.enabled;
         config.set_provider_enabled(
             agenda_core::classification::PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
@@ -108,7 +108,7 @@ impl App {
         self.refresh(agenda.store())?;
         self.status = format!(
             "Ollama {}",
-            if self.classification_ui.config.ollama.enabled {
+            if self.classification.ui.config.ollama.enabled {
                 "enabled"
             } else {
                 "disabled"
@@ -120,15 +120,15 @@ impl App {
     pub(crate) fn open_global_settings_ollama_text_input(&mut self, context: NameInputContext) {
         let (current_value, label) = match context {
             NameInputContext::OllamaBaseUrl => (
-                self.classification_ui.config.ollama.base_url.clone(),
+                self.classification.ui.config.ollama.base_url.clone(),
                 "Ollama base URL",
             ),
             NameInputContext::OllamaModel => (
-                self.classification_ui.config.ollama.model.clone(),
+                self.classification.ui.config.ollama.model.clone(),
                 "Ollama model",
             ),
             NameInputContext::OllamaTimeout => (
-                self.classification_ui
+                self.classification.ui
                     .config
                     .ollama
                     .timeout_secs
@@ -163,11 +163,12 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> TuiResult<bool> {
-        if self.ollama_model_picker.is_some() {
+        if self.settings.ollama_model_picker.is_some() {
             self.handle_ollama_model_picker_key(code, agenda)?;
             return Ok(false);
         }
         if self
+            .settings
             .workflow_role_picker
             .as_ref()
             .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
@@ -178,8 +179,8 @@ impl App {
 
         match code {
             KeyCode::Esc => {
-                self.workflow_role_picker = None;
-                self.global_settings = None;
+                self.settings.workflow_role_picker = None;
+                self.settings.global_settings = None;
                 self.mode = Mode::Normal;
                 self.status = "Closed Global Settings".to_string();
             }
@@ -281,12 +282,12 @@ impl App {
     }
 
     fn open_ollama_model_picker(&mut self, _agenda: &Agenda<'_>) {
-        match agenda_core::classification::list_ollama_models(&self.classification_ui.config.ollama)
+        match agenda_core::classification::list_ollama_models(&self.classification.ui.config.ollama)
         {
             Ok(models) if !models.is_empty() => {
-                let current = &self.classification_ui.config.ollama.model;
+                let current = &self.classification.ui.config.ollama.model;
                 let selected_index = models.iter().position(|m| m == current).unwrap_or(0);
-                self.ollama_model_picker = Some(OllamaModelPickerState {
+                self.settings.ollama_model_picker = Some(OllamaModelPickerState {
                     models,
                     selected_index,
                 });
@@ -308,12 +309,12 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> TuiResult<()> {
-        let Some(picker) = self.ollama_model_picker.as_mut() else {
+        let Some(picker) = self.settings.ollama_model_picker.as_mut() else {
             return Ok(());
         };
         match code {
             KeyCode::Esc => {
-                self.ollama_model_picker = None;
+                self.settings.ollama_model_picker = None;
                 self.status = "Model selection cancelled".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -326,8 +327,8 @@ impl App {
             }
             KeyCode::Enter => {
                 let selected = picker.models[picker.selected_index].clone();
-                self.ollama_model_picker = None;
-                let mut config = self.classification_ui.config.clone();
+                self.settings.ollama_model_picker = None;
+                let mut config = self.classification.ui.config.clone();
                 config.ollama.model = selected.clone();
                 agenda.store().set_classification_config(&config)?;
                 self.refresh(agenda.store())?;

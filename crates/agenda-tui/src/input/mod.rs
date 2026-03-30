@@ -8,7 +8,7 @@ impl App {
     ) -> TuiResult<bool> {
         self.clear_expired_transient_status();
         self.clear_transient_status_on_key(key);
-        self.current_key_modifiers = key.modifiers;
+        self.transient.key_modifiers = key.modifiers;
         let handled = match self.mode {
             Mode::Normal => self.handle_normal_key_event(key, agenda),
             Mode::GlobalSettings
@@ -33,7 +33,7 @@ impl App {
                 self.handle_key(key.code, agenda)
             }
         };
-        self.current_key_modifiers = KeyModifiers::NONE;
+        self.transient.key_modifiers = KeyModifiers::NONE;
         handled
     }
 
@@ -81,7 +81,7 @@ impl App {
     }
 
     pub(crate) fn text_key_event(&self, code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, self.current_key_modifiers)
+        KeyEvent::new(code, self.transient.key_modifiers)
     }
 
     pub(crate) fn selected_category_is_reserved(&self) -> bool {
