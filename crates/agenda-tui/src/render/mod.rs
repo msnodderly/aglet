@@ -3107,15 +3107,18 @@ impl App {
             if rows.is_empty() {
                 items.push(ListItem::new(Line::from("(no assignments)")));
             } else {
-                let row_start = items.len();
                 let picker_mode = self.mode == Mode::InspectUnassign;
                 for (index, row) in rows.iter().enumerate() {
+                    let entry_line = items.len();
                     items.push(ListItem::new(Line::from(format!(
                         "{} | source={} | origin={}",
                         row.category_name, row.source_label, row.origin_label
                     ))));
+                    if let Some(explanation) = &row.explanation_label {
+                        items.push(ListItem::new(Line::from(format!("  {explanation}"))));
+                    }
                     if picker_mode && index == self.inspect_assignment_index {
-                        selected_line = Some(row_start + index);
+                        selected_line = Some(entry_line);
                     }
                 }
             }
@@ -3223,6 +3226,9 @@ impl App {
                     "  {} | source={} | origin={}",
                     row.category_name, row.source_label, row.origin_label
                 )));
+                if let Some(explanation) = row.explanation_label {
+                    lines.push(Line::from(format!("    {explanation}")));
+                }
             }
         }
         lines

@@ -20,9 +20,11 @@ use crate::engine::{
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentSource, Category, CategoryId,
-    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section,
-    View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
+    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
+    AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
+    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
+    Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -175,7 +177,8 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: origin.or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
+            origin: origin.clone().or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
+            explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value: None,
         });
         self.sync_when_assignment(item_id, when_date, when_assignment)?;
@@ -220,13 +223,22 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: origin.or_else(|| Some(origin_const::MANUAL.to_string())),
+            origin: origin.clone().or_else(|| Some(origin_const::MANUAL.to_string())),
+            explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value: None,
         };
 
         self.store.assign_item(item_id, category_id, &assignment)?;
         self.assign_subsumption_for_category(item_id, category_id)?;
-        self.reprocess_existing_item(item_id)
+        let mut result = self.reprocess_existing_item(item_id)?;
+        self.prepend_assignment_event(
+            &mut result,
+            AssignmentEventKind::Assigned,
+            category_id,
+            "Assigned manually",
+        );
+        self.debug_log_process_result("assign.manual", item_id, &result);
+        Ok(result)
     }
 
     pub fn claim_item_manual(
@@ -320,13 +332,22 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: origin.or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
+            origin: origin.clone().or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
+            explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value: Some(numeric_value),
         };
 
         self.store.assign_item(item_id, category_id, &assignment)?;
         self.assign_subsumption_for_category(item_id, category_id)?;
-        self.reprocess_existing_item(item_id)
+        let mut result = self.reprocess_existing_item(item_id)?;
+        self.prepend_assignment_event(
+            &mut result,
+            AssignmentEventKind::Assigned,
+            category_id,
+            "Assigned manually",
+        );
+        self.debug_log_process_result("assign.manual.numeric", item_id, &result);
+        Ok(result)
     }
 
     pub fn unassign_item_manual(
@@ -357,7 +378,23 @@ impl<'a> Agenda<'a> {
             });
         }
         self.store.unassign_item(item_id, category_id)?;
-        self.reprocess_existing_item(item_id)
+        let mut result = self.reprocess_existing_item(item_id)?;
+        let category_name = self
+            .store
+            .get_category(category_id)
+            .map(|category| category.name)
+            .unwrap_or_else(|_| category_id.to_string());
+        result.assignment_events.insert(
+            0,
+            AssignmentEvent {
+                kind: AssignmentEventKind::Removed,
+                category_id,
+                category_name,
+                summary: "Removed manually".to_string(),
+            },
+        );
+        self.debug_log_process_result("remove.manual", item_id, &result);
+        Ok(result)
     }
 
     pub fn insert_item_in_section(
@@ -545,6 +582,9 @@ impl<'a> Agenda<'a> {
             assigned_at: now,
             sticky: true,
             origin: Some(origin_const::MANUAL_DONE.to_string()),
+            explanation: Some(AssignmentExplanation::Manual {
+                origin: Some(origin_const::MANUAL_DONE.to_string()),
+            }),
             numeric_value: None,
         };
         self.store
@@ -595,6 +635,7 @@ impl<'a> Agenda<'a> {
         self.ensure_depends_on_no_cycle(dependent_id, dependency_id)?;
         let link = self.build_link(dependent_id, dependency_id, ItemLinkKind::DependsOn);
         self.store.create_item_link(&link)?;
+        self.debug_log_link_event("link.created", dependent_id, dependency_id, ItemLinkKind::DependsOn);
         Ok(LinkItemsResult { created: true })
     }
 
@@ -621,6 +662,7 @@ impl<'a> Agenda<'a> {
 
         let link = self.build_link(item_id, other_item_id, ItemLinkKind::Related);
         self.store.create_item_link(&link)?;
+        self.debug_log_link_event("link.created", item_id, other_item_id, ItemLinkKind::Related);
         Ok(LinkItemsResult { created: true })
     }
 
@@ -630,7 +672,14 @@ impl<'a> Agenda<'a> {
         dependency_id: ItemId,
     ) -> Result<()> {
         self.store
-            .delete_item_link(dependent_id, dependency_id, ItemLinkKind::DependsOn)
+            .delete_item_link(dependent_id, dependency_id, ItemLinkKind::DependsOn)?;
+        self.debug_log_link_event(
+            "link.removed",
+            dependent_id,
+            dependency_id,
+            ItemLinkKind::DependsOn,
+        );
+        Ok(())
     }
 
     pub fn unlink_items_blocks(&self, blocker_id: ItemId, blocked_id: ItemId) -> Result<()> {
@@ -640,7 +689,9 @@ impl<'a> Agenda<'a> {
     pub fn unlink_items_related(&self, a: ItemId, b: ItemId) -> Result<()> {
         let (item_id, other_item_id) = Self::normalize_related_pair(a, b);
         self.store
-            .delete_item_link(item_id, other_item_id, ItemLinkKind::Related)
+            .delete_item_link(item_id, other_item_id, ItemLinkKind::Related)?;
+        self.debug_log_link_event("link.removed", item_id, other_item_id, ItemLinkKind::Related);
+        Ok(())
     }
 
     pub fn immediate_prereq_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>> {
@@ -690,6 +741,7 @@ impl<'a> Agenda<'a> {
         self.store
             .set_suggestion_status(suggestion_id, SuggestionStatus::Accepted)?;
         merge_process_results(&mut result, self.process_cascades(suggestion.item_id)?);
+        self.debug_log_process_result("suggestion.accept", suggestion.item_id, &result);
         Ok(result)
     }
 
@@ -864,7 +916,9 @@ impl<'a> Agenda<'a> {
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
         if !cfg.should_run_continuously() || !cfg.run_on_item_save {
-            return self.process_cascades(item_id);
+            let result = self.process_cascades(item_id)?;
+            self.debug_log_process_result("item.process", item_id, &result);
+            return Ok(result);
         }
 
         let service = if include_semantic {
@@ -873,7 +927,9 @@ impl<'a> Agenda<'a> {
             self.classification_service_cheap(reference_date, &cfg, text_changed)
         };
         if !service.has_providers() {
-            return self.process_cascades(item_id);
+            let result = self.process_cascades(item_id)?;
+            self.debug_log_process_result("item.process", item_id, &result);
+            return Ok(result);
         }
 
         let (_item, item_revision_hash, candidates, debug_summaries) =
@@ -963,6 +1019,7 @@ impl<'a> Agenda<'a> {
         }
 
         merge_process_results(&mut result, self.process_cascades(item_id)?);
+        self.debug_log_process_result("item.process", item_id, &result);
         Ok(result)
     }
 
@@ -1271,9 +1328,25 @@ impl<'a> Agenda<'a> {
                     *category_id,
                     AssignmentSource::AutoClassified,
                     Some(format!("cat:{}", category.name)),
+                    Some(AssignmentExplanation::AutoClassified {
+                        provider_id: candidate.provider.clone(),
+                        model: candidate.model.clone(),
+                        rationale: candidate.rationale.clone(),
+                    }),
                     false,
                 )? {
                     result.new_assignments.insert(*category_id);
+                    result.assignment_events.push(AssignmentEvent {
+                        kind: AssignmentEventKind::Assigned,
+                        category_id: *category_id,
+                        category_name: category.name.clone(),
+                        summary: AssignmentExplanation::AutoClassified {
+                            provider_id: candidate.provider.clone(),
+                            model: candidate.model.clone(),
+                            rationale: candidate.rationale.clone(),
+                        }
+                        .summary(),
+                    });
                     merge_process_results(
                         &mut result,
                         self.apply_actions_for_category(item_id, *category_id)?,
@@ -1293,10 +1366,25 @@ impl<'a> Agenda<'a> {
                     *when_date,
                     AssignmentSource::AutoClassified,
                     origin,
+                    Some(AssignmentExplanation::AutoClassified {
+                        provider_id: candidate.provider.clone(),
+                        model: candidate.model.clone(),
+                        rationale: candidate.rationale.clone(),
+                    }),
                 )? {
-                    result
-                        .new_assignments
-                        .insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
+                    let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
+                    result.new_assignments.insert(when_category_id);
+                    result.assignment_events.push(AssignmentEvent {
+                        kind: AssignmentEventKind::Assigned,
+                        category_id: when_category_id,
+                        category_name: RESERVED_CATEGORY_NAME_WHEN.to_string(),
+                        summary: AssignmentExplanation::AutoClassified {
+                            provider_id: candidate.provider.clone(),
+                            model: candidate.model.clone(),
+                            rationale: candidate.rationale.clone(),
+                        }
+                        .summary(),
+                    });
                 }
                 Ok(result)
             }
@@ -1316,9 +1404,25 @@ impl<'a> Agenda<'a> {
                     category_id,
                     AssignmentSource::SuggestionAccepted,
                     origin,
+                    Some(AssignmentExplanation::SuggestionAccepted {
+                        provider_id: suggestion.provider_id.clone(),
+                        model: suggestion.model.clone(),
+                        rationale: suggestion.rationale.clone(),
+                    }),
                     true,
                 )? {
                     result.new_assignments.insert(category_id);
+                    result.assignment_events.push(AssignmentEvent {
+                        kind: AssignmentEventKind::Assigned,
+                        category_id,
+                        category_name: self.category_name_or_id(category_id),
+                        summary: AssignmentExplanation::SuggestionAccepted {
+                            provider_id: suggestion.provider_id.clone(),
+                            model: suggestion.model.clone(),
+                            rationale: suggestion.rationale.clone(),
+                        }
+                        .summary(),
+                    });
                     merge_process_results(
                         &mut result,
                         self.apply_actions_for_category(suggestion.item_id, category_id)?,
@@ -1333,10 +1437,25 @@ impl<'a> Agenda<'a> {
                     when_date,
                     AssignmentSource::SuggestionAccepted,
                     origin,
+                    Some(AssignmentExplanation::SuggestionAccepted {
+                        provider_id: suggestion.provider_id.clone(),
+                        model: suggestion.model.clone(),
+                        rationale: suggestion.rationale.clone(),
+                    }),
                 )? {
-                    result
-                        .new_assignments
-                        .insert(self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?);
+                    let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
+                    result.new_assignments.insert(when_category_id);
+                    result.assignment_events.push(AssignmentEvent {
+                        kind: AssignmentEventKind::Assigned,
+                        category_id: when_category_id,
+                        category_name: RESERVED_CATEGORY_NAME_WHEN.to_string(),
+                        summary: AssignmentExplanation::SuggestionAccepted {
+                            provider_id: suggestion.provider_id.clone(),
+                            model: suggestion.model.clone(),
+                            rationale: suggestion.rationale.clone(),
+                        }
+                        .summary(),
+                    });
                 }
                 Ok(result)
             }
@@ -1349,6 +1468,7 @@ impl<'a> Agenda<'a> {
         category_id: CategoryId,
         source: AssignmentSource,
         origin: Option<String>,
+        explanation: Option<AssignmentExplanation>,
         allow_manual_exclusive_override: bool,
     ) -> Result<bool> {
         let assignments = self.store.get_assignments_for_item(item_id)?;
@@ -1367,6 +1487,7 @@ impl<'a> Agenda<'a> {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin,
+            explanation,
             numeric_value: None,
         };
         self.store.assign_item(item_id, category_id, &assignment)?;
@@ -1380,6 +1501,7 @@ impl<'a> Agenda<'a> {
         when_date: jiff::civil::DateTime,
         source: AssignmentSource,
         origin: Option<String>,
+        explanation: Option<AssignmentExplanation>,
     ) -> Result<bool> {
         let mut item = self.store.get_item(item_id)?;
         if item.when_date == Some(when_date) {
@@ -1394,6 +1516,7 @@ impl<'a> Agenda<'a> {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin,
+            explanation,
             numeric_value: None,
         };
         self.sync_when_assignment(item_id, Some(when_date), Some(assignment))?;
@@ -1417,21 +1540,47 @@ impl<'a> Agenda<'a> {
                             *target_id,
                             AssignmentSource::Action,
                             Some(format!("action:{}", category.name)),
+                            Some(AssignmentExplanation::Action {
+                                trigger_category_name: category.name.clone(),
+                                kind: AssignmentActionKind::Assign,
+                            }),
                             true,
                         )? {
                             result.new_assignments.insert(*target_id);
+                            result.assignment_events.push(AssignmentEvent {
+                                kind: AssignmentEventKind::Assigned,
+                                category_id: *target_id,
+                                category_name: self.category_name_or_id(*target_id),
+                                summary: format!("Assigned by action on {}", category.name),
+                            });
                         }
                     }
                 }
                 Action::Remove { targets } => {
                     for target_id in targets {
-                        self.store.unassign_item(item_id, *target_id)?;
-                        result
-                            .deferred_removals
-                            .push(crate::engine::DeferredRemoval {
-                                target: *target_id,
-                                triggered_by: category_id,
+                        let existing_assignments = self.store.get_assignments_for_item(item_id)?;
+                        if let Some(existing) = existing_assignments.get(target_id) {
+                            self.store.unassign_item(item_id, *target_id)?;
+                            result
+                                .deferred_removals
+                                .push(crate::engine::DeferredRemoval {
+                                    target: *target_id,
+                                    triggered_by: category_id,
+                                });
+                            result.removed_assignments.insert(*target_id);
+                            result.assignment_events.push(AssignmentEvent {
+                                kind: AssignmentEventKind::Removed,
+                                category_id: *target_id,
+                                category_name: self.store.get_category(*target_id)?.name,
+                                summary: existing
+                                    .explanation
+                                    .as_ref()
+                                    .map(|explanation| explanation.removal_summary())
+                                    .unwrap_or_else(|| {
+                                        format!("Removed by action on {}", category.name)
+                                    }),
                             });
+                        }
                     }
                 }
             }
@@ -1479,6 +1628,9 @@ impl<'a> Agenda<'a> {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin.to_string()),
+            explanation: Some(AssignmentExplanation::Manual {
+                origin: Some(origin.to_string()),
+            }),
             numeric_value: None,
         };
 
@@ -1549,6 +1701,13 @@ impl<'a> Agenda<'a> {
                     assigned_at: Timestamp::now(),
                     sticky: false,
                     origin: Some(format!("{}:{parent_name}", origin_const::SUBSUMPTION)),
+                    explanation: Some(AssignmentExplanation::Subsumption {
+                        parent_category_name: parent_name.clone(),
+                        via_child_category_name: categories_by_id
+                            .get(&category_id)
+                            .map(|category| category.name.clone())
+                            .unwrap_or_else(|| category_id.to_string()),
+                    }),
                     numeric_value: None,
                 };
                 self.store.assign_item(item_id, parent_id, &assignment)?;
@@ -1593,6 +1752,61 @@ impl<'a> Agenda<'a> {
         let mut targets = section.on_insert_assign.clone();
         targets.extend(section.criteria.and_category_ids());
         targets
+    }
+
+    fn prepend_assignment_event(
+        &self,
+        result: &mut ProcessItemResult,
+        kind: AssignmentEventKind,
+        category_id: CategoryId,
+        summary: &str,
+    ) {
+        result.assignment_events.insert(
+            0,
+            AssignmentEvent {
+                kind,
+                category_id,
+                category_name: self.category_name_or_id(category_id),
+                summary: summary.to_string(),
+            },
+        );
+    }
+
+    fn category_name_or_id(&self, category_id: CategoryId) -> String {
+        self.store
+            .get_category(category_id)
+            .map(|category| category.name)
+            .unwrap_or_else(|_| category_id.to_string())
+    }
+
+    fn debug_log_process_result(&self, context: &str, item_id: ItemId, result: &ProcessItemResult) {
+        if !self.debug {
+            return;
+        }
+        for event in &result.assignment_events {
+            eprintln!(
+                "[agenda.debug] context={context} item={item_id} event={:?} category={} summary={}",
+                event.kind, event.category_name, event.summary
+            );
+        }
+        for message in &result.semantic_debug_messages {
+            eprintln!("[agenda.debug] context={context} item={item_id} semantic={message}");
+        }
+    }
+
+    fn debug_log_link_event(
+        &self,
+        family: &str,
+        item_id: ItemId,
+        other_item_id: ItemId,
+        kind: ItemLinkKind,
+    ) {
+        if !self.debug {
+            return;
+        }
+        eprintln!(
+            "[agenda.debug] event={family} kind={kind:?} item={item_id} other={other_item_id}"
+        );
     }
 
     fn first_assigned_descendant(
@@ -1726,6 +1940,11 @@ impl<'a> Agenda<'a> {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin_const::NLP_DATE.to_string()),
+            explanation: Some(AssignmentExplanation::AutoClassified {
+                provider_id: PROVIDER_ID_WHEN_PARSER.to_string(),
+                model: None,
+                rationale: None,
+            }),
             numeric_value: None,
         }
     }
@@ -1779,6 +1998,7 @@ fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemRe
     target
         .removed_assignments
         .extend(incoming.removed_assignments);
+    target.assignment_events.extend(incoming.assignment_events);
     target.deferred_removals.extend(incoming.deferred_removals);
     target.semantic_candidates_seen += incoming.semantic_candidates_seen;
     target.semantic_candidates_queued_review += incoming.semantic_candidates_queued_review;
@@ -1851,6 +2071,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin.to_string()),
+            explanation: None,
             numeric_value: None,
         }
     }

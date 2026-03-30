@@ -1216,6 +1216,9 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
         for (name, assignment) in rows {
             let origin = assignment.origin.as_deref().unwrap_or("-");
             println!("  {} | {:?} | {}", name, assignment.source, origin);
+            if let Some(explanation) = &assignment.explanation {
+                println!("    {}", explanation.summary());
+            }
         }
     }
 
@@ -5507,6 +5510,7 @@ mod tests {
                 assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: Some(Decimal::new(100, 0)),
             },
         );
@@ -5518,6 +5522,7 @@ mod tests {
                 assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: Some(Decimal::new(250, 0)),
             },
         );

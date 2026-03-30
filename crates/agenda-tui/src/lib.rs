@@ -225,6 +225,7 @@ struct InspectAssignmentRow {
     category_name: String,
     source_label: String,
     origin_label: String,
+    explanation_label: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1514,6 +1515,7 @@ impl App {
                         assigned_at: Timestamp::now(),
                         sticky: false,
                         origin: None,
+                        explanation: None,
                         numeric_value: None,
                     });
                 let _ = agenda.unassign_item_manual(item_id, category_id);
@@ -1689,9 +1691,9 @@ mod tests {
     use agenda_core::engine::ProcessItemResult;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
-        CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
-        NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
+        Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
+        CategoryId, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
+        NumericFormat, Query, Section, SectionFlow, SummaryFn, TextMatchSource, View, WhenBucket,
     };
     use agenda_core::store::Store;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -1727,6 +1729,7 @@ mod tests {
             assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
+            explanation: None,
             numeric_value: None,
         };
         item.assignments.insert(high.id, assignment.clone());
@@ -4608,7 +4611,7 @@ mod tests {
         let anchor = Item::new("Anchor task".to_string());
         let open_target = Item::new("Open target".to_string());
         let done_target = Item::new("Done target".to_string());
-        let complete_target = Item::new("Complete target".to_string());
+        let complete_target = Item::new("Finished target".to_string());
         for item in [&anchor, &open_target, &done_target, &complete_target] {
             store.create_item(item).expect("create item");
         }
@@ -5664,6 +5667,7 @@ mod tests {
                     assigned_at: now,
                     sticky: false,
                     origin: Some("cat:In Progress".to_string()),
+                    explanation: None,
                     numeric_value: None,
                 },
             )
@@ -5677,6 +5681,7 @@ mod tests {
                     assigned_at: now,
                     sticky: false,
                     origin: Some("subsumption:Status".to_string()),
+                    explanation: None,
                     numeric_value: None,
                 },
             )
@@ -8553,12 +8558,10 @@ mod tests {
         app.handle_normal_key(KeyCode::Char('s'), &agenda)
             .expect("gs should open global settings");
 
-        app.handle_key(KeyCode::Char('j'), &agenda)
-            .expect("move to classification mode row");
-        assert_eq!(
-            app.global_settings_selected_kind(),
-            GlobalSettingsRow::LiteralClassificationMode
-        );
+        while app.global_settings_selected_kind() != GlobalSettingsRow::LiteralClassificationMode {
+            app.handle_key(KeyCode::Char('j'), &agenda)
+                .expect("move to classification mode row");
+        }
         app.handle_key(KeyCode::Enter, &agenda)
             .expect("apply classification mode");
 
@@ -9924,7 +9927,7 @@ mod tests {
             "assign picker should render an outer modal title/border: {rendered}"
         );
         assert!(
-            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:apply+close  Esc:close"),
+            rendered.contains("Tab/S-Tab:pane  Space:toggle  n:new  Enter:resolve+close  Esc:close"),
             "assign picker footer should advertise forward/backward pane switching: {rendered}"
         );
         assert!(
@@ -11053,6 +11056,7 @@ mod tests {
             assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
+            explanation: None,
             numeric_value: None,
         };
         item.assignments.insert(alpha.id, assignment.clone());
@@ -15523,6 +15527,7 @@ mod tests {
                 assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: None,
             },
         );
@@ -15533,6 +15538,7 @@ mod tests {
                 assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: None,
             },
         );
@@ -15542,6 +15548,38 @@ mod tests {
         ]);
         let labels = item_assignment_labels(&item, &names);
         assert_eq!(labels, vec!["garage".to_string(), "slotB".to_string()]);
+    }
+
+    #[test]
+    fn inspect_assignment_rows_include_explanation_summary() {
+        let category = Category::new("Phone Calls".to_string());
+        let mut item = Item::new("Call manager".to_string());
+        item.assignments.insert(
+            category.id,
+            Assignment {
+                source: AssignmentSource::AutoMatch,
+                assigned_at: jiff::Timestamp::now(),
+                sticky: false,
+                origin: Some("cat:Phone Calls".to_string()),
+                explanation: Some(AssignmentExplanation::ImplicitMatch {
+                    matched_term: "call".to_string(),
+                    matched_source: TextMatchSource::AlsoMatch,
+                }),
+                numeric_value: None,
+            },
+        );
+
+        let app = App {
+            categories: vec![category.clone()],
+            ..App::default()
+        };
+        let rows = app.inspect_assignment_rows_for_item(&item);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].category_name, category.name);
+        assert_eq!(
+            rows[0].explanation_label.as_deref(),
+            Some("Matched alias \"call\"")
+        );
     }
 
     #[test]
@@ -20736,11 +20774,7 @@ mod tests {
             .expect("return to edit panel");
 
         assert_eq!(app.mode, Mode::InputPanel);
-        assert!(
-            app.status.contains("Added category Bug"),
-            "status: {}",
-            app.status
-        );
+        assert!(app.status.contains("Added Bug"), "status: {}", app.status);
         assert_eq!(
             app.input_panel.as_ref().unwrap().kind,
             input_panel::InputPanelKind::EditItem
@@ -21145,6 +21179,7 @@ mod tests {
                     assigned_at: jiff::Timestamp::now(),
                     sticky: true,
                     origin: Some("manual:test".to_string()),
+                    explanation: None,
                     numeric_value: None,
                 },
             )

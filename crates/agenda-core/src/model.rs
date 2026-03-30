@@ -90,6 +90,8 @@ pub struct Assignment {
     /// How this assignment was created. See [`origin`] for canonical values.
     pub origin: Option<String>,
     #[serde(default)]
+    pub explanation: Option<AssignmentExplanation>,
+    #[serde(default)]
     pub numeric_value: Option<Decimal>,
 }
 
@@ -101,6 +103,193 @@ pub enum AssignmentSource {
     SuggestionAccepted,
     Action,
     Subsumption,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextMatchSource {
+    CategoryName,
+    AlsoMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssignmentActionKind {
+    Assign,
+    Remove,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssignmentExplanation {
+    Manual {
+        origin: Option<String>,
+    },
+    ImplicitMatch {
+        matched_term: String,
+        matched_source: TextMatchSource,
+    },
+    ProfileCondition {
+        owner_category_name: String,
+        condition_index: usize,
+        rendered_rule: String,
+    },
+    Action {
+        trigger_category_name: String,
+        kind: AssignmentActionKind,
+    },
+    Subsumption {
+        parent_category_name: String,
+        via_child_category_name: String,
+    },
+    SuggestionAccepted {
+        provider_id: String,
+        model: Option<String>,
+        rationale: Option<String>,
+    },
+    AutoClassified {
+        provider_id: String,
+        model: Option<String>,
+        rationale: Option<String>,
+    },
+}
+
+impl AssignmentExplanation {
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Manual { .. } => "Assigned manually".to_string(),
+            Self::ImplicitMatch {
+                matched_term,
+                matched_source,
+            } => match matched_source {
+                TextMatchSource::CategoryName => {
+                    format!("Matched category name \"{matched_term}\"")
+                }
+                TextMatchSource::AlsoMatch => format!("Matched alias \"{matched_term}\""),
+            },
+            Self::ProfileCondition {
+                owner_category_name,
+                condition_index,
+                rendered_rule,
+            } => format!(
+                "Derived from profile rule {} on {}: {}",
+                condition_index + 1,
+                owner_category_name,
+                rendered_rule
+            ),
+            Self::Action {
+                trigger_category_name,
+                kind,
+            } => match kind {
+                AssignmentActionKind::Assign => {
+                    format!("Assigned by action on {trigger_category_name}")
+                }
+                AssignmentActionKind::Remove => {
+                    format!("Removed by action on {trigger_category_name}")
+                }
+            },
+            Self::Subsumption {
+                via_child_category_name,
+                ..
+            } => format!("Inherited from child {via_child_category_name}"),
+            Self::SuggestionAccepted {
+                provider_id,
+                rationale,
+                ..
+            } => rationale
+                .as_ref()
+                .map(|rationale| format!("Accepted suggestion from {provider_id}: {rationale}"))
+                .unwrap_or_else(|| format!("Accepted suggestion from {provider_id}")),
+            Self::AutoClassified {
+                provider_id,
+                rationale,
+                ..
+            } => rationale
+                .as_ref()
+                .map(|rationale| format!("Auto-classified by {provider_id}: {rationale}"))
+                .unwrap_or_else(|| format!("Auto-classified by {provider_id}")),
+        }
+    }
+
+    pub fn removal_summary(&self) -> String {
+        match self {
+            Self::Manual { .. } => "Removed manually".to_string(),
+            Self::ImplicitMatch {
+                matched_term,
+                matched_source,
+            } => match matched_source {
+                TextMatchSource::CategoryName => {
+                    format!("Text no longer matched category name \"{matched_term}\"")
+                }
+                TextMatchSource::AlsoMatch => {
+                    format!("Text no longer matched alias \"{matched_term}\"")
+                }
+            },
+            Self::ProfileCondition {
+                owner_category_name,
+                condition_index,
+                ..
+            } => format!(
+                "Profile rule {} on {} no longer matched",
+                condition_index + 1,
+                owner_category_name
+            ),
+            Self::Action {
+                trigger_category_name,
+                kind,
+            } => match kind {
+                AssignmentActionKind::Assign => {
+                    format!("Removed after action-triggered assignment from {trigger_category_name}")
+                }
+                AssignmentActionKind::Remove => {
+                    format!("Removed by action on {trigger_category_name}")
+                }
+            },
+            Self::Subsumption {
+                via_child_category_name,
+                ..
+            } => format!(
+                "Supporting child {} is no longer assigned",
+                via_child_category_name
+            ),
+            Self::SuggestionAccepted { provider_id, .. } => {
+                format!("Accepted suggestion from {provider_id} was removed")
+            }
+            Self::AutoClassified { provider_id, .. } => {
+                format!("Auto-classified assignment from {provider_id} was removed")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentEventKind {
+    Assigned,
+    Removed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssignmentEvent {
+    pub kind: AssignmentEventKind,
+    pub category_id: CategoryId,
+    pub category_name: String,
+    pub summary: String,
+}
+
+impl AssignmentEvent {
+    pub fn concise_summary(&self) -> String {
+        match self.kind {
+            AssignmentEventKind::Assigned if self.summary == "Assigned manually" => {
+                format!("Added {}", self.category_name)
+            }
+            AssignmentEventKind::Removed if self.summary == "Removed manually" => {
+                format!("Removed {}", self.category_name)
+            }
+            AssignmentEventKind::Assigned => {
+                format!("Auto-added {} ({})", self.category_name, self.summary)
+            }
+            AssignmentEventKind::Removed => {
+                format!("Auto-removed {} ({})", self.category_name, self.summary)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
