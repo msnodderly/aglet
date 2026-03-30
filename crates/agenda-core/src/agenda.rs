@@ -9,8 +9,8 @@ use crate::classification::{
     BackgroundClassificationJob, ClassificationCandidate, ClassificationConfig,
     ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
     LiteralClassificationMode, OllamaProvider, OllamaTransport, ReqwestOllamaTransport,
-    SemanticClassificationMode, SuggestionStatus, WhenParserProvider,
-    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
+    SemanticClassificationMode, SuggestionStatus, WhenParserProvider, PROVIDER_ID_IMPLICIT_STRING,
+    PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
 use crate::engine::{
@@ -329,7 +329,11 @@ impl<'a> Agenda<'a> {
         self.reprocess_existing_item(item_id)
     }
 
-    pub fn unassign_item_manual(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
+    pub fn unassign_item_manual(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<ProcessItemResult> {
         if let Some(blocking_descendant_id) =
             self.first_assigned_descendant(item_id, category_id)?
         {
@@ -352,7 +356,8 @@ impl<'a> Agenda<'a> {
                 ),
             });
         }
-        self.store.unassign_item(item_id, category_id)
+        self.store.unassign_item(item_id, category_id)?;
+        self.reprocess_existing_item(item_id)
     }
 
     pub fn insert_item_in_section(
@@ -1542,7 +1547,7 @@ impl<'a> Agenda<'a> {
                 let assignment = Assignment {
                     source: AssignmentSource::Subsumption,
                     assigned_at: Timestamp::now(),
-                    sticky: true,
+                    sticky: false,
                     origin: Some(format!("{}:{parent_name}", origin_const::SUBSUMPTION)),
                     numeric_value: None,
                 };
@@ -1771,6 +1776,9 @@ impl<'a> Agenda<'a> {
 
 fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemResult) {
     target.new_assignments.extend(incoming.new_assignments);
+    target
+        .removed_assignments
+        .extend(incoming.removed_assignments);
     target.deferred_removals.extend(incoming.deferred_removals);
     target.semantic_candidates_seen += incoming.semantic_candidates_seen;
     target.semantic_candidates_queued_review += incoming.semantic_candidates_queued_review;
@@ -2394,7 +2402,10 @@ mod tests {
         let travel_assignment = reloaded_assignments
             .get(&travel.id)
             .expect("travel assignment should exist after acceptance");
-        assert_eq!(travel_assignment.source, AssignmentSource::SuggestionAccepted);
+        assert_eq!(
+            travel_assignment.source,
+            AssignmentSource::SuggestionAccepted
+        );
 
         let reloaded_suggestion = store
             .get_classification_suggestion(travel_suggestion.id)
@@ -2861,6 +2872,38 @@ mod tests {
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&project_y.id));
         assert!(assignments.contains_key(&work.id));
+    }
+
+    #[test]
+    fn manual_unassign_removes_live_subsumption_ancestor() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let project_y = child_category("Project Y", work.id, false);
+        store.create_category(&project_y).unwrap();
+
+        let item = Item::new("Kickoff".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, project_y.id, Some("manual:user".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let ancestor = assignments.get(&work.id).unwrap();
+        assert_eq!(ancestor.source, AssignmentSource::Subsumption);
+        assert!(!ancestor.sticky);
+
+        agenda.unassign_item_manual(item.id, project_y.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&project_y.id));
+        assert!(
+            !assignments.contains_key(&work.id),
+            "subsumption ancestor should auto-break once the supporting descendant is removed"
+        );
     }
 
     #[test]

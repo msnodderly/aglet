@@ -803,6 +803,7 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
             enable_semantic_classification: category.enable_semantic_classification,
             match_category_name: category.match_category_name,
             value_kind: category.value_kind,
+            has_conditions: !category.conditions.is_empty(),
         })
         .collect()
 }

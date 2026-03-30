@@ -95,20 +95,33 @@ Practical implications:
   `agenda-cli show` assignment provenance before assuming the visible category
   was manually assigned
 
-## Disabling Implicit Match Does Not Evict Existing `AutoMatch` Assignments (Surprising)
+## Disabling Implicit Match Only Evicts Live `AutoMatch` Assignments (Surprising)
 
 Turning a category's `enable_implicit_string` flag off and re-running category
-evaluation does **not** automatically remove already-persisted implicit-string
-assignments for that category.
+evaluation now removes **live/non-sticky** implicit-string assignments for that
+category, but it still does **not** retroactively evict older sticky derived
+assignments created before dynamic conditions were introduced.
 
 Practical implications:
-- Engine/evaluate-all paths treat derived assignments as sticky once written.
-- If you need "disable implicit match" to stop current `cat:<Category>` matches
-  from staying assigned, you must explicitly clear those assignments and then
-  re-run evaluation.
-- This came up in TUI workflow-role setup: disabling `Auto-match` for a
-  workflow role required targeted cleanup of existing `AssignmentSource::AutoMatch`
-  rows with `origin=cat:<Category>` before reevaluation.
+- Engine/evaluate-all paths now reconcile non-sticky `AssignmentSource::AutoMatch`
+  rows and remove them when the category no longer matches.
+- Compatibility is intentionally mixed: newly created implicit/profile-derived
+  assignments are live, while legacy sticky derived assignments remain until
+  explicitly cleared.
+- If a category still appears assigned after disabling `Auto-match`, inspect
+  `sticky`/provenance before assuming the new dynamic behavior is broken.
+
+## `Agenda::unassign_item_manual` Reprocesses After Removal (Updated)
+
+`Agenda::unassign_item_manual(...)` now mirrors other manual assignment flows:
+after validating descendant constraints and removing the explicit assignment
+row, it immediately reprocesses the item.
+
+Practical implications:
+- Live profile and subsumption assignments can auto-break immediately after a
+  manual unassign, including from the TUI `a` item-assign picker.
+- Older tests or callers that manually invoked reprocessing after
+  `unassign_item_manual(...)` may now be doing redundant work.
 
 ## CLI Search vs TUI Search Matchers Diverge (Surprising)
 

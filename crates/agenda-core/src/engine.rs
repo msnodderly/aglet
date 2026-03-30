@@ -22,6 +22,7 @@ pub struct DeferredRemoval {
 #[derive(Debug, Default)]
 pub struct ProcessItemResult {
     pub new_assignments: HashSet<CategoryId>,
+    pub removed_assignments: HashSet<CategoryId>,
     pub deferred_removals: Vec<DeferredRemoval>,
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
@@ -34,6 +35,7 @@ pub struct EvaluateAllItemsResult {
     pub processed_items: usize,
     pub affected_items: usize,
     pub total_new_assignments: usize,
+    pub total_removed_assignments: usize,
     pub total_deferred_removals: usize,
 }
 
@@ -41,15 +43,23 @@ pub struct EvaluateAllItemsResult {
 struct PassResult {
     new_assignments: HashSet<CategoryId>,
     deferred_removals: Vec<DeferredRemoval>,
+    changed: bool,
 }
 
 struct HierarchyPassInput<'a> {
-    store: &'a Store,
     classifier: &'a dyn Classifier,
     item_id: ItemId,
     item_text: &'a str,
     categories: &'a [Category],
+    categories_by_id: &'a HashMap<CategoryId, &'a Category>,
+    original_assignments: &'a HashMap<CategoryId, Assignment>,
     options: ProcessOptions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InsertResult {
+    inserted: bool,
+    new_to_store: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,9 +134,11 @@ pub fn evaluate_all_items_with_options(
 
         result.processed_items += 1;
         result.total_new_assignments += process_result.new_assignments.len();
+        result.total_removed_assignments += process_result.removed_assignments.len();
         result.total_deferred_removals += process_result.deferred_removals.len();
 
         if !process_result.new_assignments.is_empty()
+            || !process_result.removed_assignments.is_empty()
             || !process_result.deferred_removals.is_empty()
         {
             result.affected_items += 1;
@@ -144,42 +156,75 @@ fn process_item_inner(
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
     let categories = store.get_hierarchy()?;
+    let categories_by_id: HashMap<CategoryId, &Category> = categories
+        .iter()
+        .map(|category| (category.id, category))
+        .collect();
     let match_text = item_match_text(&item);
 
-    let mut assignments = item.assignments;
+    let original_assignments = item.assignments;
+    let mut assignments = retained_assignments(&original_assignments);
     let mut seen_pairs: HashSet<(ItemId, CategoryId)> = assignments
         .keys()
         .copied()
         .map(|category_id| (item_id, category_id))
         .collect();
 
+    rebuild_live_subsumption_assignments(
+        item_id,
+        &categories_by_id,
+        &original_assignments,
+        &mut assignments,
+        &mut seen_pairs,
+    );
+
     let mut result = ProcessItemResult::default();
     let pass_input = HierarchyPassInput {
-        store,
         classifier,
         item_id,
         item_text: &match_text,
         categories: &categories,
+        categories_by_id: &categories_by_id,
+        original_assignments: &original_assignments,
         options,
     };
 
     for pass in 1..=MAX_PASSES {
         let pass_result = run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs)?;
 
-        let made_new_assignments = !pass_result.new_assignments.is_empty();
+        let changed = pass_result.changed;
 
         result.new_assignments.extend(pass_result.new_assignments);
         result
             .deferred_removals
             .extend(pass_result.deferred_removals);
 
-        if !made_new_assignments {
-            apply_deferred_removals(store, item_id, &result.deferred_removals)?;
+        if !changed {
+            apply_deferred_removals_to_assignments(&result.deferred_removals, &mut assignments);
+            drop_live_subsumption_assignments(&mut assignments);
+            let mut final_seen_pairs: HashSet<(ItemId, CategoryId)> = assignments
+                .keys()
+                .copied()
+                .map(|category_id| (item_id, category_id))
+                .collect();
+            rebuild_live_subsumption_assignments(
+                item_id,
+                &categories_by_id,
+                &original_assignments,
+                &mut assignments,
+                &mut final_seen_pairs,
+            );
+            sync_assignments(
+                store,
+                item_id,
+                &original_assignments,
+                &assignments,
+                &mut result,
+            )?;
             return Ok(result);
         }
 
         if pass == MAX_PASSES {
-            apply_deferred_removals(store, item_id, &result.deferred_removals)?;
             return Err(pass_cap_error(item_id));
         }
     }
@@ -200,11 +245,6 @@ fn run_hierarchy_pass(
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
 ) -> Result<PassResult> {
     let mut pass_result = PassResult::default();
-    let categories_by_id: HashMap<CategoryId, &Category> = input
-        .categories
-        .iter()
-        .map(|category| (category.id, category))
-        .collect();
 
     for category in input.categories {
         let Some(reason) = evaluate_category_match(
@@ -220,51 +260,47 @@ fn run_hierarchy_pass(
         if !can_assign(input.item_id, category.id, assignments, seen_pairs) {
             continue;
         }
-        if has_manual_exclusive_sibling(category.id, &categories_by_id, assignments) {
+        if has_manual_exclusive_sibling(category.id, input.categories_by_id, assignments) {
             continue;
         }
 
-        enforce_mutual_exclusion(
-            input.store,
-            input.item_id,
-            category.id,
-            &categories_by_id,
-            assignments,
-        )?;
+        enforce_mutual_exclusion(category.id, input.categories_by_id, assignments)?;
 
         let assigned = assign_if_unassigned(
-            input.store,
             input.item_id,
             category.id,
             AssignmentSource::AutoMatch,
+            false,
             Some(match_origin(reason, &category.name)),
+            input.original_assignments,
             assignments,
             seen_pairs,
-        )?;
+        );
 
-        // Assignments are sticky: no re-assign and no action re-fire.
-        if !assigned {
+        if !assigned.inserted {
             continue;
         }
+        pass_result.changed = true;
         assign_subsumption_ancestors(
-            input.store,
             input.item_id,
             category.id,
-            &categories_by_id,
+            input.categories_by_id,
+            input.original_assignments,
             assignments,
             seen_pairs,
-        )?;
-        pass_result.new_assignments.insert(category.id);
-
-        fire_actions(
-            input.store,
-            input.item_id,
-            category,
-            &categories_by_id,
-            assignments,
-            seen_pairs,
-            &mut pass_result,
-        )?;
+        );
+        if assigned.new_to_store {
+            pass_result.new_assignments.insert(category.id);
+            fire_actions(
+                input.item_id,
+                category,
+                input.categories_by_id,
+                input.original_assignments,
+                assignments,
+                seen_pairs,
+                &mut pass_result,
+            )?;
+        }
     }
 
     Ok(pass_result)
@@ -321,10 +357,10 @@ fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignmen
 }
 
 fn fire_actions(
-    store: &Store,
     item_id: ItemId,
     category: &Category,
     categories_by_id: &HashMap<CategoryId, &Category>,
+    original_assignments: &HashMap<CategoryId, Assignment>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
     pass_result: &mut PassResult,
@@ -337,33 +373,31 @@ fn fire_actions(
                         continue;
                     }
 
-                    enforce_mutual_exclusion(
-                        store,
-                        item_id,
-                        *target_id,
-                        categories_by_id,
-                        assignments,
-                    )?;
+                    enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
 
                     let assigned = assign_if_unassigned(
-                        store,
                         item_id,
                         *target_id,
                         AssignmentSource::Action,
+                        true,
                         Some(format!("action:{}", category.name)),
+                        original_assignments,
                         assignments,
                         seen_pairs,
-                    )?;
-                    if assigned {
+                    );
+                    if assigned.inserted {
+                        pass_result.changed = true;
                         assign_subsumption_ancestors(
-                            store,
                             item_id,
                             *target_id,
                             categories_by_id,
+                            original_assignments,
                             assignments,
                             seen_pairs,
-                        )?;
-                        pass_result.new_assignments.insert(*target_id);
+                        );
+                        if assigned.new_to_store {
+                            pass_result.new_assignments.insert(*target_id);
+                        }
                     }
                 }
             }
@@ -397,38 +431,46 @@ fn can_assign(
     !seen_pairs.contains(&pair)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assign_if_unassigned(
-    store: &Store,
     item_id: ItemId,
     category_id: CategoryId,
     source: AssignmentSource,
+    sticky: bool,
     origin: Option<String>,
+    original_assignments: &HashMap<CategoryId, Assignment>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
-) -> Result<bool> {
+) -> InsertResult {
     if !can_assign(item_id, category_id, assignments, seen_pairs) {
-        return Ok(false);
+        return InsertResult {
+            inserted: false,
+            new_to_store: false,
+        };
     }
 
     let pair = (item_id, category_id);
-    let assignment = Assignment {
-        source,
-        assigned_at: Timestamp::now(),
-        sticky: true,
-        origin,
-        numeric_value: None,
-    };
-
-    store.assign_item(item_id, category_id, &assignment)?;
+    let new_to_store = !original_assignments.contains_key(&category_id);
+    let assignment = original_assignments
+        .get(&category_id)
+        .cloned()
+        .unwrap_or_else(|| Assignment {
+            source,
+            assigned_at: Timestamp::now(),
+            sticky,
+            origin,
+            numeric_value: None,
+        });
     assignments.insert(category_id, assignment);
     seen_pairs.insert(pair);
 
-    Ok(true)
+    InsertResult {
+        inserted: true,
+        new_to_store,
+    }
 }
 
 fn enforce_mutual_exclusion(
-    store: &Store,
-    item_id: ItemId,
     category_id: CategoryId,
     categories_by_id: &HashMap<CategoryId, &Category>,
     assignments: &mut HashMap<CategoryId, Assignment>,
@@ -451,9 +493,7 @@ fn enforce_mutual_exclusion(
             continue;
         }
 
-        if assignments.remove(sibling_id).is_some() {
-            store.unassign_item(item_id, *sibling_id)?;
-        }
+        assignments.remove(sibling_id);
     }
 
     Ok(())
@@ -481,21 +521,24 @@ fn has_manual_exclusive_sibling(
         *sibling_id != category_id
             && assignments
                 .get(sibling_id)
-                .map(|assignment| assignment.source == AssignmentSource::Manual)
+                .map(|assignment| {
+                    assignment.source == AssignmentSource::Manual
+                        || assignment.source == AssignmentSource::SuggestionAccepted
+                })
                 .unwrap_or(false)
     })
 }
 
 fn assign_subsumption_ancestors(
-    store: &Store,
     item_id: ItemId,
     category_id: CategoryId,
     categories_by_id: &HashMap<CategoryId, &Category>,
+    original_assignments: &HashMap<CategoryId, Assignment>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
-) -> Result<()> {
+) {
     let Some(category) = categories_by_id.get(&category_id) else {
-        return Ok(());
+        return;
     };
 
     let subsumption_origin = Some(format!("{}:{}", origin_const::SUBSUMPTION, category.name));
@@ -510,14 +553,16 @@ fn assign_subsumption_ancestors(
         let pair = (item_id, ancestor_id);
         if let std::collections::hash_map::Entry::Vacant(entry) = assignments.entry(ancestor_id) {
             if !seen_pairs.contains(&pair) {
-                let assignment = Assignment {
-                    source: AssignmentSource::Subsumption,
-                    assigned_at: Timestamp::now(),
-                    sticky: true,
-                    origin: subsumption_origin.clone(),
-                    numeric_value: None,
-                };
-                store.assign_item(item_id, ancestor_id, &assignment)?;
+                let assignment = original_assignments
+                    .get(&ancestor_id)
+                    .cloned()
+                    .unwrap_or_else(|| Assignment {
+                        source: AssignmentSource::Subsumption,
+                        assigned_at: Timestamp::now(),
+                        sticky: false,
+                        origin: subsumption_origin.clone(),
+                        numeric_value: None,
+                    });
                 entry.insert(assignment);
                 seen_pairs.insert(pair);
             }
@@ -529,20 +574,88 @@ fn assign_subsumption_ancestors(
             .get(&ancestor_id)
             .and_then(|ancestor| ancestor.parent);
     }
-
-    Ok(())
 }
 
-fn apply_deferred_removals(
-    store: &Store,
-    item_id: ItemId,
+fn apply_deferred_removals_to_assignments(
     deferred_removals: &[DeferredRemoval],
-) -> Result<()> {
+    assignments: &mut HashMap<CategoryId, Assignment>,
+) {
     let mut removed_targets = HashSet::new();
 
     for removal in deferred_removals {
         if removed_targets.insert(removal.target) {
-            store.unassign_item(item_id, removal.target)?;
+            assignments.remove(&removal.target);
+        }
+    }
+}
+
+fn drop_live_subsumption_assignments(assignments: &mut HashMap<CategoryId, Assignment>) {
+    assignments.retain(|_, assignment| {
+        assignment.source != AssignmentSource::Subsumption || assignment.sticky
+    });
+}
+
+fn retained_assignments(
+    original_assignments: &HashMap<CategoryId, Assignment>,
+) -> HashMap<CategoryId, Assignment> {
+    original_assignments
+        .iter()
+        .filter(|(_, assignment)| !is_live_derived_assignment(assignment))
+        .map(|(&category_id, assignment)| (category_id, assignment.clone()))
+        .collect()
+}
+
+fn is_live_derived_assignment(assignment: &Assignment) -> bool {
+    !assignment.sticky
+        && matches!(
+            assignment.source,
+            AssignmentSource::AutoMatch | AssignmentSource::Subsumption
+        )
+}
+
+fn rebuild_live_subsumption_assignments(
+    item_id: ItemId,
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    original_assignments: &HashMap<CategoryId, Assignment>,
+    assignments: &mut HashMap<CategoryId, Assignment>,
+    seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+) {
+    let direct_assignment_ids: Vec<CategoryId> = assignments
+        .iter()
+        .filter(|(_, assignment)| assignment.source != AssignmentSource::Subsumption)
+        .map(|(&category_id, _)| category_id)
+        .collect();
+
+    for category_id in direct_assignment_ids {
+        assign_subsumption_ancestors(
+            item_id,
+            category_id,
+            categories_by_id,
+            original_assignments,
+            assignments,
+            seen_pairs,
+        );
+    }
+}
+
+fn sync_assignments(
+    store: &Store,
+    item_id: ItemId,
+    original_assignments: &HashMap<CategoryId, Assignment>,
+    desired_assignments: &HashMap<CategoryId, Assignment>,
+    result: &mut ProcessItemResult,
+) -> Result<()> {
+    let original_ids: HashSet<CategoryId> = original_assignments.keys().copied().collect();
+    let desired_ids: HashSet<CategoryId> = desired_assignments.keys().copied().collect();
+
+    for category_id in original_ids.difference(&desired_ids) {
+        store.unassign_item(item_id, *category_id)?;
+        result.removed_assignments.insert(*category_id);
+    }
+
+    for category_id in desired_ids.difference(&original_ids) {
+        if let Some(assignment) = desired_assignments.get(category_id) {
+            store.assign_item(item_id, *category_id, assignment)?;
         }
     }
 
@@ -932,14 +1045,19 @@ mod tests {
 
         let item = create_item(&store, "Project Alpha planning");
         let categories = store.get_hierarchy().unwrap();
+        let categories_by_id: HashMap<CategoryId, &Category> = categories
+            .iter()
+            .map(|category| (category.id, category))
+            .collect();
         let mut assignments = HashMap::new();
         let mut seen_pairs = HashSet::new();
         let pass_input = HierarchyPassInput {
-            store: &store,
             classifier: &classifier,
             item_id: item.id,
             item_text: &item.text,
             categories: &categories,
+            categories_by_id: &categories_by_id,
+            original_assignments: &HashMap::new(),
             options: ProcessOptions::default(),
         };
 
@@ -1620,5 +1738,556 @@ mod tests {
             assignments.contains_key(&tag.id),
             "assignment made inside a successful savepoint should be persisted"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Profile condition test scenarios (brainstormed from Beeswax spec)
+    // ---------------------------------------------------------------
+
+    /// Helper to create a category with profile condition including OR criteria.
+    fn category_with_profile_or(
+        name: &str,
+        include: &[CategoryId],
+        exclude: &[CategoryId],
+        or: &[CategoryId],
+    ) -> Category {
+        let mut cat = category(name, false);
+        let mut criteria = Query::default();
+        for &id in include {
+            criteria.set_criterion(CriterionMode::And, id);
+        }
+        for &id in exclude {
+            criteria.set_criterion(CriterionMode::Not, id);
+        }
+        for &id in or {
+            criteria.set_criterion(CriterionMode::Or, id);
+        }
+        cat.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        cat
+    }
+
+    #[test]
+    fn profile_single_criterion_delegation() {
+        // "If Project A → assign to Mary"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let project_a = category("Project A", true);
+        create_category(&store, &project_a);
+        let mary = category_with_profile("Mary", &[project_a.id], &[]);
+        create_category(&store, &mary);
+
+        let item = create_item(&store, "Review the Project A docs");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&project_a.id));
+        assert!(result.new_assignments.contains(&mary.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&mary.id).unwrap().origin.as_deref(),
+            Some("profile:Mary")
+        );
+    }
+
+    #[test]
+    fn profile_compound_and_trigger() {
+        // "If Urgent AND Project Alpha → assign to Escalated"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", true);
+        let project_alpha = category("Project Alpha", true);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "Urgent Project Alpha deploy is failing");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&urgent.id));
+        assert!(result.new_assignments.contains(&project_alpha.id));
+        assert!(result.new_assignments.contains(&escalated.id));
+    }
+
+    #[test]
+    fn profile_partial_match_does_not_fire() {
+        // Item in Urgent but NOT Project Alpha → Escalated should NOT fire
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", true);
+        let project_alpha = category("Project Alpha", true);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "Urgent fix the login page");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&urgent.id));
+        assert!(!result.new_assignments.contains(&project_alpha.id));
+        assert!(!result.new_assignments.contains(&escalated.id));
+    }
+
+    #[test]
+    fn profile_exclude_pattern() {
+        // "If Work AND NOT Delegated → assign to My-Tasks"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let work = category("Work", true);
+        let delegated = category("Delegated", false);
+        let my_tasks = category_with_profile("My-Tasks", &[work.id], &[delegated.id]);
+        create_category(&store, &work);
+        create_category(&store, &delegated);
+        create_category(&store, &my_tasks);
+
+        // Item with "Work" but not "Delegated" → should match
+        let item = create_item(&store, "Work on the API refactor");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&work.id));
+        assert!(result.new_assignments.contains(&my_tasks.id));
+    }
+
+    #[test]
+    fn profile_exclude_blocks_when_present() {
+        // "If Work AND NOT Delegated → assign to My-Tasks" — but item IS Delegated
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let work = category("Work", true);
+        let delegated = category("Delegated", false);
+        let my_tasks = category_with_profile("My-Tasks", &[work.id], &[delegated.id]);
+        create_category(&store, &work);
+        create_category(&store, &delegated);
+        create_category(&store, &my_tasks);
+
+        let item = create_item(&store, "Work stuff");
+        store
+            .assign_item(item.id, delegated.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(!result.new_assignments.contains(&my_tasks.id));
+    }
+
+    #[test]
+    fn profile_cascading_chain() {
+        // Escalated → Notify:Manager (cascading two profile conditions)
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", true);
+        let project_alpha = category("Project Alpha", true);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        let notify = category_with_profile("Notify-Manager", &[escalated.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+        create_category(&store, &notify);
+
+        let item = create_item(&store, "Urgent Project Alpha outage");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+
+        assert!(result.new_assignments.contains(&escalated.id));
+        assert!(result.new_assignments.contains(&notify.id));
+    }
+
+    #[test]
+    fn profile_late_satisfaction() {
+        // Assign Urgent first (no fire), then assign Project Alpha → rule fires
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", false);
+        let project_alpha = category("Project Alpha", false);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "some neutral text");
+
+        // Manual assign Urgent only — Escalated should NOT fire
+        store
+            .assign_item(item.id, urgent.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(!result.new_assignments.contains(&escalated.id));
+
+        // Now also assign Project Alpha — Escalated should fire
+        store
+            .assign_item(item.id, project_alpha.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&escalated.id));
+    }
+
+    #[test]
+    fn profile_order_independence() {
+        // Assign B then A vs A then B → same result
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        let target = category_with_profile("Target", &[cat_a.id, cat_b.id], &[]);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+        create_category(&store, &target);
+
+        // Order 1: A then B
+        let item1 = create_item(&store, "neutral text one");
+        store
+            .assign_item(item1.id, cat_a.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item1.id, cat_b.id, &manual_assignment())
+            .unwrap();
+        let result1 = process_item(&store, &classifier, item1.id).unwrap();
+
+        // Order 2: B then A
+        let item2 = create_item(&store, "neutral text two");
+        store
+            .assign_item(item2.id, cat_b.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item2.id, cat_a.id, &manual_assignment())
+            .unwrap();
+        let result2 = process_item(&store, &classifier, item2.id).unwrap();
+
+        assert!(result1.new_assignments.contains(&target.id));
+        assert!(result2.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_idempotent_when_already_assigned() {
+        // Item already in target → no duplicate assignment
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let trigger = category("Trigger", false);
+        let target = category_with_profile("Target", &[trigger.id], &[]);
+        create_category(&store, &trigger);
+        create_category(&store, &target);
+
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, trigger.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item.id, target.id, &manual_assignment())
+            .unwrap();
+
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        // Target already assigned, so it shouldn't appear in new_assignments
+        assert!(!result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_provenance_tracking() {
+        // Auto-assigned via profile gets origin="profile:CategoryName"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let trigger = category("Trigger", false);
+        let target = category_with_profile("Target", &[trigger.id], &[]);
+        create_category(&store, &trigger);
+        create_category(&store, &target);
+
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, trigger.id, &manual_assignment())
+            .unwrap();
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let target_assignment = assignments.get(&target.id).unwrap();
+        assert_eq!(target_assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(target_assignment.origin.as_deref(), Some("profile:Target"));
+    }
+
+    #[test]
+    fn profile_or_criteria() {
+        // "If CatA OR CatB → assign to Target"
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        let target = category_with_profile_or("Target", &[], &[], &[cat_a.id, cat_b.id]);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+        create_category(&store, &target);
+
+        // Only CatA assigned — should still fire (OR)
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, cat_a.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_or_criteria_no_match() {
+        // OR criteria but none present → should NOT fire
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        let target = category_with_profile_or("Target", &[], &[], &[cat_a.id, cat_b.id]);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+        create_category(&store, &target);
+
+        let item = create_item(&store, "neutral");
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(!result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn profile_multiple_conditions_or_semantics() {
+        // Category with two profile conditions — either one matching should fire
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cat_a = category("CatA", false);
+        let cat_b = category("CatB", false);
+        create_category(&store, &cat_a);
+        create_category(&store, &cat_b);
+
+        // Target has TWO separate profile conditions (OR'd across conditions)
+        let mut target = category("Target", false);
+        let mut criteria1 = Query::default();
+        criteria1.set_criterion(CriterionMode::And, cat_a.id);
+        target.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria1),
+        });
+        let mut criteria2 = Query::default();
+        criteria2.set_criterion(CriterionMode::And, cat_b.id);
+        target.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria2),
+        });
+        create_category(&store, &target);
+
+        // Only CatB assigned — second condition matches
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, cat_b.id, &manual_assignment())
+            .unwrap();
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&target.id));
+    }
+
+    // ---------------------------------------------------------------
+    // "Mom OR Dad → Family" scenarios — two ways to express OR
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn profile_mom_or_dad_via_or_criteria() {
+        // Single condition with OR criteria: --or Mom --or Dad
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mom = category("Mom", false);
+        let dad = category("Dad", false);
+        let family = category_with_profile_or("Family", &[], &[], &[mom.id, dad.id]);
+        create_category(&store, &mom);
+        create_category(&store, &dad);
+        create_category(&store, &family);
+
+        // Only Mom assigned → Family fires
+        let item1 = create_item(&store, "neutral one");
+        store
+            .assign_item(item1.id, mom.id, &manual_assignment())
+            .unwrap();
+        let result1 = process_item(&store, &classifier, item1.id).unwrap();
+        assert!(result1.new_assignments.contains(&family.id));
+
+        // Only Dad assigned → Family fires
+        let item2 = create_item(&store, "neutral two");
+        store
+            .assign_item(item2.id, dad.id, &manual_assignment())
+            .unwrap();
+        let result2 = process_item(&store, &classifier, item2.id).unwrap();
+        assert!(result2.new_assignments.contains(&family.id));
+
+        // Neither assigned → Family does NOT fire
+        let item3 = create_item(&store, "neutral three");
+        let result3 = process_item(&store, &classifier, item3.id).unwrap();
+        assert!(!result3.new_assignments.contains(&family.id));
+    }
+
+    #[test]
+    fn profile_mom_or_dad_via_multiple_conditions() {
+        // Two separate profile conditions: condition1 = --and Mom, condition2 = --and Dad
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mom = category("Mom", false);
+        let dad = category("Dad", false);
+        create_category(&store, &mom);
+        create_category(&store, &dad);
+
+        let mut family = category("Family", false);
+        let mut c1 = Query::default();
+        c1.set_criterion(CriterionMode::And, mom.id);
+        family.conditions.push(Condition::Profile {
+            criteria: Box::new(c1),
+        });
+        let mut c2 = Query::default();
+        c2.set_criterion(CriterionMode::And, dad.id);
+        family.conditions.push(Condition::Profile {
+            criteria: Box::new(c2),
+        });
+        create_category(&store, &family);
+
+        // Only Mom assigned → Family fires (first condition matches)
+        let item1 = create_item(&store, "neutral one");
+        store
+            .assign_item(item1.id, mom.id, &manual_assignment())
+            .unwrap();
+        let result1 = process_item(&store, &classifier, item1.id).unwrap();
+        assert!(result1.new_assignments.contains(&family.id));
+
+        // Only Dad assigned → Family fires (second condition matches)
+        let item2 = create_item(&store, "neutral two");
+        store
+            .assign_item(item2.id, dad.id, &manual_assignment())
+            .unwrap();
+        let result2 = process_item(&store, &classifier, item2.id).unwrap();
+        assert!(result2.new_assignments.contains(&family.id));
+
+        // Both assigned → Family fires (both conditions match)
+        let item3 = create_item(&store, "neutral three");
+        store
+            .assign_item(item3.id, mom.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item3.id, dad.id, &manual_assignment())
+            .unwrap();
+        let result3 = process_item(&store, &classifier, item3.id).unwrap();
+        assert!(result3.new_assignments.contains(&family.id));
+
+        // Neither assigned → Family does NOT fire
+        let item4 = create_item(&store, "neutral four");
+        let result4 = process_item(&store, &classifier, item4.id).unwrap();
+        assert!(!result4.new_assignments.contains(&family.id));
+    }
+
+    #[test]
+    fn process_item_implicit_match_auto_breaks_non_sticky_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mom = category("Mom", true);
+        create_category(&store, &mom);
+
+        let mut item = create_item(&store, "Call Mom about birthday");
+        let first = process_item(&store, &classifier, item.id).unwrap();
+        assert!(first.new_assignments.contains(&mom.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let mom_assignment = assignments.get(&mom.id).unwrap();
+        assert_eq!(mom_assignment.source, AssignmentSource::AutoMatch);
+        assert!(!mom_assignment.sticky);
+
+        item.text = "Call Dad about birthday".to_string();
+        item.modified_at = Timestamp::now();
+        store.update_item(&item).unwrap();
+
+        let second = process_item(&store, &classifier, item.id).unwrap();
+        assert!(second.removed_assignments.contains(&mom.id));
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&mom.id),
+            "implicit string assignment should auto-break when text no longer matches"
+        );
+    }
+
+    #[test]
+    fn process_item_profile_assignment_auto_breaks_when_prerequisite_removed() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", false);
+        let project_alpha = category("Project Alpha", false);
+        let escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, urgent.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item.id, project_alpha.id, &manual_assignment())
+            .unwrap();
+
+        let first = process_item(&store, &classifier, item.id).unwrap();
+        assert!(first.new_assignments.contains(&escalated.id));
+        let escalated_assignment = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!escalated_assignment[&escalated.id].sticky);
+
+        store.unassign_item(item.id, urgent.id).unwrap();
+        let second = process_item(&store, &classifier, item.id).unwrap();
+        assert!(second.removed_assignments.contains(&escalated.id));
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&escalated.id),
+            "profile assignment should auto-break when prerequisite assignment disappears"
+        );
+    }
+
+    #[test]
+    fn process_item_action_assignment_persists_after_live_condition_breaks() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let urgent = category("Urgent", false);
+        let project_alpha = category("Project Alpha", false);
+        let mut escalated = category_with_profile("Escalated", &[urgent.id, project_alpha.id], &[]);
+        let notify = category("Notify", false);
+        escalated.actions.push(Action::Assign {
+            targets: HashSet::from([notify.id]),
+        });
+        create_category(&store, &urgent);
+        create_category(&store, &project_alpha);
+        create_category(&store, &escalated);
+        create_category(&store, &notify);
+
+        let item = create_item(&store, "neutral");
+        store
+            .assign_item(item.id, urgent.id, &manual_assignment())
+            .unwrap();
+        store
+            .assign_item(item.id, project_alpha.id, &manual_assignment())
+            .unwrap();
+
+        let first = process_item(&store, &classifier, item.id).unwrap();
+        assert!(first.new_assignments.contains(&escalated.id));
+        assert!(first.new_assignments.contains(&notify.id));
+
+        store.unassign_item(item.id, urgent.id).unwrap();
+        let second = process_item(&store, &classifier, item.id).unwrap();
+        assert!(second.removed_assignments.contains(&escalated.id));
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(!assignments.contains_key(&escalated.id));
+        assert!(
+            assignments.contains_key(&notify.id),
+            "action-produced assignment should remain after live condition assignment breaks"
+        );
+        assert_eq!(assignments[&notify.id].source, AssignmentSource::Action);
+        assert!(assignments[&notify.id].sticky);
     }
 }

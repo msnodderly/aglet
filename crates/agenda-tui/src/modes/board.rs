@@ -5364,7 +5364,9 @@ impl App {
 
                     for action_item_id in &action_item_ids {
                         let result = if should_unassign {
-                            agenda.unassign_item_manual(*action_item_id, row.id)
+                            agenda
+                                .unassign_item_manual(*action_item_id, row.id)
+                                .map(|_| ())
                         } else {
                             agenda
                                 .assign_item_manual(
@@ -5422,7 +5424,7 @@ impl App {
                         .and_then(|i| i.assignments.get(&row.id))
                         .cloned();
                     match agenda.unassign_item_manual(item_id, row.id) {
-                        Ok(()) => {
+                        Ok(_) => {
                             if let Some(assignment) = old_assignment {
                                 self.push_undo(UndoEntry::CategoryUnassigned {
                                     item_id,
@@ -5934,6 +5936,7 @@ mod tests {
             enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
+            has_conditions: false,
         }
     }
 

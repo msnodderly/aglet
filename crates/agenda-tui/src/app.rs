@@ -1,6 +1,6 @@
 use crate::*;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -1465,6 +1465,21 @@ impl App {
                     else {
                         continue;
                     };
+                    let current_assignments: HashSet<_> =
+                        item.assignments.keys().copied().collect();
+                    let hypothetical_assignments: HashSet<_> =
+                        hypothetical.assignments.keys().copied().collect();
+
+                    self.item_assign_preview.cat_to_add.extend(
+                        hypothetical_assignments
+                            .difference(&current_assignments)
+                            .copied(),
+                    );
+                    self.item_assign_preview.cat_to_remove.extend(
+                        current_assignments
+                            .difference(&hypothetical_assignments)
+                            .copied(),
+                    );
 
                     // Build item lists: current and hypothetical.
                     let other_items: Vec<_> = self
@@ -1659,6 +1674,7 @@ impl App {
             visible_row_indices: Vec::new(),
             selected_category_id,
             inline_action: None,
+            condition_edit: None,
         });
         self.rebuild_category_manager_visible_rows();
     }
@@ -1952,6 +1968,20 @@ impl App {
         if let Some(state) = &mut self.category_manager {
             state.details_inline_input = input;
         }
+    }
+
+    pub(crate) fn category_manager_condition_edit(&self) -> Option<&ConditionEditState> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.condition_edit.as_ref())
+    }
+
+    pub(crate) fn category_manager_condition_edit_mut(
+        &mut self,
+    ) -> Option<&mut ConditionEditState> {
+        self.category_manager
+            .as_mut()
+            .and_then(|state| state.condition_edit.as_mut())
     }
 
     pub(crate) fn selected_category_numeric_format(&self) -> Option<NumericFormat> {

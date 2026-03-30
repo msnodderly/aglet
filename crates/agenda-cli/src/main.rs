@@ -10,8 +10,8 @@ use agenda_core::dates::{BasicDateParser, DateParser};
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, ItemId,
-    Query, Section, SummaryFn, View,
+    Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
+    CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
@@ -408,6 +408,29 @@ enum CategoryCommand {
         item_id: String,
         /// Category name (case-insensitive).
         category_name: String,
+    },
+
+    /// Add a profile condition to a category
+    AddCondition {
+        /// Category name to add the condition to (case-insensitive).
+        name: String,
+        /// Categories that must ALL be assigned (AND logic).
+        #[arg(long = "and", value_name = "CATEGORY")]
+        and_categories: Vec<String>,
+        /// Categories that must NOT be assigned.
+        #[arg(long = "not", value_name = "CATEGORY")]
+        not_categories: Vec<String>,
+        /// Categories where at least one must be assigned (OR logic).
+        #[arg(long = "or", value_name = "CATEGORY")]
+        or_categories: Vec<String>,
+    },
+
+    /// Remove a profile condition from a category by index (1-based)
+    RemoveCondition {
+        /// Category name (case-insensitive).
+        name: String,
+        /// Condition index (1-based, as shown in `category show`).
+        index: usize,
     },
 }
 
@@ -1949,29 +1972,24 @@ fn cmd_category(
             }
             if !category.conditions.is_empty() {
                 println!("conditions:");
-                for condition in &category.conditions {
+                let resolve = |id: CategoryId| {
+                    category_names
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| "(deleted)".to_string())
+                };
+                for (i, condition) in category.conditions.iter().enumerate() {
                     match condition {
                         agenda_core::model::Condition::ImplicitString => {
-                            println!("  - ImplicitString");
+                            println!("  {}. ImplicitString", i + 1);
                         }
                         agenda_core::model::Condition::Profile { criteria } => {
-                            let and_names: Vec<&str> = criteria
-                                .and_category_ids()
-                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                                .collect();
-                            let not_names: Vec<&str> = criteria
-                                .not_category_ids()
-                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                                .collect();
-                            let or_names: Vec<&str> = criteria
-                                .or_category_ids()
-                                .filter_map(|id| category_names.get(&id).map(|s| s.as_str()))
-                                .collect();
+                            let trigger = criteria.format_trigger(&resolve);
                             println!(
-                                "  - Profile (and=[{}], not=[{}], or=[{}])",
-                                and_names.join(", "),
-                                not_names.join(", "),
-                                or_names.join(", ")
+                                "  {}. {} -> {}",
+                                i + 1,
+                                trigger,
+                                category.name
                             );
                         }
                     }
@@ -2309,6 +2327,101 @@ fn cmd_category(
             println!(
                 "unassigned item {} from category {}",
                 item_id, category_name
+            );
+            Ok(())
+        }
+        CategoryCommand::AddCondition {
+            name,
+            and_categories,
+            not_categories,
+            or_categories,
+        } => {
+            if and_categories.is_empty() && not_categories.is_empty() && or_categories.is_empty() {
+                return Err(
+                    "at least one criterion required: use --and, --not, or --or".to_string()
+                );
+            }
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+
+            let mut criteria = Vec::new();
+            for cat_name in &and_categories {
+                let id = category_id_by_name(&categories, cat_name)?;
+                criteria.push(Criterion {
+                    mode: CriterionMode::And,
+                    category_id: id,
+                });
+            }
+            for cat_name in &not_categories {
+                let id = category_id_by_name(&categories, cat_name)?;
+                criteria.push(Criterion {
+                    mode: CriterionMode::Not,
+                    category_id: id,
+                });
+            }
+            for cat_name in &or_categories {
+                let id = category_id_by_name(&categories, cat_name)?;
+                criteria.push(Criterion {
+                    mode: CriterionMode::Or,
+                    category_id: id,
+                });
+            }
+
+            let query = Query {
+                criteria,
+                ..Query::default()
+            };
+            category
+                .conditions
+                .push(Condition::Profile {
+                    criteria: Box::new(query),
+                });
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+
+            let condition_index = category.conditions.len();
+            println!(
+                "added profile condition #{} to {} (processed_items={}, affected_items={})",
+                condition_index, name, result.processed_items, result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::RemoveCondition { name, index } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+
+            if index == 0 || index > category.conditions.len() {
+                return Err(format!(
+                    "condition index {} out of range: {} has {} condition(s)",
+                    index,
+                    name,
+                    category.conditions.len()
+                ));
+            }
+            let removed = category.conditions.remove(index - 1);
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+
+            let desc = match &removed {
+                Condition::ImplicitString => "ImplicitString".to_string(),
+                Condition::Profile { criteria } => {
+                    let category_names = category_name_map(&categories);
+                    let resolve = |id: CategoryId| {
+                        category_names
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string())
+                    };
+                    criteria.format_trigger(&resolve)
+                }
+            };
+            println!(
+                "removed condition #{} ({}) from {} (processed_items={}, affected_items={})",
+                index, desc, name, result.processed_items, result.affected_items
             );
             Ok(())
         }
@@ -4239,8 +4352,8 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Category, CategoryValueKind, Column, ColumnKind, CriterionMode, Item, NumericFormat, Query,
-        Section, SummaryFn, View,
+        Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item,
+        NumericFormat, Query, Section, SummaryFn, View,
     };
     use agenda_core::store::Store;
     use jiff::civil::date;
@@ -5629,6 +5742,188 @@ mod tests {
                 use_thousands_separator: true,
             })
         );
+    }
+
+    #[test]
+    fn cmd_category_add_condition_creates_profile_condition() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let project = Category::new("Project Alpha".to_string());
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create urgent");
+        store.create_category(&project).expect("create project");
+        store.create_category(&escalated).expect("create escalated");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddCondition {
+                name: "Escalated".to_string(),
+                and_categories: vec!["Urgent".to_string(), "Project Alpha".to_string()],
+                not_categories: Vec::new(),
+                or_categories: Vec::new(),
+            },
+        )
+        .expect("add condition");
+
+        let updated = store.get_category(escalated.id).expect("load escalated");
+        assert_eq!(updated.conditions.len(), 1);
+        match &updated.conditions[0] {
+            Condition::Profile { criteria } => {
+                let and_ids: Vec<_> = criteria.and_category_ids().collect();
+                assert_eq!(and_ids, vec![urgent.id, project.id]);
+                assert_eq!(criteria.not_category_ids().count(), 0);
+            }
+            other => panic!("expected Profile condition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cmd_category_add_condition_with_not_criteria() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = Category::new("Work".to_string());
+        let delegated = Category::new("Delegated".to_string());
+        let my_tasks = Category::new("My-Tasks".to_string());
+        store.create_category(&work).expect("create");
+        store.create_category(&delegated).expect("create");
+        store.create_category(&my_tasks).expect("create");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddCondition {
+                name: "My-Tasks".to_string(),
+                and_categories: vec!["Work".to_string()],
+                not_categories: vec!["Delegated".to_string()],
+                or_categories: Vec::new(),
+            },
+        )
+        .expect("add condition");
+
+        let updated = store.get_category(my_tasks.id).expect("load");
+        assert_eq!(updated.conditions.len(), 1);
+        match &updated.conditions[0] {
+            Condition::Profile { criteria } => {
+                let and_ids: Vec<_> = criteria.and_category_ids().collect();
+                let not_ids: Vec<_> = criteria.not_category_ids().collect();
+                assert_eq!(and_ids, vec![work.id]);
+                assert_eq!(not_ids, vec![delegated.id]);
+            }
+            other => panic!("expected Profile condition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cmd_category_add_condition_rejects_empty_criteria() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cat = Category::new("Test".to_string());
+        store.create_category(&cat).expect("create");
+
+        let result = cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddCondition {
+                name: "Test".to_string(),
+                and_categories: Vec::new(),
+                not_categories: Vec::new(),
+                or_categories: Vec::new(),
+            },
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least one criterion"));
+    }
+
+    #[test]
+    fn cmd_category_remove_condition_removes_by_index() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let urgent = Category::new("Urgent".to_string());
+        let p0 = Category::new("P0".to_string());
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&urgent).expect("create");
+        store.create_category(&p0).expect("create");
+        store.create_category(&escalated).expect("create");
+
+        // Add two conditions
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddCondition {
+                name: "Escalated".to_string(),
+                and_categories: vec!["Urgent".to_string()],
+                not_categories: Vec::new(),
+                or_categories: Vec::new(),
+            },
+        )
+        .expect("add condition 1");
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddCondition {
+                name: "Escalated".to_string(),
+                and_categories: vec!["P0".to_string()],
+                not_categories: Vec::new(),
+                or_categories: Vec::new(),
+            },
+        )
+        .expect("add condition 2");
+
+        let before = store.get_category(escalated.id).expect("load");
+        assert_eq!(before.conditions.len(), 2);
+
+        // Remove the first condition (1-based)
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::RemoveCondition {
+                name: "Escalated".to_string(),
+                index: 1,
+            },
+        )
+        .expect("remove condition");
+
+        let after = store.get_category(escalated.id).expect("load");
+        assert_eq!(after.conditions.len(), 1);
+        // The remaining condition should be the P0 one
+        match &after.conditions[0] {
+            Condition::Profile { criteria } => {
+                let and_ids: Vec<_> = criteria.and_category_ids().collect();
+                assert_eq!(and_ids, vec![p0.id]);
+            }
+            other => panic!("expected Profile condition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cmd_category_remove_condition_rejects_out_of_range_index() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let cat = Category::new("Test".to_string());
+        store.create_category(&cat).expect("create");
+
+        let result = cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::RemoveCondition {
+                name: "Test".to_string(),
+                index: 1,
+            },
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("out of range"));
     }
 
     #[test]

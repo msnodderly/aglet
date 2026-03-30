@@ -5652,6 +5652,237 @@ impl App {
         );
     }
 
+    fn render_condition_edit_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(edit) = self.category_manager_condition_edit() else {
+            return;
+        };
+        let category_name = self
+            .selected_category_row()
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let category = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id));
+        let selected_category_id = category.map(|c| c.id);
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let category_names: std::collections::HashMap<CategoryId, &str> = self
+            .categories
+            .iter()
+            .map(|c| (c.id, c.name.as_str()))
+            .collect();
+
+        if edit.picker_open {
+            // Level 2: criteria picker
+            let title = if edit.condition_index.is_some() {
+                format!(" Edit Condition: {} ", category_name)
+            } else {
+                format!(" New Condition: {} ", category_name)
+            };
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(8),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            // Summary of current draft criteria
+            let resolve = |id: CategoryId| -> String {
+                category_names
+                    .get(&id)
+                    .unwrap_or(&"(deleted)")
+                    .to_string()
+            };
+            let trigger = edit.draft_query.format_trigger(&resolve);
+            let summary_text = if edit.draft_query.criteria.is_empty() {
+                "(no criteria selected yet)".to_string()
+            } else {
+                format!("{} -> {}", trigger, category_name)
+            };
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    summary_text,
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            // Category picker list
+            let filtered_indices: Vec<usize> = self
+                .category_rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| !row.is_reserved)
+                .map(|(i, _)| i)
+                .collect();
+            let selected_row = filtered_indices
+                .iter()
+                .position(|&idx| idx == edit.picker_index)
+                .unwrap_or(0);
+
+            let items: Vec<ListItem<'_>> = filtered_indices
+                .iter()
+                .filter_map(|idx| self.category_rows.get(*idx))
+                .map(|row| {
+                    let mode = edit.draft_query.mode_for(row.id);
+                    let is_self = Some(row.id) == selected_category_id;
+                    let (prefix, color) = if is_self {
+                        match mode {
+                            Some(_) => ("[!] ", MUTED_TEXT_COLOR),
+                            None => ("[ ] ", MUTED_TEXT_COLOR),
+                        }
+                    } else {
+                        match mode {
+                            Some(CriterionMode::And) => ("[+] ", Color::Green),
+                            Some(CriterionMode::Not) => ("[-] ", Color::Red),
+                            Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
+                            None => ("    ", Color::White),
+                        }
+                    };
+                    let label = format!(
+                        "{}{}{}{}",
+                        "  ".repeat(row.depth),
+                        prefix,
+                        row.name,
+                        if is_self { " (self)" } else { "" }
+                    );
+                    ListItem::new(Line::from(Span::styled(label, Style::default().fg(color))))
+                })
+                .collect();
+
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "Space:cycle  +/-/3:set  0:clear  Enter:save  Esc:cancel",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        } else {
+            // Level 1: condition list
+            let profile_conditions: Vec<(usize, &Query)> = category
+                .map(|cat| {
+                    cat.conditions
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| match c {
+                            Condition::Profile { criteria } => Some((i, criteria.as_ref())),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(5),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    "Items matching ANY rule get assigned:",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(format!(" Rules: {} ", category_name))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let resolve = |id: CategoryId| -> String {
+                category_names
+                    .get(&id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "(deleted)".to_string())
+            };
+            let items: Vec<ListItem<'_>> = if profile_conditions.is_empty() {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "(no rules — press 'a' to add)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                profile_conditions
+                    .iter()
+                    .enumerate()
+                    .map(|(display_idx, (_actual_idx, query))| {
+                        let trigger = query.format_trigger(&resolve);
+                        let label = format!(
+                            "{}. {} -> {}",
+                            display_idx + 1,
+                            trigger,
+                            category_name
+                        );
+                        ListItem::new(Line::from(label))
+                    })
+                    .collect()
+            };
+
+            let selected_row = if profile_conditions.is_empty() {
+                0
+            } else {
+                edit.list_index.min(profile_conditions.len().saturating_sub(1))
+            };
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "a:add  Enter:edit  x:delete  Esc:close",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        }
+    }
+
     pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
@@ -5815,6 +6046,9 @@ impl App {
                         if self.workflow_config.claim_category_id == Some(row.id) {
                             badges.push("claim-target");
                         }
+                    }
+                    if row.has_conditions {
+                        badges.push("rules");
                     }
                     if !badges.is_empty() {
                         label.push(' ');
@@ -5981,13 +6215,15 @@ impl App {
                             Constraint::Length(info_height),
                             Constraint::Length(flags_height),
                             Constraint::Length(6),
+                            Constraint::Length(4),
                             Constraint::Min(5),
                             Constraint::Length(2),
                         ])
                         .split(details_inner)
                 };
-                let note_chunk_index = if is_numeric_category { 2 } else { 3 };
-                let hint_chunk_index = if is_numeric_category { 3 } else { 4 };
+                let conditions_chunk_index: usize = 3;
+                let note_chunk_index = if is_numeric_category { 2 } else { 4 };
+                let hint_chunk_index = if is_numeric_category { 3 } else { 5 };
 
                 let assigned_item_count = self
                     .category_assignment_counts
@@ -6222,7 +6458,9 @@ impl App {
                 let flags_border_focused = !is_reserved_category
                     && !matches!(
                         details_focus,
-                        CategoryManagerDetailsFocus::Note | CategoryManagerDetailsFocus::AlsoMatch
+                        CategoryManagerDetailsFocus::Note
+                            | CategoryManagerDetailsFocus::AlsoMatch
+                            | CategoryManagerDetailsFocus::Conditions
                     );
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
@@ -6304,6 +6542,91 @@ impl App {
                             also_match_scroll as usize,
                         );
                     }
+                }
+
+                // Conditions subpane (non-numeric only)
+                if !is_numeric_category {
+                    let conditions_focused = !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::Conditions;
+                    let conditions_count = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .map(|c| {
+                            c.conditions
+                                .iter()
+                                .filter(|cond| matches!(cond, Condition::Profile { .. }))
+                                .count()
+                        })
+                        .unwrap_or(0);
+                    let conditions_summary = if conditions_count == 0 {
+                        "  (none — Enter to add)".to_string()
+                    } else {
+                        let category_names: std::collections::HashMap<CategoryId, &str> = self
+                            .categories
+                            .iter()
+                            .map(|c| (c.id, c.name.as_str()))
+                            .collect();
+                        let resolve = |id: CategoryId| -> String {
+                            category_names
+                                .get(&id)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "(deleted)".to_string())
+                        };
+                        self.categories
+                            .iter()
+                            .find(|c| c.id == row.id)
+                            .map(|cat| {
+                                cat.conditions
+                                    .iter()
+                                    .filter_map(|cond| match cond {
+                                        Condition::Profile { criteria } => {
+                                            Some(format!(
+                                                "  {} -> {}",
+                                                criteria.format_trigger(&resolve),
+                                                row.name
+                                            ))
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            })
+                            .unwrap_or_default()
+                    };
+                    let conditions_title = if conditions_count == 0 {
+                        "Conditions"
+                    } else {
+                        "Conditions (Enter to edit)"
+                    };
+                    let conditions_title_display = if conditions_focused {
+                        format!("> {conditions_title}")
+                    } else {
+                        conditions_title.to_string()
+                    };
+                    frame.render_widget(
+                        Paragraph::new(conditions_summary)
+                            .style(if is_reserved_category {
+                                Style::default()
+                                    .fg(MUTED_TEXT_COLOR)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            })
+                            .block(
+                                Block::default()
+                                    .title(conditions_title_display)
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(
+                                        if conditions_focused {
+                                            CATEGORY_MANAGER_EDIT_FOCUS
+                                        } else {
+                                            pane_idle
+                                        },
+                                    )),
+                            ),
+                        details_chunks[conditions_chunk_index],
+                    );
                 }
 
                 let note_block_focus =
@@ -6422,6 +6745,9 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::ThousandsSeparator => {
                             "Enter/Space: toggle thousands separator"
+                        }
+                        CategoryManagerDetailsFocus::Conditions => {
+                            "Profile conditions auto-assign items  Enter: details"
                         }
                         CategoryManagerDetailsFocus::Note => {
                             "j/k: focus field  Enter/Space: toggle/edit"
@@ -6556,6 +6882,10 @@ impl App {
 
         if self.workflow_role_picker.is_some() {
             self.render_workflow_role_picker_overlay(frame, area);
+        }
+
+        if self.category_manager_condition_edit().is_some() {
+            self.render_condition_edit_overlay(frame, area);
         }
 
         if self.classification_mode_picker_open {
