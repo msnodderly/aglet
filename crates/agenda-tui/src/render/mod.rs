@@ -3400,7 +3400,7 @@ impl App {
     }
 
     fn render_suggestion_review(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let Some(state) = &self.suggestion_review else {
+        let Some(state) = &self.classification.suggestion_review else {
             return;
         };
 
@@ -3814,8 +3814,8 @@ impl App {
                 .map(str::to_string)
                 .unwrap_or_else(|| {
                     let mut parts = vec![self.status.clone()];
-                    if !self.in_flight_classifications.is_empty() {
-                        let n = self.in_flight_classifications.len();
+                    if !self.classification.in_flight_classifications.is_empty() {
+                        let n = self.classification.in_flight_classifications.len();
                         parts.push(format!("[classifying {n}…]"));
                     }
                     if let Some(suffix) = self.classification_pending_suffix() {
@@ -3847,6 +3847,7 @@ impl App {
             ],
             Mode::GlobalSettings => {
                 if self
+                    .settings
                     .workflow_role_picker
                     .as_ref()
                     .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
@@ -3874,9 +3875,9 @@ impl App {
                         ("n", "discard"),
                         ("Esc", "keep editing"),
                     ]
-                } else if self.classification_mode_picker_open {
+                } else if self.settings.classification_mode_picker_open {
                     vec![("j/k", "mode"), ("Enter", "apply"), ("Esc", "close")]
-                } else if self.workflow_role_picker.is_some() {
+                } else if self.settings.workflow_role_picker.is_some() {
                     vec![
                         ("j/k", "pick"),
                         ("Enter", "assign"),
@@ -5376,18 +5377,18 @@ impl App {
             ListItem::new(Line::from(format!(
                 "Literal classify    < {} >",
                 modes::classification::literal_mode_label(
-                    self.classification_ui.config.literal_mode
+                    self.classification.ui.config.literal_mode
                 )
             ))),
             ListItem::new(Line::from(format!(
                 "Semantic classify   < {} >",
                 modes::classification::semantic_mode_label(
-                    self.classification_ui.config.semantic_mode
+                    self.classification.ui.config.semantic_mode
                 )
             ))),
             ListItem::new(Line::from(format!(
                 "Ollama enabled      < {} >",
-                if self.classification_ui.config.ollama.enabled {
+                if self.classification.ui.config.ollama.enabled {
                     "On"
                 } else {
                     "Off"
@@ -5395,15 +5396,15 @@ impl App {
             ))),
             ListItem::new(Line::from(format!(
                 "Ollama base URL     {}",
-                self.classification_ui.config.ollama.base_url
+                self.classification.ui.config.ollama.base_url
             ))),
             ListItem::new(Line::from(format!(
                 "Ollama model        {}",
-                self.classification_ui.config.ollama.model
+                self.classification.ui.config.ollama.model
             ))),
             ListItem::new(Line::from(format!(
                 "Ollama timeout      {}s",
-                self.classification_ui.config.ollama.timeout_secs
+                self.classification.ui.config.ollama.timeout_secs
             ))),
             ListItem::new(Line::from(format!("Ready category       {ready_name}"))),
             ListItem::new(Line::from(format!("Claim category       {claim_name}"))),
@@ -5432,6 +5433,7 @@ impl App {
         );
 
         if self
+            .settings
             .workflow_role_picker
             .as_ref()
             .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
@@ -5439,7 +5441,7 @@ impl App {
             self.render_workflow_role_picker_overlay(frame, area);
         }
 
-        if let Some(picker) = &self.ollama_model_picker {
+        if let Some(picker) = &self.settings.ollama_model_picker {
             self.render_ollama_model_picker_overlay(frame, area, picker);
         }
     }
@@ -5480,7 +5482,7 @@ impl App {
             popup_area,
         );
 
-        let current_model = &self.classification_ui.config.ollama.model;
+        let current_model = &self.classification.ui.config.ollama.model;
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!("Current: {current_model}"),
@@ -5521,7 +5523,7 @@ impl App {
     }
 
     fn render_workflow_role_picker_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let Some(picker) = &self.workflow_role_picker else {
+        let Some(picker) = &self.settings.workflow_role_picker else {
             return;
         };
         let row_indices = self.workflow_role_picker_row_indices();
@@ -5915,9 +5917,9 @@ impl App {
                 }
             });
         let literal_mode =
-            modes::classification::literal_mode_label(self.classification_ui.config.literal_mode);
+            modes::classification::literal_mode_label(self.classification.ui.config.literal_mode);
         let semantic_mode =
-            modes::classification::semantic_mode_label(self.classification_ui.config.semantic_mode);
+            modes::classification::semantic_mode_label(self.classification.ui.config.semantic_mode);
         let ready_name = self
             .workflow_config
             .ready_category_id
@@ -6886,7 +6888,7 @@ impl App {
             );
         }
 
-        if self.workflow_role_picker.is_some() {
+        if self.settings.workflow_role_picker.is_some() {
             self.render_workflow_role_picker_overlay(frame, area);
         }
 
@@ -6894,8 +6896,8 @@ impl App {
             self.render_condition_edit_overlay(frame, area);
         }
 
-        if self.classification_mode_picker_open {
-            let focus = self.classification_mode_picker_focus;
+        if self.settings.classification_mode_picker_open {
+            let focus = self.settings.classification_mode_picker_focus;
             let style_for = |idx: usize| {
                 if focus == idx {
                     focused_cell_style()
@@ -6905,7 +6907,7 @@ impl App {
             };
             let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
             let current_mode = modes::classification::literal_mode_label(
-                self.classification_ui.config.literal_mode,
+                self.classification.ui.config.literal_mode,
             );
             let w = area.width.min(54);
             let h = 15u16;

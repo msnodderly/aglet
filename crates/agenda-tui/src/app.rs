@@ -4,10 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use agenda_core::store::DEFAULT_VIEW_NAME;
-use agenda_core::workflow::{
-    build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
-};
+use agenda_core::workflow::READY_QUEUE_VIEW_NAME;
 
 pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
     let Some(parts) = shlex::split(editor) else {
@@ -26,7 +23,7 @@ impl App {
     const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
 
     pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
-        self.transient_status.as_ref().and_then(|transient| {
+        self.transient.status.as_ref().and_then(|transient| {
             if Instant::now() < transient.expires_at {
                 Some(transient.message.as_str())
             } else {
@@ -37,17 +34,18 @@ impl App {
 
     pub(crate) fn clear_expired_transient_status(&mut self) {
         if self
-            .transient_status
+            .transient
+            .status
             .as_ref()
             .is_some_and(|transient| Instant::now() >= transient.expires_at)
         {
-            self.transient_status = None;
+            self.transient.status = None;
         }
     }
 
     pub(crate) fn clear_transient_status_on_key(&mut self, _key: KeyEvent) {
-        if self.transient_status.is_some() {
-            self.transient_status = None;
+        if self.transient.status.is_some() {
+            self.transient.status = None;
         }
     }
 
@@ -65,7 +63,7 @@ impl App {
     pub(crate) fn set_auto_refresh_interval(&mut self, interval: AutoRefreshInterval) {
         self.auto_refresh_interval = interval;
         self.auto_refresh_last_tick = Instant::now();
-        self.transient_status = Some(TransientStatus {
+        self.transient.status = Some(TransientStatus {
             message: format!("Auto-refresh interval: {}", self.auto_refresh_mode_label()),
             expires_at: Instant::now() + Self::AUTO_REFRESH_STATUS_TTL,
         });
@@ -139,7 +137,7 @@ impl App {
         self.refresh(store)?;
         self.load_auto_refresh_interval(store)?;
         self.load_section_border_mode(store)?;
-        self.global_settings = Some(GlobalSettingsState::default());
+        self.settings.global_settings = Some(GlobalSettingsState::default());
         self.mode = Mode::GlobalSettings;
         self.status =
             "Global settings: j/k move, Space or ←/→ cycle, Enter pick, Esc close".to_string();
@@ -228,7 +226,7 @@ impl App {
                 break;
             }
 
-            if let Some(target) = self.pending_external_edit.take() {
+            if let Some(target) = self.transient.pending_external_edit.take() {
                 self.run_external_editor(terminal, target)?;
             }
 
@@ -239,19 +237,8 @@ impl App {
     }
 
     pub(crate) fn refresh(&mut self, store: &Store) -> TuiResult<()> {
-        self.views = store.list_views()?;
+        self.views = projection::load_views_with_ready_queue(store)?;
         self.workflow_config = store.get_workflow_config()?;
-        if let Some(workflow) = resolve_workflow_config(store)? {
-            let ready_queue_view = build_ready_queue_view(store, workflow)?;
-            let insert_at = self
-                .views
-                .iter()
-                .position(|view| view.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME))
-                .map(|index| index + 1)
-                .unwrap_or(0)
-                .min(self.views.len());
-            self.views.insert(insert_at, ready_queue_view);
-        }
         if let Some(active_view_name) = self.active_view_name.clone() {
             if let Some(index) = self
                 .views
@@ -301,139 +288,7 @@ impl App {
             };
             self.item_links_by_item_id.insert(item.id, links);
         }
-
-        let mut slots = Vec::new();
-        if self.views.is_empty() {
-            slots.push(Slot {
-                title: "All Items (no views configured)".to_string(),
-                items: items.clone(),
-                context: SlotContext::Unmatched,
-            });
-            if self.mode == Mode::Normal {
-                self.status = "No views configured; showing fallback item list".to_string();
-            }
-            self.set_active_view_index(0);
-        } else {
-            self.set_active_view_index(self.view_index);
-            let view = self
-                .current_view()
-                .cloned()
-                .ok_or("No active view".to_string())?;
-            let reference_date = jiff::Zoned::now().date();
-            let view_items = if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                if let Some(workflow) = resolve_workflow_config(store)? {
-                    let claimable_ids = claimable_item_ids(store, &items, workflow)?;
-                    items
-                        .iter()
-                        .filter(|item| claimable_ids.contains(&item.id))
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                items.clone()
-            };
-            let mut result = resolve_view(&view, &view_items, &self.categories, reference_date);
-            if self.effective_hide_dependent_items() {
-                for section in &mut result.sections {
-                    section.items.retain(|item| !self.is_item_blocked(item.id));
-                    for subsection in &mut section.subsections {
-                        subsection
-                            .items
-                            .retain(|item| !self.is_item_blocked(item.id));
-                    }
-                }
-                if let Some(unmatched_items) = &mut result.unmatched {
-                    unmatched_items.retain(|item| !self.is_item_blocked(item.id));
-                }
-            }
-
-            for section in result.sections {
-                if section.subsections.is_empty() {
-                    slots.push(Slot {
-                        title: section.title,
-                        items: section.items,
-                        context: SlotContext::Section {
-                            section_index: section.section_index,
-                        },
-                    });
-                    continue;
-                }
-
-                for subsection in section.subsections {
-                    slots.push(Slot {
-                        title: format!("{} / {}", section.title, subsection.title),
-                        items: subsection.items,
-                        context: SlotContext::GeneratedSection {
-                            section_index: section.section_index,
-                            on_insert_assign: subsection.on_insert_assign,
-                            on_remove_unassign: subsection.on_remove_unassign,
-                        },
-                    });
-                }
-            }
-
-            if let Some(unmatched_items) = result.unmatched {
-                if should_render_unmatched_lane(&unmatched_items) {
-                    slots.push(Slot {
-                        title: result
-                            .unmatched_label
-                            .unwrap_or_else(|| "Unassigned".to_string()),
-                        items: unmatched_items,
-                        context: SlotContext::Unmatched,
-                    });
-                }
-            }
-
-            if slots.is_empty() {
-                slots.push(Slot {
-                    title: "No visible sections".to_string(),
-                    items: Vec::new(),
-                    context: SlotContext::Unmatched,
-                });
-            }
-        }
-
-        // Resize per-slot state to match slot count (resets if structure changed)
-        if self.section_filters.len() != slots.len() {
-            self.section_filters = vec![None; slots.len()];
-            self.search_buffer.clear();
-        }
-        if self.slot_sort_keys.len() != slots.len() {
-            self.slot_sort_keys = vec![Vec::new(); slots.len()];
-        }
-
-        let active_view = self.current_view().cloned();
-        let category_names_lower_ascii: HashMap<CategoryId, String> = self
-            .categories
-            .iter()
-            .map(|category| (category.id, category.name.to_ascii_lowercase()))
-            .collect();
-
-        // Apply per-slot filters and sorting.
-        for (slot_index, (slot, filter)) in slots
-            .iter_mut()
-            .zip(self.section_filters.iter())
-            .enumerate()
-        {
-            if let Some(needle) = filter {
-                let needle = needle.to_ascii_lowercase();
-                slot.items
-                    .retain(|item| item_text_matches(item, &needle, &category_names_lower_ascii));
-            }
-
-            let mut sort_keys = self.slot_sort_keys[slot_index].clone();
-            sort_keys.retain(|key| {
-                self.slot_sort_key_is_valid_for_slot(active_view.as_ref(), slot, key)
-            });
-            if sort_keys != self.slot_sort_keys[slot_index] {
-                self.slot_sort_keys[slot_index] = sort_keys.clone();
-            }
-            if !sort_keys.is_empty() {
-                self.sort_slot_items(slot, &sort_keys);
-            }
-        }
+        let slots = projection::project_slots(self, store, &items)?;
 
         self.slots = slots;
         self.prune_selected_items_to_visible_slots();
@@ -549,10 +404,10 @@ impl App {
                 })
         });
 
-        self.classification_ui.pending_count =
+        self.classification.ui.pending_count =
             review_items.iter().map(|item| item.suggestions.len()).sum();
-        self.classification_ui.config = config;
-        self.classification_ui.review_items = review_items;
+        self.classification.ui.config = config;
+        self.classification.ui.review_items = review_items;
 
         Ok(())
     }
@@ -560,8 +415,8 @@ impl App {
     /// Drain completed background classification results and apply them.
     pub(crate) fn process_classification_results(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let mut any_applied = false;
-        while let Some(result) = self.classification_worker.try_recv() {
-            self.in_flight_classifications.remove(&result.item_id);
+        while let Some(result) = self.classification.worker.try_recv() {
+            self.classification.in_flight_classifications.remove(&result.item_id);
 
             if let Some(error) = result.error {
                 self.status = format!("Classification error: {error}");
@@ -589,7 +444,7 @@ impl App {
             )?;
 
             any_applied = true;
-            let remaining = self.in_flight_classifications.len();
+            let remaining = self.classification.in_flight_classifications.len();
             if remaining > 0 {
                 let sug_part = if queued > 0 {
                     format!(
@@ -633,13 +488,13 @@ impl App {
         agenda: &Agenda<'_>,
         item_id: ItemId,
     ) -> TuiResult<bool> {
-        if self.in_flight_classifications.contains(&item_id) {
+        if self.classification.in_flight_classifications.contains(&item_id) {
             return Ok(false);
         }
         let reference_date = jiff::Zoned::now().date();
         if let Some(job) = agenda.prepare_background_classification(item_id, reference_date)? {
-            self.in_flight_classifications.insert(item_id);
-            self.classification_worker.submit(job);
+            self.classification.in_flight_classifications.insert(item_id);
+            self.classification.worker.submit(job);
             Ok(true)
         } else {
             Ok(false)
@@ -941,11 +796,11 @@ impl App {
 
     #[cfg(test)]
     pub(crate) fn classification_pending_count(&self) -> usize {
-        self.classification_ui.pending_count
+        self.classification.ui.pending_count
     }
 
     pub(crate) fn pending_suggestion_count_for_item(&self, item_id: ItemId) -> usize {
-        self.classification_ui
+        self.classification.ui
             .review_items
             .iter()
             .find(|item| item.item_id == item_id)
@@ -954,13 +809,13 @@ impl App {
     }
 
     pub(crate) fn classification_pending_suffix(&self) -> Option<String> {
-        if self.classification_ui.pending_count == 0 {
+        if self.classification.ui.pending_count == 0 {
             None
         } else {
             Some(format!(
                 "? {} pending suggestion{}",
-                self.classification_ui.pending_count,
-                if self.classification_ui.pending_count == 1 {
+                self.classification.ui.pending_count,
+                if self.classification.ui.pending_count == 1 {
                     ""
                 } else {
                     "s"
@@ -2395,7 +2250,7 @@ impl App {
         }
     }
 
-    fn sort_slot_items(&self, slot: &mut Slot, sort_keys: &[SlotSortKey]) {
+    pub(crate) fn sort_slot_items(&self, slot: &mut Slot, sort_keys: &[SlotSortKey]) {
         if sort_keys.is_empty() || slot.items.len() < 2 {
             return;
         }

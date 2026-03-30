@@ -133,14 +133,14 @@ impl App {
     fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
         matches!(code, KeyCode::Char('S'))
             || (matches!(code, KeyCode::Char('s'))
-                && self.current_key_modifiers.contains(KeyModifiers::SHIFT))
+                && self.transient.key_modifiers.contains(KeyModifiers::SHIFT))
     }
 
     fn close_category_manager_with_status(&mut self, status: &str) {
         self.mode = Mode::Normal;
         self.close_category_manager_session();
         self.workflow_setup_open = false;
-        self.workflow_role_picker = None;
+        self.settings.workflow_role_picker = None;
         self.clear_input();
         self.status = status.to_string();
     }
@@ -1276,7 +1276,7 @@ impl App {
         match code {
             KeyCode::Esc | KeyCode::Char('w') => {
                 self.workflow_setup_open = false;
-                self.workflow_role_picker = None;
+                self.settings.workflow_role_picker = None;
                 self.status = "Workflow setup closed".to_string();
                 return Ok(true);
             }
@@ -1343,7 +1343,7 @@ impl App {
                 })
             })
             .unwrap_or(0);
-        self.workflow_role_picker = Some(WorkflowRolePickerState {
+        self.settings.workflow_role_picker = Some(WorkflowRolePickerState {
             role_index,
             row_index,
             origin,
@@ -1363,24 +1363,24 @@ impl App {
         agenda: &Agenda<'_>,
     ) -> TuiResult<bool> {
         let visible_row_indices = self.workflow_role_picker_row_indices();
-        let Some(picker) = self.workflow_role_picker.clone() else {
+        let Some(picker) = self.settings.workflow_role_picker.clone() else {
             return Ok(true);
         };
         match code {
             KeyCode::Esc | KeyCode::Char('w') => {
-                self.workflow_role_picker = None;
+                self.settings.workflow_role_picker = None;
                 self.status = "Workflow category picker closed".to_string();
                 return Ok(true);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(active_picker) = self.workflow_role_picker.as_mut() {
+                if let Some(active_picker) = self.settings.workflow_role_picker.as_mut() {
                     active_picker.row_index =
                         next_index_clamped(picker.row_index, visible_row_indices.len(), 1);
                 }
                 return Ok(true);
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(active_picker) = self.workflow_role_picker.as_mut() {
+                if let Some(active_picker) = self.settings.workflow_role_picker.as_mut() {
                     active_picker.row_index =
                         next_index_clamped(picker.row_index, visible_row_indices.len(), -1);
                 }
@@ -1388,7 +1388,7 @@ impl App {
             }
             KeyCode::Char('x') => {
                 self.clear_workflow_role(agenda, picker.role_index)?;
-                self.workflow_role_picker = None;
+                self.settings.workflow_role_picker = None;
                 return Ok(true);
             }
             KeyCode::Enter => {
@@ -1414,7 +1414,7 @@ impl App {
                 } else {
                     self.assign_claim_result_role(agenda, row.id, preserved_selection)?;
                 }
-                self.workflow_role_picker = None;
+                self.settings.workflow_role_picker = None;
                 return Ok(true);
             }
             _ => {}
@@ -1451,26 +1451,26 @@ impl App {
     ) -> TuiResult<bool> {
         match code {
             KeyCode::Esc | KeyCode::Char('m') => {
-                self.classification_mode_picker_open = false;
+                self.settings.classification_mode_picker_open = false;
                 self.status = "Classification mode picker closed".to_string();
                 return Ok(true);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.classification_mode_picker_focus =
-                    next_index_clamped(self.classification_mode_picker_focus, 3, 1);
+                self.settings.classification_mode_picker_focus =
+                    next_index_clamped(self.settings.classification_mode_picker_focus, 3, 1);
                 return Ok(true);
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.classification_mode_picker_focus =
-                    next_index_clamped(self.classification_mode_picker_focus, 3, -1);
+                self.settings.classification_mode_picker_focus =
+                    next_index_clamped(self.settings.classification_mode_picker_focus, 3, -1);
                 return Ok(true);
             }
             KeyCode::Enter => {
                 let mode = modes::classification::literal_mode_from_index(
-                    self.classification_mode_picker_focus,
+                    self.settings.classification_mode_picker_focus,
                 );
                 self.apply_category_manager_classification_mode(agenda, mode)?;
-                self.classification_mode_picker_open = false;
+                self.settings.classification_mode_picker_open = false;
                 return Ok(true);
             }
             _ => {}
@@ -1491,11 +1491,11 @@ impl App {
             self.handle_category_manager_discard_confirm_key(code, agenda)?;
             return Ok(false);
         }
-        if self.classification_mode_picker_open {
+        if self.settings.classification_mode_picker_open {
             self.handle_classification_mode_picker_key(code, agenda)?;
             return Ok(false);
         }
-        if self.workflow_role_picker.is_some() {
+        if self.settings.workflow_role_picker.is_some() {
             self.handle_workflow_role_picker_key(code, agenda)?;
             return Ok(false);
         }
@@ -1742,7 +1742,7 @@ impl App {
         agenda: &Agenda<'_>,
         mode: LiteralClassificationMode,
     ) -> TuiResult<()> {
-        let mut config = self.classification_ui.config.clone();
+        let mut config = self.classification.ui.config.clone();
         config.literal_mode = mode;
         config.sync_enabled_flag();
         let selected_category_id = self.selected_category_id();
