@@ -969,6 +969,33 @@ impl App {
         }
     }
 
+    pub(crate) fn assignment_event_status_summary(
+        &self,
+        result: &agenda_core::engine::ProcessItemResult,
+    ) -> Option<String> {
+        if result.assignment_events.is_empty() {
+            return None;
+        }
+
+        let mut unique = Vec::new();
+        for event in &result.assignment_events {
+            let summary = event.concise_summary();
+            if !unique.contains(&summary) {
+                unique.push(summary);
+            }
+        }
+        if unique.is_empty() {
+            return None;
+        }
+
+        let mut message = unique.into_iter().take(3).collect::<Vec<_>>().join("; ");
+        let extra = result.assignment_events.len().saturating_sub(3);
+        if extra > 0 {
+            message.push_str(&format!("; +{extra} more"));
+        }
+        Some(message)
+    }
+
     pub(crate) fn classification_feedback_for_saved_item(
         &self,
         item_id: ItemId,
@@ -1000,6 +1027,10 @@ impl App {
                 },
                 true,
             ));
+        }
+
+        if let Some(message) = self.assignment_event_status_summary(result) {
+            return Some((message, false));
         }
 
         if result.semantic_candidates_seen > 0 {
@@ -1076,6 +1107,10 @@ impl App {
                     .unwrap_or_else(|| category_id.to_string()),
                 source_label: format!("{:?}", assignment.source),
                 origin_label: assignment.origin.clone().unwrap_or_else(|| "-".to_string()),
+                explanation_label: assignment
+                    .explanation
+                    .as_ref()
+                    .map(|explanation| explanation.summary()),
             })
             .collect();
         rows.sort_by_key(|row| row.category_name.to_ascii_lowercase());

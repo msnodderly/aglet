@@ -1524,6 +1524,7 @@ mod tests {
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: Some(Decimal::new(100, 0)),
             },
         );
@@ -1554,6 +1555,7 @@ mod tests {
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: Some(Decimal::new(100, 0)),
             },
         );
@@ -1565,6 +1567,7 @@ mod tests {
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: Some(Decimal::new(250, 0)),
             },
         );

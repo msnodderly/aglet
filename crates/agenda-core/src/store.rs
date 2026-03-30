@@ -14,14 +14,14 @@ use crate::classification::{
 };
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryId,
+    Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
     NumericFormat, Query, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
     RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 14;
+const SCHEMA_VERSION: i32 = 15;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS assignments (
     assigned_at TEXT NOT NULL,
     sticky      INTEGER NOT NULL DEFAULT 1,
     origin      TEXT,
+    explanation_json TEXT NOT NULL DEFAULT 'null',
     numeric_value TEXT,
     PRIMARY KEY (item_id, category_id)
 );
@@ -1200,7 +1201,7 @@ impl Store {
 
     fn load_assignments(&self, mut item: Item) -> Result<Item> {
         let mut stmt = self.conn.prepare(
-            "SELECT category_id, source, assigned_at, sticky, origin, numeric_value
+            "SELECT category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value
              FROM assignments WHERE item_id = ?1",
         )?;
         let rows = stmt.query_map(params![item.id.to_string()], |row| {
@@ -1209,19 +1210,29 @@ impl Store {
             let assigned_str: String = row.get(2)?;
             let sticky_int: i32 = row.get(3)?;
             let origin: Option<String> = row.get(4)?;
-            let numeric_value: Option<String> = row.get(5)?;
+            let explanation_json: String = row.get(5)?;
+            let numeric_value: Option<String> = row.get(6)?;
             Ok((
                 cat_str,
                 source_str,
                 assigned_str,
                 sticky_int,
                 origin,
+                explanation_json,
                 numeric_value,
             ))
         })?;
 
         for row in rows {
-            let (cat_str, source_str, assigned_str, sticky_int, origin, numeric_value_str) = row?;
+            let (
+                cat_str,
+                source_str,
+                assigned_str,
+                sticky_int,
+                origin,
+                explanation_json,
+                numeric_value_str,
+            ) = row?;
             let cat_id = Uuid::parse_str(&cat_str).unwrap_or_default();
             let source = match source_str.as_str() {
                 "Manual" => AssignmentSource::Manual,
@@ -1233,6 +1244,8 @@ impl Store {
                 _ => AssignmentSource::Manual,
             };
             let assigned_at = assigned_str.parse::<Timestamp>().unwrap_or_default();
+            let explanation = serde_json::from_str::<Option<AssignmentExplanation>>(&explanation_json)
+                .unwrap_or_default();
             let numeric_value = numeric_value_str.and_then(|s| s.parse::<Decimal>().ok());
             item.assignments.insert(
                 cat_id,
@@ -1241,6 +1254,7 @@ impl Store {
                     assigned_at,
                     sticky: sticky_int != 0,
                     origin,
+                    explanation,
                     numeric_value,
                 },
             );
@@ -1553,8 +1567,8 @@ impl Store {
         assignment: &Assignment,
     ) -> Result<()> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, numeric_value)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 item_id.to_string(),
                 category_id.to_string(),
@@ -1562,6 +1576,11 @@ impl Store {
                 assignment.assigned_at.to_string(),
                 assignment.sticky as i32,
                 assignment.origin,
+                serde_json::to_string(&assignment.explanation).map_err(|err| {
+                    AgendaError::StorageError {
+                        source: Box::new(err),
+                    }
+                })?,
                 assignment.numeric_value.map(|v| v.to_string()),
             ],
         )?;
@@ -2115,6 +2134,11 @@ impl Store {
                 "ALTER TABLE categories ADD COLUMN enable_semantic_classification INTEGER NOT NULL DEFAULT 1;",
             )?;
         }
+        if !self.column_exists("assignments", "explanation_json")? {
+            self.conn.execute_batch(
+                "ALTER TABLE assignments ADD COLUMN explanation_json TEXT NOT NULL DEFAULT 'null';",
+            )?;
+        }
         if !self.column_exists("assignments", "numeric_value")? {
             self.conn
                 .execute_batch("ALTER TABLE assignments ADD COLUMN numeric_value TEXT;")?;
@@ -2287,10 +2311,10 @@ mod tests {
         CandidateAssignment, ClassificationConfig, ClassificationSuggestion, SuggestionStatus,
     };
     use crate::model::{
-        Assignment, AssignmentSource, BoardDisplayMode, Category, CategoryValueKind, Column,
-        ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind, NumericFormat, Query, Section,
-        SectionFlow, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE,
-        RESERVED_CATEGORY_NAME_WHEN,
+        Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
+        CategoryValueKind, Column, ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind,
+        NumericFormat, Query, Section, SectionFlow, TextMatchSource, View,
+        RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
     };
     use jiff::Timestamp;
     use rusqlite::params;
@@ -3011,6 +3035,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
+            explanation: None,
             numeric_value: None,
         };
         store
@@ -3352,6 +3377,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual".to_string()),
+            explanation: None,
             numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &assignment).unwrap();
@@ -3361,6 +3387,34 @@ mod tests {
         assert!(assignments.contains_key(&cat_id));
         assert_eq!(assignments[&cat_id].source, AssignmentSource::Manual);
         assert_eq!(assignments[&cat_id].origin.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn test_assignment_explanation_round_trips_through_store() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Call manager".to_string());
+        store.create_item(&item).unwrap();
+        let cat_id = make_category(&store, "Phone Calls");
+        let assignment = Assignment {
+            source: AssignmentSource::AutoMatch,
+            assigned_at: Timestamp::now(),
+            sticky: false,
+            origin: Some("cat:Phone Calls".to_string()),
+            explanation: Some(AssignmentExplanation::ImplicitMatch {
+                matched_term: "call".to_string(),
+                matched_source: TextMatchSource::AlsoMatch,
+            }),
+            numeric_value: None,
+        };
+        store.assign_item(item.id, cat_id, &assignment).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments
+                .get(&cat_id)
+                .and_then(|assignment| assignment.explanation.clone()),
+            assignment.explanation
+        );
     }
 
     #[test]
@@ -3379,6 +3433,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual".to_string()),
+            explanation: None,
             numeric_value: Some(Decimal::new(24596, 2)),
         };
         store.assign_item(item_id, cat.id, &assignment).unwrap();
@@ -3403,6 +3458,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("cat:Status".to_string()),
+            explanation: None,
             numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &a1).unwrap();
@@ -3413,6 +3469,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: false,
             origin: Some("manual".to_string()),
+            explanation: None,
             numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &a2).unwrap();
@@ -3436,6 +3493,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: None,
+            explanation: None,
             numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &assignment).unwrap();
@@ -3473,6 +3531,7 @@ mod tests {
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
+                explanation: None,
                 numeric_value: None,
             };
             store.assign_item(item_id, cat_id, &a).unwrap();

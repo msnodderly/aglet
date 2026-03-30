@@ -5,8 +5,9 @@ use jiff::Timestamp;
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentSource, Category, CategoryId, Condition,
-    ItemId, Query,
+    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
+    AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition,
+    ItemId, Query, TextMatchSource,
 };
 use crate::store::Store;
 
@@ -23,6 +24,7 @@ pub struct DeferredRemoval {
 pub struct ProcessItemResult {
     pub new_assignments: HashSet<CategoryId>,
     pub removed_assignments: HashSet<CategoryId>,
+    pub assignment_events: Vec<AssignmentEvent>,
     pub deferred_removals: Vec<DeferredRemoval>,
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
@@ -42,6 +44,7 @@ pub struct EvaluateAllItemsResult {
 #[derive(Debug, Default)]
 struct PassResult {
     new_assignments: HashSet<CategoryId>,
+    assignment_events: Vec<AssignmentEvent>,
     deferred_removals: Vec<DeferredRemoval>,
     changed: bool,
 }
@@ -62,6 +65,14 @@ struct InsertResult {
     new_to_store: bool,
 }
 
+#[derive(Debug, Clone)]
+struct AssignmentTemplate {
+    source: AssignmentSource,
+    sticky: bool,
+    origin: Option<String>,
+    explanation: Option<AssignmentExplanation>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessOptions {
     pub enable_implicit_string: bool,
@@ -75,10 +86,10 @@ impl Default for ProcessOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum MatchReason {
-    ImplicitString,
-    Profile,
+#[derive(Debug, Clone)]
+struct MatchReason {
+    explanation: AssignmentExplanation,
+    origin: String,
 }
 
 /// Process one item through fixed-point category evaluation.
@@ -195,6 +206,7 @@ fn process_item_inner(
         let changed = pass_result.changed;
 
         result.new_assignments.extend(pass_result.new_assignments);
+        result.assignment_events.extend(pass_result.assignment_events);
         result
             .deferred_removals
             .extend(pass_result.deferred_removals);
@@ -252,6 +264,7 @@ fn run_hierarchy_pass(
             input.item_text,
             assignments,
             input.classifier,
+            input.categories_by_id,
             input.options.enable_implicit_string,
         ) else {
             continue;
@@ -269,9 +282,12 @@ fn run_hierarchy_pass(
         let assigned = assign_if_unassigned(
             input.item_id,
             category.id,
-            AssignmentSource::AutoMatch,
-            false,
-            Some(match_origin(reason, &category.name)),
+            AssignmentTemplate {
+                source: AssignmentSource::AutoMatch,
+                sticky: false,
+                origin: Some(reason.origin.clone()),
+                explanation: Some(reason.explanation.clone()),
+            },
             input.original_assignments,
             assignments,
             seen_pairs,
@@ -291,6 +307,12 @@ fn run_hierarchy_pass(
         );
         if assigned.new_to_store {
             pass_result.new_assignments.insert(category.id);
+            pass_result.assignment_events.push(AssignmentEvent {
+                kind: AssignmentEventKind::Assigned,
+                category_id: category.id,
+                category_name: category.name.clone(),
+                summary: reason.explanation.summary(),
+            });
             fire_actions(
                 input.item_id,
                 category,
@@ -311,36 +333,52 @@ fn evaluate_category_match(
     item_text: &str,
     assignments: &HashMap<CategoryId, Assignment>,
     classifier: &dyn Classifier,
+    categories_by_id: &HashMap<CategoryId, &Category>,
     enable_implicit_string: bool,
 ) -> Option<MatchReason> {
-    if enable_implicit_string
-        && category.enable_implicit_string
-        && classifier
-            .classify(
-                item_text,
-                &category.name,
-                category.match_category_name,
-                &category.also_match,
-            )
-            .is_some()
-    {
-        return Some(MatchReason::ImplicitString);
+    if enable_implicit_string && category.enable_implicit_string {
+        if let Some(matched) = classifier.classify(
+            item_text,
+            &category.name,
+            category.match_category_name,
+            &category.also_match,
+        ) {
+            let matched_source = match matched.source {
+                crate::matcher::ImplicitMatchSource::CategoryName => TextMatchSource::CategoryName,
+                crate::matcher::ImplicitMatchSource::AlsoMatch => TextMatchSource::AlsoMatch,
+            };
+            return Some(MatchReason {
+                origin: match_origin_implicit(&category.name),
+                explanation: AssignmentExplanation::ImplicitMatch {
+                    matched_term: matched.matched_term,
+                    matched_source,
+                },
+            });
+        }
     }
 
-    let profile_match = category
-        .conditions
-        .iter()
-        .filter_map(|condition| match condition {
-            Condition::Profile { criteria } => Some(criteria),
-            Condition::ImplicitString => None,
-        })
-        .any(|criteria| profile_matches(criteria, assignments));
-
-    if profile_match {
-        Some(MatchReason::Profile)
-    } else {
-        None
+    for (condition_index, condition) in category.conditions.iter().enumerate() {
+        let Condition::Profile { criteria } = condition else {
+            continue;
+        };
+        if profile_matches(criteria, assignments) {
+            return Some(MatchReason {
+                origin: match_origin_profile(&category.name),
+                explanation: AssignmentExplanation::ProfileCondition {
+                    owner_category_name: category.name.clone(),
+                    condition_index,
+                    rendered_rule: criteria.format_trigger(&|category_id| {
+                        categories_by_id
+                            .get(&category_id)
+                            .map(|candidate| candidate.name.clone())
+                            .unwrap_or_else(|| category_id.to_string())
+                    }),
+                },
+            });
+        }
     }
+
+    None
 }
 
 fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignment>) -> bool {
@@ -378,9 +416,15 @@ fn fire_actions(
                     let assigned = assign_if_unassigned(
                         item_id,
                         *target_id,
-                        AssignmentSource::Action,
-                        true,
-                        Some(format!("action:{}", category.name)),
+                        AssignmentTemplate {
+                            source: AssignmentSource::Action,
+                            sticky: true,
+                            origin: Some(format!("action:{}", category.name)),
+                            explanation: Some(AssignmentExplanation::Action {
+                                trigger_category_name: category.name.clone(),
+                                kind: AssignmentActionKind::Assign,
+                            }),
+                        },
                         original_assignments,
                         assignments,
                         seen_pairs,
@@ -397,6 +441,16 @@ fn fire_actions(
                         );
                         if assigned.new_to_store {
                             pass_result.new_assignments.insert(*target_id);
+                            let target_name = categories_by_id
+                                .get(target_id)
+                                .map(|category| category.name.clone())
+                                .unwrap_or_else(|| target_id.to_string());
+                            pass_result.assignment_events.push(AssignmentEvent {
+                                kind: AssignmentEventKind::Assigned,
+                                category_id: *target_id,
+                                category_name: target_name,
+                                summary: format!("Assigned by action on {}", category.name),
+                            });
                         }
                     }
                 }
@@ -431,13 +485,10 @@ fn can_assign(
     !seen_pairs.contains(&pair)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn assign_if_unassigned(
     item_id: ItemId,
     category_id: CategoryId,
-    source: AssignmentSource,
-    sticky: bool,
-    origin: Option<String>,
+    template: AssignmentTemplate,
     original_assignments: &HashMap<CategoryId, Assignment>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
@@ -455,10 +506,11 @@ fn assign_if_unassigned(
         .get(&category_id)
         .cloned()
         .unwrap_or_else(|| Assignment {
-            source,
+            source: template.source,
             assigned_at: Timestamp::now(),
-            sticky,
-            origin,
+            sticky: template.sticky,
+            origin: template.origin,
+            explanation: template.explanation,
             numeric_value: None,
         });
     assignments.insert(category_id, assignment);
@@ -553,6 +605,10 @@ fn assign_subsumption_ancestors(
         let pair = (item_id, ancestor_id);
         if let std::collections::hash_map::Entry::Vacant(entry) = assignments.entry(ancestor_id) {
             if !seen_pairs.contains(&pair) {
+                let parent_name = categories_by_id
+                    .get(&ancestor_id)
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| ancestor_id.to_string());
                 let assignment = original_assignments
                     .get(&ancestor_id)
                     .cloned()
@@ -561,6 +617,10 @@ fn assign_subsumption_ancestors(
                         assigned_at: Timestamp::now(),
                         sticky: false,
                         origin: subsumption_origin.clone(),
+                        explanation: Some(AssignmentExplanation::Subsumption {
+                            parent_category_name: parent_name,
+                            via_child_category_name: category.name.clone(),
+                        }),
                         numeric_value: None,
                     });
                 entry.insert(assignment);
@@ -649,8 +709,23 @@ fn sync_assignments(
     let desired_ids: HashSet<CategoryId> = desired_assignments.keys().copied().collect();
 
     for category_id in original_ids.difference(&desired_ids) {
+        let category_name = store
+            .get_category(*category_id)
+            .map(|category| category.name)
+            .unwrap_or_else(|_| category_id.to_string());
+        let summary = original_assignments
+            .get(category_id)
+            .and_then(|assignment| assignment.explanation.as_ref())
+            .map(AssignmentExplanation::removal_summary)
+            .unwrap_or_else(|| "Assignment removed".to_string());
         store.unassign_item(item_id, *category_id)?;
         result.removed_assignments.insert(*category_id);
+        result.assignment_events.push(AssignmentEvent {
+            kind: AssignmentEventKind::Removed,
+            category_id: *category_id,
+            category_name,
+            summary,
+        });
     }
 
     for category_id in desired_ids.difference(&original_ids) {
@@ -662,11 +737,12 @@ fn sync_assignments(
     Ok(())
 }
 
-fn match_origin(reason: MatchReason, category_name: &str) -> String {
-    match reason {
-        MatchReason::ImplicitString => format!("cat:{category_name}"),
-        MatchReason::Profile => format!("profile:{category_name}"),
-    }
+fn match_origin_implicit(category_name: &str) -> String {
+    format!("cat:{category_name}")
+}
+
+fn match_origin_profile(category_name: &str) -> String {
+    format!("profile:{category_name}")
 }
 
 fn pass_cap_error(item_id: ItemId) -> AgendaError {
@@ -748,6 +824,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
+            explanation: None,
             numeric_value: None,
         }
     }

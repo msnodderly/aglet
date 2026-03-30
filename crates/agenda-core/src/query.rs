@@ -378,6 +378,7 @@ mod tests {
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
+            explanation: None,
             numeric_value: None,
         }
     }

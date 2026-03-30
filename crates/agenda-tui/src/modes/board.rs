@@ -5424,7 +5424,7 @@ impl App {
                         .and_then(|i| i.assignments.get(&row.id))
                         .cloned();
                     match agenda.unassign_item_manual(item_id, row.id) {
-                        Ok(_) => {
+                        Ok(result) => {
                             if let Some(assignment) = old_assignment {
                                 self.push_undo(UndoEntry::CategoryUnassigned {
                                     item_id,
@@ -5435,7 +5435,9 @@ impl App {
                             self.item_assign_dirty = true;
                             self.refresh(agenda.store())?;
                             self.set_item_selection_by_id(item_id);
-                            self.status = format!("Removed category {}", row.name);
+                            self.status = self
+                                .assignment_event_status_summary(&result)
+                                .unwrap_or_else(|| format!("Removed category {}", row.name));
                         }
                         Err(err) => {
                             self.status = format!("Cannot remove {}: {}", row.name, err);
@@ -5454,11 +5456,13 @@ impl App {
                     self.item_assign_dirty = true;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
-                    self.status = format!(
-                        "Added category {} (new_assignments={})",
-                        row.name,
-                        result.new_assignments.len()
-                    );
+                    self.status = self.assignment_event_status_summary(&result).unwrap_or_else(|| {
+                        format!(
+                            "Added category {} (new_assignments={})",
+                            row.name,
+                            result.new_assignments.len()
+                        )
+                    });
                 }
             }
             KeyCode::Enter => {
