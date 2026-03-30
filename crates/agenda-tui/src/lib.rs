@@ -10195,6 +10195,74 @@ mod tests {
     }
 
     #[test]
+    fn item_assign_preview_shows_derived_category_adds_and_removals() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let waiting = Category::new("Waiting/Blocked".to_string());
+        store.create_category(&waiting).expect("create waiting");
+
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&escalated).expect("create escalated");
+
+        let mut critical = Category::new("Critical".to_string());
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, waiting.id);
+        criteria.set_criterion(CriterionMode::And, escalated.id);
+        critical.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        store.create_category(&critical).expect("create critical");
+
+        let item = Item::new("Preview me".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, waiting.id, Some("manual:test".to_string()))
+            .expect("assign waiting");
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_pane = ItemAssignPane::Categories;
+        app.set_item_assign_category_selection_by_id(escalated.id);
+
+        app.compute_assignment_preview(&agenda);
+        assert!(
+            app.item_assign_preview.cat_to_add.contains(&escalated.id),
+            "preview should mark the directly toggled category as added"
+        );
+        assert!(
+            app.item_assign_preview.cat_to_add.contains(&critical.id),
+            "preview should mark profile-derived category as added"
+        );
+        assert!(
+            !app.item_assign_preview.cat_to_remove.contains(&critical.id),
+            "add preview should not mark the derived category for removal"
+        );
+
+        agenda
+            .assign_item_manual(item.id, escalated.id, Some("manual:test".to_string()))
+            .expect("assign escalated");
+        app.refresh(&store).expect("refresh after assign");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::ItemAssignPicker;
+        app.item_assign_pane = ItemAssignPane::Categories;
+        app.set_item_assign_category_selection_by_id(escalated.id);
+
+        app.compute_assignment_preview(&agenda);
+        assert!(
+            app.item_assign_preview.cat_to_remove.contains(&escalated.id),
+            "preview should mark the directly toggled category as removed"
+        );
+        assert!(
+            app.item_assign_preview.cat_to_remove.contains(&critical.id),
+            "preview should mark profile-derived category as removed"
+        );
+    }
+
+    #[test]
     fn assign_picker_shows_numeric_category_as_toggle_not_inline_value() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
