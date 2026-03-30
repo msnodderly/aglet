@@ -9996,6 +9996,59 @@ mod tests {
     }
 
     #[test]
+    fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
+        let store = Store::open_memory().expect("memory store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let waiting = Category::new("Waiting/Blocked".to_string());
+        store.create_category(&waiting).expect("create waiting");
+
+        let escalated = Category::new("Escalated".to_string());
+        store.create_category(&escalated).expect("create escalated");
+
+        let mut critical = Category::new("Critical".to_string());
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, waiting.id);
+        criteria.set_criterion(CriterionMode::And, escalated.id);
+        critical.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        store.create_category(&critical).expect("create critical");
+
+        let item = Item::new("Investigate outage".to_string());
+        store.create_item(&item).expect("create item");
+        agenda
+            .assign_item_manual(item.id, waiting.id, Some("manual:test".to_string()))
+            .expect("assign waiting");
+        agenda
+            .assign_item_manual(item.id, escalated.id, Some("manual:test".to_string()))
+            .expect("assign escalated");
+
+        let before = store.get_item(item.id).expect("reload before unassign");
+        assert!(before.assignments.contains_key(&critical.id));
+
+        let mut app = App::default();
+        app.refresh(&store).expect("refresh");
+        app.set_item_selection_by_id(item.id);
+        app.mode = Mode::Normal;
+
+        app.handle_normal_key(KeyCode::Char('a'), &agenda)
+            .expect("open assign picker");
+        app.set_item_assign_category_selection_by_id(escalated.id);
+        app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+            .expect("unassign escalated via picker");
+
+        let after = store.get_item(item.id).expect("reload after unassign");
+        assert!(after.assignments.contains_key(&waiting.id));
+        assert!(!after.assignments.contains_key(&escalated.id));
+        assert!(
+            !after.assignments.contains_key(&critical.id),
+            "live profile-derived assignment should auto-break after unassign via item picker"
+        );
+    }
+
+    #[test]
     fn item_assign_view_pane_enter_applies_and_closes() {
         let store = Store::open_memory().expect("memory store");
         let classifier = SubstringClassifier;
