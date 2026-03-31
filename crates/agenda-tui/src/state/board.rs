@@ -124,6 +124,10 @@ pub(crate) enum NameInputContext {
     OllamaBaseUrl,
     OllamaModel,
     OllamaTimeout,
+    OpenRouterModel,
+    OpenRouterTimeout,
+    OpenAiModel,
+    OpenAiTimeout,
 }
 
 #[derive(Clone, Copy, Debug)]

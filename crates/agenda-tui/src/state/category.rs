@@ -193,32 +193,47 @@ pub(crate) enum GlobalSettingsRow {
     SectionBorders,
     LiteralClassificationMode,
     SemanticClassificationMode,
-    OllamaEnabled,
+    SemanticProvider,
     OllamaBaseUrl,
     OllamaModel,
     OllamaTimeout,
+    OpenRouterModel,
+    OpenRouterTimeout,
+    OpenAiModel,
+    OpenAiTimeout,
     WorkflowReady,
     WorkflowClaim,
 }
 
 impl GlobalSettingsRow {
-    pub(crate) fn count() -> usize {
-        10
-    }
-
-    pub(crate) fn from_index(index: usize) -> Self {
-        match index {
-            0 => Self::AutoRefresh,
-            1 => Self::SectionBorders,
-            2 => Self::LiteralClassificationMode,
-            3 => Self::SemanticClassificationMode,
-            4 => Self::OllamaEnabled,
-            5 => Self::OllamaBaseUrl,
-            6 => Self::OllamaModel,
-            7 => Self::OllamaTimeout,
-            8 => Self::WorkflowReady,
-            _ => Self::WorkflowClaim,
+    pub(crate) fn visible_rows(
+        provider: agenda_core::classification::SemanticProviderKind,
+    ) -> Vec<Self> {
+        use agenda_core::classification::SemanticProviderKind;
+        let mut rows = vec![
+            Self::AutoRefresh,
+            Self::SectionBorders,
+            Self::LiteralClassificationMode,
+            Self::SemanticClassificationMode,
+            Self::SemanticProvider,
+        ];
+        match provider {
+            SemanticProviderKind::Ollama => {
+                rows.extend_from_slice(&[
+                    Self::OllamaBaseUrl,
+                    Self::OllamaModel,
+                    Self::OllamaTimeout,
+                ]);
+            }
+            SemanticProviderKind::OpenRouter => {
+                rows.extend_from_slice(&[Self::OpenRouterModel, Self::OpenRouterTimeout]);
+            }
+            SemanticProviderKind::OpenAi => {
+                rows.extend_from_slice(&[Self::OpenAiModel, Self::OpenAiTimeout]);
+            }
         }
+        rows.extend_from_slice(&[Self::WorkflowReady, Self::WorkflowClaim]);
+        rows
     }
 }
 

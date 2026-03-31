@@ -1,15 +1,23 @@
+use agenda_core::classification::SemanticProviderKind;
+
 use crate::*;
 
 impl App {
+    pub(crate) fn global_settings_visible_rows(&self) -> Vec<GlobalSettingsRow> {
+        GlobalSettingsRow::visible_rows(self.classification.ui.config.semantic_provider)
+    }
+
     pub(crate) fn global_settings_selected_row(&self) -> usize {
-        self.settings.global_settings
+        self.settings
+            .global_settings
             .as_ref()
             .map(|state| state.selected_row)
             .unwrap_or(0)
     }
 
     fn set_global_settings_selected_row(&mut self, selected_row: usize) {
-        let selected_row = selected_row.min(GlobalSettingsRow::count().saturating_sub(1));
+        let rows = self.global_settings_visible_rows();
+        let selected_row = selected_row.min(rows.len().saturating_sub(1));
         if let Some(state) = self.settings.global_settings.as_mut() {
             state.selected_row = selected_row;
         } else {
@@ -18,7 +26,11 @@ impl App {
     }
 
     pub(crate) fn global_settings_selected_kind(&self) -> GlobalSettingsRow {
-        GlobalSettingsRow::from_index(self.global_settings_selected_row())
+        let rows = self.global_settings_visible_rows();
+        let idx = self.global_settings_selected_row();
+        rows.get(idx)
+            .copied()
+            .unwrap_or(GlobalSettingsRow::AutoRefresh)
     }
 
     fn cycle_global_settings_auto_refresh(
@@ -97,27 +109,37 @@ impl App {
         Ok(())
     }
 
-    fn toggle_global_settings_ollama_enabled(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    fn cycle_global_settings_semantic_provider(
+        &mut self,
+        agenda: &Agenda<'_>,
+        forward: bool,
+    ) -> TuiResult<()> {
+        let current = self.classification.ui.config.semantic_provider;
+        let next = if forward {
+            match current {
+                SemanticProviderKind::Ollama => SemanticProviderKind::OpenRouter,
+                SemanticProviderKind::OpenRouter => SemanticProviderKind::OpenAi,
+                SemanticProviderKind::OpenAi => SemanticProviderKind::Ollama,
+            }
+        } else {
+            match current {
+                SemanticProviderKind::Ollama => SemanticProviderKind::OpenAi,
+                SemanticProviderKind::OpenRouter => SemanticProviderKind::Ollama,
+                SemanticProviderKind::OpenAi => SemanticProviderKind::OpenRouter,
+            }
+        };
         let mut config = self.classification.ui.config.clone();
-        config.ollama.enabled = !config.ollama.enabled;
-        config.set_provider_enabled(
-            agenda_core::classification::PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
-            config.ollama.enabled,
-        );
+        config.semantic_provider = next;
         agenda.store().set_classification_config(&config)?;
         self.refresh(agenda.store())?;
-        self.status = format!(
-            "Ollama {}",
-            if self.classification.ui.config.ollama.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
+        // Re-clamp cursor: the row count changes when the provider switches.
+        let current_row = self.global_settings_selected_row();
+        self.set_global_settings_selected_row(current_row);
+        self.status = format!("Semantic provider: {}", semantic_provider_label(next));
         Ok(())
     }
 
-    pub(crate) fn open_global_settings_ollama_text_input(&mut self, context: NameInputContext) {
+    pub(crate) fn open_global_settings_text_input(&mut self, context: NameInputContext) {
         let (current_value, label) = match context {
             NameInputContext::OllamaBaseUrl => (
                 self.classification.ui.config.ollama.base_url.clone(),
@@ -128,12 +150,39 @@ impl App {
                 "Ollama model",
             ),
             NameInputContext::OllamaTimeout => (
-                self.classification.ui
+                self.classification
+                    .ui
                     .config
                     .ollama
                     .timeout_secs
                     .to_string(),
                 "Ollama timeout (seconds)",
+            ),
+            NameInputContext::OpenRouterModel => (
+                self.classification.ui.config.openrouter.model.clone(),
+                "OpenRouter model",
+            ),
+            NameInputContext::OpenRouterTimeout => (
+                self.classification
+                    .ui
+                    .config
+                    .openrouter
+                    .timeout_secs
+                    .to_string(),
+                "OpenRouter timeout (seconds)",
+            ),
+            NameInputContext::OpenAiModel => (
+                self.classification.ui.config.openai.model.clone(),
+                "OpenAI model",
+            ),
+            NameInputContext::OpenAiTimeout => (
+                self.classification
+                    .ui
+                    .config
+                    .openai
+                    .timeout_secs
+                    .to_string(),
+                "OpenAI timeout (seconds)",
             ),
             _ => return,
         };
@@ -185,19 +234,13 @@ impl App {
                 self.status = "Closed Global Settings".to_string();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let next = next_index_clamped(
-                    self.global_settings_selected_row(),
-                    GlobalSettingsRow::count(),
-                    1,
-                );
+                let row_count = self.global_settings_visible_rows().len();
+                let next = next_index_clamped(self.global_settings_selected_row(), row_count, 1);
                 self.set_global_settings_selected_row(next);
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let next = next_index_clamped(
-                    self.global_settings_selected_row(),
-                    GlobalSettingsRow::count(),
-                    -1,
-                );
+                let row_count = self.global_settings_visible_rows().len();
+                let next = next_index_clamped(self.global_settings_selected_row(), row_count, -1);
                 self.set_global_settings_selected_row(next);
             }
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') => {
@@ -214,12 +257,16 @@ impl App {
                     GlobalSettingsRow::SemanticClassificationMode => {
                         self.cycle_global_settings_semantic_mode(agenda, true)?;
                     }
-                    GlobalSettingsRow::OllamaEnabled => {
-                        self.toggle_global_settings_ollama_enabled(agenda)?;
+                    GlobalSettingsRow::SemanticProvider => {
+                        self.cycle_global_settings_semantic_provider(agenda, true)?;
                     }
                     GlobalSettingsRow::OllamaBaseUrl
                     | GlobalSettingsRow::OllamaModel
                     | GlobalSettingsRow::OllamaTimeout
+                    | GlobalSettingsRow::OpenRouterModel
+                    | GlobalSettingsRow::OpenRouterTimeout
+                    | GlobalSettingsRow::OpenAiModel
+                    | GlobalSettingsRow::OpenAiTimeout
                     | GlobalSettingsRow::WorkflowReady
                     | GlobalSettingsRow::WorkflowClaim => {}
                 }
@@ -237,12 +284,16 @@ impl App {
                 GlobalSettingsRow::SemanticClassificationMode => {
                     self.cycle_global_settings_semantic_mode(agenda, false)?;
                 }
-                GlobalSettingsRow::OllamaEnabled => {
-                    self.toggle_global_settings_ollama_enabled(agenda)?;
+                GlobalSettingsRow::SemanticProvider => {
+                    self.cycle_global_settings_semantic_provider(agenda, false)?;
                 }
                 GlobalSettingsRow::OllamaBaseUrl
                 | GlobalSettingsRow::OllamaModel
                 | GlobalSettingsRow::OllamaTimeout
+                | GlobalSettingsRow::OpenRouterModel
+                | GlobalSettingsRow::OpenRouterTimeout
+                | GlobalSettingsRow::OpenAiModel
+                | GlobalSettingsRow::OpenAiTimeout
                 | GlobalSettingsRow::WorkflowReady
                 | GlobalSettingsRow::WorkflowClaim => {}
             },
@@ -259,17 +310,29 @@ impl App {
                 GlobalSettingsRow::SemanticClassificationMode => {
                     self.cycle_global_settings_semantic_mode(agenda, true)?;
                 }
-                GlobalSettingsRow::OllamaEnabled => {
-                    self.toggle_global_settings_ollama_enabled(agenda)?;
+                GlobalSettingsRow::SemanticProvider => {
+                    self.cycle_global_settings_semantic_provider(agenda, true)?;
                 }
                 GlobalSettingsRow::OllamaBaseUrl => {
-                    self.open_global_settings_ollama_text_input(NameInputContext::OllamaBaseUrl);
+                    self.open_global_settings_text_input(NameInputContext::OllamaBaseUrl);
                 }
                 GlobalSettingsRow::OllamaModel => {
                     self.open_ollama_model_picker(agenda);
                 }
                 GlobalSettingsRow::OllamaTimeout => {
-                    self.open_global_settings_ollama_text_input(NameInputContext::OllamaTimeout);
+                    self.open_global_settings_text_input(NameInputContext::OllamaTimeout);
+                }
+                GlobalSettingsRow::OpenRouterModel => {
+                    self.open_global_settings_text_input(NameInputContext::OpenRouterModel);
+                }
+                GlobalSettingsRow::OpenRouterTimeout => {
+                    self.open_global_settings_text_input(NameInputContext::OpenRouterTimeout);
+                }
+                GlobalSettingsRow::OpenAiModel => {
+                    self.open_global_settings_text_input(NameInputContext::OpenAiModel);
+                }
+                GlobalSettingsRow::OpenAiTimeout => {
+                    self.open_global_settings_text_input(NameInputContext::OpenAiTimeout);
                 }
                 GlobalSettingsRow::WorkflowReady | GlobalSettingsRow::WorkflowClaim => {
                     self.open_global_settings_workflow_picker();
@@ -295,11 +358,11 @@ impl App {
             }
             Ok(_) => {
                 self.status = "No models found. Falling back to text input.".to_string();
-                self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+                self.open_global_settings_text_input(NameInputContext::OllamaModel);
             }
             Err(err) => {
                 self.status = format!("Could not reach Ollama: {err}");
-                self.open_global_settings_ollama_text_input(NameInputContext::OllamaModel);
+                self.open_global_settings_text_input(NameInputContext::OllamaModel);
             }
         }
     }
@@ -337,5 +400,13 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+}
+
+pub(crate) fn semantic_provider_label(kind: SemanticProviderKind) -> &'static str {
+    match kind {
+        SemanticProviderKind::Ollama => "Ollama",
+        SemanticProviderKind::OpenRouter => "OpenRouter",
+        SemanticProviderKind::OpenAi => "OpenAI",
     }
 }

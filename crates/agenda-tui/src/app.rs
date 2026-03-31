@@ -416,7 +416,19 @@ impl App {
     pub(crate) fn process_classification_results(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         let mut any_applied = false;
         while let Some(result) = self.classification.worker.try_recv() {
-            self.classification.in_flight_classifications.remove(&result.item_id);
+            self.classification
+                .in_flight_classifications
+                .remove(&result.item_id);
+            self.debug_log_classification(
+                agenda,
+                &format!(
+                    "background_classification: finished item_id={} candidates={} debug_summaries={:?} error={:?}",
+                    result.item_id,
+                    result.candidates.len(),
+                    result.debug_summaries,
+                    result.error
+                ),
+            );
 
             if let Some(error) = result.error {
                 self.status = format!("Classification error: {error}");
@@ -470,6 +482,11 @@ impl App {
                 };
                 self.status =
                     format!("Classification complete: {queued} new {sug_word} (Shift+C to review)");
+            } else if !result.debug_summaries.is_empty() {
+                self.status = format!(
+                    "Classification complete: no new suggestions ({})",
+                    result.debug_summaries.join("; ")
+                );
             } else {
                 self.status = "Classification complete: no new suggestions".to_string();
             }
@@ -487,17 +504,65 @@ impl App {
         &mut self,
         agenda: &Agenda<'_>,
         item_id: ItemId,
-    ) -> TuiResult<bool> {
-        if self.classification.in_flight_classifications.contains(&item_id) {
-            return Ok(false);
+    ) -> TuiResult<BackgroundClassificationSubmitResult> {
+        if self
+            .classification
+            .in_flight_classifications
+            .contains(&item_id)
+        {
+            self.debug_log_classification(
+                agenda,
+                &format!(
+                    "background_classification: skip item_id={item_id} reason=already_in_flight"
+                ),
+            );
+            return Ok(BackgroundClassificationSubmitResult::AlreadyInFlight);
         }
         let reference_date = jiff::Zoned::now().date();
         if let Some(job) = agenda.prepare_background_classification(item_id, reference_date)? {
-            self.classification.in_flight_classifications.insert(item_id);
-            self.classification.worker.submit(job);
-            Ok(true)
+            self.classification
+                .in_flight_classifications
+                .insert(item_id);
+            self.debug_log_classification(
+                agenda,
+                &format!(
+                    "background_classification: submit item_id={item_id} semantic_provider={:?}",
+                    job.config.semantic_provider
+                ),
+            );
+            if self.classification.worker.submit(job) {
+                Ok(BackgroundClassificationSubmitResult::Submitted)
+            } else {
+                self.classification
+                    .in_flight_classifications
+                    .remove(&item_id);
+                self.debug_log_classification(
+                    agenda,
+                    &format!(
+                        "background_classification: submit_failed item_id={item_id} reason=worker_disconnected"
+                    ),
+                );
+                Err(std::io::Error::other("background classification worker unavailable").into())
+            }
         } else {
-            Ok(false)
+            self.debug_log_classification(
+                agenda,
+                &format!("background_classification: skip item_id={item_id} reason=no_providers"),
+            );
+            Ok(BackgroundClassificationSubmitResult::NoProvidersEnabled)
+        }
+    }
+
+    fn debug_log_classification(&self, agenda: &Agenda<'_>, message: &str) {
+        if !agenda.debug_enabled() {
+            return;
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(agenda_core::classification::CLASSIFICATION_DEBUG_LOG_PATH)
+        {
+            let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
         }
     }
 
@@ -800,7 +865,8 @@ impl App {
     }
 
     pub(crate) fn pending_suggestion_count_for_item(&self, item_id: ItemId) -> usize {
-        self.classification.ui
+        self.classification
+            .ui
             .review_items
             .iter()
             .find(|item| item.item_id == item_id)
@@ -1045,10 +1111,7 @@ impl App {
         self.clear_input();
     }
 
-    pub(crate) fn close_item_assign_session(
-        &mut self,
-        status: impl Into<String>,
-    ) {
+    pub(crate) fn close_item_assign_session(&mut self, status: impl Into<String>) {
         let status = status.into();
         let clear_selection = self.item_assign_dirty && self.has_selected_items();
         let return_target = self.item_assign_return_target.take();

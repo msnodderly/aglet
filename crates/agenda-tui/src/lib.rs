@@ -47,13 +47,14 @@ mod projection;
 mod render;
 mod state;
 mod text_buffer;
-mod undo;
 mod ui_support;
+mod undo;
 
 pub use error::{TuiError, TuiResult};
 
-use state::assign::{AssignmentPreview, InspectAssignmentRow, ItemAssignPane, ItemAssignReturnTarget,
-    ViewAssignRow};
+use state::assign::{
+    AssignmentPreview, InspectAssignmentRow, ItemAssignPane, ItemAssignReturnTarget, ViewAssignRow,
+};
 use state::board::{
     AddColumnDirection, BoardAddColumnAnchor, BoardAddColumnState, DoneBlocksConfirmScope,
     DoneBlocksConfirmState, DoneToggleOrigin, GlobalSearchSession, LinkWizardAction,
@@ -67,19 +68,18 @@ use state::category::{
     CategoryDirectEditState, CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus,
     CategoryManagerDetailsInlineField, CategoryManagerDetailsInlineInput, CategoryManagerFocus,
     CategoryManagerState, CategorySuggestState, ConditionEditState, GlobalSettingsRow,
-    GlobalSettingsState, OllamaModelPickerState, WorkflowRolePickerOrigin,
-    WorkflowRolePickerState,
+    GlobalSettingsState, OllamaModelPickerState, WorkflowRolePickerOrigin, WorkflowRolePickerState,
 };
 use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
     SuggestionReviewFocus, SuggestionReviewItem, SuggestionReviewState,
 };
 use state::view_edit::{
-    BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay,
-    ViewEditPaneFocus, ViewEditRegion, ViewEditState,
+    BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
+    ViewEditRegion, ViewEditState,
 };
-use undo::{UndoEntry, UndoState};
 use ui_support::*;
+use undo::{UndoEntry, UndoState};
 
 type TuiTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
@@ -198,7 +198,6 @@ enum Mode {
     CategoryColumnPicker,
     BoardAddColumnPicker,
 }
-
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AutoRefreshInterval {
@@ -349,6 +348,13 @@ impl Default for ClassificationAppState {
             in_flight_classifications: HashSet::new(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackgroundClassificationSubmitResult {
+    Submitted,
+    AlreadyInFlight,
+    NoProvidersEnabled,
 }
 
 struct TransientUiState {

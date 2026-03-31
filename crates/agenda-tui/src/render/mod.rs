@@ -1473,10 +1473,7 @@ impl App {
         let input_area = chunks[2];
         let input_x = input_area.x.saturating_add(1);
         let input_y = input_area.y.saturating_add(1);
-        let prefix_len = "Search or create> "
-            .chars()
-            .count()
-            .min(u16::MAX as usize) as u16;
+        let prefix_len = "Search or create> ".chars().count().min(u16::MAX as usize) as u16;
         let cursor_chars = state.filter.cursor().min(u16::MAX as usize) as u16;
         let max_x = input_area
             .x
@@ -2304,7 +2301,10 @@ impl App {
                 }
                 if item_board_column_index > 0 {
                     border_segments.push(InlineBorderSegment {
-                        start: offsets.get(2 + item_board_column_index).copied().unwrap_or(0),
+                        start: offsets
+                            .get(2 + item_board_column_index)
+                            .copied()
+                            .unwrap_or(0),
                         width: item_width,
                         text: self.inline_border_segment_text(&layout.item_label),
                         priority: self.inline_border_segment_priority(
@@ -2677,8 +2677,10 @@ impl App {
                     widths.when,
                     widths.categories,
                 ];
-                let offsets =
-                    board_column_offsets(&legacy_column_widths, BOARD_TABLE_COLUMN_SPACING as usize);
+                let offsets = board_column_offsets(
+                    &legacy_column_widths,
+                    BOARD_TABLE_COLUMN_SPACING as usize,
+                );
                 let border_title = build_segmented_board_border_title_line(
                     &title,
                     &[
@@ -3982,10 +3984,7 @@ impl App {
                                 ("Esc", "done"),
                             ]
                         } else {
-                            vec![
-                                ("Space", "toggle"),
-                                ("Esc", "done"),
-                            ]
+                            vec![("Space", "toggle"), ("Esc", "done")]
                         }
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
                         if state.sections_view_row_selected {
@@ -4351,7 +4350,12 @@ impl App {
             InputPanelKind::NumericValue => "Value",
             _ => "Description",
         };
-        let text_prefix = if matches!(panel.kind, InputPanelKind::NameInput | InputPanelKind::CategoryCreate | InputPanelKind::NumericValue) {
+        let text_prefix = if matches!(
+            panel.kind,
+            InputPanelKind::NameInput
+                | InputPanelKind::CategoryCreate
+                | InputPanelKind::NumericValue
+        ) {
             format!("{text_marker}{text_label}> ")
         } else {
             format!("{text_marker}{text_label}: ")
@@ -4640,8 +4644,7 @@ impl App {
                                 .confidence
                                 .map(|value| format!("{:.0}%", value * 100.0))
                                 .unwrap_or_else(|| "-".to_string());
-                            let rationale =
-                                suggestion.rationale.as_deref().unwrap_or("text match");
+                            let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
                             vec![
                                 Line::from(vec![
                                     Span::styled(if selected { "> " } else { "  " }, row_style),
@@ -4651,7 +4654,9 @@ impl App {
                                 Line::from(vec![
                                     Span::styled("    ", meta_style),
                                     Span::styled(
-                                        format!("[{provider_label} {confidence_label}] {rationale}"),
+                                        format!(
+                                            "[{provider_label} {confidence_label}] {rationale}"
+                                        ),
                                         meta_style,
                                     ),
                                 ]),
@@ -4659,7 +4664,8 @@ impl App {
                         })
                         .collect()
                 };
-                if suggestion_len > 0 && suggestions_inner.width > 0 && suggestions_inner.height > 0 {
+                if suggestion_len > 0 && suggestions_inner.width > 0 && suggestions_inner.height > 0
+                {
                     let rendered_suggestion_lines = if suggestion_len == 0 {
                         1
                     } else {
@@ -4686,11 +4692,14 @@ impl App {
                         );
                     }
                 }
-
             } else if panel.category_filter_editing {
                 frame.render_widget(
                     Block::default()
-                        .title(if cat_focused { "> Categories" } else { "Categories" })
+                        .title(if cat_focused {
+                            "> Categories"
+                        } else {
+                            "Categories"
+                        })
                         .borders(Borders::ALL)
                         .style(Style::default())
                         .border_style(cat_border_style),
@@ -4706,7 +4715,11 @@ impl App {
             } else {
                 frame.render_widget(
                     Block::default()
-                        .title(if cat_focused { "> Categories" } else { "Categories" })
+                        .title(if cat_focused {
+                            "> Categories"
+                        } else {
+                            "Categories"
+                        })
                         .borders(Borders::ALL)
                         .style(Style::default())
                         .border_style(cat_border_style),
@@ -4723,7 +4736,8 @@ impl App {
                         Span::styled("───", Style::default().fg(Color::Yellow)),
                     ]));
                     let suggestion_cat_names = category_name_map(&self.categories);
-                    for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate() {
+                    for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate()
+                    {
                         let is_cursor = cat_focused && panel.category_cursor == si;
                         let marker = decision.marker();
                         let marker_style = match decision {
@@ -4738,8 +4752,10 @@ impl App {
                         } else {
                             marker_style
                         };
-                        let cat_name =
-                            candidate_assignment_label(&suggestion.assignment, &suggestion_cat_names);
+                        let cat_name = candidate_assignment_label(
+                            &suggestion.assignment,
+                            &suggestion_cat_names,
+                        );
                         let provider_label = suggestion
                             .model
                             .as_ref()
@@ -4857,7 +4873,10 @@ impl App {
                                     };
                                     let mut spans = vec![Span::styled(main_prefix, base_style)];
                                     if !type_suffix.is_empty() {
-                                        spans.push(Span::styled(type_suffix.to_string(), suffix_style));
+                                        spans.push(Span::styled(
+                                            type_suffix.to_string(),
+                                            suffix_style,
+                                        ));
                                     }
                                     spans.push(Span::styled(padding, base_style));
                                     spans.push(Span::styled(value_text, value_style));
@@ -4891,7 +4910,10 @@ impl App {
                 let item_count = lines.len();
 
                 if cat_list_rect.width > 0 && cat_list_rect.height > 0 {
-                    frame.render_widget(Paragraph::new(lines).scroll((cat_scroll, 0)), cat_list_rect);
+                    frame.render_widget(
+                        Paragraph::new(lines).scroll((cat_scroll, 0)),
+                        cat_list_rect,
+                    );
                     Self::render_vertical_scrollbar(
                         frame,
                         cat_list_rect,
@@ -4951,9 +4973,7 @@ impl App {
             InputPanelFocus::Categories if panel.category_filter_editing => {
                 "Type filter  Enter:keep  Esc:done  Tab:next"
             }
-            InputPanelFocus::Categories => {
-                "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close"
-            }
+            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
             InputPanelFocus::Actions => {
                 if panel.pending_suggestions.is_empty() {
                     "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  Esc:save and close"
@@ -5365,50 +5385,96 @@ impl App {
         );
 
         let selected_row = self.global_settings_selected_row();
-        let rows = vec![
-            ListItem::new(Line::from(format!(
-                "Auto-refresh        < {} >",
-                self.auto_refresh_mode_label()
-            ))),
-            ListItem::new(Line::from(format!(
-                "Section borders     < {} >",
-                self.section_border_mode_label()
-            ))),
-            ListItem::new(Line::from(format!(
-                "Literal classify    < {} >",
-                modes::classification::literal_mode_label(
-                    self.classification.ui.config.literal_mode
-                )
-            ))),
-            ListItem::new(Line::from(format!(
-                "Semantic classify   < {} >",
-                modes::classification::semantic_mode_label(
-                    self.classification.ui.config.semantic_mode
-                )
-            ))),
-            ListItem::new(Line::from(format!(
-                "Ollama enabled      < {} >",
-                if self.classification.ui.config.ollama.enabled {
-                    "On"
-                } else {
-                    "Off"
-                }
-            ))),
-            ListItem::new(Line::from(format!(
-                "Ollama base URL     {}",
-                self.classification.ui.config.ollama.base_url
-            ))),
-            ListItem::new(Line::from(format!(
-                "Ollama model        {}",
-                self.classification.ui.config.ollama.model
-            ))),
-            ListItem::new(Line::from(format!(
-                "Ollama timeout      {}s",
-                self.classification.ui.config.ollama.timeout_secs
-            ))),
-            ListItem::new(Line::from(format!("Ready category       {ready_name}"))),
-            ListItem::new(Line::from(format!("Claim category       {claim_name}"))),
-        ];
+        let visible = self.global_settings_visible_rows();
+        let rows: Vec<ListItem> = visible
+            .iter()
+            .map(|row| {
+                let text = match row {
+                    GlobalSettingsRow::AutoRefresh => {
+                        format!("Auto-refresh        < {} >", self.auto_refresh_mode_label())
+                    }
+                    GlobalSettingsRow::SectionBorders => {
+                        format!(
+                            "Section borders     < {} >",
+                            self.section_border_mode_label()
+                        )
+                    }
+                    GlobalSettingsRow::LiteralClassificationMode => {
+                        format!(
+                            "Literal classify    < {} >",
+                            modes::classification::literal_mode_label(
+                                self.classification.ui.config.literal_mode
+                            )
+                        )
+                    }
+                    GlobalSettingsRow::SemanticClassificationMode => {
+                        format!(
+                            "Semantic classify   < {} >",
+                            modes::classification::semantic_mode_label(
+                                self.classification.ui.config.semantic_mode
+                            )
+                        )
+                    }
+                    GlobalSettingsRow::SemanticProvider => {
+                        format!(
+                            "Semantic provider   < {} >",
+                            modes::global_settings::semantic_provider_label(
+                                self.classification.ui.config.semantic_provider
+                            )
+                        )
+                    }
+                    GlobalSettingsRow::OllamaBaseUrl => {
+                        format!(
+                            "  Base URL          {}",
+                            self.classification.ui.config.ollama.base_url
+                        )
+                    }
+                    GlobalSettingsRow::OllamaModel => {
+                        format!(
+                            "  Model             {}",
+                            self.classification.ui.config.ollama.model
+                        )
+                    }
+                    GlobalSettingsRow::OllamaTimeout => {
+                        format!(
+                            "  Timeout           {}s",
+                            self.classification.ui.config.ollama.timeout_secs
+                        )
+                    }
+                    GlobalSettingsRow::OpenRouterModel => {
+                        format!(
+                            "  Model             {}",
+                            self.classification.ui.config.openrouter.model
+                        )
+                    }
+                    GlobalSettingsRow::OpenRouterTimeout => {
+                        format!(
+                            "  Timeout           {}s",
+                            self.classification.ui.config.openrouter.timeout_secs
+                        )
+                    }
+                    GlobalSettingsRow::OpenAiModel => {
+                        format!(
+                            "  Model             {}",
+                            self.classification.ui.config.openai.model
+                        )
+                    }
+                    GlobalSettingsRow::OpenAiTimeout => {
+                        format!(
+                            "  Timeout           {}s",
+                            self.classification.ui.config.openai.timeout_secs
+                        )
+                    }
+                    GlobalSettingsRow::WorkflowReady => {
+                        format!("Ready category       {ready_name}")
+                    }
+                    GlobalSettingsRow::WorkflowClaim => {
+                        format!("Claim category       {claim_name}")
+                    }
+                };
+                ListItem::new(Line::from(text))
+            })
+            .collect();
         let mut list_state = Self::list_state_for(outer[1], Some(selected_row));
         frame.render_stateful_widget(
             List::new(rows)
@@ -5705,10 +5771,7 @@ impl App {
 
             // Summary of current draft criteria
             let resolve = |id: CategoryId| -> String {
-                category_names
-                    .get(&id)
-                    .unwrap_or(&"(deleted)")
-                    .to_string()
+                category_names.get(&id).unwrap_or(&"(deleted)").to_string()
             };
             let trigger = edit.draft_query.format_trigger(&resolve);
             let summary_text = if edit.draft_query.criteria.is_empty() {
@@ -5851,12 +5914,8 @@ impl App {
                     .enumerate()
                     .map(|(display_idx, (_actual_idx, query))| {
                         let trigger = query.format_trigger(&resolve);
-                        let label = format!(
-                            "{}. {} -> {}",
-                            display_idx + 1,
-                            trigger,
-                            category_name
-                        );
+                        let label =
+                            format!("{}. {} -> {}", display_idx + 1, trigger, category_name);
                         ListItem::new(Line::from(label))
                     })
                     .collect()
@@ -5865,7 +5924,8 @@ impl App {
             let selected_row = if profile_conditions.is_empty() {
                 0
             } else {
-                edit.list_index.min(profile_conditions.len().saturating_sub(1))
+                edit.list_index
+                    .min(profile_conditions.len().saturating_sub(1))
             };
             let mut state = ListState::default().with_selected(Some(selected_row));
             frame.render_stateful_widget(
@@ -6588,13 +6648,11 @@ impl App {
                                 cat.conditions
                                     .iter()
                                     .filter_map(|cond| match cond {
-                                        Condition::Profile { criteria } => {
-                                            Some(format!(
-                                                "  {} -> {}",
-                                                criteria.format_trigger(&resolve),
-                                                row.name
-                                            ))
-                                        }
+                                        Condition::Profile { criteria } => Some(format!(
+                                            "  {} -> {}",
+                                            criteria.format_trigger(&resolve),
+                                            row.name
+                                        )),
                                         _ => None,
                                     })
                                     .collect::<Vec<_>>()
@@ -6625,13 +6683,11 @@ impl App {
                                 Block::default()
                                     .title(conditions_title_display)
                                     .borders(Borders::ALL)
-                                    .border_style(Style::default().fg(
-                                        if conditions_focused {
-                                            CATEGORY_MANAGER_EDIT_FOCUS
-                                        } else {
-                                            pane_idle
-                                        },
-                                    )),
+                                    .border_style(Style::default().fg(if conditions_focused {
+                                        CATEGORY_MANAGER_EDIT_FOCUS
+                                    } else {
+                                        pane_idle
+                                    })),
                             ),
                         details_chunks[conditions_chunk_index],
                     );
@@ -7040,7 +7096,10 @@ impl App {
                             .get(&criterion.category_id)
                             .cloned()
                             .unwrap_or_else(|| "(deleted)".to_string());
-                        (criterion.mode, format!("{}: {}", criterion_mode_label(criterion.mode), name))
+                        (
+                            criterion.mode,
+                            format!("{}: {}", criterion_mode_label(criterion.mode), name),
+                        )
                     })
                     .collect()
             };
@@ -7686,16 +7745,12 @@ impl App {
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else if view_row_focused {
-                Style::default()
-                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
             } else {
                 Style::default().fg(dim)
             };
             items.push(
-                ListItem::new(Line::from(
-                    " ⚙ View settings".to_string(),
-                ))
-                .style(view_row_style),
+                ListItem::new(Line::from(" ⚙ View settings".to_string())).style(view_row_style),
             );
 
             let visible_section_indices: Vec<usize> = {
@@ -7738,9 +7793,7 @@ impl App {
                     } else {
                         "├──"
                     };
-                    let cursor = if is_active_section
-                        && state.region == ViewEditRegion::Sections
-                    {
+                    let cursor = if is_active_section && state.region == ViewEditRegion::Sections {
                         "▸"
                     } else {
                         " "
@@ -7763,8 +7816,7 @@ impl App {
                             .bg(Color::Cyan)
                             .add_modifier(Modifier::BOLD)
                     } else if is_active_section {
-                        Style::default()
-                            .add_modifier(Modifier::REVERSED)
+                        Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
                     };
@@ -7980,9 +8032,8 @@ impl App {
                         (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
                         filtered_indices.len()
                     );
-                    let title = format!(
-                        " {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",
-                    );
+                    let title =
+                        format!(" {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",);
                     let section_index = state.section_index;
                     let items: Vec<ListItem<'_>> = self
                         .category_rows
@@ -8025,7 +8076,11 @@ impl App {
                                     Some(CriterionMode::Not) => ("-", " Exclude", Color::Red),
                                     Some(CriterionMode::Or) => ("*", " Or", Color::Yellow),
                                 };
-                                let fg = if is_selected { Color::Black } else { glyph_color };
+                                let fg = if is_selected {
+                                    Color::Black
+                                } else {
+                                    glyph_color
+                                };
                                 let glyph_style = Style::default().fg(fg);
                                 let label_style = if is_selected {
                                     Style::default().fg(Color::Black)
@@ -8066,7 +8121,10 @@ impl App {
                                     current_alias
                                 };
                                 let edit_marker = if active_alias_edit { " ◀" } else { "" };
-                                let label = format!("{indent}{}  alias: {alias_text}{edit_marker}", row.name);
+                                let label = format!(
+                                    "{indent}{}  alias: {alias_text}{edit_marker}",
+                                    row.name
+                                );
                                 ListItem::new(Line::from(label)).style(selected_style)
                             } else {
                                 let checked = match target {
