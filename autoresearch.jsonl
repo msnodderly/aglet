@@ -1,0 +1,3 @@
+{"type":"config","name":"Category manager note placeholder visibility fix","metricName":"cargo_test_time","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"19cec36","metric":3.6,"metrics":{},"status":"discard","description":"Verify category manager note placeholder test passes after splitting placeholder over two lines","timestamp":1775018329881,"segment":0}
+{"run":2,"commit":"19cec36","metric":3.9,"metrics":{},"status":"discard","description":"Reserve a right gutter and render wrapped manual placeholders for category-manager Also Match/Note so helper text stays visible in narrow panes","timestamp":1775018544487,"segment":0}

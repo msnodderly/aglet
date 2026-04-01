@@ -5,7 +5,9 @@ const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
 const CATEGORY_MANAGER_PANE_FOCUS: Color = Color::LightCyan;
 const CATEGORY_MANAGER_TEXT_ENTRY: Color = Color::LightMagenta;
 const CATEGORY_MANAGER_EDIT_FOCUS: Color = Color::Yellow;
-const NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
+const ITEM_NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
+const CATEGORY_NOTE_PLACEHOLDER_TEXT: &str =
+    "Describe the purpose of this category.\nIncluded in AI classification context when enabled.";
 const ALSO_MATCH_PLACEHOLDER_TEXT: &str = "One term or phrase per line...";
 const FOOTER_HEIGHT: u16 = 4;
 const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
@@ -4447,7 +4449,7 @@ impl App {
                 Style::default().fg(Color::Cyan)
             };
             let note_widget = panel.note.widget_mut();
-            note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
+            note_widget.set_placeholder_text(ITEM_NOTE_PLACEHOLDER_TEXT);
             note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
             note_widget.set_style(Style::default());
             note_widget.set_cursor_line_style(Style::default());
@@ -6707,7 +6709,7 @@ impl App {
                 let note_rect = details_chunks[note_chunk_index];
                 if let Some(state) = self.category_manager.as_ref() {
                     let mut note_widget = state.details_note.widget().clone();
-                    note_widget.set_placeholder_text(NOTE_PLACEHOLDER_TEXT);
+                    note_widget.set_placeholder_text(CATEGORY_NOTE_PLACEHOLDER_TEXT);
                     note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
                     note_widget.set_style(if is_reserved_category {
                         Style::default()
@@ -6727,25 +6729,35 @@ impl App {
                     } else {
                         note_widget.set_cursor_style(Style::default());
                     }
-                    note_widget.set_block(
-                        Block::default()
-                            .title(if note_block_focus {
-                                format!("> {note_title}")
-                            } else {
-                                note_title.to_string()
-                            })
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(if is_reserved_category {
-                                pane_idle
-                            } else if note_editing {
-                                CATEGORY_MANAGER_EDIT_FOCUS
-                            } else if note_block_focus {
-                                CATEGORY_MANAGER_PANE_FOCUS
-                            } else {
-                                pane_idle
-                            })),
-                    );
+                    let note_block = Block::default()
+                        .title(if note_block_focus {
+                            format!("> {note_title}")
+                        } else {
+                            note_title.to_string()
+                        })
+                        .borders(Borders::ALL)
+                        .padding(Padding::new(0, 1, 0, 0))
+                        .border_style(Style::default().fg(if is_reserved_category {
+                            pane_idle
+                        } else if note_editing {
+                            CATEGORY_MANAGER_EDIT_FOCUS
+                        } else if note_block_focus {
+                            CATEGORY_MANAGER_PANE_FOCUS
+                        } else {
+                            pane_idle
+                        }));
+                    let note_inner = note_block.inner(note_rect);
+                    note_widget.set_placeholder_text("");
+                    note_widget.set_block(note_block);
                     frame.render_widget(&note_widget, note_rect);
+                    if !note_editing && state.details_note.text().is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(CATEGORY_NOTE_PLACEHOLDER_TEXT)
+                                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                                .wrap(Wrap { trim: false }),
+                            note_inner,
+                        );
+                    }
                     let note_scroll = list_scroll_for_selected_line(
                         note_rect,
                         Some(state.details_note.line_col().0),
