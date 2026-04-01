@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -8,9 +9,12 @@ use uuid::Uuid;
 use crate::classification::{
     BackgroundClassificationJob, ClassificationCandidate, ClassificationConfig,
     ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
-    LiteralClassificationMode, OllamaProvider, OllamaTransport, ReqwestOllamaTransport,
-    SemanticClassificationMode, SuggestionStatus, WhenParserProvider, PROVIDER_ID_IMPLICIT_STRING,
-    PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
+    LiteralClassificationMode, OllamaProvider, OllamaTransport, OpenAiProvider, OpenAiTransport,
+    OpenRouterProvider, OpenRouterTransport, ReqwestOllamaTransport, ReqwestOpenAiTransport,
+    ReqwestOpenRouterTransport, SemanticClassificationMode, SemanticProviderKind,
+    SuggestionStatus, WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH,
+    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI,
+    PROVIDER_ID_OPENROUTER, PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
 use crate::engine::{
@@ -22,9 +26,8 @@ use crate::matcher::Classifier;
 use crate::model::{
     origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
-    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
-    Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
-    RESERVED_CATEGORY_NAME_WHEN,
+    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section,
+    View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -38,6 +41,8 @@ pub struct Agenda<'a> {
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
     ollama_transport: Arc<dyn OllamaTransport>,
+    openrouter_transport: Arc<dyn OpenRouterTransport>,
+    openai_transport: Arc<dyn OpenAiTransport>,
     debug: bool,
 }
 
@@ -65,7 +70,13 @@ enum CandidateDisposition {
 
 impl<'a> Agenda<'a> {
     pub fn new(store: &'a Store, classifier: &'a dyn Classifier) -> Self {
-        Self::with_ollama_transport(store, classifier, Arc::new(ReqwestOllamaTransport))
+        Self::with_transports(
+            store,
+            classifier,
+            Arc::new(ReqwestOllamaTransport),
+            Arc::new(ReqwestOpenRouterTransport),
+            Arc::new(ReqwestOpenAiTransport),
+        )
     }
 
     pub fn with_debug(store: &'a Store, classifier: &'a dyn Classifier, debug: bool) -> Self {
@@ -79,17 +90,39 @@ impl<'a> Agenda<'a> {
         classifier: &'a dyn Classifier,
         ollama_transport: Arc<dyn OllamaTransport>,
     ) -> Self {
+        Self::with_transports(
+            store,
+            classifier,
+            ollama_transport,
+            Arc::new(ReqwestOpenRouterTransport),
+            Arc::new(ReqwestOpenAiTransport),
+        )
+    }
+
+    pub fn with_transports(
+        store: &'a Store,
+        classifier: &'a dyn Classifier,
+        ollama_transport: Arc<dyn OllamaTransport>,
+        openrouter_transport: Arc<dyn OpenRouterTransport>,
+        openai_transport: Arc<dyn OpenAiTransport>,
+    ) -> Self {
         Self {
             store,
             classifier,
             date_parser: BasicDateParser::default(),
             ollama_transport,
+            openrouter_transport,
+            openai_transport,
             debug: false,
         }
     }
 
     pub fn store(&self) -> &Store {
         self.store
+    }
+
+    pub fn debug_enabled(&self) -> bool {
+        self.debug
     }
 
     pub fn create_item(&self, item: &Item) -> Result<ProcessItemResult> {
@@ -177,7 +210,9 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: origin.clone().or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
+            origin: origin
+                .clone()
+                .or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
             explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value: None,
         });
@@ -223,7 +258,9 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: origin.clone().or_else(|| Some(origin_const::MANUAL.to_string())),
+            origin: origin
+                .clone()
+                .or_else(|| Some(origin_const::MANUAL.to_string())),
             explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value: None,
         };
@@ -332,7 +369,9 @@ impl<'a> Agenda<'a> {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: origin.clone().or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
+            origin: origin
+                .clone()
+                .or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
             explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value: Some(numeric_value),
         };
@@ -635,7 +674,12 @@ impl<'a> Agenda<'a> {
         self.ensure_depends_on_no_cycle(dependent_id, dependency_id)?;
         let link = self.build_link(dependent_id, dependency_id, ItemLinkKind::DependsOn);
         self.store.create_item_link(&link)?;
-        self.debug_log_link_event("link.created", dependent_id, dependency_id, ItemLinkKind::DependsOn);
+        self.debug_log_link_event(
+            "link.created",
+            dependent_id,
+            dependency_id,
+            ItemLinkKind::DependsOn,
+        );
         Ok(LinkItemsResult { created: true })
     }
 
@@ -662,7 +706,12 @@ impl<'a> Agenda<'a> {
 
         let link = self.build_link(item_id, other_item_id, ItemLinkKind::Related);
         self.store.create_item_link(&link)?;
-        self.debug_log_link_event("link.created", item_id, other_item_id, ItemLinkKind::Related);
+        self.debug_log_link_event(
+            "link.created",
+            item_id,
+            other_item_id,
+            ItemLinkKind::Related,
+        );
         Ok(LinkItemsResult { created: true })
     }
 
@@ -690,7 +739,12 @@ impl<'a> Agenda<'a> {
         let (item_id, other_item_id) = Self::normalize_related_pair(a, b);
         self.store
             .delete_item_link(item_id, other_item_id, ItemLinkKind::Related)?;
-        self.debug_log_link_event("link.removed", item_id, other_item_id, ItemLinkKind::Related);
+        self.debug_log_link_event(
+            "link.removed",
+            item_id,
+            other_item_id,
+            ItemLinkKind::Related,
+        );
         Ok(())
     }
 
@@ -853,7 +907,7 @@ impl<'a> Agenda<'a> {
     }
 
     /// Prepare a background classification job for an item. Returns `None`
-    /// if no expensive (semantic/Ollama) providers are enabled.
+    /// if no expensive (semantic) providers are enabled.
     /// The returned job contains everything needed to run classification
     /// on a background thread without Store access.
     pub fn prepare_background_classification(
@@ -862,28 +916,43 @@ impl<'a> Agenda<'a> {
         reference_date: jiff::civil::Date,
     ) -> Result<Option<BackgroundClassificationJob>> {
         let cfg = self.store.get_classification_config()?;
-        if cfg.semantic_mode == SemanticClassificationMode::Off
-            || !cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
-            || !cfg.ollama.enabled
-        {
+        self.debug_log(&format!(
+            "prepare_background_classification: item_id={item_id} semantic_mode={:?} semantic_provider={:?}",
+            cfg.semantic_mode, cfg.semantic_provider
+        ));
+        if cfg.semantic_mode == SemanticClassificationMode::Off {
+            self.debug_log(&format!(
+                "prepare_background_classification: skip item_id={item_id} reason=semantic_mode_off"
+            ));
             return Ok(None);
         }
 
         let (request, revision_hash) = {
             let service = self.classification_service(reference_date, &cfg, true);
             if !service.has_providers() {
+                self.debug_log(&format!(
+                    "prepare_background_classification: skip item_id={item_id} reason=no_providers"
+                ));
                 return Ok(None);
             }
             let (_item, request, revision_hash) = service.prepare_request(item_id)?;
             (request, revision_hash)
         };
+        self.debug_log(&format!(
+            "prepare_background_classification: queued item_id={item_id} literal_candidates={} semantic_candidates={}",
+            request.literal_candidate_categories.len(),
+            request.semantic_candidate_categories.len()
+        ));
         Ok(Some(BackgroundClassificationJob {
             item_id,
             item_revision_hash: revision_hash,
             request,
             config: cfg,
             ollama_transport: Arc::clone(&self.ollama_transport),
+            openrouter_transport: Arc::clone(&self.openrouter_transport),
+            openai_transport: Arc::clone(&self.openai_transport),
             reference_date,
+            debug: self.debug,
         }))
     }
 
@@ -939,7 +1008,9 @@ impl<'a> Agenda<'a> {
             .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
 
         for candidate in candidates {
-            let is_semantic = candidate.provider == PROVIDER_ID_OLLAMA_OPENAI_COMPAT;
+            let is_semantic = candidate.provider == PROVIDER_ID_OLLAMA_OPENAI_COMPAT
+                || candidate.provider == PROVIDER_ID_OPENROUTER
+                || candidate.provider == PROVIDER_ID_OPENAI;
             if is_semantic {
                 result.semantic_candidates_seen += 1;
             }
@@ -1098,18 +1169,45 @@ impl<'a> Agenda<'a> {
                 reference_date,
             }) as _);
         }
-        if include_semantic
-            && cfg.semantic_mode == SemanticClassificationMode::SuggestReview
-            && cfg.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
-            && cfg.ollama.enabled
-        {
-            providers.push(Box::new(OllamaProvider {
-                settings: &cfg.ollama,
-                transport: self.ollama_transport.as_ref(),
-                debug: self.debug,
-            }) as _);
+        if include_semantic && cfg.semantic_mode == SemanticClassificationMode::SuggestReview {
+            match cfg.semantic_provider {
+                SemanticProviderKind::Ollama => {
+                    providers.push(Box::new(OllamaProvider {
+                        settings: &cfg.ollama,
+                        transport: self.ollama_transport.as_ref(),
+                        debug: self.debug,
+                    }) as _);
+                }
+                SemanticProviderKind::OpenRouter => {
+                    providers.push(Box::new(OpenRouterProvider {
+                        settings: &cfg.openrouter,
+                        transport: self.openrouter_transport.as_ref(),
+                        debug: self.debug,
+                    }) as _);
+                }
+                SemanticProviderKind::OpenAi => {
+                    providers.push(Box::new(OpenAiProvider {
+                        settings: &cfg.openai,
+                        transport: self.openai_transport.as_ref(),
+                        debug: self.debug,
+                    }) as _);
+                }
+            }
         }
         ClassificationService::new(self.store, providers)
+    }
+
+    fn debug_log(&self, message: &str) {
+        if !self.debug {
+            return;
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(CLASSIFICATION_DEBUG_LOG_PATH)
+        {
+            let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
+        }
     }
 
     fn reprocess_existing_item(&self, item_id: ItemId) -> Result<ProcessItemResult> {
@@ -1306,7 +1404,7 @@ impl<'a> Agenda<'a> {
                 LiteralClassificationMode::AutoApply => CandidateDisposition::AutoApply,
                 LiteralClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
             },
-            PROVIDER_ID_OLLAMA_OPENAI_COMPAT => match cfg.semantic_mode {
+            PROVIDER_ID_OLLAMA_OPENAI_COMPAT | PROVIDER_ID_OPENROUTER | PROVIDER_ID_OPENAI => match cfg.semantic_mode {
                 SemanticClassificationMode::Off => CandidateDisposition::Skip,
                 SemanticClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
             },

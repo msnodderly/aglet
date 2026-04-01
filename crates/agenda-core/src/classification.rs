@@ -20,19 +20,25 @@ use crate::model::{
 use crate::store::Store;
 
 pub const CLASSIFICATION_CONFIG_KEY: &str = "classification.config.v1";
+pub const CLASSIFICATION_DEBUG_LOG_PATH: &str = "/tmp/aglet-classification-debug.log";
 pub const PROVIDER_ID_IMPLICIT_STRING: &str = "implicit_string";
 pub const PROVIDER_ID_WHEN_PARSER: &str = "when_parser";
 pub const PROVIDER_ID_OLLAMA_OPENAI_COMPAT: &str = "ollama_openai_compat";
+pub const PROVIDER_ID_OPENROUTER: &str = "openrouter";
+pub const PROVIDER_ID_OPENAI: &str = "openai";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ClassificationConfig {
     pub enabled: bool,
     pub literal_mode: LiteralClassificationMode,
     pub semantic_mode: SemanticClassificationMode,
+    pub semantic_provider: SemanticProviderKind,
     pub run_on_item_save: bool,
     pub run_on_category_change: bool,
     pub enabled_providers: Vec<ProviderConfig>,
     pub ollama: OllamaProviderSettings,
+    pub openrouter: OpenRouterProviderSettings,
+    pub openai: OpenAiProviderSettings,
 }
 
 impl Default for ClassificationConfig {
@@ -41,6 +47,7 @@ impl Default for ClassificationConfig {
             enabled: true,
             literal_mode: LiteralClassificationMode::AutoApply,
             semantic_mode: SemanticClassificationMode::Off,
+            semantic_provider: SemanticProviderKind::Ollama,
             run_on_item_save: true,
             run_on_category_change: true,
             enabled_providers: vec![
@@ -54,13 +61,10 @@ impl Default for ClassificationConfig {
                     enabled: true,
                     mode: ProviderMode::InlineIfCheap,
                 },
-                ProviderConfig {
-                    provider_id: PROVIDER_ID_OLLAMA_OPENAI_COMPAT.to_string(),
-                    enabled: false,
-                    mode: ProviderMode::InlineIfCheap,
-                },
             ],
             ollama: OllamaProviderSettings::default(),
+            openrouter: OpenRouterProviderSettings::default(),
+            openai: OpenAiProviderSettings::default(),
         }
     }
 }
@@ -70,11 +74,14 @@ struct ClassificationConfigWire {
     enabled: Option<bool>,
     literal_mode: Option<LiteralClassificationMode>,
     semantic_mode: Option<SemanticClassificationMode>,
+    semantic_provider: Option<SemanticProviderKind>,
     continuous_mode: Option<LegacyContinuousMode>,
     run_on_item_save: Option<bool>,
     run_on_category_change: Option<bool>,
     enabled_providers: Option<Vec<ProviderConfig>>,
     ollama: Option<OllamaProviderSettings>,
+    openrouter: Option<OpenRouterProviderSettings>,
+    openai: Option<OpenAiProviderSettings>,
 }
 
 impl<'de> Deserialize<'de> for ClassificationConfig {
@@ -94,6 +101,9 @@ impl<'de> Deserialize<'de> for ClassificationConfig {
         if let Some(mode) = wire.semantic_mode {
             config.semantic_mode = mode;
         }
+        if let Some(provider) = wire.semantic_provider {
+            config.semantic_provider = provider;
+        }
         if let Some(legacy) = wire.continuous_mode {
             let (literal_mode, semantic_mode) = legacy.into_modes();
             config.literal_mode = literal_mode;
@@ -110,6 +120,12 @@ impl<'de> Deserialize<'de> for ClassificationConfig {
         }
         if let Some(ollama) = wire.ollama {
             config.ollama = ollama;
+        }
+        if let Some(openrouter) = wire.openrouter {
+            config.openrouter = openrouter;
+        }
+        if let Some(openai) = wire.openai {
+            config.openai = openai;
         }
 
         config.ensure_provider_defaults();
@@ -155,11 +171,7 @@ impl ClassificationConfig {
     }
 
     fn ensure_provider_defaults(&mut self) {
-        for provider_id in [
-            PROVIDER_ID_IMPLICIT_STRING,
-            PROVIDER_ID_WHEN_PARSER,
-            PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
-        ] {
+        for provider_id in [PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_WHEN_PARSER] {
             if self
                 .enabled_providers
                 .iter()
@@ -191,6 +203,13 @@ pub enum LiteralClassificationMode {
 pub enum SemanticClassificationMode {
     Off,
     SuggestReview,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SemanticProviderKind {
+    Ollama,
+    OpenRouter,
+    OpenAi,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -248,6 +267,52 @@ impl Default for OllamaProviderSettings {
             model: "mistral".to_string(),
             timeout_secs: 30,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenRouterProviderSettings {
+    pub model: String,
+    pub timeout_secs: u64,
+}
+
+impl Default for OpenRouterProviderSettings {
+    fn default() -> Self {
+        Self {
+            model: "nvidia/llama-3.3-nemotron-super-49b-v1:free".to_string(),
+            timeout_secs: 60,
+        }
+    }
+}
+
+impl OpenRouterProviderSettings {
+    pub fn api_key(&self) -> Option<String> {
+        std::env::var("OPENROUTER_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenAiProviderSettings {
+    pub model: String,
+    pub timeout_secs: u64,
+}
+
+impl Default for OpenAiProviderSettings {
+    fn default() -> Self {
+        Self {
+            model: "gpt-4.1-nano".to_string(),
+            timeout_secs: 60,
+        }
+    }
+}
+
+impl OpenAiProviderSettings {
+    pub fn api_key(&self) -> Option<String> {
+        std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
     }
 }
 
@@ -437,10 +502,7 @@ pub fn list_ollama_models(settings: &OllamaProviderSettings) -> Result<Vec<Strin
         .map_err(|err| AgendaError::StorageError {
             source: Box::new(err),
         })?;
-    let url = format!(
-        "{}/models",
-        settings.base_url.trim_end_matches('/')
-    );
+    let url = format!("{}/models", settings.base_url.trim_end_matches('/'));
     let response = client
         .get(url)
         .send()
@@ -516,6 +578,70 @@ impl OllamaTransport for ReqwestOllamaTransport {
     }
 }
 
+pub trait OpenRouterTransport: Send + Sync {
+    fn complete(
+        &self,
+        settings: &OpenRouterProviderSettings,
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<Option<String>>;
+}
+
+#[derive(Debug, Default)]
+pub struct ReqwestOpenRouterTransport;
+
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+impl OpenRouterTransport for ReqwestOpenRouterTransport {
+    fn complete(
+        &self,
+        settings: &OpenRouterProviderSettings,
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<Option<String>> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(settings.timeout_secs))
+            .build()
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let url = format!("{OPENROUTER_BASE_URL}/chat/completions");
+        let body = json!({
+            "model": settings.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.2
+        });
+        let response = client
+            .post(url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&body)
+            .send()
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let response = response
+            .error_for_status()
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let parsed: OpenAiChatCompletionResponse =
+            response.json().map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        Ok(parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|choice| choice.message.content.trim().to_string())
+            .filter(|content| !content.is_empty()))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenAiChatCompletionResponse {
     choices: Vec<OpenAiChatChoice>,
@@ -529,6 +655,70 @@ struct OpenAiChatChoice {
 #[derive(Debug, Deserialize)]
 struct OpenAiChatMessage {
     content: String,
+}
+
+pub trait OpenAiTransport: Send + Sync {
+    fn complete(
+        &self,
+        settings: &OpenAiProviderSettings,
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<Option<String>>;
+}
+
+#[derive(Debug, Default)]
+pub struct ReqwestOpenAiTransport;
+
+const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+
+impl OpenAiTransport for ReqwestOpenAiTransport {
+    fn complete(
+        &self,
+        settings: &OpenAiProviderSettings,
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<Option<String>> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(settings.timeout_secs))
+            .build()
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let url = format!("{OPENAI_BASE_URL}/chat/completions");
+        let body = json!({
+            "model": settings.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.2
+        });
+        let response = client
+            .post(url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&body)
+            .send()
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let response = response
+            .error_for_status()
+            .map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        let parsed: OpenAiChatCompletionResponse =
+            response.json().map_err(|err| AgendaError::StorageError {
+                source: Box::new(err),
+            })?;
+        Ok(parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|choice| choice.message.content.trim().to_string())
+            .filter(|content| !content.is_empty()))
+    }
 }
 
 pub struct ImplicitStringProvider<'a> {
@@ -654,8 +844,7 @@ impl ClassificationProvider for OllamaProvider<'_> {
             request.semantic_candidate_categories.len()
         ));
 
-        if !self.settings.enabled
-            || self.settings.model.trim().is_empty()
+        if self.settings.model.trim().is_empty()
             || self.settings.base_url.trim().is_empty()
             || request.semantic_candidate_categories.is_empty()
         {
@@ -663,8 +852,8 @@ impl ClassificationProvider for OllamaProvider<'_> {
             return Ok(ProviderClassificationResult::default());
         }
 
-        let system_prompt = "Classify an item into categories. Return JSON: {\"suggestions\":[{\"category\":\"EXACT NAME\",\"confidence\":0.0-1.0,\"rationale\":\"brief\"}]}\nRules:\n- ONLY use names from the \"Allowed categories\" list. Copy the name exactly.\n- FORBIDDEN names are marked [group]. NEVER return a [group] name. Return one of its children instead.\n  Example: Do NOT return \"Priority\". Return \"High\" or \"Normal\" instead.\n  Example: Do NOT return \"Issue type\". Return \"Bug\" or \"Feature request\" instead.\n- Suggest 1-3 categories. Only include confident matches (>0.7).\n- ALWAYS try to assign a priority level if priority categories are available (e.g. High, Normal, Low). Every item has some priority.\n- If nothing fits, return {\"suggestions\":[]}.\n- Aliases (aka:) hint at scope but always return the exact category name.";
-        let user_prompt = build_ollama_user_prompt(request);
+        let system_prompt = SEMANTIC_SYSTEM_PROMPT;
+        let user_prompt = build_semantic_user_prompt(request);
         dbg(&format!("user_prompt:\n{user_prompt}"));
         let content = match self
             .transport
@@ -705,12 +894,7 @@ impl ClassificationProvider for OllamaProvider<'_> {
 
         dbg(&format!("ollama response: {content}"));
 
-        let result = parse_ollama_suggestions(
-            request,
-            &content,
-            &self.settings.model,
-            self.id(),
-        );
+        let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
         dbg(&format!(
             "parse result: {} candidates, debug={:?}",
             result.candidates.len(),
@@ -720,7 +904,203 @@ impl ClassificationProvider for OllamaProvider<'_> {
     }
 }
 
-fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
+pub struct OpenRouterProvider<'a> {
+    pub settings: &'a OpenRouterProviderSettings,
+    pub transport: &'a dyn OpenRouterTransport,
+    pub debug: bool,
+}
+
+impl ClassificationProvider for OpenRouterProvider<'_> {
+    fn id(&self) -> &'static str {
+        PROVIDER_ID_OPENROUTER
+    }
+
+    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
+        let debug = self.debug;
+        let dbg = |msg: &str| {
+            if !debug {
+                return;
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/aglet-openrouter-debug.log")
+            {
+                let _ = writeln!(f, "[{}] {msg}", jiff::Zoned::now());
+            }
+        };
+
+        let api_key = match self.settings.api_key() {
+            Some(key) => key,
+            None => {
+                dbg("no API key: OPENROUTER_API_KEY not set");
+                return Ok(ProviderClassificationResult {
+                    candidates: Vec::new(),
+                    debug_summary: Some("OpenRouter: OPENROUTER_API_KEY not set".to_string()),
+                });
+            }
+        };
+
+        dbg(&format!(
+            "classify called: model={:?} semantic_cats={}",
+            self.settings.model,
+            request.semantic_candidate_categories.len()
+        ));
+
+        if self.settings.model.trim().is_empty() || request.semantic_candidate_categories.is_empty()
+        {
+            dbg("early return: precondition failed");
+            return Ok(ProviderClassificationResult::default());
+        }
+
+        let system_prompt = SEMANTIC_SYSTEM_PROMPT;
+        let user_prompt = build_semantic_user_prompt(request);
+        dbg(&format!("user_prompt:\n{user_prompt}"));
+        let content =
+            match self
+                .transport
+                .complete(self.settings, &api_key, system_prompt, &user_prompt)
+            {
+                Ok(content) => content,
+                Err(err) => {
+                    let err_str = format!("{err}");
+                    dbg(&format!("transport error: {err_str}"));
+                    let detail = if err_str.contains("timed out") || err_str.contains("Timeout") {
+                        format!(
+                            "OpenRouter timed out ({}s) — try a smaller model or increase timeout",
+                            self.settings.timeout_secs
+                        )
+                    } else if err_str.contains("401") || err_str.contains("Unauthorized") {
+                        "OpenRouter: invalid API key — check $OPENROUTER_API_KEY".to_string()
+                    } else {
+                        format!("OpenRouter error: {err_str}")
+                    };
+                    return Ok(ProviderClassificationResult {
+                        candidates: Vec::new(),
+                        debug_summary: Some(detail),
+                    });
+                }
+            };
+        let Some(content) = content else {
+            dbg("empty response from transport");
+            return Ok(ProviderClassificationResult {
+                candidates: Vec::new(),
+                debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
+            });
+        };
+
+        dbg(&format!("openrouter response: {content}"));
+
+        let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
+        dbg(&format!(
+            "parse result: {} candidates, debug={:?}",
+            result.candidates.len(),
+            result.debug_summary
+        ));
+        Ok(result)
+    }
+}
+
+pub struct OpenAiProvider<'a> {
+    pub settings: &'a OpenAiProviderSettings,
+    pub transport: &'a dyn OpenAiTransport,
+    pub debug: bool,
+}
+
+impl ClassificationProvider for OpenAiProvider<'_> {
+    fn id(&self) -> &'static str {
+        PROVIDER_ID_OPENAI
+    }
+
+    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
+        let debug = self.debug;
+        let dbg = |msg: &str| {
+            if !debug {
+                return;
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/aglet-openai-debug.log")
+            {
+                let _ = writeln!(f, "[{}] {msg}", jiff::Zoned::now());
+            }
+        };
+
+        let api_key = match self.settings.api_key() {
+            Some(key) => key,
+            None => {
+                dbg("no API key: OPENAI_API_KEY not set");
+                return Ok(ProviderClassificationResult {
+                    candidates: Vec::new(),
+                    debug_summary: Some("OpenAI: OPENAI_API_KEY not set".to_string()),
+                });
+            }
+        };
+
+        dbg(&format!(
+            "classify called: model={:?} semantic_cats={}",
+            self.settings.model,
+            request.semantic_candidate_categories.len()
+        ));
+
+        if self.settings.model.trim().is_empty() || request.semantic_candidate_categories.is_empty()
+        {
+            dbg("early return: precondition failed");
+            return Ok(ProviderClassificationResult::default());
+        }
+
+        let system_prompt = SEMANTIC_SYSTEM_PROMPT;
+        let user_prompt = build_semantic_user_prompt(request);
+        dbg(&format!("user_prompt:\n{user_prompt}"));
+        let content =
+            match self
+                .transport
+                .complete(self.settings, &api_key, system_prompt, &user_prompt)
+            {
+                Ok(content) => content,
+                Err(err) => {
+                    let err_str = format!("{err}");
+                    dbg(&format!("transport error: {err_str}"));
+                    let detail = if err_str.contains("timed out") || err_str.contains("Timeout") {
+                        format!(
+                            "OpenAI timed out ({}s) — try a smaller model or increase timeout",
+                            self.settings.timeout_secs
+                        )
+                    } else if err_str.contains("401") || err_str.contains("Unauthorized") {
+                        "OpenAI: invalid API key — check $OPENAI_API_KEY".to_string()
+                    } else {
+                        format!("OpenAI error: {err_str}")
+                    };
+                    return Ok(ProviderClassificationResult {
+                        candidates: Vec::new(),
+                        debug_summary: Some(detail),
+                    });
+                }
+            };
+        let Some(content) = content else {
+            dbg("empty response from transport");
+            return Ok(ProviderClassificationResult {
+                candidates: Vec::new(),
+                debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
+            });
+        };
+
+        dbg(&format!("openai response: {content}"));
+
+        let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
+        dbg(&format!(
+            "parse result: {} candidates, debug={:?}",
+            result.candidates.len(),
+            result.debug_summary
+        ));
+        Ok(result)
+    }
+}
+
+const SEMANTIC_SYSTEM_PROMPT: &str = "Classify an item into categories. Return JSON: {\"suggestions\":[{\"category\":\"EXACT NAME\",\"confidence\":0.0-1.0,\"rationale\":\"brief\"}]}\nRules:\n- ONLY use names from the \"Allowed categories\" list. Copy the name exactly.\n- FORBIDDEN names are marked [group]. NEVER return a [group] name. Return one of its children instead.\n  Example: Do NOT return \"Priority\". Return \"High\" or \"Normal\" instead.\n  Example: Do NOT return \"Issue type\". Return \"Bug\" or \"Feature request\" instead.\n- Suggest 1-3 categories. Only include confident matches (>0.7).\n- ALWAYS try to assign a priority level if priority categories are available (e.g. High, Normal, Low). Every item has some priority.\n- If nothing fits, return {\"suggestions\":[]}.\n- Aliases (aka:) hint at scope but always return the exact category name.";
+
+fn build_semantic_user_prompt(request: &ClassificationRequest) -> String {
     let name_map = &request.all_category_names;
 
     // Identify which categories are parents (have children in the list).
@@ -807,24 +1187,24 @@ fn build_ollama_user_prompt(request: &ClassificationRequest) -> String {
 }
 
 #[derive(Debug, Deserialize)]
-struct OllamaSuggestionEnvelope {
-    suggestions: Vec<OllamaSuggestionRow>,
+struct SemanticSuggestionEnvelope {
+    suggestions: Vec<SemanticSuggestionRow>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OllamaSuggestionRow {
+struct SemanticSuggestionRow {
     category: String,
     confidence: Option<f32>,
     rationale: Option<String>,
 }
 
-fn parse_ollama_suggestions(
+fn parse_semantic_suggestions(
     request: &ClassificationRequest,
     content: &str,
     model: &str,
     provider_id: &str,
 ) -> ProviderClassificationResult {
-    let Ok(parsed) = serde_json::from_str::<OllamaSuggestionEnvelope>(content) else {
+    let Ok(parsed) = serde_json::from_str::<SemanticSuggestionEnvelope>(content) else {
         return ProviderClassificationResult {
             candidates: Vec::new(),
             debug_summary: Some(format!("semantic[{model}]: malformed JSON response")),
@@ -852,11 +1232,7 @@ fn parse_ollama_suggestions(
         // Strip any parenthetical annotations the model may echo back,
         // e.g. "High (child of Priority)" → "High".
         let raw = suggestion.category.trim();
-        let normalized = raw
-            .find(" (")
-            .map(|pos| &raw[..pos])
-            .unwrap_or(raw)
-            .trim();
+        let normalized = raw.find(" (").map(|pos| &raw[..pos]).unwrap_or(raw).trim();
         let key = normalized.to_ascii_lowercase();
         let Some(category) = category_map.get(&key) else {
             dropped_unknown += 1;
@@ -903,7 +1279,10 @@ pub struct BackgroundClassificationJob {
     pub request: ClassificationRequest,
     pub config: ClassificationConfig,
     pub ollama_transport: Arc<dyn OllamaTransport>,
+    pub openrouter_transport: Arc<dyn OpenRouterTransport>,
+    pub openai_transport: Arc<dyn OpenAiTransport>,
     pub reference_date: Date,
+    pub debug: bool,
 }
 
 pub struct ClassificationService<'a> {
@@ -925,8 +1304,7 @@ impl<'a> ClassificationService<'a> {
         item_id: ItemId,
     ) -> Result<(Item, String, Vec<ClassificationCandidate>, Vec<String>)> {
         let (item, request, revision_hash) = self.prepare_request(item_id)?;
-        let (candidates, debug_summaries) =
-            execute_providers(&self.providers, &request)?;
+        let (candidates, debug_summaries) = execute_providers(&self.providers, &request)?;
         Ok((item, revision_hash, candidates, debug_summaries))
     }
 
@@ -1166,7 +1544,7 @@ mod tests {
             all_category_names: HashMap::new(),
         };
 
-        let parsed = parse_ollama_suggestions(
+        let parsed = parse_semantic_suggestions(
             &request,
             r#"{"suggestions":[{"category":"Travel","confidence":0.8,"rationale":"trip"},{"category":"Unknown","confidence":0.2},{"category":"travel","confidence":0.9}]}"#,
             "mistral",
@@ -1231,7 +1609,7 @@ mod tests {
         };
 
         // Model suggests the group parent — should be dropped.
-        let parsed = parse_ollama_suggestions(
+        let parsed = parse_semantic_suggestions(
             &request,
             r#"{"suggestions":[{"category":"Issue Type","confidence":0.9,"rationale":"it is an issue"},{"category":"Bug","confidence":0.8,"rationale":"crash is a bug"}]}"#,
             "mistral",
@@ -1489,9 +1867,7 @@ mod tests {
 
         let stored_item = store.get_item(item.id).expect("reload item");
         let service = ClassificationService::new(&store, Vec::new());
-        let request = service
-            .build_request(&stored_item)
-            .expect("build request");
+        let request = service.build_request(&stored_item).expect("build request");
 
         let semantic_names: Vec<&str> = request
             .semantic_candidate_categories

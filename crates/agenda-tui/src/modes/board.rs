@@ -241,10 +241,7 @@ impl App {
         Ok(false)
     }
 
-    fn cancel_input_panel_with_status(
-        &mut self,
-        kind: input_panel::InputPanelKind,
-    ) {
+    fn cancel_input_panel_with_status(&mut self, kind: input_panel::InputPanelKind) {
         self.input_panel = None;
         match kind {
             input_panel::InputPanelKind::NameInput
@@ -1881,7 +1878,8 @@ impl App {
                     return Ok(false);
                 }
 
-                if let Some(category_id) = self.resolve_category_column_picker_typed_category(agenda)?
+                if let Some(category_id) =
+                    self.resolve_category_column_picker_typed_category(agenda)?
                 {
                     if let Some(state) = self.category_column_picker_state_mut() {
                         if state.is_exclusive {
@@ -1974,10 +1972,12 @@ impl App {
                 "Search existing categories or type a new one. Enter uses an exact match or creates it."
                     .to_string()
             } else if no_matches {
-                format!("Press Enter to create '{}' in this column and save it.", typed)
+                format!(
+                    "Press Enter to create '{}' in this column and save it.",
+                    typed
+                )
             } else {
-                "Press Enter to use the exact name, or Tab to browse the filtered list."
-                    .to_string()
+                "Press Enter to use the exact name, or Tab to browse the filtered list.".to_string()
             };
         }
         Ok(false)
@@ -2516,22 +2516,33 @@ impl App {
                     self.status = "No item selected to classify".to_string();
                 } else {
                     let mut submitted = 0usize;
-                    let mut skipped = 0usize;
+                    let mut already_in_flight = 0usize;
+                    let mut no_providers = 0usize;
                     for &item_id in &item_ids {
-                        if self.submit_background_classification(agenda, item_id)? {
-                            submitted += 1;
-                        } else {
-                            skipped += 1;
+                        match self.submit_background_classification(agenda, item_id)? {
+                            BackgroundClassificationSubmitResult::Submitted => {
+                                submitted += 1;
+                            }
+                            BackgroundClassificationSubmitResult::AlreadyInFlight => {
+                                already_in_flight += 1;
+                            }
+                            BackgroundClassificationSubmitResult::NoProvidersEnabled => {
+                                no_providers += 1;
+                            }
                         }
                     }
                     if submitted > 0 {
                         // No status message needed — footer shows [classifying N…]
-                    } else if skipped > 0 {
-                        self.status =
-                            "Already classifying selected items".to_string();
+                    } else if already_in_flight > 0 && no_providers == 0 {
+                        self.status = "Already classifying selected items".to_string();
+                    } else if no_providers > 0 && already_in_flight == 0 {
+                        self.status = "Background semantic classification is off".to_string();
+                    } else if already_in_flight > 0 && no_providers > 0 {
+                        self.status = format!(
+                            "{already_in_flight} already classifying, {no_providers} skipped because background semantic classification is off"
+                        );
                     } else {
-                        self.status =
-                            "No classification providers enabled".to_string();
+                        self.status = "No classification jobs submitted".to_string();
                     }
                 }
             }
@@ -3771,8 +3782,7 @@ impl App {
             &on_insert_assign,
         ));
         self.mode = Mode::InputPanel;
-        self.status =
-            "Add item: type text, Tab for note/categories, Esc to close".to_string();
+        self.status = "Add item: type text, Tab for note/categories, Esc to close".to_string();
     }
 
     pub(crate) fn handle_board_add_column_key(
@@ -4080,8 +4090,7 @@ impl App {
             }
             self.input_panel = Some(panel);
             self.mode = Mode::InputPanel;
-            self.status =
-                "Edit item: Tab cycles fields, Esc to save and close".to_string();
+            self.status = "Edit item: Tab cycles fields, Esc to save and close".to_string();
         } else {
             self.status = "No selected item to edit".to_string();
         }
@@ -4781,11 +4790,7 @@ impl App {
             .any(|(_, d)| *d != SuggestionDecision::Pending);
         let pending_suggestions = panel.pending_suggestions.clone();
 
-        if no_text_change
-            && no_note_change
-            && no_when_change
-            && !has_suggestion_decisions
-        {
+        if no_text_change && no_note_change && no_when_change && !has_suggestion_decisions {
             self.input_panel = None;
             self.mode = Mode::Normal;
             self.status = "Edit canceled: no changes".to_string();
@@ -4875,14 +4880,19 @@ impl App {
     /// Returns the mode to return to when a NameInput panel is canceled or completed.
     fn name_input_return_mode(&self) -> Mode {
         match self.name_input_context {
-            Some(NameInputContext::ViewRename)
-            | Some(NameInputContext::ViewClone) => Mode::ViewPicker,
+            Some(NameInputContext::ViewRename) | Some(NameInputContext::ViewClone) => {
+                Mode::ViewPicker
+            }
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
             Some(NameInputContext::OllamaBaseUrl)
             | Some(NameInputContext::OllamaModel)
-            | Some(NameInputContext::OllamaTimeout) => Mode::GlobalSettings,
+            | Some(NameInputContext::OllamaTimeout)
+            | Some(NameInputContext::OpenRouterModel)
+            | Some(NameInputContext::OpenRouterTimeout)
+            | Some(NameInputContext::OpenAiModel)
+            | Some(NameInputContext::OpenAiTimeout) => Mode::GlobalSettings,
             None => Mode::Normal,
         }
     }
@@ -5191,6 +5201,70 @@ impl App {
                 self.mode = Mode::GlobalSettings;
                 self.status = format!("Ollama timeout set to {secs}s");
             }
+            Some(NameInputContext::OpenRouterModel) => {
+                if input_text.is_empty() {
+                    self.status = "OpenRouter model cannot be empty".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification.ui.config.clone();
+                config.openrouter.model = input_text.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("OpenRouter model set to '{}'", input_text);
+            }
+            Some(NameInputContext::OpenRouterTimeout) => {
+                let Ok(secs) = input_text.trim().parse::<u64>() else {
+                    self.status = "Timeout must be a positive integer (seconds)".to_string();
+                    return Ok(());
+                };
+                if secs == 0 {
+                    self.status = "Timeout must be at least 1 second".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification.ui.config.clone();
+                config.openrouter.timeout_secs = secs;
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("OpenRouter timeout set to {secs}s");
+            }
+            Some(NameInputContext::OpenAiModel) => {
+                if input_text.is_empty() {
+                    self.status = "OpenAI model cannot be empty".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification.ui.config.clone();
+                config.openai.model = input_text.clone();
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("OpenAI model set to '{}'", input_text);
+            }
+            Some(NameInputContext::OpenAiTimeout) => {
+                let Ok(secs) = input_text.trim().parse::<u64>() else {
+                    self.status = "Timeout must be a positive integer (seconds)".to_string();
+                    return Ok(());
+                };
+                if secs == 0 {
+                    self.status = "Timeout must be at least 1 second".to_string();
+                    return Ok(());
+                }
+                let mut config = self.classification.ui.config.clone();
+                config.openai.timeout_secs = secs;
+                agenda.store().set_classification_config(&config)?;
+                self.refresh(agenda.store())?;
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::GlobalSettings;
+                self.status = format!("OpenAI timeout set to {secs}s");
+            }
             None => {
                 self.input_panel = None;
                 self.name_input_context = None;
@@ -5210,9 +5284,7 @@ impl App {
         };
         let name = panel.text.trimmed().to_string();
         if name.is_empty() {
-            self.cancel_input_panel_with_status(
-                input_panel::InputPanelKind::CategoryCreate,
-            );
+            self.cancel_input_panel_with_status(input_panel::InputPanelKind::CategoryCreate);
             return Ok(());
         }
         if is_reserved_category_name(&name) {
@@ -5457,13 +5529,15 @@ impl App {
                     self.item_assign_dirty = true;
                     self.refresh(agenda.store())?;
                     self.set_item_selection_by_id(item_id);
-                    self.status = self.assignment_event_status_summary(&result).unwrap_or_else(|| {
-                        format!(
-                            "Added category {} (new_assignments={})",
-                            row.name,
-                            result.new_assignments.len()
-                        )
-                    });
+                    self.status = self
+                        .assignment_event_status_summary(&result)
+                        .unwrap_or_else(|| {
+                            format!(
+                                "Added category {} (new_assignments={})",
+                                row.name,
+                                result.new_assignments.len()
+                            )
+                        });
                 }
             }
             KeyCode::Enter => {
@@ -6404,7 +6478,14 @@ mod tests {
         let status = Category::new("Status".to_string());
 
         let mut app = App {
-            categories: vec![when, entry, done, issue_type.clone(), bug.clone(), status.clone()],
+            categories: vec![
+                when,
+                entry,
+                done,
+                issue_type.clone(),
+                bug.clone(),
+                status.clone(),
+            ],
             ..App::default()
         };
         app.category_rows = build_category_rows(&app.categories);
@@ -6482,7 +6563,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn ctrl_g_allowed_from_text_focus_in_name_input() {
         let mut app = App {
@@ -6505,7 +6585,6 @@ mod tests {
             Some(ExternalEditorTarget::Text)
         );
     }
-
 
     #[test]
     fn add_item_in_ready_section_with_no_children_assigns_ready_category() {

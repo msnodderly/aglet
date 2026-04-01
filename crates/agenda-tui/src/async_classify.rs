@@ -4,8 +4,9 @@ use std::thread;
 use agenda_core::classification::{
     execute_providers, BackgroundClassificationJob, ClassificationCandidate,
     ClassificationProvider, ImplicitStringProvider, LiteralClassificationMode, OllamaProvider,
-    SemanticClassificationMode, WhenParserProvider, PROVIDER_ID_IMPLICIT_STRING,
-    PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_WHEN_PARSER,
+    OpenAiProvider, OpenRouterProvider, SemanticClassificationMode, SemanticProviderKind,
+    WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH, PROVIDER_ID_IMPLICIT_STRING,
+    PROVIDER_ID_WHEN_PARSER,
 };
 use agenda_core::dates::BasicDateParser;
 use agenda_core::matcher::SubstringClassifier;
@@ -16,6 +17,7 @@ pub(crate) struct ClassifyResult {
     pub item_id: ItemId,
     pub item_revision_hash: String,
     pub candidates: Vec<ClassificationCandidate>,
+    pub debug_summaries: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -57,6 +59,17 @@ impl ClassificationWorker {
 }
 
 fn run_classification_job(job: &BackgroundClassificationJob) -> ClassifyResult {
+    append_debug_log(
+        job.debug,
+        &format!(
+            "background_classification: start item_id={} semantic_provider={:?} literal_mode={:?} semantic_mode={:?} semantic_candidates={}",
+            job.item_id,
+            job.config.semantic_provider,
+            job.config.literal_mode,
+            job.config.semantic_mode,
+            job.request.semantic_candidate_categories.len()
+        ),
+    );
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let classifier = SubstringClassifier;
         let parser = BasicDateParser::default();
@@ -77,38 +90,100 @@ fn run_classification_job(job: &BackgroundClassificationJob) -> ClassifyResult {
                 reference_date: job.reference_date,
             }));
         }
-        if job.config.semantic_mode == SemanticClassificationMode::SuggestReview
-            && job.config.provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT)
-            && job.config.ollama.enabled
-        {
-            providers.push(Box::new(OllamaProvider {
-                settings: &job.config.ollama,
-                transport: job.ollama_transport.as_ref(),
-                debug: false,
-            }));
+        if job.config.semantic_mode == SemanticClassificationMode::SuggestReview {
+            match job.config.semantic_provider {
+                SemanticProviderKind::Ollama => {
+                    providers.push(Box::new(OllamaProvider {
+                        settings: &job.config.ollama,
+                        transport: job.ollama_transport.as_ref(),
+                        debug: job.debug,
+                    }));
+                }
+                SemanticProviderKind::OpenRouter => {
+                    providers.push(Box::new(OpenRouterProvider {
+                        settings: &job.config.openrouter,
+                        transport: job.openrouter_transport.as_ref(),
+                        debug: job.debug,
+                    }));
+                }
+                SemanticProviderKind::OpenAi => {
+                    providers.push(Box::new(OpenAiProvider {
+                        settings: &job.config.openai,
+                        transport: job.openai_transport.as_ref(),
+                        debug: job.debug,
+                    }));
+                }
+            }
         }
 
         execute_providers(&providers, &job.request)
     }));
 
     match result {
-        Ok(Ok((candidates, _debug))) => ClassifyResult {
-            item_id: job.item_id,
-            item_revision_hash: job.item_revision_hash.clone(),
-            candidates,
-            error: None,
-        },
-        Ok(Err(e)) => ClassifyResult {
-            item_id: job.item_id,
-            item_revision_hash: job.item_revision_hash.clone(),
-            candidates: vec![],
-            error: Some(e.to_string()),
-        },
-        Err(_panic) => ClassifyResult {
-            item_id: job.item_id,
-            item_revision_hash: job.item_revision_hash.clone(),
-            candidates: vec![],
-            error: Some("classification provider panicked".to_string()),
-        },
+        Ok(Ok((candidates, debug_summaries))) => {
+            append_debug_log(
+                job.debug,
+                &format!(
+                    "background_classification: success item_id={} candidates={} debug_summaries={:?}",
+                    job.item_id,
+                    candidates.len(),
+                    debug_summaries
+                ),
+            );
+            ClassifyResult {
+                item_id: job.item_id,
+                item_revision_hash: job.item_revision_hash.clone(),
+                candidates,
+                debug_summaries,
+                error: None,
+            }
+        }
+        Ok(Err(e)) => {
+            append_debug_log(
+                job.debug,
+                &format!(
+                    "background_classification: error item_id={} error={e}",
+                    job.item_id
+                ),
+            );
+            ClassifyResult {
+                item_id: job.item_id,
+                item_revision_hash: job.item_revision_hash.clone(),
+                candidates: vec![],
+                debug_summaries: vec![],
+                error: Some(e.to_string()),
+            }
+        }
+        Err(_panic) => {
+            append_debug_log(
+                job.debug,
+                &format!(
+                    "background_classification: panic item_id={} error=classification provider panicked",
+                    job.item_id
+                ),
+            );
+            ClassifyResult {
+                item_id: job.item_id,
+                item_revision_hash: job.item_revision_hash.clone(),
+                candidates: vec![],
+                debug_summaries: vec![],
+                error: Some("classification provider panicked".to_string()),
+            }
+        }
+    }
+}
+
+fn append_debug_log(enabled: bool, message: &str) {
+    if !enabled {
+        return;
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(CLASSIFICATION_DEBUG_LOG_PATH)
+    {
+        use std::io::Write;
+
+        let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
     }
 }
