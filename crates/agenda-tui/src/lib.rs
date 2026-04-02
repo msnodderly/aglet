@@ -74,7 +74,7 @@ use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
     SuggestionReviewFocus, SuggestionReviewItem, SuggestionReviewState,
 };
-use state::view_edit::{
+use modes::view_edit::{
     BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
     ViewEditRegion, ViewEditState,
 };

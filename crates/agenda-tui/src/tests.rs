@@ -14958,6 +14958,34 @@ fn view_picker_e_opens_view_edit() {
 }
 
 #[test]
+fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
+    let (store, db_path) = make_test_store_with_view("new-view-picker");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.mode = Mode::ViewPicker;
+
+    app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
+        .expect("open new view editor");
+
+    let state = app
+        .view_edit_state
+        .as_ref()
+        .expect("new view editor should initialize state");
+    assert_eq!(app.mode, Mode::ViewEdit);
+    assert!(state.is_new_view);
+    assert_eq!(state.draft.sections.len(), 1);
+    assert_eq!(state.draft.sections[0].title, App::DEFAULT_VIEW_EDIT_SECTION_TITLE);
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
+    assert_eq!(state.region, ViewEditRegion::Criteria);
+    assert_eq!(state.inline_input, Some(super::ViewEditInlineInput::ViewName));
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn normal_v_then_e_opens_view_edit_for_active_view() {
     let (store, db_path) = make_test_store_with_view("normal-v-then-e");
     let classifier = SubstringClassifier;
