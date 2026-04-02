@@ -304,7 +304,7 @@ fn item_matches_query(
     }
 
     if let Some(search_term) = normalized_search {
-        if !matches_text_search(item, search_term) {
+        if !matches_text_search(item, search_term, None) {
             return false;
         }
     }
@@ -312,9 +312,17 @@ fn item_matches_query(
     true
 }
 
-fn matches_text_search(item: &Item, search_term: &str) -> bool {
-    let text_matches = item.text.to_ascii_lowercase().contains(search_term);
-    if text_matches {
+/// Check whether an item matches a text search term.
+///
+/// The `search_term` must already be ASCII-lowercased by the caller.
+/// When `category_names_lower` is provided, items whose assigned category
+/// names contain the search term will also match.
+pub fn matches_text_search(
+    item: &Item,
+    search_term: &str,
+    category_names_lower: Option<&HashMap<CategoryId, String>>,
+) -> bool {
+    if item.text.to_ascii_lowercase().contains(search_term) {
         return true;
     }
 
@@ -330,10 +338,27 @@ fn matches_text_search(item: &Item, search_term: &str) -> bool {
         }
     }
 
-    item.note
+    if item
+        .note
         .as_ref()
         .map(|note| note.to_ascii_lowercase().contains(search_term))
         .unwrap_or(false)
+    {
+        return true;
+    }
+
+    if let Some(names) = category_names_lower {
+        if item.assignments.keys().any(|category_id| {
+            names
+                .get(category_id)
+                .map(|name| name.contains(search_term))
+                .unwrap_or(false)
+        }) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn is_uuid_search_candidate(search_term: &str) -> bool {
@@ -358,7 +383,7 @@ mod tests {
     use jiff::Timestamp;
     use uuid::Uuid;
 
-    use super::{evaluate_query, resolve_view, resolve_when_bucket};
+    use super::{evaluate_query, matches_text_search, resolve_view, resolve_when_bucket};
     use crate::model::{
         Assignment, AssignmentSource, Category, CategoryId, CriterionMode, Item, Query, Section,
         View, WhenBucket,
@@ -1551,5 +1576,72 @@ mod tests {
 
         assert_eq!(resolve_when_bucket(sunday, reference), WhenBucket::Tomorrow);
         assert_eq!(resolve_when_bucket(monday, reference), WhenBucket::NextWeek);
+    }
+
+    // ── matches_text_search tests ──
+
+    #[test]
+    fn text_search_matches_item_text() {
+        let item = item_with_assignments("Buy groceries", None, None, &[]);
+        assert!(matches_text_search(&item, "groceries", None));
+        assert!(!matches_text_search(&item, "meeting", None));
+    }
+
+    #[test]
+    fn text_search_case_insensitive() {
+        let item = item_with_assignments("URGENT task", None, None, &[]);
+        assert!(matches_text_search(&item, "urgent", None));
+    }
+
+    #[test]
+    fn text_search_matches_note() {
+        let item = item_with_assignments("Title", Some("Discuss roadmap"), None, &[]);
+        assert!(matches_text_search(&item, "roadmap", None));
+        assert!(!matches_text_search(&item, "missing", None));
+    }
+
+    #[test]
+    fn text_search_matches_uuid_prefix() {
+        let mut item = item_with_assignments("target", None, None, &[]);
+        item.id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        assert!(matches_text_search(&item, "123e4567", None));
+    }
+
+    #[test]
+    fn text_search_matches_compact_uuid() {
+        let mut item = item_with_assignments("target", None, None, &[]);
+        item.id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        assert!(matches_text_search(&item, "123e4567e89b", None));
+    }
+
+    #[test]
+    fn text_search_short_hex_not_treated_as_uuid() {
+        let mut item = item_with_assignments("target", None, None, &[]);
+        item.id = Uuid::parse_str("ab000000-0000-0000-0000-000000000000").unwrap();
+        // "ab" is only 2 hex chars, below the 3-char threshold
+        assert!(!matches_text_search(&item, "ab", None));
+    }
+
+    #[test]
+    fn text_search_matches_category_name() {
+        let cat_id = Uuid::new_v4();
+        let item = item_with_assignments("Some task", None, None, &[cat_id]);
+        let mut names = HashMap::new();
+        names.insert(cat_id, "priority".to_string());
+        assert!(matches_text_search(&item, "prio", Some(&names)));
+    }
+
+    #[test]
+    fn text_search_skips_categories_when_none() {
+        let cat_id = Uuid::new_v4();
+        let item = item_with_assignments("Some task", None, None, &[cat_id]);
+        // Without category names, "priority" should not match
+        assert!(!matches_text_search(&item, "priority", None));
+    }
+
+    #[test]
+    fn text_search_no_match_returns_false() {
+        let item = item_with_assignments("alpha", None, None, &[]);
+        assert!(!matches_text_search(&item, "zzz", None));
     }
 }
