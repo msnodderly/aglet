@@ -10,7 +10,7 @@ use agenda_core::dates::{BasicDateParser, DateParser};
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
+    Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
     CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
@@ -430,6 +430,26 @@ enum CategoryCommand {
         /// Category name (case-insensitive).
         name: String,
         /// Condition index (1-based, as shown in `category show`).
+        index: usize,
+    },
+
+    /// Add an action to a category
+    AddAction {
+        /// Category name to add the action to (case-insensitive).
+        name: String,
+        /// Categories to assign when this category is assigned.
+        #[arg(long = "assign", value_name = "CATEGORY")]
+        assign_categories: Vec<String>,
+        /// Categories to remove when this category is assigned.
+        #[arg(long = "remove", value_name = "CATEGORY")]
+        remove_categories: Vec<String>,
+    },
+
+    /// Remove an action from a category by index (1-based)
+    RemoveAction {
+        /// Category name (case-insensitive).
+        name: String,
+        /// Action index (1-based, as shown in `category show`).
         index: usize,
     },
 }
@@ -2376,6 +2396,97 @@ fn cmd_category(
             );
             Ok(())
         }
+        CategoryCommand::AddAction {
+            name,
+            assign_categories,
+            remove_categories,
+        } => {
+            let assign_requested = !assign_categories.is_empty();
+            let remove_requested = !remove_categories.is_empty();
+            if assign_requested == remove_requested {
+                return Err(
+                    "specify exactly one action kind: use either --assign or --remove".to_string(),
+                );
+            }
+
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let target_names = if assign_requested {
+                &assign_categories
+            } else {
+                &remove_categories
+            };
+            let mut targets = HashSet::new();
+            for target_name in target_names {
+                let target_id = category_id_by_name(&categories, target_name)?;
+                if target_id == category_id {
+                    return Err(format!(
+                        "category '{}' cannot target itself in an action",
+                        category.name
+                    ));
+                }
+                targets.insert(target_id);
+            }
+
+            let action = if assign_requested {
+                Action::Assign { targets }
+            } else {
+                Action::Remove { targets }
+            };
+            category.actions.push(action);
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            let action_index = category.actions.len();
+            let action_kind = if assign_requested { "assign" } else { "remove" };
+            println!(
+                "added {} action #{} to {} (processed_items={}, affected_items={})",
+                action_kind, action_index, name, result.processed_items, result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::RemoveAction { name, index } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+
+            if index == 0 || index > category.actions.len() {
+                return Err(format!(
+                    "action index {} out of range: {} has {} action(s)",
+                    index,
+                    name,
+                    category.actions.len()
+                ));
+            }
+            let removed = category.actions.remove(index - 1);
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            let category_names = category_name_map(&categories);
+            let describe_targets = |targets: &HashSet<CategoryId>| -> String {
+                let mut names: Vec<String> = targets
+                    .iter()
+                    .map(|id| {
+                        category_names
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string())
+                    })
+                    .collect();
+                names.sort();
+                format!("[{}]", names.join(", "))
+            };
+            let desc = match &removed {
+                Action::Assign { targets } => format!("Assign {}", describe_targets(targets)),
+                Action::Remove { targets } => format!("Remove {}", describe_targets(targets)),
+            };
+            println!(
+                "removed action #{} ({}) from {} (processed_items={}, affected_items={})",
+                index, desc, name, result.processed_items, result.affected_items
+            );
+            Ok(())
+        }
     }
 }
 
@@ -4309,7 +4420,7 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item,
+        Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item,
         NumericFormat, Query, Section, SummaryFn, View,
     };
     use agenda_core::store::Store;
@@ -5877,6 +5988,122 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("out of range"));
+    }
+
+    #[test]
+    fn cmd_category_add_action_creates_assign_action() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        let notify = Category::new("Notify".to_string());
+        store.create_category(&source).expect("create source");
+        store.create_category(&notify).expect("create notify");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Notify".to_string()],
+                remove_categories: Vec::new(),
+            },
+        )
+        .expect("add action");
+
+        let updated = store.get_category(source.id).expect("load source");
+        assert_eq!(updated.actions.len(), 1);
+        match &updated.actions[0] {
+            Action::Assign { targets } => {
+                assert_eq!(targets.len(), 1);
+                assert!(targets.contains(&notify.id));
+            }
+            other => panic!("expected Assign action, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cmd_category_add_action_rejects_mixed_kinds() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        let notify = Category::new("Notify".to_string());
+        let low = Category::new("Low".to_string());
+        store.create_category(&source).expect("create source");
+        store.create_category(&notify).expect("create notify");
+        store.create_category(&low).expect("create low");
+
+        let result = cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Notify".to_string()],
+                remove_categories: vec!["Low".to_string()],
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("specify exactly one action kind"));
+    }
+
+    #[test]
+    fn cmd_category_remove_action_removes_by_index() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        let notify = Category::new("Notify".to_string());
+        let low = Category::new("Low".to_string());
+        store.create_category(&source).expect("create source");
+        store.create_category(&notify).expect("create notify");
+        store.create_category(&low).expect("create low");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Notify".to_string()],
+                remove_categories: Vec::new(),
+            },
+        )
+        .expect("add action 1");
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: Vec::new(),
+                remove_categories: vec!["Low".to_string()],
+            },
+        )
+        .expect("add action 2");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::RemoveAction {
+                name: "Escalated".to_string(),
+                index: 1,
+            },
+        )
+        .expect("remove action");
+
+        let updated = store.get_category(source.id).expect("load source");
+        assert_eq!(updated.actions.len(), 1);
+        match &updated.actions[0] {
+            Action::Remove { targets } => {
+                assert!(targets.contains(&low.id));
+            }
+            other => panic!("expected Remove action, got {:?}", other),
+        }
     }
 
     #[test]

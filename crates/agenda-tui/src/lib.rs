@@ -11,9 +11,9 @@ use agenda_core::classification::{
 };
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition,
-    CriterionMode, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow,
-    SummaryFn, View, WhenBucket,
+    Action, BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind,
+    Condition, CriterionMode, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section,
+    SectionFlow, SummaryFn, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -52,6 +52,10 @@ mod undo;
 
 pub use error::{TuiError, TuiResult};
 
+use modes::view_edit::{
+    BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
+    ViewEditRegion, ViewEditState,
+};
 use state::assign::{
     AssignmentPreview, InspectAssignmentRow, ItemAssignPane, ItemAssignReturnTarget, ViewAssignRow,
 };
@@ -63,20 +67,17 @@ use state::board::{
     SlotSortKey, WhenEditTarget,
 };
 use state::category::{
-    CategoryColumnPickerFocus, CategoryColumnPickerState, CategoryDirectEditAnchor,
-    CategoryDirectEditColumnMeta, CategoryDirectEditFocus, CategoryDirectEditRow,
-    CategoryDirectEditState, CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus,
-    CategoryManagerDetailsInlineField, CategoryManagerDetailsInlineInput, CategoryManagerFocus,
-    CategoryManagerState, CategorySuggestState, ConditionEditState, GlobalSettingsRow,
-    GlobalSettingsState, OllamaModelPickerState, WorkflowRolePickerOrigin, WorkflowRolePickerState,
+    ActionEditKind, ActionEditState, CategoryColumnPickerFocus, CategoryColumnPickerState,
+    CategoryDirectEditAnchor, CategoryDirectEditColumnMeta, CategoryDirectEditFocus,
+    CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
+    CategoryManagerDetailsFocus, CategoryManagerDetailsInlineField,
+    CategoryManagerDetailsInlineInput, CategoryManagerFocus, CategoryManagerState,
+    CategorySuggestState, ConditionEditState, GlobalSettingsRow, GlobalSettingsState,
+    OllamaModelPickerState, WorkflowRolePickerOrigin, WorkflowRolePickerState,
 };
 use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
     SuggestionReviewFocus, SuggestionReviewItem, SuggestionReviewState,
-};
-use modes::view_edit::{
-    BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
-    ViewEditRegion, ViewEditState,
 };
 use ui_support::*;
 use undo::{UndoEntry, UndoState};

@@ -6016,6 +6016,7 @@ mod tests {
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
             has_conditions: false,
+            has_actions: false,
         }
     }
 

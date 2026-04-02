@@ -758,6 +758,7 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
             match_category_name: category.match_category_name,
             value_kind: category.value_kind,
             has_conditions: !category.conditions.is_empty(),
+            has_actions: !category.actions.is_empty(),
         })
         .collect()
 }

@@ -3543,6 +3543,7 @@ fn first_non_reserved_category_index_prefers_non_reserved_row() {
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
         has_conditions: false,
+        has_actions: false,
     };
     let user = CategoryListRow {
         id: CategoryId::new_v4(),
@@ -3557,6 +3558,7 @@ fn first_non_reserved_category_index_prefers_non_reserved_row() {
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
         has_conditions: false,
+        has_actions: false,
     };
 
     assert_eq!(
@@ -3580,6 +3582,7 @@ fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
         has_conditions: false,
+        has_actions: false,
     };
     let when = CategoryListRow {
         id: CategoryId::new_v4(),
@@ -3594,6 +3597,7 @@ fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
         has_conditions: false,
+        has_actions: false,
     };
 
     assert_eq!(first_non_reserved_category_index(&[done, when]), 0);
@@ -7742,6 +7746,82 @@ fn category_manager_condition_edit_delete_condition() {
     // Verify it was removed
     let cat = store.get_category(escalated.id).expect("load");
     assert!(cat.conditions.is_empty());
+}
+
+#[test]
+fn category_manager_action_edit_add_and_save_assign_action() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let notify = Category::new("Notify".to_string());
+    let escalated = Category::new("Escalated".to_string());
+    store.create_category(&notify).expect("create notify");
+    store.create_category(&escalated).expect("create escalated");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "Escalated" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to actions");
+    assert_eq!(
+        app.category_manager_details_focus(),
+        Some(CategoryManagerDetailsFocus::Actions)
+    );
+
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open action list");
+    assert!(app.category_manager_action_edit().is_some());
+    assert!(!app.category_manager_action_edit().unwrap().picker_open);
+
+    app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
+        .expect("add action");
+    assert!(app.category_manager_action_edit().unwrap().picker_open);
+
+    loop {
+        let edit = app.category_manager_action_edit().unwrap();
+        let idx = edit.picker_index;
+        if let Some(row) = app.category_rows.get(idx) {
+            if row.name == "Notify" {
+                break;
+            }
+        }
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("navigate picker");
+    }
+    app.handle_category_manager_key(KeyCode::Char(' '), &agenda)
+        .expect("toggle target");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("save action");
+
+    let cat = store.get_category(escalated.id).expect("load escalated");
+    assert_eq!(cat.actions.len(), 1);
+    match &cat.actions[0] {
+        Action::Assign { targets } => {
+            assert!(targets.contains(&notify.id));
+        }
+        other => panic!("expected Assign action, got {:?}", other),
+    }
+
+    assert!(app.category_manager_action_edit().is_some());
+    assert!(!app.category_manager_action_edit().unwrap().picker_open);
 }
 
 #[test]
@@ -14977,10 +15057,16 @@ fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(state.is_new_view);
     assert_eq!(state.draft.sections.len(), 1);
-    assert_eq!(state.draft.sections[0].title, App::DEFAULT_VIEW_EDIT_SECTION_TITLE);
+    assert_eq!(
+        state.draft.sections[0].title,
+        App::DEFAULT_VIEW_EDIT_SECTION_TITLE
+    );
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
     assert_eq!(state.region, ViewEditRegion::Criteria);
-    assert_eq!(state.inline_input, Some(super::ViewEditInlineInput::ViewName));
+    assert_eq!(
+        state.inline_input,
+        Some(super::ViewEditInlineInput::ViewName)
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }

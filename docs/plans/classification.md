@@ -210,14 +210,15 @@
 
   1. The ? passive indicator — non-modal, non-interruptive notification
   2. The batch review workflow — item-by-item with per-suggestion toggle (TAB=all, SPACE=individual, ENTER=next)
-  3. Conditional → Explicit promotion on acceptance — your proposal at line 160-162 explicitly says "all assignments are sticky" and you do NOT implement
-  auto-breaking conditional assignments. This is a significant departure from Lotus Agenda where conditional assignments were temporary and reactive. Your
-  accepted suggestions become permanent AssignmentSource::SuggestionAccepted.
+  3. Conditional → Explicit promotion on acceptance — shipped semantics are now
+  closer to Lotus than this older summary implied. Live implicit/profile
+  assignments can auto-break, while accepted suggestions become sticky
+  AssignmentSource::SuggestionAccepted assignments.
   4. Two review orientations — item-centric ("what should this item be?") and category-centric ("what belongs in this category?") — faithfully captured in your
   Path 1 / Path 2 design
   5. The cascade — already implemented in your engine with 10-pass fixed-point loop
 
-  The biggest fidelity question is item #3: Lotus Agenda's conditional assignments auto-broke when conditions stopped matching, creating a "living" classification
-   that continuously reflected reality. Your design makes everything sticky, which is simpler but means items won't automatically leave categories when their text
-   changes. The proposal acknowledges this as intentional.
-
+  The biggest fidelity question is no longer whether live conditional
+  assignments auto-break; they do. The remaining fidelity questions are around
+  date conditions, recurrence/post-done behavior, and how much of Lotus's
+  condition/action surface we want to expose in CLI/TUI.

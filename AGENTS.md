@@ -133,6 +133,18 @@ Practical implications:
 - If a category still appears assigned after disabling `Auto-match`, inspect
   `sticky`/provenance before assuming the new dynamic behavior is broken.
 
+## Some Older Proposal Docs Still Describe Pre-Live Rule Semantics (Surprising)
+
+Some planning/proposal docs still describe an older simplification where "all
+assignments are sticky" and condition-derived assignments never auto-break.
+
+Practical implications:
+- Treat the shipped engine/tests as source of truth: new implicit/profile
+  assignments are live and can auto-break; action/manual/accepted assignments
+  remain sticky.
+- If a proposal doc disagrees with current behavior, update the doc before
+  using it as implementation guidance.
+
 ## `Agenda::unassign_item_manual` Reprocesses After Removal (Updated)
 
 `Agenda::unassign_item_manual(...)` now mirrors other manual assignment flows:
