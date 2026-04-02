@@ -122,13 +122,13 @@ Keep colon style, shorter labels.
 ## Implementation Plan
 
 ### Step 1: Remove expand/collapse from sections list
-**Files:** `crates/agenda-tui/src/lib.rs`, `crates/agenda-tui/src/modes/view_edit2.rs`, `crates/agenda-tui/src/render/mod.rs`
+**Files:** `crates/agenda-tui/src/lib.rs`, `crates/agenda-tui/src/modes/view_edit/sections.rs`, `crates/agenda-tui/src/modes/view_edit/details.rs`, `crates/agenda-tui/src/render/mod.rs`
 
 - Remove `section_expanded: Option<usize>` from `ViewEditState` (lib.rs ~line 348)
-- Remove all `section_expanded` references from view_edit2.rs (~15 occurrences: Enter toggle, tracking on add/delete/move)
+- Remove all `section_expanded` references from the ViewEdit feature module (~15 occurrences in the old incremental bridge implementation: Enter toggle, tracking on add/delete/move)
 - Simplify section list rendering in render/mod.rs (lines 3822-3887): remove expand icons (▸/▾), remove expanded detail lines, just show `{cursor} {n}. {title}`
 - Remove field 7 from section details: change field count from 8 to 7
-- Remove `7 => Some(KeyCode::Enter)` match arm from Enter/Space dispatch in view_edit2.rs
+- Remove `7 => Some(KeyCode::Enter)` match arm from Enter/Space dispatch in the ViewEdit feature module
 
 ### Step 2: Redesign section details rendering
 **File:** `crates/agenda-tui/src/render/mod.rs` lines 3597-3715
@@ -196,7 +196,7 @@ Additional:
 
 ## Key Files
 - `crates/agenda-tui/src/render/mod.rs` — all rendering (~lines 3298-4240, footer ~2350)
-- `crates/agenda-tui/src/modes/view_edit2.rs` — input handler (field count, expand removal)
+- `crates/agenda-tui/src/modes/view_edit/sections.rs` and `crates/agenda-tui/src/modes/view_edit/details.rs` — input handlers for field count and expand removal
 - `crates/agenda-tui/src/lib.rs` — ViewEditState struct (remove section_expanded)
 
 ## Verification

@@ -1,4 +1,4 @@
-use super::super::*;
+use crate::{text_buffer, CategoryId, View};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum CategoryEditTarget {

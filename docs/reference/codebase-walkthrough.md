@@ -1009,8 +1009,14 @@ crates/agenda-tui/src/main.rs
 crates/agenda-tui/src/modes/board.rs
 crates/agenda-tui/src/modes/category.rs
 crates/agenda-tui/src/modes/mod.rs
-crates/agenda-tui/src/modes/view_edit.rs
-crates/agenda-tui/src/modes/view_edit2.rs
+crates/agenda-tui/src/modes/view_edit/details.rs
+crates/agenda-tui/src/modes/view_edit/editor.rs
+crates/agenda-tui/src/modes/view_edit/inline.rs
+crates/agenda-tui/src/modes/view_edit/mod.rs
+crates/agenda-tui/src/modes/view_edit/overlay.rs
+crates/agenda-tui/src/modes/view_edit/picker.rs
+crates/agenda-tui/src/modes/view_edit/sections.rs
+crates/agenda-tui/src/modes/view_edit/state.rs
 crates/agenda-tui/src/render/mod.rs
 crates/agenda-tui/src/text_buffer.rs
 crates/agenda-tui/src/ui_support.rs
@@ -1022,7 +1028,7 @@ The TUI is organized as:
 - **`app.rs`** — the event loop (`App::run`), `refresh()` to rebuild slots from views, cursor movement, and view cycling.
 - **`input/mod.rs`** — key dispatch: routes key events to the right handler based on current `Mode`.
 - **`input_panel.rs`** — unified text input widget for add/edit/rename operations.
-- **`modes/`** — mode-specific handlers: `board.rs` (board/column operations), `category.rs` (category manager with tree + details panes), `view_edit.rs` + `view_edit2.rs` (the view editor with criteria/sections/unmatched regions).
+- **`modes/`** — mode-specific handlers: `board.rs` (board/column operations), `category.rs` (category manager with tree + details panes), `view_edit/` (the view editor feature module with picker/editor/inline/overlay/sections/details/state responsibilities).
 - **`render/mod.rs`** — all drawing code: layout, tables, overlays, board grids.
 - **`text_buffer.rs`** — a simple text editing buffer with cursor support.
 - **`ui_support.rs`** — helper functions shared across modules.

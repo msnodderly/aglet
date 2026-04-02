@@ -7,7 +7,8 @@ Users currently cannot create or manage profile conditions through CLI or TUI �
 direct database manipulation. This plan adds the missing user-facing layer.
 
 The Beeswax/Agenda article states profile conditions are "identical in form to the view criteria."
-The view criteria picker in `view_edit2.rs` already edits `Query` objects with AND/NOT/OR logic.
+The view criteria picker in `crates/agenda-tui/src/modes/view_edit/details.rs` already edits
+`Query` objects with AND/NOT/OR logic.
 We reuse this same pattern for category profile condition editing.
 
 ## Design Decisions
@@ -15,7 +16,7 @@ We reuse this same pattern for category profile condition editing.
 1. **Include + Exclude from day 1** — AND/NOT criteria in the editor
 2. **Multiple conditions per category, OR'd** — if ANY condition matches, the item is assigned
 3. **Dialog/modal layout** — criteria editor opens as a modal in the TUI
-4. **Reuse view criteria picker pattern** from `view_edit2.rs`
+4. **Reuse view criteria picker pattern** from `modes/view_edit/details.rs`
 
 ## What Exists (Backend)
 
@@ -35,7 +36,7 @@ We reuse this same pattern for category profile condition editing.
 
 ### TUI: Profile Condition Editing in Category Manager
 - Add condition management to category.rs mode
-- Reuse criteria picker pattern from view_edit2.rs
+- Reuse criteria picker pattern from `modes/view_edit/details.rs`
 - Two-level UI:
   - Level 1: List conditions on a category (summary view)
   - Level 2: Edit a condition's criteria (AND/NOT/OR category picker)
@@ -97,7 +98,7 @@ We reuse this same pattern for category profile condition editing.
 - [x] 2. Add CLI `category remove-condition` command
 - [x] 3. Add profile condition display improvements to CLI `category show`
 - [x] 4. Add TUI condition list view in category manager
-- [x] 5. Add TUI criteria editor (reusing view_edit2 pattern)
+- [x] 5. Add TUI criteria editor (reusing `modes/view_edit/details.rs` pattern)
 - [x] 6. Write engine tests for brainstormed scenarios
 - [x] 7. Write CLI integration tests
 - [x] 8. Write TUI mode tests
@@ -110,4 +111,4 @@ We reuse this same pattern for category profile condition editing.
 - `crates/agenda-cli/src/main.rs:288-413` — CategoryCommand enum (add variants here)
 - `crates/agenda-cli/src/main.rs:1950-1979` — category show display
 - `crates/agenda-tui/src/modes/category.rs` — category manager (add condition UI here)
-- `crates/agenda-tui/src/modes/view_edit2.rs` — criteria picker to reuse
+- `crates/agenda-tui/src/modes/view_edit/details.rs` — criteria picker to reuse

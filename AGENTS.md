@@ -145,18 +145,30 @@ Practical implications:
 - Older tests or callers that manually invoked reprocessing after
   `unassign_item_manual(...)` may now be doing redundant work.
 
-## CLI Search vs TUI Search Matchers Diverge (Surprising)
+## CLI And TUI Search Semantics Are Centralized In `agenda-core` (Updated)
 
-CLI `agenda-cli search <query>` uses `agenda-core` query text matching, but the
-TUI per-lane `/` search uses a separate helper in `crates/agenda-tui/src/ui_support.rs`
-(`item_text_matches`).
+CLI `agenda-cli search <query>` and the TUI per-lane `/` search now both route
+through `agenda_core::query::matches_text_search(...)`.
 
 Practical implications:
-- Search behavior can drift between CLI and TUI if you only patch one path
-- UUID/prefix search support must be updated in both places unless the matching
-  logic is centralized first
-- Re-run both `agenda-core` text-search tests and `agenda-tui` search-bar tests
-  after changing item search semantics
+- Do not reintroduce TUI-local search helpers for text/note/UUID/category-name
+  matching; shared semantics live in `agenda-core`
+- If search behavior changes, update `agenda-core` matcher tests first and then
+  re-run both `agenda-core` and `agenda-tui` search-focused tests
+
+## `view_edit2.rs` Was An Incremental Bridge, Not A Stable Boundary (Surprising)
+
+The former `crates/agenda-tui/src/modes/view_edit2.rs` existed as an
+incremental bridge during the unified ViewEdit rollout, not because cargo tests
+needed a split implementation.
+
+Practical implications:
+- Treat the view editor as one feature rooted at
+  `crates/agenda-tui/src/modes/view_edit/`
+- Organize the code by responsibility (`picker`, `editor`, `inline`,
+  `overlay`, `sections`, `details`, `state`), not by historical spillover
+- If you need to extend view editing, prefer the feature module directory over
+  reviving a sibling `view_edit2.rs` file
 
 ## Database Files
 
