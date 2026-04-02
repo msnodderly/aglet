@@ -2536,10 +2536,6 @@ impl App {
             Some(r) => r.id,
             None => return Ok(false),
         };
-        let mut category = match self.categories.iter().find(|c| c.id == category_id) {
-            Some(c) => c.clone(),
-            None => return Ok(false),
-        };
 
         let new_action = match draft_kind {
             ActionEditKind::Assign => Action::Assign {
@@ -2550,15 +2546,11 @@ impl App {
             },
         };
 
-        if let Some(idx) = action_index {
-            if idx < category.actions.len() {
-                category.actions[idx] = new_action;
-            }
+        let result = if let Some(idx) = action_index {
+            agenda.update_category_action(category_id, idx, new_action)?
         } else {
-            category.actions.push(new_action);
-        }
-
-        let result = agenda.update_category(&category)?;
+            agenda.add_category_action(category_id, new_action)?.1
+        };
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
 
@@ -2598,7 +2590,7 @@ impl App {
             Some(r) => r.id,
             None => return Ok(false),
         };
-        let mut category = match self.categories.iter().find(|c| c.id == category_id) {
+        let category = match self.categories.iter().find(|c| c.id == category_id) {
             Some(c) => c.clone(),
             None => return Ok(false),
         };
@@ -2606,9 +2598,8 @@ impl App {
         if list_index >= category.actions.len() {
             return Ok(false);
         }
-        category.actions.remove(list_index);
 
-        let result = agenda.update_category(&category)?;
+        let (_, result) = agenda.remove_category_action(category_id, list_index)?;
         self.refresh(agenda.store())?;
         self.set_category_selection_by_id(category_id);
 

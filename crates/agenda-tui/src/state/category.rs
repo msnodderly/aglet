@@ -13,8 +13,8 @@ pub(crate) struct CategoryListRow {
     pub(crate) enable_semantic_classification: bool,
     pub(crate) match_category_name: bool,
     pub(crate) value_kind: CategoryValueKind,
-    pub(crate) has_conditions: bool,
-    pub(crate) has_actions: bool,
+    pub(crate) condition_count: usize,
+    pub(crate) action_count: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -145,6 +145,15 @@ pub(crate) struct ConditionEditState {
 pub(crate) enum ActionEditKind {
     Assign,
     Remove,
+}
+
+impl ActionEditKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Assign => "Assign",
+            Self::Remove => "Remove",
+        }
+    }
 }
 
 #[derive(Clone)]

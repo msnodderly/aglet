@@ -6015,8 +6015,8 @@ mod tests {
             enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
-            has_conditions: false,
-            has_actions: false,
+            condition_count: 0,
+            action_count: 0,
         }
     }
 

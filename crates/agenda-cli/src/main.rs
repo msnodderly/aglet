@@ -1970,23 +1970,8 @@ fn cmd_category(
             }
             if !category.actions.is_empty() {
                 println!("actions:");
-                for action in &category.actions {
-                    match action {
-                        agenda_core::model::Action::Assign { targets } => {
-                            let names: Vec<&str> = targets
-                                .iter()
-                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
-                                .collect();
-                            println!("  - Assign [{}]", names.join(", "));
-                        }
-                        agenda_core::model::Action::Remove { targets } => {
-                            let names: Vec<&str> = targets
-                                .iter()
-                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
-                                .collect();
-                            println!("  - Remove [{}]", names.join(", "));
-                        }
-                    }
+                for (index, action) in category.actions.iter().enumerate() {
+                    println!("  {}", indexed_category_action_row(index, action, &category_names));
                 }
             }
             println!("created_at:      {}", category.created_at);
@@ -2411,7 +2396,6 @@ fn cmd_category(
 
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
             let target_names = if assign_requested {
                 &assign_categories
             } else {
@@ -2420,12 +2404,6 @@ fn cmd_category(
             let mut targets = HashSet::new();
             for target_name in target_names {
                 let target_id = category_id_by_name(&categories, target_name)?;
-                if target_id == category_id {
-                    return Err(format!(
-                        "category '{}' cannot target itself in an action",
-                        category.name
-                    ));
-                }
                 targets.insert(target_id);
             }
 
@@ -2434,22 +2412,24 @@ fn cmd_category(
             } else {
                 Action::Remove { targets }
             };
-            category.actions.push(action);
-            let result = agenda
-                .update_category(&category)
+            let (action_index, result) = agenda
+                .add_category_action(category_id, action)
                 .map_err(|e| e.to_string())?;
-            let action_index = category.actions.len();
             let action_kind = if assign_requested { "assign" } else { "remove" };
             println!(
                 "added {} action #{} to {} (processed_items={}, affected_items={})",
-                action_kind, action_index, name, result.processed_items, result.affected_items
+                action_kind,
+                action_index + 1,
+                name,
+                result.processed_items,
+                result.affected_items
             );
             Ok(())
         }
         CategoryCommand::RemoveAction { name, index } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let category = store.get_category(category_id).map_err(|e| e.to_string())?;
 
             if index == 0 || index > category.actions.len() {
                 return Err(format!(
@@ -2459,28 +2439,11 @@ fn cmd_category(
                     category.actions.len()
                 ));
             }
-            let removed = category.actions.remove(index - 1);
-            let result = agenda
-                .update_category(&category)
+            let (removed, result) = agenda
+                .remove_category_action(category_id, index - 1)
                 .map_err(|e| e.to_string())?;
             let category_names = category_name_map(&categories);
-            let describe_targets = |targets: &HashSet<CategoryId>| -> String {
-                let mut names: Vec<String> = targets
-                    .iter()
-                    .map(|id| {
-                        category_names
-                            .get(id)
-                            .cloned()
-                            .unwrap_or_else(|| "(deleted)".to_string())
-                    })
-                    .collect();
-                names.sort();
-                format!("[{}]", names.join(", "))
-            };
-            let desc = match &removed {
-                Action::Assign { targets } => format!("Assign {}", describe_targets(targets)),
-                Action::Remove { targets } => format!("Remove {}", describe_targets(targets)),
-            };
+            let desc = describe_category_action(&removed, &category_names);
             println!(
                 "removed action #{} ({}) from {} (processed_items={}, affected_items={})",
                 index, desc, name, result.processed_items, result.affected_items
@@ -3137,6 +3100,49 @@ fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
         .iter()
         .map(|category| (category.id, category.name.clone()))
         .collect()
+}
+
+fn describe_category_targets(
+    targets: &HashSet<CategoryId>,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    let mut names: Vec<String> = targets
+        .iter()
+        .map(|id| {
+            category_names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| "(deleted)".to_string())
+        })
+        .collect();
+    names.sort();
+    format!("[{}]", names.join(", "))
+}
+
+fn describe_category_action(
+    action: &Action,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    match action.category_targets() {
+        Some(targets) => format!(
+            "{} {}",
+            action.kind_label(),
+            describe_category_targets(targets, category_names)
+        ),
+        None => action.kind_label().to_string(),
+    }
+}
+
+fn indexed_category_action_row(
+    index: usize,
+    action: &Action,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    format!(
+        "{}. {}",
+        index + 1,
+        describe_category_action(action, category_names)
+    )
 }
 
 fn category_id_by_name(categories: &[Category], name: &str) -> Result<CategoryId, String> {
@@ -4405,8 +4411,9 @@ mod tests {
     use super::{
         blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_add, cmd_category,
         cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
-        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
+        compare_items_by_sort_keys, describe_category_action, duplicate_category_create_error,
+        indexed_category_action_row, item_link_section_lines, parse_csv_decimals,
+        parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
         parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
         retain_items_by_dependency_state, retain_items_matching_numeric_filters,
         retain_items_with_all_categories, retain_items_with_any_categories,
@@ -6024,6 +6031,36 @@ mod tests {
     }
 
     #[test]
+    fn describe_category_action_sorts_targets_and_uses_kind_label() {
+        let alpha = Category::new("Alpha".to_string());
+        let zed = Category::new("Zed".to_string());
+        let category_names = HashMap::from([
+            (zed.id, zed.name.clone()),
+            (alpha.id, alpha.name.clone()),
+        ]);
+        let action = Action::Assign {
+            targets: HashSet::from([zed.id, alpha.id]),
+        };
+
+        let desc = describe_category_action(&action, &category_names);
+
+        assert_eq!(desc, "Assign [Alpha, Zed]");
+    }
+
+    #[test]
+    fn indexed_category_action_row_is_one_based() {
+        let notify = Category::new("Notify".to_string());
+        let category_names = HashMap::from([(notify.id, notify.name.clone())]);
+        let action = Action::Remove {
+            targets: HashSet::from([notify.id]),
+        };
+
+        let row = indexed_category_action_row(1, &action, &category_names);
+
+        assert_eq!(row, "2. Remove [Notify]");
+    }
+
+    #[test]
     fn cmd_category_add_action_rejects_mixed_kinds() {
         let store = Store::open_memory().expect("store");
         let classifier = SubstringClassifier;
@@ -6050,6 +6087,31 @@ mod tests {
         assert!(result
             .unwrap_err()
             .contains("specify exactly one action kind"));
+    }
+
+    #[test]
+    fn cmd_category_add_action_rejects_self_target() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        store.create_category(&source).expect("create source");
+
+        let result = cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Escalated".to_string()],
+                remove_categories: Vec::new(),
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("cannot target itself in an action"));
     }
 
     #[test]

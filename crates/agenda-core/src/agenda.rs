@@ -231,6 +231,81 @@ impl<'a> Agenda<'a> {
         self.process_category_change(category.id)
     }
 
+    pub fn add_category_action(
+        &self,
+        category_id: CategoryId,
+        action: Action,
+    ) -> Result<(usize, EvaluateAllItemsResult)> {
+        let mut category = self.store.get_category(category_id)?;
+        self.validate_category_action(&category, &action)?;
+        category.actions.push(action);
+        let action_index = category.actions.len() - 1;
+        let result = self.update_category(&category)?;
+        Ok((action_index, result))
+    }
+
+    pub fn update_category_action(
+        &self,
+        category_id: CategoryId,
+        action_index: usize,
+        action: Action,
+    ) -> Result<EvaluateAllItemsResult> {
+        let mut category = self.store.get_category(category_id)?;
+        if action_index >= category.actions.len() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "action index {} out of range for category '{}' (has {} action(s))",
+                    action_index + 1,
+                    category.name,
+                    category.actions.len()
+                ),
+            });
+        }
+        self.validate_category_action(&category, &action)?;
+        category.actions[action_index] = action;
+        self.update_category(&category)
+    }
+
+    pub fn remove_category_action(
+        &self,
+        category_id: CategoryId,
+        action_index: usize,
+    ) -> Result<(Action, EvaluateAllItemsResult)> {
+        let mut category = self.store.get_category(category_id)?;
+        if action_index >= category.actions.len() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "action index {} out of range for category '{}' (has {} action(s))",
+                    action_index + 1,
+                    category.name,
+                    category.actions.len()
+                ),
+            });
+        }
+        let removed = category.actions.remove(action_index);
+        let result = self.update_category(&category)?;
+        Ok((removed, result))
+    }
+
+    fn validate_category_action(&self, category: &Category, action: &Action) -> Result<()> {
+        if let Some(targets) = action.category_targets() {
+            if targets.is_empty() {
+                return Err(AgendaError::InvalidOperation {
+                    message: "category actions must target at least one category".to_string(),
+                });
+            }
+            if targets.contains(&category.id) {
+                return Err(AgendaError::InvalidOperation {
+                    message: format!(
+                        "category '{}' cannot target itself in an action",
+                        category.name
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn move_category_within_parent(&self, category_id: CategoryId, delta: i32) -> Result<()> {
         self.store.move_category_within_parent(category_id, delta)
     }
@@ -3047,6 +3122,58 @@ mod tests {
         agenda.create_item(&new_item).unwrap();
         let new_assignments = store.get_assignments_for_item(new_item.id).unwrap();
         assert!(new_assignments.contains_key(&foo.id));
+    }
+
+    #[test]
+    fn add_category_action_does_not_retroactively_fire_for_existing_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = category("Escalated", false);
+        let notify = category("Notify", false);
+        agenda.create_category(&source).unwrap();
+        agenda.create_category(&notify).unwrap();
+
+        let item = Item::new("Task".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda.assign_item_manual(item.id, source.id, None).unwrap();
+
+        let (_index, result) = agenda
+            .add_category_action(
+                source.id,
+                Action::Assign {
+                    targets: HashSet::from([notify.id]),
+                },
+            )
+            .unwrap();
+
+        assert!(result.processed_items >= 1);
+        assert!(!store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&notify.id));
+    }
+
+    #[test]
+    fn add_category_action_rejects_self_target() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = category("Escalated", false);
+        agenda.create_category(&source).unwrap();
+
+        let err = agenda
+            .add_category_action(
+                source.id,
+                Action::Assign {
+                    targets: HashSet::from([source.id]),
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
     }
 
     #[test]

@@ -5973,24 +5973,7 @@ impl App {
         let overlay_area = Rect::new(x, y, w, h);
         frame.render_widget(Clear, overlay_area);
 
-        let category_names: std::collections::HashMap<CategoryId, &str> = self
-            .categories
-            .iter()
-            .map(|c| (c.id, c.name.as_str()))
-            .collect();
-        let render_targets = |targets: &HashSet<CategoryId>| -> String {
-            let mut names: Vec<String> = targets
-                .iter()
-                .map(|id| {
-                    category_names
-                        .get(id)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "(deleted)".to_string())
-                })
-                .collect();
-            names.sort();
-            format!("[{}]", names.join(", "))
-        };
+        let category_names = category_name_map(&self.categories);
 
         if edit.picker_open {
             let title = if edit.action_index.is_some() {
@@ -6007,14 +5990,14 @@ impl App {
                 ])
                 .split(overlay_area);
 
-            let action_name = match edit.draft_kind {
-                ActionEditKind::Assign => "Assign",
-                ActionEditKind::Remove => "Remove",
-            };
+            let action_name = edit.draft_kind.label();
             let summary_text = if edit.draft_targets.is_empty() {
                 format!("{action_name} (no targets selected yet)")
             } else {
-                format!("{action_name} {}", render_targets(&edit.draft_targets))
+                format!(
+                    "{action_name} {}",
+                    format_action_targets(&edit.draft_targets, &category_names)
+                )
             };
             frame.render_widget(
                 Paragraph::new(vec![Line::from(Span::styled(
@@ -6130,14 +6113,11 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(display_idx, action)| {
-                        let label = match action {
-                            Action::Assign { targets } => {
-                                format!("{}. Assign {}", display_idx + 1, render_targets(targets))
-                            }
-                            Action::Remove { targets } => {
-                                format!("{}. Remove {}", display_idx + 1, render_targets(targets))
-                            }
-                        };
+                        let label = format!(
+                            "{}. {}",
+                            display_idx + 1,
+                            format_category_action(action, &category_names)
+                        );
                         ListItem::new(Line::from(label))
                     })
                     .collect()
@@ -6318,25 +6298,28 @@ impl App {
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
                     label = with_note_marker(label, row.has_note);
-                    let mut badges = Vec::new();
+                    let mut badges: Vec<String> = Vec::new();
                     if row.is_reserved {
-                        badges.push("reserved");
+                        badges.push("reserved".to_string());
                     }
                     if row.value_kind == CategoryValueKind::Numeric {
-                        badges.push("numeric");
+                        badges.push("numeric".to_string());
                     } else {
                         if row.is_exclusive {
-                            badges.push("exclusive");
+                            badges.push("exclusive".to_string());
                         }
                         if self.workflow_config.ready_category_id == Some(row.id) {
-                            badges.push("ready-queue");
+                            badges.push("ready-queue".to_string());
                         }
                         if self.workflow_config.claim_category_id == Some(row.id) {
-                            badges.push("claim-target");
+                            badges.push("claim-target".to_string());
                         }
                     }
-                    if row.has_conditions || row.has_actions {
-                        badges.push("rules");
+                    if row.condition_count > 0 {
+                        badges.push(format!("C{}", row.condition_count));
+                    }
+                    if row.action_count > 0 {
+                        badges.push(format!("A{}", row.action_count));
                     }
                     if !badges.is_empty() {
                         label.push(' ');
@@ -6927,33 +6910,11 @@ impl App {
                             if cat.actions.is_empty() {
                                 "  (none — Enter to add)".to_string()
                             } else {
-                                let category_names: std::collections::HashMap<CategoryId, &str> =
-                                    self.categories
-                                        .iter()
-                                        .map(|c| (c.id, c.name.as_str()))
-                                        .collect();
-                                let render_targets = |targets: &HashSet<CategoryId>| -> String {
-                                    let mut names: Vec<String> = targets
-                                        .iter()
-                                        .map(|id| {
-                                            category_names
-                                                .get(id)
-                                                .map(|name| name.to_string())
-                                                .unwrap_or_else(|| "(deleted)".to_string())
-                                        })
-                                        .collect();
-                                    names.sort();
-                                    format!("[{}]", names.join(", "))
-                                };
+                                let category_names = category_name_map(&self.categories);
                                 cat.actions
                                     .iter()
-                                    .map(|action| match action {
-                                        Action::Assign { targets } => {
-                                            format!("  Assign {}", render_targets(targets))
-                                        }
-                                        Action::Remove { targets } => {
-                                            format!("  Remove {}", render_targets(targets))
-                                        }
+                                    .map(|action| {
+                                        format!("  {}", format_category_action(action, &category_names))
                                     })
                                     .collect::<Vec<_>>()
                                     .join("\n")

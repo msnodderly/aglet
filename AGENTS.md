@@ -157,6 +157,23 @@ Practical implications:
 - Older tests or callers that manually invoked reprocessing after
   `unassign_item_manual(...)` may now be doing redundant work.
 
+## Adding A Category Action Does Not Retroactively Fire It (Surprising)
+
+Updating a category to add or edit an `Action::Assign` / `Action::Remove`
+definition reprocesses items for category-change bookkeeping, but it does **not**
+retroactively execute that action for items already assigned to the owning
+category.
+
+Practical implications:
+- Treat category actions as event-driven "on assignment" behavior, not as
+  destination-style live conditions.
+- If you add an action to `Escalated`, existing items already in `Escalated`
+  will not immediately gain/remove the target categories just because the
+  action was added.
+- Do not write tests that assume `agenda.update_category(...)` or action-authoring
+  commands will backfill action effects across historical assignments unless we
+  intentionally change that semantic later.
+
 ## CLI And TUI Search Semantics Are Centralized In `agenda-core` (Updated)
 
 CLI `agenda-cli search <query>` and the TUI per-lane `/` search now both route

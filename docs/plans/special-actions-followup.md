@@ -13,6 +13,8 @@ design once recurrence and done sequencing are stable.
 ## Why Deferred
 
 - `Action::Assign` / `Action::Remove` already cover the current missing UX gap.
+- The phase-1 authoring UI should expose a generic action-kind entry point, but
+  it will still only ship the category-targeted payload editor in this phase.
 - Date-setting actions overlap with unresolved date-condition semantics.
 - Mark-done/discard actions overlap directly with the recurrence/done pipeline.
 - Export/file side effects introduce I/O policy questions that do not belong in
@@ -54,6 +56,8 @@ beyond the database itself.
 ## Core Design Constraints
 
 - Do not let action variants sidestep existing agenda invariants.
+- Keep the authoring surface action-kind-first, with per-kind payload editors,
+  so special actions extend the existing flow instead of replacing it.
 - Route date mutations through `set_item_when_date(...)`-style helpers.
 - Route done/discard mutations through agenda-layer lifecycle functions.
 - Preserve deterministic ordering when multiple heterogeneous actions exist on a
