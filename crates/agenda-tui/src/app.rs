@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use agenda_core::workflow::READY_QUEUE_VIEW_NAME;
+use agenda_core::workflow::{blocked_item_ids, READY_QUEUE_VIEW_NAME};
 
 pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
     let Some(parts) = shlex::split(editor) else {
@@ -273,6 +273,7 @@ impl App {
         self.sync_category_manager_state_from_selection();
         let items = store.list_items()?;
         self.all_items = items.clone();
+        self.blocked_item_ids = blocked_item_ids(store, &items)?;
         self.category_assignment_counts.clear();
         for item in &items {
             for cat_id in item.assignments.keys() {
@@ -1492,15 +1493,7 @@ impl App {
     }
 
     pub(crate) fn is_item_blocked(&self, item_id: ItemId) -> bool {
-        self.item_links_by_item_id
-            .get(&item_id)
-            .map(|links| {
-                links
-                    .depends_on
-                    .iter()
-                    .any(|dep_id| !self.all_items.iter().any(|i| i.id == *dep_id && i.is_done))
-            })
-            .unwrap_or(false)
+        self.blocked_item_ids.contains(&item_id)
     }
 
     pub(crate) fn current_view(&self) -> Option<&View> {

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -99,6 +99,28 @@ pub fn item_is_dependency_blocked(store: &Store, item_id: ItemId) -> Result<bool
     Ok(false)
 }
 
+pub fn blocked_item_ids(store: &Store, items: &[Item]) -> Result<HashSet<ItemId>> {
+    let done_by_item_id = dependency_done_map(store, items)?;
+    let mut blocked = HashSet::new();
+    for item in items {
+        let dependency_ids = store.list_dependency_ids_for_item(item.id)?;
+        if dependency_ids_are_blocked(&dependency_ids, &done_by_item_id) {
+            blocked.insert(item.id);
+        }
+    }
+    Ok(blocked)
+}
+
+pub fn retain_items_by_dependency_state(
+    store: &Store,
+    items: &mut Vec<Item>,
+    blocked: bool,
+) -> Result<()> {
+    let blocked_ids = blocked_item_ids(store, items)?;
+    items.retain(|item| blocked_ids.contains(&item.id) == blocked);
+    Ok(())
+}
+
 pub fn claimability_for_item(
     store: &Store,
     item: &Item,
@@ -117,6 +139,30 @@ pub fn claimability_for_item(
         return Ok(Claimability::Blocked);
     }
     Ok(Claimability::Claimable)
+}
+
+fn dependency_done_map(store: &Store, items: &[Item]) -> Result<HashMap<ItemId, bool>> {
+    let mut done_by_item_id: HashMap<ItemId, bool> =
+        items.iter().map(|item| (item.id, item.is_done)).collect();
+
+    for item in items {
+        for dependency_id in store.list_dependency_ids_for_item(item.id)? {
+            done_by_item_id
+                .entry(dependency_id)
+                .or_insert(store.get_item(dependency_id)?.is_done);
+        }
+    }
+
+    Ok(done_by_item_id)
+}
+
+fn dependency_ids_are_blocked(
+    dependency_ids: &[ItemId],
+    done_by_item_id: &HashMap<ItemId, bool>,
+) -> bool {
+    dependency_ids
+        .iter()
+        .any(|dep_id| !done_by_item_id.get(dep_id).copied().unwrap_or(false))
 }
 
 pub fn claimable_item_ids(
@@ -153,7 +199,14 @@ pub fn build_ready_queue_view(store: &Store, config: ResolvedWorkflowConfig) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::workflow_setup_error_message;
+    use super::{
+        blocked_item_ids, item_is_dependency_blocked, retain_items_by_dependency_state,
+        workflow_setup_error_message,
+    };
+    use crate::agenda::Agenda;
+    use crate::matcher::SubstringClassifier;
+    use crate::model::Item;
+    use crate::store::Store;
 
     #[test]
     fn workflow_setup_error_message_points_to_global_settings() {
@@ -161,5 +214,118 @@ mod tests {
             workflow_setup_error_message(),
             "workflow is not configured: set Ready Queue and Claim Target categories in TUI Global Settings"
         );
+    }
+
+    #[test]
+    fn item_is_dependency_blocked_returns_true_for_unresolved_dependency() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        assert!(
+            item_is_dependency_blocked(&store, blocked.id).expect("blocked check"),
+            "open dependency should block the item"
+        );
+        assert!(
+            !item_is_dependency_blocked(&store, blocker.id).expect("blocker check"),
+            "item with no dependencies should not be blocked"
+        );
+    }
+
+    #[test]
+    fn item_is_dependency_blocked_returns_false_when_dependency_is_done() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+        blocker.is_done = true;
+        store.update_item(&blocker).expect("mark blocker done");
+
+        assert!(
+            !item_is_dependency_blocked(&store, blocked.id).expect("blocked check"),
+            "done dependency should not block the item"
+        );
+    }
+
+    #[test]
+    fn blocked_item_ids_matches_single_item_checks() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        let free = Item::new("Free".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        store.create_item(&free).expect("create free");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        let items = store.list_items().expect("list items");
+        let blocked_ids = blocked_item_ids(&store, &items).expect("blocked ids");
+
+        for item in &items {
+            assert_eq!(
+                blocked_ids.contains(&item.id),
+                item_is_dependency_blocked(&store, item.id).expect("single blocked check"),
+                "batch blocked ids should match single-item blocked checks for {}",
+                item.text
+            );
+        }
+    }
+
+    #[test]
+    fn retain_items_by_dependency_state_filters_blocked_and_not_blocked_items() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let blocker = Item::new("Blocker".to_string());
+        let blocked = Item::new("Blocked".to_string());
+        let free = Item::new("Free".to_string());
+        store.create_item(&blocker).expect("create blocker");
+        store.create_item(&blocked).expect("create blocked");
+        store.create_item(&free).expect("create free");
+        agenda
+            .link_items_depends_on(blocked.id, blocker.id)
+            .expect("link depends-on");
+
+        let mut blocked_rows = store.list_items().expect("list items");
+        retain_items_by_dependency_state(&store, &mut blocked_rows, true)
+            .expect("retain blocked items");
+        assert_eq!(
+            blocked_rows
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>(),
+            vec!["Blocked".to_string()]
+        );
+
+        let mut not_blocked_rows = store.list_items().expect("list items");
+        retain_items_by_dependency_state(&store, &mut not_blocked_rows, false)
+            .expect("retain not blocked items");
+        let mut texts = not_blocked_rows
+            .into_iter()
+            .map(|item| item.text)
+            .collect::<Vec<_>>();
+        texts.sort();
+        assert_eq!(texts, vec!["Blocker".to_string(), "Free".to_string()]);
     }
 }

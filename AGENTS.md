@@ -77,6 +77,28 @@ categories):
 `blocked` means the item has at least one unresolved `depends-on` prerequisite.
 This state is computed from links + done state at query time.
 
+## Claim Workflow Uses Dependency State But Is Not A Link Type (Current)
+
+The workflow-backed claim flow (`agenda-cli ready`, `claim`, `release`) uses
+dependency state as one input, but it is a **separate concept** from item
+links.
+
+Current claimability is computed as:
+- item has the configured Ready category
+- item does not already have the configured claim-target category
+- item is not done
+- item is not dependency-blocked by unresolved `depends-on` links
+
+Practical implications:
+- Use `link depends-on` / `link blocks` to model real prerequisite or ordering
+  relationships between items.
+- Use `claim` / `release` to reserve or unreserve an otherwise-claimable item
+  for active work.
+- Do **not** create synthetic `blocks` / `depends-on` links just to mean
+  "someone is working on this"; that is what the claim-target category is for.
+- Claiming does not create/remove links, and linked blocked/unblocked state
+  should stay derivable from dependency graph + done state.
+
 ## Category Assignment in Items
 
 When viewing items, the categories list includes both the assigned category and
@@ -205,6 +227,22 @@ by `agenda-cli show`; it can still print `status: open`.
 Treat the `assignments:` section as the source of truth for workflow status
 categories in this DB.
 
+## Claimed Items Can Show Stale `Status` Provenance Text (Surprising)
+
+After `agenda-cli claim <ITEM_ID>` moves an item from `Ready` to the workflow
+claim target (for example `In Progress`), `agenda-cli ready` correctly removes
+the item from the queue and `agenda-cli show` shows the new claim assignment.
+However, the `assignments:` section can still show a `Status | Subsumption`
+explanation that says it was inherited from child `Ready`, even when `Ready`
+is no longer listed as an active assignment.
+
+Practical implications:
+- Do not assume a successful claim failed just because `agenda-cli show`
+  mentions `subsumption:Status` from `Ready`.
+- Verify the actual claimed category assignment (`In Progress | Manual |
+  manual:cli.claim`) and/or re-run `agenda-cli ready` to confirm the item left
+  the queue.
+
 ## Edit Panel Category Checks Include Derived Assignments (Current)
 
 In `agenda-tui` `Mode::InputPanel` edit-item flow, category checkboxes are
@@ -259,6 +297,27 @@ line is always `created ...`; extract the ID by matching the `^created ` prefix.
 fail claim with `claim precondition failed ... already has category 'In Progress'`
 if another agent claims it between your list step and claim step. If this
 happens, re-run selection and claim the next eligible item; do not force-assign.
+
+**Current claim CLI syntax is workflow-based.** The public commands are:
+
+```bash
+cargo run --bin agenda-cli -- --db aglet-features.ag ready
+cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin agenda-cli -- --db aglet-features.ag release <ITEM_ID>
+# alias:
+cargo run --bin agenda-cli -- --db aglet-features.ag unclaim <ITEM_ID>
+```
+
+Practical implications:
+- Older examples showing `agenda-cli claim <ITEM_ID> --must-not-have ...` are
+  stale; current `claim` accepts only the item id.
+- Prefer `agenda-cli ready` when picking work; it already excludes done,
+  claimed, and dependency-blocked items using workflow config.
+- `agenda-cli view show "Ready Queue" --blocked` is invalid and
+  `--not-blocked` is redundant because the Ready Queue already shows only
+  claimable items.
+- Marking an item done clears the configured claim assignment automatically; you
+  do not need to `release` before completing it.
 
 **Item ID prefix matching works.** You can use the first 8 hex characters of a
 UUID instead of the full ID:
