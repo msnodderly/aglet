@@ -31,8 +31,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
+    Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Padding, Paragraph, Row,
+    Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
 use uuid::Uuid;
@@ -385,6 +385,7 @@ struct App {
     normal_focus: NormalFocus,
     all_items: Vec<Item>,
     item_links_by_item_id: HashMap<ItemId, ItemLinksForItem>,
+    blocked_item_ids: HashSet<ItemId>,
 
     views: Vec<View>,
     view_index: usize,
@@ -462,6 +463,7 @@ impl Default for App {
             normal_focus: NormalFocus::Board,
             all_items: Vec::new(),
             item_links_by_item_id: HashMap::new(),
+            blocked_item_ids: HashSet::new(),
             views: Vec::new(),
             view_index: 0,
             active_view_name: None,

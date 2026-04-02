@@ -1,4 +1,3 @@
-
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -4032,6 +4031,37 @@ fn edit_panel_prechecks_derived_assignments() {
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn item_edit_note_placeholder_remains_generic() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let item = Item::new("placeholder demo item".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.mode = Mode::Normal;
+    app.set_item_selection_by_id(item.id);
+    app.handle_normal_key(KeyCode::Char('e'), &agenda)
+        .expect("open item edit");
+
+    let backend = TestBackend::new(220, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Notes, context, links, ideas, next actions..."),
+        "item edit note placeholder should remain generic: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Describe the purpose of this category"),
+        "item edit should not show the category-specific note placeholder: {rendered}"
+    );
 }
 
 #[test]
@@ -9685,6 +9715,82 @@ fn category_manager_enter_on_reserved_category_stays_inline_in_manager() {
     );
     drop(store);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn category_manager_uses_category_specific_note_placeholder() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_category_selection_by_id(category.id);
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.sync_category_manager_state_from_selection();
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+    let backend = TestBackend::new(240, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Describe the purpose of this category"),
+        "category manager should show a category-specific note placeholder: {rendered}"
+    );
+    assert!(
+        rendered.contains("Included in AI classification context"),
+        "category manager should explain note text classification context: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Notes, context, links, ideas, next actions..."),
+        "category manager should no longer show the generic item note placeholder: {rendered}"
+    );
+}
+
+#[test]
+fn category_manager_note_placeholder_remains_visible_in_narrow_details_pane() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_category_selection_by_id(category.id);
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.sync_category_manager_state_from_selection();
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+
+    let backend = TestBackend::new(120, 36);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Describe the purpose of this category"),
+        "narrow details pane should still show the first note placeholder line: {rendered}"
+    );
+    assert!(
+        rendered.contains("Included in AI classification context"),
+        "narrow details pane should still show the second note placeholder line: {rendered}"
+    );
+    assert!(
+        rendered.contains("enabled."),
+        "narrow details pane should keep the end of the helper text visible instead of cutting it off: {rendered}"
+    );
 }
 
 #[test]

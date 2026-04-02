@@ -16,11 +16,11 @@ use agenda_core::model::{
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
 use agenda_core::workflow::{
-    build_ready_queue_view, claimable_item_ids, resolve_workflow_config,
-    workflow_setup_error_message, READY_QUEUE_VIEW_NAME,
+    blocked_item_ids, build_ready_queue_view, claimable_item_ids, resolve_workflow_config,
+    retain_items_by_dependency_state, workflow_setup_error_message, READY_QUEUE_VIEW_NAME,
 };
-use jiff::civil::{Date, DateTime};
 use clap::{Parser, Subcommand, ValueEnum};
+use jiff::civil::{Date, DateTime};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use uuid::Uuid;
@@ -1382,7 +1382,7 @@ fn cmd_list(
     output_format: OutputFormatArg,
 ) -> Result<(), String> {
     let all_items = store.list_items().map_err(|e| e.to_string())?;
-    let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+    let blocked_item_ids = blocked_item_ids(store, &all_items).map_err(|e| e.to_string())?;
     let mut items = all_items.clone();
     if !filters.include_done {
         items.retain(|item| !item.is_done);
@@ -1421,7 +1421,12 @@ fn cmd_list(
         retain_items_matching_numeric_filters(&mut items, &numeric_filters);
     }
     if let Some(filter) = filters.dependency_state_filter {
-        retain_items_by_dependency_state(store, &mut items, filter)?;
+        retain_items_by_dependency_state(
+            store,
+            &mut items,
+            filter == DependencyStateFilter::Blocked,
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     let resolved_view = if let Some(view_name) = view_name {
@@ -1461,24 +1466,6 @@ fn cmd_list(
         print_item_table(&items, &category_names, &sort_keys, &categories);
     }
     Ok(())
-}
-
-fn blocked_item_ids(items: &[Item], store: &Store) -> Result<HashSet<ItemId>, String> {
-    let done_by_item_id: HashMap<ItemId, bool> =
-        items.iter().map(|item| (item.id, item.is_done)).collect();
-    let mut blocked = HashSet::new();
-    for item in items {
-        let dependency_ids = store
-            .list_dependency_ids_for_item(item.id)
-            .map_err(|e| e.to_string())?;
-        let is_blocked = dependency_ids
-            .iter()
-            .any(|dep_id| !done_by_item_id.get(dep_id).copied().unwrap_or(false));
-        if is_blocked {
-            blocked.insert(item.id);
-        }
-    }
-    Ok(blocked)
 }
 
 fn retain_items_with_all_categories(items: &mut Vec<Item>, category_ids: &[CategoryId]) {
@@ -1612,39 +1599,6 @@ fn retain_items_matching_numeric_filters(items: &mut Vec<Item>, numeric_filters:
     });
 }
 
-fn item_is_dependency_blocked(store: &Store, item_id: ItemId) -> Result<bool, String> {
-    let dependency_ids = store
-        .list_dependency_ids_for_item(item_id)
-        .map_err(|e| e.to_string())?;
-    for dependency_id in dependency_ids {
-        let dependency = store.get_item(dependency_id).map_err(|e| e.to_string())?;
-        if !dependency.is_done {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn retain_items_by_dependency_state(
-    store: &Store,
-    items: &mut Vec<Item>,
-    filter: DependencyStateFilter,
-) -> Result<(), String> {
-    let mut retained = Vec::with_capacity(items.len());
-    for item in std::mem::take(items) {
-        let is_blocked = item_is_dependency_blocked(store, item.id)?;
-        let keep = match filter {
-            DependencyStateFilter::Blocked => is_blocked,
-            DependencyStateFilter::NotBlocked => !is_blocked,
-        };
-        if keep {
-            retained.push(item);
-        }
-    }
-    *items = retained;
-    Ok(())
-}
-
 fn cmd_search(
     store: &Store,
     query: String,
@@ -1669,7 +1623,12 @@ fn cmd_search(
 
     let mut matched_items: Vec<Item> = matches.into_iter().cloned().collect();
     if let Some(filter) = dependency_state_filter {
-        retain_items_by_dependency_state(store, &mut matched_items, filter)?;
+        retain_items_by_dependency_state(
+            store,
+            &mut matched_items,
+            filter == DependencyStateFilter::Blocked,
+        )
+        .map_err(|e| e.to_string())?;
     }
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
@@ -1720,11 +1679,7 @@ fn cmd_deleted(store: &Store) -> Result<(), String> {
     for entry in deleted {
         println!(
             "{} | item={} | deleted_at={} | by={} | {}",
-            entry.id,
-            entry.item_id,
-            entry.deleted_at,
-            entry.deleted_by,
-            entry.text
+            entry.id, entry.item_id, entry.deleted_at, entry.deleted_by, entry.text
         );
     }
     Ok(())
@@ -1988,12 +1943,7 @@ fn cmd_category(
                         }
                         agenda_core::model::Condition::Profile { criteria } => {
                             let trigger = criteria.format_trigger(&resolve);
-                            println!(
-                                "  {}. {} -> {}",
-                                i + 1,
-                                trigger,
-                                category.name
-                            );
+                            println!("  {}. {} -> {}", i + 1, trigger, category.name);
                         }
                     }
                 }
@@ -2375,11 +2325,9 @@ fn cmd_category(
                 criteria,
                 ..Query::default()
             };
-            category
-                .conditions
-                .push(Condition::Profile {
-                    criteria: Box::new(query),
-                });
+            category.conditions.push(Condition::Profile {
+                criteria: Box::new(query),
+            });
             let result = agenda
                 .update_category(&category)
                 .map_err(|e| e.to_string())?;
@@ -2495,10 +2443,16 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                 let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
                 let category_names = category_name_map(&categories);
                 let all_items = store.list_items().map_err(|e| e.to_string())?;
-                let blocked_item_ids = blocked_item_ids(&all_items, store)?;
+                let blocked_item_ids =
+                    blocked_item_ids(store, &all_items).map_err(|e| e.to_string())?;
                 let mut items = all_items;
                 if let Some(filter) = dependency_state_filter_from_flags(blocked, not_blocked) {
-                    retain_items_by_dependency_state(store, &mut items, filter)?;
+                    retain_items_by_dependency_state(
+                        store,
+                        &mut items,
+                        filter == DependencyStateFilter::Blocked,
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
                 let view = view_by_name(store, &name)?;
                 let sort_keys = parse_sort_specs(&sort, &categories)?;
@@ -4348,9 +4302,9 @@ mod tests {
         section_summary_entries, section_summary_line, unknown_hashtag_feedback_line, view_by_name,
         view_category_alias_rows, write_output_allow_broken_pipe, write_stdout_allow_broken_pipe,
         CategoryCommand, Cli, CliColumnKind, CliSortDirection, CliSortField, CliSortKey,
-        CliSummaryFn, Command, DependencyStateFilter, ImportCommand, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand,
-        ViewColumnCommand, ViewCommand, ViewSectionCommand,
+        CliSummaryFn, Command, ImportCommand, LinkCommand, ListFilters, NumericFilter,
+        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand, ViewColumnCommand,
+        ViewCommand, ViewSectionCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
@@ -4359,8 +4313,8 @@ mod tests {
         NumericFormat, Query, Section, SummaryFn, View,
     };
     use agenda_core::store::Store;
-    use jiff::civil::date;
     use clap::{CommandFactory, Parser};
+    use jiff::civil::date;
     use rust_decimal::Decimal;
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -4497,10 +4451,7 @@ mod tests {
         assert_eq!(items.len(), 1);
         let item = &items[0];
         assert_eq!(item.text, "DRZ Payment");
-        assert_eq!(
-            item.when_date,
-            Some(date(2026, 2, 20).at(0, 0, 0, 0))
-        );
+        assert_eq!(item.when_date, Some(date(2026, 2, 20).at(0, 0, 0, 0)));
         assert!(item.assignments.contains_key(&budget.id));
         assert!(item.assignments.contains_key(&vendor.id));
         assert_eq!(
@@ -4534,10 +4485,7 @@ mod tests {
         )
         .expect("set when");
         let updated = store.get_item(item.id).expect("load item");
-        assert_eq!(
-            updated.when_date,
-            Some(date(2026, 3, 1).at(0, 0, 0, 0))
-        );
+        assert_eq!(updated.when_date, Some(date(2026, 3, 1).at(0, 0, 0, 0)));
 
         cmd_edit(
             &agenda,
@@ -6102,10 +6050,7 @@ mod tests {
             .iter()
             .find(|item| item.text == "YCRS")
             .expect("YCRS item");
-        assert_eq!(
-            ycrs.when_date,
-            Some(date(2026, 2, 20).at(0, 0, 0, 0))
-        );
+        assert_eq!(ycrs.when_date, Some(date(2026, 2, 20).at(0, 0, 0, 0)));
         assert_eq!(ycrs.note.as_deref(), Some("School day"));
 
         let categories = store.get_hierarchy().expect("hierarchy");
@@ -6220,7 +6165,7 @@ mod tests {
             .expect("link depends-on");
 
         let items = store.list_items().expect("list items");
-        let blocked = blocked_item_ids(&items, &store).expect("blocked ids");
+        let blocked = blocked_item_ids(&store, &items).expect("blocked ids");
         assert!(blocked.contains(&dependent.id));
         assert!(!blocked.contains(&dependency.id));
     }
@@ -6402,16 +6347,14 @@ mod tests {
         store.create_item(&blocked).expect("create blocked");
 
         let mut rows = store.list_items().expect("list initial");
-        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
-            .expect("filter initial blocked");
+        retain_items_by_dependency_state(&store, &mut rows, true).expect("filter initial blocked");
         assert!(rows.is_empty(), "no links means nothing is blocked");
 
         agenda
             .link_items_depends_on(blocked.id, blocker.id)
             .expect("link depends-on");
         let mut rows = store.list_items().expect("list linked");
-        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
-            .expect("filter linked blocked");
+        retain_items_by_dependency_state(&store, &mut rows, true).expect("filter linked blocked");
         assert_eq!(
             rows.into_iter().map(|item| item.text).collect::<Vec<_>>(),
             vec!["Blocked".to_string()]
@@ -6421,8 +6364,7 @@ mod tests {
             .unlink_items_depends_on(blocked.id, blocker.id)
             .expect("unlink depends-on");
         let mut rows = store.list_items().expect("list unlinked");
-        retain_items_by_dependency_state(&store, &mut rows, DependencyStateFilter::Blocked)
-            .expect("filter unlinked blocked");
+        retain_items_by_dependency_state(&store, &mut rows, true).expect("filter unlinked blocked");
         assert!(
             rows.is_empty(),
             "removing dependency link clears blocked state"
