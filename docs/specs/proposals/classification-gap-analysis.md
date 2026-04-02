@@ -190,7 +190,7 @@ No per-category override.
 
 ## 3. Assignment Lifecycle
 
-### 3a. Conditional (auto-breaking) assignments — INTENTIONAL DIVERGENCE
+### 3a. Conditional (auto-breaking) assignments — SHIPPED BEHAVIOR
 
 **Lotus Agenda:** Condition-based assignments were *conditional* (`*c` in the
 assignment profile). They:
@@ -202,22 +202,20 @@ assignment profile). They:
 Example: Item "Call Mom" is conditionally assigned to "Phone Calls" via text match.
 User edits to "Visit Mom" → assignment to "Phone Calls" automatically breaks.
 
-**Aglet:** All assignments are sticky/permanent (`Assignment.sticky = true`). Once
-assigned via auto-match, the assignment persists even if the item text changes.
-Only explicit user unassignment or `Action::Remove` can break an assignment.
+**Aglet:** Current engine behavior now matches this distinction for
+destination-centric rule output:
+- implicit-string and profile-condition assignments are written as live
+  non-sticky derived assignments
+- they auto-break when the text/prerequisite state no longer matches
+- action-produced, manual, and accepted-suggestion assignments remain sticky
 
-**This is documented as intentional** in `classification-ux-revised.md` line 160-162:
-> "All assignments are sticky (permanent). We do not implement Lotus Agenda's
-> 'auto-breaking' conditional assignments."
+**Implications:**
+- The database can now shed stale condition-derived classifications on reprocess
+- Users can see categories disappear when live conditions stop matching
+- Historical sticky derived rows may still exist in older DBs until explicitly
+  cleared, so provenance still matters during debugging
 
-**Tradeoffs:**
-- Simpler mental model (assignments don't silently disappear)
-- Items don't "fall off" views unexpectedly
-- But: stale classifications accumulate — if user edits "Call Mom" to "Visit Mom,"
-  the "Phone Calls" assignment persists incorrectly unless manually removed
-- Lotus's auto-breaking was a key part of the "living database" feel
-
-### 3b. Confirmation promotes conditional → explicit — INTENTIONAL DIVERGENCE
+### 3b. Confirmation promotes live/suggested → explicit — PARTIAL PARITY
 
 **Lotus Agenda:** When a user accepted a suggestion in the Questions queue, the
 assignment was promoted from *conditional* to *explicit*. This meant:
@@ -225,14 +223,14 @@ assignment was promoted from *conditional* to *explicit*. This meant:
 - It was the user's seal of approval
 - It behaved differently from an unreviewed auto-assignment
 
-**Aglet:** Since all assignments are sticky, there's no meaningful distinction
-between AutoClassified (auto-applied) and SuggestionAccepted (user-reviewed).
-Both persist identically. The `AssignmentSource` enum tracks the provenance
-(`AutoClassified` vs `SuggestionAccepted`) but the behavioral difference is nil.
+**Aglet:** There is now a meaningful lifecycle distinction, but it is narrower:
+- accepted suggestions are stored as sticky `SuggestionAccepted` assignments
+- action/manual assignments are sticky
+- live condition-derived assignments (`AutoMatch`) can auto-break
 
-**Impact:** In SuggestReview mode, the user reviews and accepts suggestions. But
-in AutoApply mode, assignments are applied with the same permanence. The review
-step in SuggestReview adds user intent tracking but not behavioral difference.
+This means accepted suggestions do carry stronger durability than live
+condition-derived assignments, even though the suggestion queue does not model
+Lotus's exact "conditional first, then promote" flow for every provider path.
 
 ---
 

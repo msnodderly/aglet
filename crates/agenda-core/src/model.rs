@@ -365,6 +365,21 @@ pub enum Action {
     Remove { targets: HashSet<CategoryId> },
 }
 
+impl Action {
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Assign { .. } => "Assign",
+            Self::Remove { .. } => "Remove",
+        }
+    }
+
+    pub fn category_targets(&self) -> Option<&HashSet<CategoryId>> {
+        match self {
+            Self::Assign { targets } | Self::Remove { targets } => Some(targets),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct View {
     pub id: Uuid,

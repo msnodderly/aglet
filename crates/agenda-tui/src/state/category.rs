@@ -13,7 +13,8 @@ pub(crate) struct CategoryListRow {
     pub(crate) enable_semantic_classification: bool,
     pub(crate) match_category_name: bool,
     pub(crate) value_kind: CategoryValueKind,
-    pub(crate) has_conditions: bool,
+    pub(crate) condition_count: usize,
+    pub(crate) action_count: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,6 +33,7 @@ pub(crate) enum CategoryManagerDetailsFocus {
     Actionable,
     AlsoMatch,
     Conditions,
+    Actions,
     Integer,
     DecimalPlaces,
     CurrencySymbol,
@@ -64,7 +66,8 @@ impl CategoryManagerDetailsFocus {
                 Self::MatchCategoryName => Self::Actionable,
                 Self::Actionable => Self::AlsoMatch,
                 Self::AlsoMatch => Self::Conditions,
-                Self::Conditions => Self::Note,
+                Self::Conditions => Self::Actions,
+                Self::Actions => Self::Note,
                 Self::Note => Self::Exclusive,
                 _ => Self::Exclusive,
             }
@@ -96,7 +99,8 @@ impl CategoryManagerDetailsFocus {
                 Self::Actionable => Self::MatchCategoryName,
                 Self::AlsoMatch => Self::Actionable,
                 Self::Conditions => Self::AlsoMatch,
-                Self::Note => Self::Conditions,
+                Self::Actions => Self::Conditions,
+                Self::Note => Self::Actions,
                 _ => Self::Actionable,
             }
         }
@@ -137,6 +141,31 @@ pub(crate) struct ConditionEditState {
     pub(crate) picker_index: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActionEditKind {
+    Assign,
+    Remove,
+}
+
+impl ActionEditKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Assign => "Assign",
+            Self::Remove => "Remove",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ActionEditState {
+    pub(crate) action_index: Option<usize>,
+    pub(crate) draft_kind: ActionEditKind,
+    pub(crate) draft_targets: HashSet<CategoryId>,
+    pub(crate) list_index: usize,
+    pub(crate) picker_open: bool,
+    pub(crate) picker_index: usize,
+}
+
 #[derive(Clone)]
 pub(crate) struct CategoryManagerState {
     pub(crate) focus: CategoryManagerFocus,
@@ -159,6 +188,7 @@ pub(crate) struct CategoryManagerState {
     pub(crate) selected_category_id: Option<CategoryId>,
     pub(crate) inline_action: Option<CategoryInlineAction>,
     pub(crate) condition_edit: Option<ConditionEditState>,
+    pub(crate) action_edit: Option<ActionEditState>,
 }
 
 #[derive(Clone, Debug)]

@@ -519,8 +519,9 @@ impl App {
                             CategoryManagerDetailsFocus::Conditions
                         }
                         CategoryManagerDetailsFocus::Conditions => {
-                            CategoryManagerDetailsFocus::Note
+                            CategoryManagerDetailsFocus::Actions
                         }
+                        CategoryManagerDetailsFocus::Actions => CategoryManagerDetailsFocus::Note,
                         CategoryManagerDetailsFocus::Note => {
                             self.set_category_manager_focus(CategoryManagerFocus::Filter);
                             return;
@@ -549,7 +550,8 @@ impl App {
                     }
                 } else {
                     match details_focus {
-                        CategoryManagerDetailsFocus::Note => {
+                        CategoryManagerDetailsFocus::Note => CategoryManagerDetailsFocus::Actions,
+                        CategoryManagerDetailsFocus::Actions => {
                             CategoryManagerDetailsFocus::Conditions
                         }
                         CategoryManagerDetailsFocus::Conditions => {
@@ -629,6 +631,8 @@ impl App {
                     | CategoryManagerDetailsFocus::MatchCategoryName
                     | CategoryManagerDetailsFocus::Actionable
                     | CategoryManagerDetailsFocus::AlsoMatch
+                    | CategoryManagerDetailsFocus::Conditions
+                    | CategoryManagerDetailsFocus::Actions
             )
         {
             details_focus = CategoryManagerDetailsFocus::Note;
@@ -815,6 +819,10 @@ impl App {
                     self.open_condition_edit_list();
                     return Ok(true);
                 }
+                CategoryManagerDetailsFocus::Actions => {
+                    self.open_action_edit_list();
+                    return Ok(true);
+                }
                 CategoryManagerDetailsFocus::Note => {
                     self.start_category_manager_details_note_edit();
                     return Ok(true);
@@ -859,6 +867,10 @@ impl App {
                 }
                 CategoryManagerDetailsFocus::Conditions => {
                     self.open_condition_edit_list();
+                    return Ok(true);
+                }
+                CategoryManagerDetailsFocus::Actions => {
+                    self.open_action_edit_list();
                     return Ok(true);
                 }
                 CategoryManagerDetailsFocus::Note => {
@@ -1507,6 +1519,10 @@ impl App {
             self.handle_condition_edit_key(code, agenda)?;
             return Ok(false);
         }
+        if self.category_manager_action_edit().is_some() {
+            self.handle_action_edit_key(code, agenda)?;
+            return Ok(false);
+        }
         if self.handle_category_manager_details_key(code, agenda)? {
             return Ok(false);
         }
@@ -1673,9 +1689,13 @@ impl App {
                     self.selected_category_id()
                 };
                 let status = match selected_name {
-                    Some(name) if parent_id.is_some() => format!("Create child category under {name}"),
+                    Some(name) if parent_id.is_some() => {
+                        format!("Create child category under {name}")
+                    }
                     Some(name) => {
-                        format!("{name} cannot have child categories here; creating top-level category")
+                        format!(
+                            "{name} cannot have child categories here; creating top-level category"
+                        )
                     }
                     None => "Create top-level category".to_string(),
                 };
@@ -2016,8 +2036,7 @@ impl App {
                 picker_index: 0,
             });
         }
-        self.status =
-            "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+        self.status = "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
     }
 
     fn close_condition_edit(&mut self) {
@@ -2256,11 +2275,7 @@ impl App {
         }
     }
 
-    fn handle_condition_edit_key(
-        &mut self,
-        code: KeyCode,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<bool> {
+    fn handle_condition_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> TuiResult<bool> {
         let edit = match self.category_manager_condition_edit() {
             Some(e) => e.clone(),
             None => return Ok(false),
@@ -2421,6 +2436,325 @@ impl App {
             }
             KeyCode::Esc => {
                 self.cancel_condition_picker();
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    // -------------------------------------------------------------------------
+    // Action editing
+    // -------------------------------------------------------------------------
+
+    fn open_action_edit_list(&mut self) {
+        if let Some(state) = &mut self.category_manager {
+            state.action_edit = Some(ActionEditState {
+                action_index: None,
+                draft_kind: ActionEditKind::Assign,
+                draft_targets: HashSet::new(),
+                list_index: 0,
+                picker_open: false,
+                picker_index: 0,
+            });
+        }
+        self.status = "Actions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+    }
+
+    fn close_action_edit(&mut self) {
+        if let Some(state) = &mut self.category_manager {
+            state.action_edit = None;
+        }
+        self.status = "j/k: focus field  Enter/Space: toggle/edit".to_string();
+    }
+
+    fn action_list_status(&mut self) {
+        self.status = "Actions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+    }
+
+    fn action_picker_status(&mut self) {
+        self.status = "Space:toggle target  1:Assign  2:Remove  Enter:save  Esc:cancel".to_string();
+    }
+
+    fn open_action_edit_picker(&mut self, action_index: Option<usize>) {
+        let (draft_kind, draft_targets) = if let Some(idx) = action_index {
+            self.selected_category_row()
+                .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+                .and_then(|cat| cat.actions.get(idx))
+                .map(|action| match action {
+                    Action::Assign { targets } => (ActionEditKind::Assign, targets.clone()),
+                    Action::Remove { targets } => (ActionEditKind::Remove, targets.clone()),
+                })
+                .unwrap_or((ActionEditKind::Assign, HashSet::new()))
+        } else {
+            (ActionEditKind::Assign, HashSet::new())
+        };
+        let initial_picker_index = draft_targets
+            .iter()
+            .next()
+            .and_then(|target_id| {
+                self.category_rows
+                    .iter()
+                    .enumerate()
+                    .find(|(_, row)| row.id == *target_id && !row.is_reserved)
+                    .map(|(idx, _)| idx)
+            })
+            .unwrap_or_else(|| first_non_reserved_category_index(&self.category_rows));
+        if let Some(state) = &mut self.category_manager {
+            if let Some(edit) = &mut state.action_edit {
+                edit.action_index = action_index;
+                edit.draft_kind = draft_kind;
+                edit.draft_targets = draft_targets;
+                edit.picker_open = true;
+                edit.picker_index = initial_picker_index;
+            }
+        }
+        self.action_picker_status();
+    }
+
+    fn save_action_from_picker(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let (action_index, draft_kind, draft_targets) = {
+            let edit = match self.category_manager_action_edit() {
+                Some(e) => e,
+                None => return Ok(false),
+            };
+            (
+                edit.action_index,
+                edit.draft_kind,
+                edit.draft_targets.clone(),
+            )
+        };
+
+        if draft_targets.is_empty() {
+            if let Some(edit) = self.category_manager_action_edit_mut() {
+                edit.picker_open = false;
+            }
+            self.action_list_status();
+            return Ok(true);
+        }
+
+        let category_id = match self.selected_category_row() {
+            Some(r) => r.id,
+            None => return Ok(false),
+        };
+
+        let new_action = match draft_kind {
+            ActionEditKind::Assign => Action::Assign {
+                targets: draft_targets,
+            },
+            ActionEditKind::Remove => Action::Remove {
+                targets: draft_targets,
+            },
+        };
+
+        let result = if let Some(idx) = action_index {
+            agenda.update_category_action(category_id, idx, new_action)?
+        } else {
+            agenda.add_category_action(category_id, new_action)?.1
+        };
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+
+        if let Some(edit) = self.category_manager_action_edit_mut() {
+            edit.picker_open = false;
+        }
+        let action = if action_index.is_some() {
+            "updated"
+        } else {
+            "added"
+        };
+        self.status = format!(
+            "Action {} (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
+            action, result.processed_items, result.affected_items
+        );
+        Ok(true)
+    }
+
+    fn cancel_action_picker(&mut self) -> bool {
+        let Some(edit) = self.category_manager_action_edit_mut() else {
+            return false;
+        };
+        if !edit.picker_open {
+            return false;
+        }
+        edit.picker_open = false;
+        self.action_list_status();
+        true
+    }
+
+    fn delete_action_at_list_index(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let list_index = match self.category_manager_action_edit() {
+            Some(e) => e.list_index,
+            None => return Ok(false),
+        };
+        let category_id = match self.selected_category_row() {
+            Some(r) => r.id,
+            None => return Ok(false),
+        };
+        let category = match self.categories.iter().find(|c| c.id == category_id) {
+            Some(c) => c.clone(),
+            None => return Ok(false),
+        };
+
+        if list_index >= category.actions.len() {
+            return Ok(false);
+        }
+
+        let (_, result) = agenda.remove_category_action(category_id, list_index)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+
+        if let Some(edit) = self.category_manager_action_edit_mut() {
+            let new_count = category.actions.len();
+            if edit.list_index >= new_count && new_count > 0 {
+                edit.list_index = new_count - 1;
+            }
+        }
+        self.status = format!(
+            "Action removed (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
+            result.processed_items, result.affected_items
+        );
+        Ok(true)
+    }
+
+    fn set_action_picker_kind(&mut self, kind: ActionEditKind) {
+        if let Some(edit) = self.category_manager_action_edit_mut() {
+            edit.draft_kind = kind;
+        }
+        self.action_picker_status();
+    }
+
+    fn toggle_action_picker_target(&mut self, row: &CategoryListRow) {
+        let Some(selected_category_id) = self.selected_category_row().map(|selected| selected.id)
+        else {
+            return;
+        };
+        let Some(edit) = self.category_manager_action_edit_mut() else {
+            return;
+        };
+        if row.id == selected_category_id {
+            self.status = format!(
+                "{} can't target itself  1:Assign  2:Remove  Enter:save  Esc:cancel",
+                row.name
+            );
+            return;
+        }
+        if !edit.draft_targets.insert(row.id) {
+            edit.draft_targets.remove(&row.id);
+        }
+        self.action_picker_status();
+    }
+
+    fn action_edit_filtered_category_indices(&self) -> Vec<usize> {
+        self.category_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| !row.is_reserved)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn handle_action_edit_key(&mut self, code: KeyCode, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let edit = match self.category_manager_action_edit() {
+            Some(e) => e.clone(),
+            None => return Ok(false),
+        };
+
+        if edit.picker_open {
+            self.handle_action_picker_key(code, agenda, &edit)
+        } else {
+            self.handle_action_list_key(code, agenda, &edit)
+        }
+    }
+
+    fn handle_action_list_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+        edit: &ActionEditState,
+    ) -> TuiResult<bool> {
+        let action_count = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+            .map(|cat| cat.actions.len())
+            .unwrap_or(0);
+
+        match code {
+            KeyCode::Esc => self.close_action_edit(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                if action_count > 0 {
+                    if let Some(e) = self.category_manager_action_edit_mut() {
+                        e.list_index = (e.list_index + 1).min(action_count.saturating_sub(1));
+                    }
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(e) = self.category_manager_action_edit_mut() {
+                    e.list_index = e.list_index.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => self.open_action_edit_picker(None),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if action_count > 0 && edit.list_index < action_count {
+                    self.open_action_edit_picker(Some(edit.list_index));
+                } else {
+                    self.open_action_edit_picker(None);
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Char('d') => {
+                if action_count > 0 && edit.list_index < action_count {
+                    self.delete_action_at_list_index(agenda)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn handle_action_picker_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+        edit: &ActionEditState,
+    ) -> TuiResult<bool> {
+        let filtered_indices = self.action_edit_filtered_category_indices();
+        let current_visible_pos = filtered_indices
+            .iter()
+            .position(|&idx| idx == edit.picker_index)
+            .unwrap_or(0);
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(&actual_idx) = filtered_indices
+                    .get((current_visible_pos + 1).min(filtered_indices.len().saturating_sub(1)))
+                {
+                    if let Some(e) = self.category_manager_action_edit_mut() {
+                        e.picker_index = actual_idx;
+                    }
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(&actual_idx) =
+                    filtered_indices.get(current_visible_pos.saturating_sub(1))
+                {
+                    if let Some(e) = self.category_manager_action_edit_mut() {
+                        e.picker_index = actual_idx;
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(&actual_idx) = filtered_indices.get(current_visible_pos) {
+                    if let Some(row) = self.category_rows.get(actual_idx).cloned() {
+                        self.toggle_action_picker_target(&row);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                self.save_action_from_picker(agenda)?;
+            }
+            KeyCode::Char('1') => self.set_action_picker_kind(ActionEditKind::Assign),
+            KeyCode::Char('2') => self.set_action_picker_kind(ActionEditKind::Remove),
+            KeyCode::Esc => {
+                self.cancel_action_picker();
             }
             _ => {}
         }

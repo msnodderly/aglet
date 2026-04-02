@@ -5953,6 +5953,204 @@ impl App {
         }
     }
 
+    fn render_action_edit_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(edit) = self.category_manager_action_edit() else {
+            return;
+        };
+        let category_name = self
+            .selected_category_row()
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let category = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id));
+        let selected_category_id = category.map(|c| c.id);
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let category_names = category_name_map(&self.categories);
+
+        if edit.picker_open {
+            let title = if edit.action_index.is_some() {
+                format!(" Edit Action: {} ", category_name)
+            } else {
+                format!(" New Action: {} ", category_name)
+            };
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(8),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            let action_name = edit.draft_kind.label();
+            let summary_text = if edit.draft_targets.is_empty() {
+                format!("{action_name} (no targets selected yet)")
+            } else {
+                format!(
+                    "{action_name} {}",
+                    format_action_targets(&edit.draft_targets, &category_names)
+                )
+            };
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    summary_text,
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let filtered_indices: Vec<usize> = self
+                .category_rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| !row.is_reserved)
+                .map(|(i, _)| i)
+                .collect();
+            let selected_row = filtered_indices
+                .iter()
+                .position(|&idx| idx == edit.picker_index)
+                .unwrap_or(0);
+            let items: Vec<ListItem<'_>> = filtered_indices
+                .iter()
+                .filter_map(|idx| self.category_rows.get(*idx))
+                .map(|row| {
+                    let is_self = Some(row.id) == selected_category_id;
+                    let is_selected = edit.draft_targets.contains(&row.id);
+                    let (prefix, color) = if is_self {
+                        ("[!] ", MUTED_TEXT_COLOR)
+                    } else if is_selected {
+                        (
+                            "[x] ",
+                            match edit.draft_kind {
+                                ActionEditKind::Assign => Color::Green,
+                                ActionEditKind::Remove => Color::Red,
+                            },
+                        )
+                    } else {
+                        ("[ ] ", Color::White)
+                    };
+                    let label = format!(
+                        "{}{}{}{}",
+                        "  ".repeat(row.depth),
+                        prefix,
+                        row.name,
+                        if is_self { " (self)" } else { "" }
+                    );
+                    ListItem::new(Line::from(Span::styled(label, Style::default().fg(color))))
+                })
+                .collect();
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "Space:toggle target  1:Assign  2:Remove  Enter:save  Esc:cancel",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        } else {
+            let actions: Vec<&Action> = category
+                .map(|cat| cat.actions.iter().collect())
+                .unwrap_or_default();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(5),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    "Actions fire when this category is assigned:",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(format!(" Actions: {} ", category_name))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let items: Vec<ListItem<'_>> = if actions.is_empty() {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "(no actions — press 'a' to add)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                actions
+                    .iter()
+                    .enumerate()
+                    .map(|(display_idx, action)| {
+                        let label = format!(
+                            "{}. {}",
+                            display_idx + 1,
+                            format_category_action(action, &category_names)
+                        );
+                        ListItem::new(Line::from(label))
+                    })
+                    .collect()
+            };
+            let selected_row = if actions.is_empty() {
+                0
+            } else {
+                edit.list_index.min(actions.len().saturating_sub(1))
+            };
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "a:add  Enter:edit  x:delete  Esc:close",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        }
+    }
+
     pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
 
@@ -6100,25 +6298,28 @@ impl App {
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
                     label = with_note_marker(label, row.has_note);
-                    let mut badges = Vec::new();
+                    let mut badges: Vec<String> = Vec::new();
                     if row.is_reserved {
-                        badges.push("reserved");
+                        badges.push("reserved".to_string());
                     }
                     if row.value_kind == CategoryValueKind::Numeric {
-                        badges.push("numeric");
+                        badges.push("numeric".to_string());
                     } else {
                         if row.is_exclusive {
-                            badges.push("exclusive");
+                            badges.push("exclusive".to_string());
                         }
                         if self.workflow_config.ready_category_id == Some(row.id) {
-                            badges.push("ready-queue");
+                            badges.push("ready-queue".to_string());
                         }
                         if self.workflow_config.claim_category_id == Some(row.id) {
-                            badges.push("claim-target");
+                            badges.push("claim-target".to_string());
                         }
                     }
-                    if row.has_conditions {
-                        badges.push("rules");
+                    if row.condition_count > 0 {
+                        badges.push(format!("C{}", row.condition_count));
+                    }
+                    if row.action_count > 0 {
+                        badges.push(format!("A{}", row.action_count));
                     }
                     if !badges.is_empty() {
                         label.push(' ');
@@ -6286,14 +6487,16 @@ impl App {
                             Constraint::Length(flags_height),
                             Constraint::Length(6),
                             Constraint::Length(4),
+                            Constraint::Length(4),
                             Constraint::Min(5),
                             Constraint::Length(2),
                         ])
                         .split(details_inner)
                 };
                 let conditions_chunk_index: usize = 3;
-                let note_chunk_index = if is_numeric_category { 2 } else { 4 };
-                let hint_chunk_index = if is_numeric_category { 3 } else { 5 };
+                let actions_chunk_index: usize = 4;
+                let note_chunk_index = if is_numeric_category { 2 } else { 5 };
+                let hint_chunk_index = if is_numeric_category { 3 } else { 6 };
 
                 let assigned_item_count = self
                     .category_assignment_counts
@@ -6531,6 +6734,7 @@ impl App {
                         CategoryManagerDetailsFocus::Note
                             | CategoryManagerDetailsFocus::AlsoMatch
                             | CategoryManagerDetailsFocus::Conditions
+                            | CategoryManagerDetailsFocus::Actions
                     );
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
@@ -6695,6 +6899,55 @@ impl App {
                     );
                 }
 
+                if !is_numeric_category {
+                    let actions_focused = !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::Actions;
+                    let actions_summary = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .map(|cat| {
+                            if cat.actions.is_empty() {
+                                "  (none — Enter to add)".to_string()
+                            } else {
+                                let category_names = category_name_map(&self.categories);
+                                cat.actions
+                                    .iter()
+                                    .map(|action| {
+                                        format!("  {}", format_category_action(action, &category_names))
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            }
+                        })
+                        .unwrap_or_else(|| "  (none — Enter to add)".to_string());
+                    frame.render_widget(
+                        Paragraph::new(actions_summary)
+                            .style(if is_reserved_category {
+                                Style::default()
+                                    .fg(MUTED_TEXT_COLOR)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            })
+                            .block(
+                                Block::default()
+                                    .title(if actions_focused {
+                                        "> Actions (Enter to edit)".to_string()
+                                    } else {
+                                        "Actions (Enter to edit)".to_string()
+                                    })
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(if actions_focused {
+                                        CATEGORY_MANAGER_EDIT_FOCUS
+                                    } else {
+                                        pane_idle
+                                    })),
+                            ),
+                        details_chunks[actions_chunk_index],
+                    );
+                }
+
                 let note_block_focus =
                     !is_reserved_category && details_focus == CategoryManagerDetailsFocus::Note;
                 let note_title = if is_reserved_category {
@@ -6824,6 +7077,9 @@ impl App {
                         }
                         CategoryManagerDetailsFocus::Conditions => {
                             "Profile conditions auto-assign items  Enter: details"
+                        }
+                        CategoryManagerDetailsFocus::Actions => {
+                            "Actions fire on assignment  Enter: details"
                         }
                         CategoryManagerDetailsFocus::Note => {
                             "j/k: focus field  Enter/Space: toggle/edit"
@@ -6962,6 +7218,10 @@ impl App {
 
         if self.category_manager_condition_edit().is_some() {
             self.render_condition_edit_overlay(frame, area);
+        }
+
+        if self.category_manager_action_edit().is_some() {
+            self.render_action_edit_overlay(frame, area);
         }
 
         if self.settings.classification_mode_picker_open {

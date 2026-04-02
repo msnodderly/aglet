@@ -133,6 +133,18 @@ Practical implications:
 - If a category still appears assigned after disabling `Auto-match`, inspect
   `sticky`/provenance before assuming the new dynamic behavior is broken.
 
+## Some Older Proposal Docs Still Describe Pre-Live Rule Semantics (Surprising)
+
+Some planning/proposal docs still describe an older simplification where "all
+assignments are sticky" and condition-derived assignments never auto-break.
+
+Practical implications:
+- Treat the shipped engine/tests as source of truth: new implicit/profile
+  assignments are live and can auto-break; action/manual/accepted assignments
+  remain sticky.
+- If a proposal doc disagrees with current behavior, update the doc before
+  using it as implementation guidance.
+
 ## `Agenda::unassign_item_manual` Reprocesses After Removal (Updated)
 
 `Agenda::unassign_item_manual(...)` now mirrors other manual assignment flows:
@@ -144,6 +156,23 @@ Practical implications:
   manual unassign, including from the TUI `a` item-assign picker.
 - Older tests or callers that manually invoked reprocessing after
   `unassign_item_manual(...)` may now be doing redundant work.
+
+## Adding A Category Action Does Not Retroactively Fire It (Surprising)
+
+Updating a category to add or edit an `Action::Assign` / `Action::Remove`
+definition reprocesses items for category-change bookkeeping, but it does **not**
+retroactively execute that action for items already assigned to the owning
+category.
+
+Practical implications:
+- Treat category actions as event-driven "on assignment" behavior, not as
+  destination-style live conditions.
+- If you add an action to `Escalated`, existing items already in `Escalated`
+  will not immediately gain/remove the target categories just because the
+  action was added.
+- Do not write tests that assume `agenda.update_category(...)` or action-authoring
+  commands will backfill action effects across historical assignments unless we
+  intentionally change that semantic later.
 
 ## CLI And TUI Search Semantics Are Centralized In `agenda-core` (Updated)
 

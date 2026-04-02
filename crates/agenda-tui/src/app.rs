@@ -1621,6 +1621,7 @@ impl App {
             selected_category_id,
             inline_action: None,
             condition_edit: None,
+            action_edit: None,
         });
         self.rebuild_category_manager_visible_rows();
     }
@@ -1928,6 +1929,18 @@ impl App {
         self.category_manager
             .as_mut()
             .and_then(|state| state.condition_edit.as_mut())
+    }
+
+    pub(crate) fn category_manager_action_edit(&self) -> Option<&ActionEditState> {
+        self.category_manager
+            .as_ref()
+            .and_then(|state| state.action_edit.as_ref())
+    }
+
+    pub(crate) fn category_manager_action_edit_mut(&mut self) -> Option<&mut ActionEditState> {
+        self.category_manager
+            .as_mut()
+            .and_then(|state| state.action_edit.as_mut())
     }
 
     pub(crate) fn selected_category_numeric_format(&self) -> Option<NumericFormat> {
