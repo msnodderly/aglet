@@ -79,52 +79,6 @@ pub(super) fn should_render_unmatched_lane(unmatched_items: &[Item]) -> bool {
     !unmatched_items.is_empty()
 }
 
-pub(super) fn item_text_matches(
-    item: &Item,
-    needle_lower_ascii: &str,
-    category_names_lower_ascii: &HashMap<CategoryId, String>,
-) -> bool {
-    if item.text.to_ascii_lowercase().contains(needle_lower_ascii) {
-        return true;
-    }
-
-    if is_uuid_search_candidate(needle_lower_ascii) {
-        let item_id = item.id.to_string();
-        if item_id.contains(needle_lower_ascii) {
-            return true;
-        }
-
-        let compact_search = needle_lower_ascii.replace('-', "");
-        if !compact_search.is_empty() && item.id.as_simple().to_string().contains(&compact_search) {
-            return true;
-        }
-    }
-
-    if item
-        .note
-        .as_ref()
-        .map(|note| note.to_ascii_lowercase().contains(needle_lower_ascii))
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    item.assignments.keys().any(|category_id| {
-        category_names_lower_ascii
-            .get(category_id)
-            .map(|name| name.contains(needle_lower_ascii))
-            .unwrap_or(false)
-    })
-}
-
-fn is_uuid_search_candidate(search_term: &str) -> bool {
-    let compact_len = search_term.chars().filter(|ch| *ch != '-').count();
-    compact_len >= 3
-        && search_term
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() || ch == '-')
-}
-
 pub(super) fn candidate_assignment_label(
     assignment: &CandidateAssignment,
     category_names: &HashMap<CategoryId, String>,

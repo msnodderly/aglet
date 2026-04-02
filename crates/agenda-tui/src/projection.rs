@@ -1,5 +1,6 @@
 use crate::*;
 
+use agenda_core::query::matches_text_search;
 use agenda_core::store::DEFAULT_VIEW_NAME;
 use agenda_core::workflow::{build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME};
 
@@ -118,7 +119,7 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
         if let Some(needle) = filter {
             let needle = needle.to_ascii_lowercase();
             slot.items
-                .retain(|item| item_text_matches(item, &needle, &category_names_lower_ascii));
+                .retain(|item| matches_text_search(item, &needle, Some(&category_names_lower_ascii)));
         }
 
         let mut sort_keys = app.slot_sort_keys[slot_index].clone();
