@@ -1235,6 +1235,43 @@ impl<'a> Agenda<'a> {
         }
     }
 
+    fn has_blocking_exclusive_sibling_assignment(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let category = self.store.get_category(category_id)?;
+        let Some(parent_id) = category.parent else {
+            return Ok(false);
+        };
+        let parent = self.store.get_category(parent_id)?;
+        if !parent.is_exclusive {
+            return Ok(false);
+        }
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        let current_index = parent
+            .children
+            .iter()
+            .position(|child_id| *child_id == category_id)
+            .unwrap_or(parent.children.len());
+        Ok(parent
+            .children
+            .into_iter()
+            .enumerate()
+            .any(|(sibling_index, sibling_id)| {
+                if sibling_id == category_id {
+                    return false;
+                }
+                let Some(assignment) = assignments.get(&sibling_id) else {
+                    return false;
+                };
+                matches!(
+                    assignment.source,
+                    AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
+                ) || sibling_index < current_index
+            }))
+    }
+
     fn has_any_exclusive_sibling_assigned(
         &self,
         item_id: ItemId,
@@ -1780,14 +1817,14 @@ impl<'a> Agenda<'a> {
         source: AssignmentSource,
         origin: Option<String>,
         explanation: Option<AssignmentExplanation>,
-        allow_manual_exclusive_override: bool,
+        allow_exclusive_override: bool,
     ) -> Result<bool> {
         let assignments = self.store.get_assignments_for_item(item_id)?;
         if assignments.contains_key(&category_id) {
             return Ok(false);
         }
-        if !allow_manual_exclusive_override
-            && self.has_manual_exclusive_sibling(item_id, category_id)?
+        if !allow_exclusive_override
+            && self.has_blocking_exclusive_sibling_assignment(item_id, category_id)?
         {
             return Ok(false);
         }
@@ -1855,7 +1892,7 @@ impl<'a> Agenda<'a> {
                                 trigger_category_name: category.name.clone(),
                                 kind: AssignmentActionKind::Assign,
                             }),
-                            true,
+                            false,
                         )? {
                             result.new_assignments.insert(*target_id);
                             result.assignment_events.push(AssignmentEvent {
@@ -1898,29 +1935,6 @@ impl<'a> Agenda<'a> {
         }
 
         Ok(result)
-    }
-
-    fn has_manual_exclusive_sibling(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-    ) -> Result<bool> {
-        let category = self.store.get_category(category_id)?;
-        let Some(parent_id) = category.parent else {
-            return Ok(false);
-        };
-        let parent = self.store.get_category(parent_id)?;
-        if !parent.is_exclusive {
-            return Ok(false);
-        }
-        let assignments = self.store.get_assignments_for_item(item_id)?;
-        Ok(parent.children.into_iter().any(|sibling_id| {
-            sibling_id != category_id
-                && assignments.get(&sibling_id).is_some_and(|assignment| {
-                    assignment.source == AssignmentSource::Manual
-                        || assignment.source == AssignmentSource::SuggestionAccepted
-                })
-        }))
     }
 
     fn assign_manual_categories(
@@ -2885,6 +2899,118 @@ mod tests {
             crate::classification::CandidateAssignment::Category(category_id)
                 if category_id == travel.id
         ));
+    }
+
+    #[test]
+    fn create_item_prefers_earlier_child_when_multiple_exclusive_derived_rules_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let bug = category("Bug", true);
+        store.create_category(&bug).unwrap();
+
+        let mut tui = category("TUI", true);
+        store.create_category(&tui).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        store.create_category(&priority).unwrap();
+
+        let mut critical = child_category("Critical", priority.id, false);
+        let mut critical_criteria = Query::default();
+        critical_criteria.set_criterion(CriterionMode::And, bug.id);
+        critical_criteria.set_criterion(CriterionMode::And, tui.id);
+        critical.conditions.push(Condition::Profile {
+            criteria: Box::new(critical_criteria),
+        });
+        store.create_category(&critical).unwrap();
+
+        let mut high = child_category("High", priority.id, false);
+        let mut high_criteria = Query::default();
+        high_criteria.set_criterion(CriterionMode::And, tui.id);
+        high.conditions.push(Condition::Profile {
+            criteria: Box::new(high_criteria),
+        });
+        store.create_category(&high).unwrap();
+
+        let mut low = child_category("Low", priority.id, false);
+        let mut low_criteria = Query::default();
+        low_criteria.set_criterion(CriterionMode::And, tui.id);
+        low.conditions.push(Condition::Profile {
+            criteria: Box::new(low_criteria),
+        });
+        store.create_category(&low).unwrap();
+
+        tui.actions.push(Action::Assign {
+            targets: HashSet::from([high.id]),
+        });
+        store.update_category(&tui).unwrap();
+
+        let item = Item::new("Bug in TUI".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&bug.id));
+        assert!(assignments.contains_key(&tui.id));
+        assert!(
+            assignments.contains_key(&critical.id),
+            "earliest matching child should win the exclusive family"
+        );
+        assert!(
+            !assignments.contains_key(&high.id),
+            "later derived sibling should be suppressed"
+        );
+        assert!(
+            !assignments.contains_key(&low.id),
+            "later derived sibling should be suppressed"
+        );
+    }
+
+    #[test]
+    fn update_item_keeps_manual_exclusive_choice_over_later_auto_classified_action() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut tui = category("TUI", true);
+        store.create_category(&tui).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        store.create_category(&priority).unwrap();
+
+        let high = child_category("High", priority.id, false);
+        let low = child_category("Low", priority.id, false);
+        store.create_category(&high).unwrap();
+        store.create_category(&low).unwrap();
+
+        tui.actions.push(Action::Assign {
+            targets: HashSet::from([high.id]),
+        });
+        store.update_category(&tui).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, low.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "TUI task".to_string();
+        updated.modified_at = Timestamp::now();
+        agenda.update_item(&updated).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&tui.id));
+        assert!(
+            assignments.contains_key(&low.id),
+            "manual exclusive choice should survive later derived action assignments"
+        );
+        assert!(
+            !assignments.contains_key(&high.id),
+            "derived action should not replace the existing manual family choice"
+        );
     }
 
     #[test]
