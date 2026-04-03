@@ -302,7 +302,7 @@ pub struct OpenAiProviderSettings {
 impl Default for OpenAiProviderSettings {
     fn default() -> Self {
         Self {
-            model: "gpt-4.1-nano".to_string(),
+            model: "gpt-5.4-nano".to_string(),
             timeout_secs: 60,
         }
     }
@@ -646,6 +646,7 @@ impl OpenRouterTransport for ReqwestOpenRouterTransport {
 #[derive(Debug, Deserialize)]
 struct OpenAiChatCompletionResponse {
     choices: Vec<OpenAiChatChoice>,
+    usage: Option<OpenAiUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -658,6 +659,35 @@ struct OpenAiChatMessage {
     content: String,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct OpenAiUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+    #[serde(default)]
+    pub completion_tokens_details: Option<OpenAiCompletionTokensDetails>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct OpenAiCompletionTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiCompletion {
+    pub content: String,
+    pub usage: Option<OpenAiUsage>,
+}
+
 pub trait OpenAiTransport: Send + Sync {
     fn complete(
         &self,
@@ -665,7 +695,7 @@ pub trait OpenAiTransport: Send + Sync {
         api_key: &str,
         system_prompt: &str,
         user_prompt: &str,
-    ) -> Result<Option<String>>;
+    ) -> Result<Option<OpenAiCompletion>>;
 }
 
 #[derive(Debug, Default)]
@@ -680,7 +710,7 @@ impl OpenAiTransport for ReqwestOpenAiTransport {
         api_key: &str,
         system_prompt: &str,
         user_prompt: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<OpenAiCompletion>> {
         let client = Client::builder()
             .timeout(Duration::from_secs(settings.timeout_secs))
             .build()
@@ -713,12 +743,15 @@ impl OpenAiTransport for ReqwestOpenAiTransport {
             response.json().map_err(|err| AgendaError::StorageError {
                 source: Box::new(err),
             })?;
-        Ok(parsed
-            .choices
+        let OpenAiChatCompletionResponse { choices, usage } = parsed;
+        Ok(choices
             .into_iter()
             .next()
-            .map(|choice| choice.message.content.trim().to_string())
-            .filter(|content| !content.is_empty()))
+            .map(|choice| OpenAiCompletion {
+                content: choice.message.content.trim().to_string(),
+                usage: usage.clone(),
+            })
+            .filter(|completion| !completion.content.is_empty()))
     }
 }
 
@@ -1054,12 +1087,12 @@ impl ClassificationProvider for OpenAiProvider<'_> {
         let system_prompt = SEMANTIC_SYSTEM_PROMPT;
         let user_prompt = build_semantic_user_prompt(request);
         dbg(&format!("user_prompt:\n{user_prompt}"));
-        let content =
+        let completion =
             match self
                 .transport
                 .complete(self.settings, &api_key, system_prompt, &user_prompt)
             {
-                Ok(content) => content,
+                Ok(completion) => completion,
                 Err(err) => {
                     let err_str = format!("{err}");
                     dbg(&format!("transport error: {err_str}"));
@@ -1079,7 +1112,7 @@ impl ClassificationProvider for OpenAiProvider<'_> {
                     });
                 }
             };
-        let Some(content) = content else {
+        let Some(completion) = completion else {
             dbg("empty response from transport");
             return Ok(ProviderClassificationResult {
                 candidates: Vec::new(),
@@ -1087,6 +1120,9 @@ impl ClassificationProvider for OpenAiProvider<'_> {
             });
         };
 
+        log_openai_completion_debug(&dbg, &completion);
+
+        let content = completion.content;
         dbg(&format!("openai response: {content}"));
 
         let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
@@ -1101,6 +1137,8 @@ impl ClassificationProvider for OpenAiProvider<'_> {
 
 const SEMANTIC_SYSTEM_PROMPT: &str = "Classify an item into categories. Return JSON: {\"suggestions\":[{\"category\":\"EXACT NAME\",\"confidence\":0.0-1.0,\"rationale\":\"brief\"}]}\nRules:\n- ONLY use names from the \"Allowed categories\" list. Copy the name exactly.\n- FORBIDDEN names are marked [group]. NEVER return a [group] name. Return one of its children instead.\n  Example: Do NOT return \"Priority\". Return \"High\" or \"Normal\" instead.\n  Example: Do NOT return \"Issue type\". Return \"Bug\" or \"Feature request\" instead.\n- Suggest 1-3 categories. Only include confident matches (>0.7).\n- ALWAYS try to assign a priority level if priority categories are available (e.g. High, Normal, Low). Every item has some priority.\n- If nothing fits, return {\"suggestions\":[]}.\n- Aliases (aka:) hint at scope but always return the exact category name.";
 
+const SEMANTIC_NOTE_CHAR_LIMIT: usize = 500;
+
 fn build_semantic_user_prompt(request: &ClassificationRequest) -> String {
     let name_map = &request.all_category_names;
 
@@ -1112,8 +1150,45 @@ fn build_semantic_user_prompt(request: &ClassificationRequest) -> String {
         .collect();
 
     let mut lines = Vec::new();
+    // Groups shown as context only; leaf categories are the allowed list.
+    let mut group_lines = Vec::new();
+    let mut leaf_lines = Vec::new();
+    for category in &request.semantic_candidate_categories {
+        if parent_ids.contains(&category.id) {
+            group_lines.push(format!("  {} [group]", category.name));
+            continue;
+        }
+        let parent = match category.parent_id {
+            Some(pid) => {
+                let pname = name_map.get(&pid).map(|s| s.as_str()).unwrap_or("?");
+                format!(" < {pname}")
+            }
+            None => String::new(),
+        };
+        let aliases = if category.also_match.is_empty() {
+            String::new()
+        } else {
+            format!(" (aka: {})", category.also_match.join(", "))
+        };
+        let note_suffix = category
+            .note
+            .as_deref()
+            .filter(|n| !n.trim().is_empty())
+            .map(|n| format!(" -- {n}"))
+            .unwrap_or_default();
+        leaf_lines.push(format!("  {}{parent}{aliases}{note_suffix}", category.name));
+    }
+    if !group_lines.is_empty() {
+        lines.push("FORBIDDEN groups (do NOT return these names):".to_string());
+        lines.extend(group_lines);
+    }
+    lines.push("Allowed categories (ONLY return names from this list):".to_string());
+    lines.extend(leaf_lines);
+
+    lines.push(String::new());
+    lines.push("Item details:".to_string());
     lines.push(format!("Item: {}", request.text));
-    if let Some(note) = request.note.as_deref().filter(|n| !n.trim().is_empty()) {
+    if let Some(note) = request.note.as_deref().and_then(truncate_semantic_note) {
         lines.push(format!("Note: {note}"));
     }
     if let Some(when) = request.when_date {
@@ -1149,42 +1224,58 @@ fn build_semantic_user_prompt(request: &ClassificationRequest) -> String {
         nv.sort();
         lines.push(format!("Numeric: {}", nv.join(", ")));
     }
-
-    // Groups shown as context only; leaf categories are the allowed list.
-    let mut group_lines = Vec::new();
-    let mut leaf_lines = Vec::new();
-    for category in &request.semantic_candidate_categories {
-        if parent_ids.contains(&category.id) {
-            group_lines.push(format!("  {} [group]", category.name));
-            continue;
-        }
-        let parent = match category.parent_id {
-            Some(pid) => {
-                let pname = name_map.get(&pid).map(|s| s.as_str()).unwrap_or("?");
-                format!(" < {pname}")
-            }
-            None => String::new(),
-        };
-        let aliases = if category.also_match.is_empty() {
-            String::new()
-        } else {
-            format!(" (aka: {})", category.also_match.join(", "))
-        };
-        let note_suffix = category
-            .note
-            .as_deref()
-            .filter(|n| !n.trim().is_empty())
-            .map(|n| format!(" -- {n}"))
-            .unwrap_or_default();
-        leaf_lines.push(format!("  {}{parent}{aliases}{note_suffix}", category.name));
-    }
-    if !group_lines.is_empty() {
-        lines.push("FORBIDDEN groups (do NOT return these names):".to_string());
-        lines.extend(group_lines);
-    }
-    lines.push("Allowed categories (ONLY return names from this list):".to_string());
-    lines.extend(leaf_lines);
     lines.join("\n")
+}
+
+fn truncate_semantic_note(note: &str) -> Option<String> {
+    let trimmed = note.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut chars = trimmed.chars();
+    let within_limit: String = chars.by_ref().take(SEMANTIC_NOTE_CHAR_LIMIT).collect();
+    if chars.next().is_none() {
+        return Some(within_limit);
+    }
+
+    const TRUNCATED_SUFFIX: &str = " [truncated]";
+    let prefix_len = SEMANTIC_NOTE_CHAR_LIMIT.saturating_sub(TRUNCATED_SUFFIX.chars().count());
+    let mut prefix = trimmed.chars().take(prefix_len).collect::<String>();
+    while prefix.chars().last().is_some_and(char::is_whitespace) {
+        prefix.pop();
+    }
+    Some(format!("{prefix}{TRUNCATED_SUFFIX}"))
+}
+
+fn format_openai_usage_summary(usage: &OpenAiUsage) -> String {
+    let cached_tokens = usage
+        .prompt_tokens_details
+        .as_ref()
+        .and_then(|details| details.cached_tokens)
+        .unwrap_or(0);
+    let reasoning_tokens = usage
+        .completion_tokens_details
+        .as_ref()
+        .and_then(|details| details.reasoning_tokens)
+        .unwrap_or(0);
+    format!(
+        "prompt_tokens={} cached_tokens={} completion_tokens={} reasoning_tokens={} total_tokens={}",
+        usage.prompt_tokens,
+        cached_tokens,
+        usage.completion_tokens,
+        reasoning_tokens,
+        usage.total_tokens
+    )
+}
+
+fn log_openai_completion_debug(mut dbg: impl FnMut(&str), completion: &OpenAiCompletion) {
+    if let Some(usage) = completion.usage.as_ref() {
+        dbg(&format!(
+            "openai usage: {}",
+            format_openai_usage_summary(usage)
+        ));
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1660,6 +1751,112 @@ mod tests {
         let prompt = build_semantic_user_prompt(&request);
 
         assert!(prompt.contains("Already assigned: High"));
+    }
+
+    #[test]
+    fn openai_provider_defaults_to_gpt_5_4_nano() {
+        let settings = OpenAiProviderSettings::default();
+        assert_eq!(settings.model, "gpt-5.4-nano");
+    }
+
+    #[test]
+    fn semantic_prompt_puts_category_catalog_before_item_details_and_truncates_note() {
+        let parent = CategoryDescriptor {
+            id: CategoryId::new_v4(),
+            name: "Priority".to_string(),
+            match_category_name: true,
+            also_match: Vec::new(),
+            parent_id: None,
+            value_kind: CategoryValueKind::Tag,
+            note: None,
+        };
+        let child = CategoryDescriptor {
+            id: CategoryId::new_v4(),
+            name: "High".to_string(),
+            match_category_name: true,
+            also_match: vec!["urgent".to_string()],
+            parent_id: Some(parent.id),
+            value_kind: CategoryValueKind::Tag,
+            note: Some("Use this for work that is important but not an outage.".to_string()),
+        };
+        let long_note = "A".repeat(600);
+        let request = ClassificationRequest {
+            item_id: ItemId::new_v4(),
+            text: "Investigate caching".to_string(),
+            note: Some(long_note),
+            when_date: None,
+            manual_category_ids: Vec::new(),
+            current_category_ids: vec![child.id],
+            visible_view_name: None,
+            visible_section_title: None,
+            numeric_values: Vec::new(),
+            literal_candidate_categories: Vec::new(),
+            semantic_candidate_categories: vec![parent.clone(), child.clone()],
+            all_category_names: HashMap::from([
+                (parent.id, parent.name.clone()),
+                (child.id, child.name.clone()),
+            ]),
+        };
+
+        let prompt = build_semantic_user_prompt(&request);
+        let allowed_idx = prompt
+            .find("Allowed categories (ONLY return names from this list):")
+            .expect("allowed categories");
+        let item_idx = prompt.find("Item details:").expect("item details");
+        assert!(allowed_idx < item_idx);
+
+        let note_line = prompt
+            .lines()
+            .find(|line| line.starts_with("Note: "))
+            .expect("trimmed note line");
+        assert!(note_line.ends_with("[truncated]"));
+        assert!(note_line.chars().count() <= "Note: ".chars().count() + SEMANTIC_NOTE_CHAR_LIMIT);
+    }
+
+    #[test]
+    fn format_openai_usage_summary_includes_cached_and_reasoning_tokens() {
+        let usage = OpenAiUsage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+            prompt_tokens_details: Some(OpenAiPromptTokensDetails {
+                cached_tokens: Some(900),
+            }),
+            completion_tokens_details: Some(OpenAiCompletionTokensDetails {
+                reasoning_tokens: Some(12),
+            }),
+        };
+
+        assert_eq!(
+            format_openai_usage_summary(&usage),
+            "prompt_tokens=1200 cached_tokens=900 completion_tokens=80 reasoning_tokens=12 total_tokens=1280"
+        );
+    }
+
+    #[test]
+    fn log_openai_completion_debug_emits_usage_summary() {
+        let completion = OpenAiCompletion {
+            content: "{\"suggestions\":[]}".to_string(),
+            usage: Some(OpenAiUsage {
+                prompt_tokens: 200,
+                completion_tokens: 20,
+                total_tokens: 220,
+                prompt_tokens_details: Some(OpenAiPromptTokensDetails {
+                    cached_tokens: Some(150),
+                }),
+                completion_tokens_details: Some(OpenAiCompletionTokensDetails {
+                    reasoning_tokens: Some(4),
+                }),
+            }),
+        };
+        let mut messages = Vec::new();
+        log_openai_completion_debug(|msg: &str| messages.push(msg.to_string()), &completion);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0],
+            "openai usage: prompt_tokens=200 cached_tokens=150 completion_tokens=20 reasoning_tokens=4 total_tokens=220"
+        );
     }
 
     #[test]
