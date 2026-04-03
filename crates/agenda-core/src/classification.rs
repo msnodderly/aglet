@@ -334,6 +334,7 @@ pub struct ClassificationRequest {
     pub note: Option<String>,
     pub when_date: Option<DateTime>,
     pub manual_category_ids: Vec<CategoryId>,
+    pub current_category_ids: Vec<CategoryId>,
     pub visible_view_name: Option<String>,
     pub visible_section_title: Option<String>,
     pub numeric_values: Vec<(CategoryId, Decimal)>,
@@ -1119,9 +1120,9 @@ fn build_semantic_user_prompt(request: &ClassificationRequest) -> String {
         lines.push(format!("When: {when}"));
     }
 
-    if !request.manual_category_ids.is_empty() {
-        let mut manual_names: Vec<String> = request
-            .manual_category_ids
+    if !request.current_category_ids.is_empty() {
+        let mut current_names: Vec<String> = request
+            .current_category_ids
             .iter()
             .map(|id| {
                 name_map
@@ -1130,8 +1131,8 @@ fn build_semantic_user_prompt(request: &ClassificationRequest) -> String {
                     .unwrap_or_else(|| id.to_string())
             })
             .collect();
-        manual_names.sort();
-        lines.push(format!("Already assigned: {}", manual_names.join(", ")));
+        current_names.sort();
+        lines.push(format!("Already assigned: {}", current_names.join(", ")));
     }
     if !request.numeric_values.is_empty() {
         let mut nv: Vec<String> = request
@@ -1330,6 +1331,7 @@ impl<'a> ClassificationService<'a> {
                 (assignment.source == AssignmentSource::Manual).then_some(*category_id)
             })
             .collect();
+        let current_category_ids = item.assignments.keys().copied().collect();
         let numeric_values = item
             .assignments
             .iter()
@@ -1380,6 +1382,7 @@ impl<'a> ClassificationService<'a> {
             note: item.note.clone(),
             when_date: item.when_date,
             manual_category_ids,
+            current_category_ids,
             visible_view_name: None,
             visible_section_title: None,
             numeric_values,
@@ -1536,6 +1539,7 @@ mod tests {
             note: None,
             when_date: None,
             manual_category_ids: Vec::new(),
+            current_category_ids: Vec::new(),
             visible_view_name: None,
             visible_section_title: None,
             numeric_values: Vec::new(),
@@ -1596,6 +1600,7 @@ mod tests {
             note: None,
             when_date: None,
             manual_category_ids: Vec::new(),
+            current_category_ids: Vec::new(),
             visible_view_name: None,
             visible_section_title: None,
             numeric_values: Vec::new(),
@@ -1627,6 +1632,37 @@ mod tests {
     }
 
     #[test]
+    fn semantic_prompt_uses_current_effective_assignments() {
+        let high = CategoryDescriptor {
+            id: CategoryId::new_v4(),
+            name: "High".to_string(),
+            match_category_name: true,
+            also_match: Vec::new(),
+            parent_id: None,
+            value_kind: CategoryValueKind::Tag,
+            note: None,
+        };
+        let request = ClassificationRequest {
+            item_id: ItemId::new_v4(),
+            text: "Refine TUI assignment UX".to_string(),
+            note: None,
+            when_date: None,
+            manual_category_ids: Vec::new(),
+            current_category_ids: vec![high.id],
+            visible_view_name: None,
+            visible_section_title: None,
+            numeric_values: Vec::new(),
+            literal_candidate_categories: Vec::new(),
+            semantic_candidate_categories: vec![high.clone()],
+            all_category_names: HashMap::from([(high.id, high.name.clone())]),
+        };
+
+        let prompt = build_semantic_user_prompt(&request);
+
+        assert!(prompt.contains("Already assigned: High"));
+    }
+
+    #[test]
     fn ollama_provider_returns_empty_for_malformed_json() {
         let request = ClassificationRequest {
             item_id: ItemId::new_v4(),
@@ -1634,6 +1670,7 @@ mod tests {
             note: None,
             when_date: None,
             manual_category_ids: Vec::new(),
+            current_category_ids: Vec::new(),
             visible_view_name: None,
             visible_section_title: None,
             numeric_values: Vec::new(),
@@ -1688,6 +1725,7 @@ mod tests {
             note: Some("Need a hotel near the conference".to_string()),
             when_date: None,
             manual_category_ids: Vec::new(),
+            current_category_ids: Vec::new(),
             visible_view_name: None,
             visible_section_title: None,
             numeric_values: Vec::new(),
@@ -1740,6 +1778,7 @@ mod tests {
             note: None,
             when_date: None,
             manual_category_ids: Vec::new(),
+            current_category_ids: Vec::new(),
             visible_view_name: None,
             visible_section_title: None,
             numeric_values: Vec::new(),

@@ -4,15 +4,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use super::{
     add_capture_status_message, board_column_widths, board_item_label, board_table_spacing_budget,
     bucket_target_set_mut, build_category_rows, category_name_map, compute_board_layout,
-    first_non_reserved_category_index, format_category_action, input_panel,
-    input_panel_popup_area, item_assignment_labels, list_scroll_for_selected_line, next_index,
-    next_index_clamped, should_render_unmatched_lane, text_buffer, truncate_board_cell,
-    when_bucket_options, AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget,
-    CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
-    CategoryDirectEditState, CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus,
-    CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext,
-    OllamaModelPickerState, SectionBorderMode, SlotSortDirection, SuggestionDecision,
-    ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
+    first_non_reserved_category_index, format_category_action, input_panel, input_panel_popup_area,
+    item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
+    should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
+    AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget, CategoryDirectEditAnchor,
+    CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
+    CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow,
+    ItemAssignPane, Mode, NameInputContext, OllamaModelPickerState, SectionBorderMode,
+    SlotSortDirection, SuggestionDecision, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
+    WorkflowRolePickerOrigin,
 };
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
@@ -42,10 +42,8 @@ fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> 
 fn format_category_action_sorts_targets_and_uses_shared_labels() {
     let alpha = Category::new("Alpha".to_string());
     let zed = Category::new("Zed".to_string());
-    let category_names = HashMap::from([
-        (zed.id, zed.name.clone()),
-        (alpha.id, alpha.name.clone()),
-    ]);
+    let category_names =
+        HashMap::from([(zed.id, zed.name.clone()), (alpha.id, alpha.name.clone())]);
     let action = Action::Assign {
         targets: HashSet::from([zed.id, alpha.id]),
     };
@@ -4327,6 +4325,7 @@ fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
         semantic_candidates_seen: 2,
         semantic_candidates_queued_review: 0,
         semantic_candidates_skipped_already_assigned: 2,
+        semantic_candidates_skipped_unavailable: 0,
         semantic_debug_messages: vec![
             "semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0".to_string(),
         ],
@@ -4340,6 +4339,30 @@ fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
                 false
             ))
         );
+}
+
+#[test]
+fn classification_feedback_reports_unavailable_semantic_candidates() {
+    let item_id = ItemId::new_v4();
+    let app = App::default();
+    let result = ProcessItemResult {
+        semantic_candidates_seen: 2,
+        semantic_candidates_queued_review: 0,
+        semantic_candidates_skipped_already_assigned: 1,
+        semantic_candidates_skipped_unavailable: 1,
+        semantic_debug_messages: vec![
+            "semantic[mistral]: raw=2 kept=2 dropped_unknown=0 dropped_duplicate=0".to_string(),
+        ],
+        ..ProcessItemResult::default()
+    };
+
+    assert_eq!(
+        app.classification_feedback_for_saved_item(item_id, &result),
+        Some((
+            "semantic ran; no new review suggestions (all already assigned or unavailable) | semantic[mistral]: raw=2 kept=2 dropped_unknown=0 dropped_duplicate=0".to_string(),
+            false
+        ))
+    );
 }
 
 #[test]
@@ -5591,6 +5614,54 @@ fn inspect_unassign_picker_jk_tracks_assignment_rows() {
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn inspect_unassign_explains_rule_locked_auto_match_assignment() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut tui = Category::new("TUI".to_string());
+    tui.enable_implicit_string = true;
+    store.create_category(&tui).expect("create TUI");
+
+    let item = Item::new("Fix TUI assignment UX".to_string());
+    agenda.create_item(&item).expect("create item");
+
+    let assigned = store.get_item(item.id).expect("reload assigned item");
+    assigned
+        .assignments
+        .get(&tui.id)
+        .expect("implicit-name assignment should assign TUI");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::InspectUnassign;
+    app.inspect_assignment_index = 0;
+
+    app.handle_inspect_unassign_key(KeyCode::Enter, &agenda)
+        .expect("inspect unassign enter should explain rule lock");
+
+    let after = store
+        .get_item(item.id)
+        .expect("reload after inspect attempt");
+    assert!(
+        after.assignments.contains_key(&tui.id),
+        "rule-derived assignment should remain after failed inspect unassign"
+    );
+    assert_eq!(app.mode, Mode::InspectUnassign);
+    assert!(
+        app.status.contains("Cannot remove TUI [auto-match]"),
+        "status should explain why the assignment is stuck: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("Matched category name \"TUI\""),
+        "status should include the rule explanation: {}",
+        app.status
+    );
 }
 
 #[test]
@@ -8749,6 +8820,66 @@ fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
     assert!(
         !after.assignments.contains_key(&critical.id),
         "live profile-derived assignment should auto-break after unassign via item picker"
+    );
+}
+
+#[test]
+fn item_assign_picker_shows_and_explains_rule_locked_auto_match_assignment() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut tui = Category::new("TUI".to_string());
+    tui.enable_implicit_string = true;
+    store.create_category(&tui).expect("create TUI");
+
+    let item = Item::new("Improve TUI action authoring".to_string());
+    agenda.create_item(&item).expect("create item");
+
+    let assigned = store.get_item(item.id).expect("reload assigned item");
+    assert!(
+        assigned.assignments.contains_key(&tui.id),
+        "implicit match should assign TUI before opening picker"
+    );
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+
+    app.handle_normal_key(KeyCode::Char('a'), &agenda)
+        .expect("open assign picker");
+    app.set_item_assign_category_selection_by_id(tui.id);
+
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("[x] TUI [auto-match]"),
+        "assign picker should show inline provenance for rule-derived rows: {rendered}"
+    );
+
+    app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+        .expect("space should report locked assignment instead of unassigning");
+
+    let after = store
+        .get_item(item.id)
+        .expect("reload after toggle attempt");
+    assert!(
+        after.assignments.contains_key(&tui.id),
+        "rule-derived assignment should remain after failed picker unassign"
+    );
+    assert_eq!(app.mode, Mode::ItemAssignPicker);
+    assert!(
+        app.status.contains("Cannot remove TUI [auto-match]"),
+        "status should explain why the assignment is stuck: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("Matched category name \"TUI\""),
+        "status should include the rule explanation: {}",
+        app.status
     );
 }
 

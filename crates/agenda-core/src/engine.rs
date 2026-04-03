@@ -29,6 +29,7 @@ pub struct ProcessItemResult {
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
     pub semantic_candidates_skipped_already_assigned: usize,
+    pub semantic_candidates_skipped_unavailable: usize,
     pub semantic_debug_messages: Vec<String>,
 }
 
@@ -206,7 +207,9 @@ fn process_item_inner(
         let changed = pass_result.changed;
 
         result.new_assignments.extend(pass_result.new_assignments);
-        result.assignment_events.extend(pass_result.assignment_events);
+        result
+            .assignment_events
+            .extend(pass_result.assignment_events);
         result
             .deferred_removals
             .extend(pass_result.deferred_removals);

@@ -137,6 +137,18 @@ The engine layer is complete:
   implementation will be synchronous (blocking on API call, result appears
   immediately). Async execution is a follow-on phase.
 
+**Implementation notes added in April 2026:**
+
+- Semantic review suggestions are filtered against the item's **effective**
+  current assignments, not only manual assignments. The prompt sees the full
+  currently assigned category set, and queueing skips suggestions that are
+  already satisfied, conflict with an assigned sibling under an exclusive
+  parent, or would not produce a stable post-reprocess change.
+- The TUI assignment/unassign flows now treat "can this change stick?" as a
+  previewed question. If removing a category would immediately be re-applied by
+  rules, the picker/inspect flow keeps the assignment in place and explains
+  why instead of pretending the unassign succeeded.
+
 ### What is missing (TUI surface area)
 
 - **No TUI to create/edit conditions or actions** — cannot visually define

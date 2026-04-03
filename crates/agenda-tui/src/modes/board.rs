@@ -4687,6 +4687,8 @@ impl App {
                 note_update_result.semantic_candidates_queued_review;
             process_result.semantic_candidates_skipped_already_assigned +=
                 note_update_result.semantic_candidates_skipped_already_assigned;
+            process_result.semantic_candidates_skipped_unavailable +=
+                note_update_result.semantic_candidates_skipped_unavailable;
             process_result
                 .semantic_debug_messages
                 .extend(note_update_result.semantic_debug_messages);
@@ -5335,6 +5337,33 @@ impl App {
         Ok(())
     }
 
+    fn item_assign_reapply_status(
+        &self,
+        agenda: &Agenda<'_>,
+        item_id: ItemId,
+        category_id: CategoryId,
+        category_name: &str,
+    ) -> TuiResult<Option<String>> {
+        let Some(item) = self.all_items.iter().find(|item| item.id == item_id) else {
+            return Ok(None);
+        };
+        let Some(assignment) = item.assignments.get(&category_id) else {
+            return Ok(None);
+        };
+        let hypothetical = agenda.preview_manual_category_toggle(item_id, category_id)?;
+        if !hypothetical.assignments.contains_key(&category_id) {
+            return Ok(None);
+        }
+
+        let summary = Self::assignment_status_summary(assignment);
+        let badge_suffix = Self::assignment_badge_from_assignment(assignment)
+            .map(|badge| format!(" [{badge}]"))
+            .unwrap_or_default();
+        Ok(Some(format!(
+            "Cannot remove {category_name}{badge_suffix}: it will be re-applied ({summary})"
+        )))
+    }
+
     pub(crate) fn handle_item_assign_category_key(
         &mut self,
         code: KeyCode,
@@ -5437,9 +5466,19 @@ impl App {
 
                     for action_item_id in &action_item_ids {
                         let result = if should_unassign {
-                            agenda
-                                .unassign_item_manual(*action_item_id, row.id)
-                                .map(|_| ())
+                            if let Some(reason) = self.item_assign_reapply_status(
+                                agenda,
+                                *action_item_id,
+                                row.id,
+                                &row.name,
+                            )? {
+                                Err(reason)
+                            } else {
+                                agenda
+                                    .unassign_item_manual(*action_item_id, row.id)
+                                    .map(|_| ())
+                                    .map_err(|err| err.to_string())
+                            }
                         } else {
                             agenda
                                 .assign_item_manual(
@@ -5448,13 +5487,14 @@ impl App {
                                     Some("manual:tui.assign".to_string()),
                                 )
                                 .map(|_| ())
+                                .map_err(|err| err.to_string())
                         };
                         match result {
                             Ok(()) => changed += 1,
                             Err(err) => {
                                 failed += 1;
                                 if first_error.is_none() {
-                                    first_error = Some(err.to_string());
+                                    first_error = Some(err);
                                 }
                             }
                         }
@@ -5489,6 +5529,12 @@ impl App {
                         summary
                     };
                 } else if self.selected_item_has_assignment(row.id) {
+                    if let Some(reason) =
+                        self.item_assign_reapply_status(agenda, item_id, row.id, &row.name)?
+                    {
+                        self.status = reason;
+                        return Ok(false);
+                    }
                     // Capture old assignment for undo
                     let old_assignment = self
                         .all_items
@@ -5861,6 +5907,16 @@ impl App {
                     self.status = "Unassign failed: no assignment selected".to_string();
                     return Ok(false);
                 };
+
+                if let Some(reason) = self.item_assign_reapply_status(
+                    agenda,
+                    item_id,
+                    row.category_id,
+                    &row.category_name,
+                )? {
+                    self.status = reason;
+                    return Ok(false);
+                }
 
                 agenda.unassign_item_manual(item_id, row.category_id)?;
                 self.refresh(agenda.store())?;
