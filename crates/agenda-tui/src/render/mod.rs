@@ -5191,11 +5191,20 @@ impl App {
                     } else {
                         "    "
                     };
+                    let assignment_badge =
+                        if total_count <= 1 && self.selected_item_has_assignment(row.id) {
+                            self.selected_item_assignment_badge(row.id)
+                                .map(|badge| format!(" [{badge}]"))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
                     let text = format!(
-                        "{preview_prefix}{checkbox} {}{}{}",
+                        "{preview_prefix}{checkbox} {}{}{}{}",
                         "  ".repeat(row.depth),
                         row.name,
-                        suffix
+                        suffix,
+                        assignment_badge
                     );
                     let style = if to_add {
                         Style::default().fg(Color::Green)
@@ -6914,7 +6923,10 @@ impl App {
                                 cat.actions
                                     .iter()
                                     .map(|action| {
-                                        format!("  {}", format_category_action(action, &category_names))
+                                        format!(
+                                            "  {}",
+                                            format_category_action(action, &category_names)
+                                        )
                                     })
                                     .collect::<Vec<_>>()
                                     .join("\n")

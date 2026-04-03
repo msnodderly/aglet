@@ -11,9 +11,9 @@ use agenda_core::classification::{
 };
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Action, BoardDisplayMode, Category, CategoryId, CategoryValueKind, Column, ColumnKind,
-    Condition, CriterionMode, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section,
-    SectionFlow, SummaryFn, View, WhenBucket,
+    Action, Assignment, AssignmentExplanation, BoardDisplayMode, Category, CategoryId,
+    CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
+    ItemLinksForItem, NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;

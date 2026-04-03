@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
+use agenda_core::classification::PROVIDER_ID_IMPLICIT_STRING;
 use agenda_core::workflow::{blocked_item_ids, READY_QUEUE_VIEW_NAME};
 
 pub(crate) fn parse_external_editor_command(editor: &str) -> Result<(String, Vec<String>), String> {
@@ -957,17 +958,24 @@ impl App {
 
         if result.semantic_candidates_seen > 0 {
             if result.semantic_candidates_skipped_already_assigned
+                + result.semantic_candidates_skipped_unavailable
                 == result.semantic_candidates_seen
             {
+                let reason = match (
+                    result.semantic_candidates_skipped_already_assigned > 0,
+                    result.semantic_candidates_skipped_unavailable > 0,
+                ) {
+                    (true, true) => "all already assigned or unavailable",
+                    (true, false) => "all already assigned",
+                    (false, true) => "all unavailable under current rules",
+                    (false, false) => "no reviewable candidates",
+                };
                 return Some((
                     match semantic_debug {
-                        Some(debug) => format!(
-                            "semantic ran; no new review suggestions (all already assigned) | {debug}"
-                        ),
-                        None => {
-                            "semantic ran; no new review suggestions (all already assigned)"
-                                .to_string()
+                        Some(debug) => {
+                            format!("semantic ran; no new review suggestions ({reason}) | {debug}")
                         }
+                        None => format!("semantic ran; no new review suggestions ({reason})"),
                     },
                     false,
                 ));
@@ -998,6 +1006,68 @@ impl App {
             .or_else(|| self.selected_item())
             .map(|item| item.assignments.contains_key(&category_id))
             .unwrap_or(false)
+    }
+
+    pub(crate) fn selected_item_assignment(&self, category_id: CategoryId) -> Option<&Assignment> {
+        self.item_assign_anchor_id()
+            .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
+            .or_else(|| self.selected_item())
+            .and_then(|item| item.assignments.get(&category_id))
+    }
+
+    fn summarize_implicit_string_rationale(rationale: &str) -> Option<String> {
+        rationale
+            .strip_prefix("matched category name '")
+            .and_then(|tail| tail.strip_suffix('\''))
+            .map(|term| format!("Matched category name \"{term}\""))
+            .or_else(|| {
+                rationale
+                    .strip_prefix("matched also-match term '")
+                    .and_then(|tail| tail.strip_suffix('\''))
+                    .map(|term| format!("Matched alias \"{term}\""))
+            })
+    }
+
+    pub(crate) fn assignment_badge_from_assignment(
+        assignment: &Assignment,
+    ) -> Option<&'static str> {
+        match assignment.explanation.as_ref() {
+            Some(AssignmentExplanation::ImplicitMatch { .. }) => Some("auto-match"),
+            Some(AssignmentExplanation::ProfileCondition { .. }) => Some("profile"),
+            Some(AssignmentExplanation::Action { .. }) => Some("action"),
+            Some(AssignmentExplanation::Subsumption { .. }) => Some("inherited"),
+            Some(AssignmentExplanation::SuggestionAccepted { .. }) => Some("suggested"),
+            Some(AssignmentExplanation::AutoClassified { provider_id, .. })
+                if provider_id == PROVIDER_ID_IMPLICIT_STRING =>
+            {
+                Some("auto-match")
+            }
+            Some(AssignmentExplanation::AutoClassified { .. }) => Some("auto"),
+            Some(AssignmentExplanation::Manual { .. }) | None => None,
+        }
+    }
+
+    pub(crate) fn assignment_status_summary(assignment: &Assignment) -> String {
+        match assignment.explanation.as_ref() {
+            Some(AssignmentExplanation::AutoClassified {
+                provider_id,
+                rationale: Some(rationale),
+                ..
+            }) if provider_id == PROVIDER_ID_IMPLICIT_STRING => {
+                Self::summarize_implicit_string_rationale(rationale)
+                    .unwrap_or_else(|| assignment.explanation.as_ref().unwrap().summary())
+            }
+            Some(explanation) => explanation.summary(),
+            None => format!("{:?}", assignment.source),
+        }
+    }
+
+    pub(crate) fn selected_item_assignment_badge(
+        &self,
+        category_id: CategoryId,
+    ) -> Option<&'static str> {
+        let assignment = self.selected_item_assignment(category_id)?;
+        Self::assignment_badge_from_assignment(assignment)
     }
 
     pub(crate) fn selected_item_has_actionable_assignment(&self) -> bool {

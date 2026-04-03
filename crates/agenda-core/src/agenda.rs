@@ -11,10 +11,10 @@ use crate::classification::{
     ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
     LiteralClassificationMode, OllamaProvider, OllamaTransport, OpenAiProvider, OpenAiTransport,
     OpenRouterProvider, OpenRouterTransport, ReqwestOllamaTransport, ReqwestOpenAiTransport,
-    ReqwestOpenRouterTransport, SemanticClassificationMode, SemanticProviderKind,
-    SuggestionStatus, WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH,
-    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI,
-    PROVIDER_ID_OPENROUTER, PROVIDER_ID_WHEN_PARSER,
+    ReqwestOpenRouterTransport, SemanticClassificationMode, SemanticProviderKind, SuggestionStatus,
+    WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH, PROVIDER_ID_IMPLICIT_STRING,
+    PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI, PROVIDER_ID_OPENROUTER,
+    PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
 use crate::engine::{
@@ -66,6 +66,12 @@ enum CandidateDisposition {
     Skip,
     AutoApply,
     QueueReview,
+}
+
+enum SemanticCandidateAvailability {
+    AlreadyAssigned,
+    Unavailable,
+    Available,
 }
 
 impl<'a> Agenda<'a> {
@@ -954,8 +960,10 @@ impl<'a> Agenda<'a> {
                     self.apply_auto_classification_candidate(item_id, candidate)?;
                 }
                 CandidateDisposition::QueueReview => {
-                    if self.candidate_assignment_already_present(item_id, candidate)? {
-                        continue;
+                    match self.semantic_candidate_availability(item_id, candidate)? {
+                        SemanticCandidateAvailability::AlreadyAssigned => continue,
+                        SemanticCandidateAvailability::Unavailable => continue,
+                        SemanticCandidateAvailability::Available => {}
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
                         candidate,
@@ -1135,11 +1143,20 @@ impl<'a> Agenda<'a> {
                     );
                 }
                 CandidateDisposition::QueueReview => {
-                    if self.candidate_assignment_already_present(item_id, &candidate)? {
-                        if is_semantic {
-                            result.semantic_candidates_skipped_already_assigned += 1;
+                    match self.semantic_candidate_availability(item_id, &candidate)? {
+                        SemanticCandidateAvailability::AlreadyAssigned => {
+                            if is_semantic {
+                                result.semantic_candidates_skipped_already_assigned += 1;
+                            }
+                            continue;
                         }
-                        continue;
+                        SemanticCandidateAvailability::Unavailable => {
+                            if is_semantic {
+                                result.semantic_candidates_skipped_unavailable += 1;
+                            }
+                            continue;
+                        }
+                        SemanticCandidateAvailability::Available => {}
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
                         &candidate,
@@ -1185,6 +1202,125 @@ impl<'a> Agenda<'a> {
                 .when_date
                 .is_some_and(|current| current == when_date)),
         }
+    }
+
+    fn semantic_candidate_availability(
+        &self,
+        item_id: ItemId,
+        candidate: &ClassificationCandidate,
+    ) -> Result<SemanticCandidateAvailability> {
+        match candidate.assignment {
+            crate::classification::CandidateAssignment::Category(category_id) => {
+                if self.candidate_assignment_already_present(item_id, candidate)? {
+                    return Ok(SemanticCandidateAvailability::AlreadyAssigned);
+                }
+                if self.has_any_exclusive_sibling_assigned(item_id, category_id)? {
+                    return Ok(SemanticCandidateAvailability::Unavailable);
+                }
+                if !self.preview_suggestion_assignment_would_change_effective_state(
+                    item_id,
+                    category_id,
+                )? {
+                    return Ok(SemanticCandidateAvailability::Unavailable);
+                }
+                Ok(SemanticCandidateAvailability::Available)
+            }
+            crate::classification::CandidateAssignment::When(_) => {
+                if self.candidate_assignment_already_present(item_id, candidate)? {
+                    Ok(SemanticCandidateAvailability::AlreadyAssigned)
+                } else {
+                    Ok(SemanticCandidateAvailability::Available)
+                }
+            }
+        }
+    }
+
+    fn has_any_exclusive_sibling_assigned(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let category = self.store.get_category(category_id)?;
+        let Some(parent_id) = category.parent else {
+            return Ok(false);
+        };
+        let parent = self.store.get_category(parent_id)?;
+        if !parent.is_exclusive {
+            return Ok(false);
+        }
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        Ok(parent
+            .children
+            .into_iter()
+            .any(|sibling_id| sibling_id != category_id && assignments.contains_key(&sibling_id)))
+    }
+
+    fn preview_suggestion_assignment_would_change_effective_state(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let source_item = self.store.get_item(item_id)?;
+        let current_assignments: HashSet<CategoryId> =
+            source_item.assignments.keys().copied().collect();
+        let preview_item = self.preview_suggestion_assignment(item_id, category_id)?;
+        let preview_assignments: HashSet<CategoryId> =
+            preview_item.assignments.keys().copied().collect();
+        Ok(preview_assignments != current_assignments)
+    }
+
+    fn preview_suggestion_assignment(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<Item> {
+        let source_item = self.store.get_item(item_id)?;
+        let preview_store = Store::open_memory()?;
+        preview_store.set_classification_config(&self.store.get_classification_config()?)?;
+
+        let source_categories = self.store.get_hierarchy()?;
+        let id_map = Self::copy_preview_categories(&preview_store, &source_categories)?;
+
+        let mut preview_item = source_item.clone();
+        preview_item.assignments.clear();
+        preview_store.create_item(&preview_item)?;
+        for (assigned_category_id, assignment) in &source_item.assignments {
+            if let Some(preview_category_id) = id_map.get(assigned_category_id) {
+                preview_store.assign_item(item_id, *preview_category_id, assignment)?;
+            }
+        }
+
+        let preview_agenda = Agenda::new(&preview_store, self.classifier);
+        let preview_category_id =
+            Self::mapped_category_id(category_id, &id_map, "preview suggestion category")?;
+        let preview_suggestion = ClassificationSuggestion {
+            id: Uuid::new_v4(),
+            item_id,
+            assignment: crate::classification::CandidateAssignment::Category(preview_category_id),
+            provider_id: "preview".to_string(),
+            model: None,
+            confidence: None,
+            rationale: None,
+            context_hash: "preview".to_string(),
+            item_revision_hash: "preview".to_string(),
+            status: SuggestionStatus::Pending,
+            created_at: Timestamp::now(),
+            decided_at: None,
+        };
+        preview_agenda.apply_suggestion_assignment(&preview_suggestion)?;
+
+        let mut preview_result = preview_store.get_item(item_id)?;
+        preview_result.assignments = preview_result
+            .assignments
+            .into_iter()
+            .map(|(preview_id, assignment)| {
+                let source_id =
+                    Self::source_category_id(preview_id, &id_map, "preview suggestion result")
+                        .expect("preview category mapping should round-trip");
+                (source_id, assignment)
+            })
+            .collect();
+        Ok(preview_result)
     }
 
     fn process_category_change(&self, category_id: CategoryId) -> Result<EvaluateAllItemsResult> {
@@ -1479,10 +1615,12 @@ impl<'a> Agenda<'a> {
                 LiteralClassificationMode::AutoApply => CandidateDisposition::AutoApply,
                 LiteralClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
             },
-            PROVIDER_ID_OLLAMA_OPENAI_COMPAT | PROVIDER_ID_OPENROUTER | PROVIDER_ID_OPENAI => match cfg.semantic_mode {
-                SemanticClassificationMode::Off => CandidateDisposition::Skip,
-                SemanticClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
-            },
+            PROVIDER_ID_OLLAMA_OPENAI_COMPAT | PROVIDER_ID_OPENROUTER | PROVIDER_ID_OPENAI => {
+                match cfg.semantic_mode {
+                    SemanticClassificationMode::Off => CandidateDisposition::Skip,
+                    SemanticClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
+                }
+            }
             _ => CandidateDisposition::Skip,
         }
     }
@@ -2177,6 +2315,8 @@ fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemRe
     target.semantic_candidates_queued_review += incoming.semantic_candidates_queued_review;
     target.semantic_candidates_skipped_already_assigned +=
         incoming.semantic_candidates_skipped_already_assigned;
+    target.semantic_candidates_skipped_unavailable +=
+        incoming.semantic_candidates_skipped_unavailable;
     target
         .semantic_debug_messages
         .extend(incoming.semantic_debug_messages);
@@ -2560,6 +2700,61 @@ mod tests {
         assert!(
             pending.is_empty(),
             "should not queue semantic duplicate for already-assigned category"
+        );
+    }
+
+    #[test]
+    fn semantic_review_skips_exclusive_sibling_when_other_child_already_assigned() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Normal","confidence":0.95,"rationale":"default priority"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::Off,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        agenda.create_category(&priority).unwrap();
+
+        let mut high = child_category("High", priority.id, false);
+        high.enable_semantic_classification = true;
+        agenda.create_category(&high).unwrap();
+
+        let mut normal = child_category("Normal", priority.id, false);
+        normal.enable_semantic_classification = true;
+        agenda.create_category(&normal).unwrap();
+
+        let item = Item::new("TUI task".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda.assign_item_manual(item.id, high.id, None).unwrap();
+
+        let result = agenda
+            .process_item_save(item.id, jiff::Zoned::now().date(), false)
+            .unwrap();
+
+        assert_eq!(result.semantic_candidates_seen, 1);
+        assert_eq!(result.semantic_candidates_queued_review, 0);
+        assert_eq!(result.semantic_candidates_skipped_already_assigned, 0);
+        assert_eq!(result.semantic_candidates_skipped_unavailable, 1);
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert!(
+            pending.is_empty(),
+            "should not queue semantic suggestion for an exclusive sibling"
         );
     }
 

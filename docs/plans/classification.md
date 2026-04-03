@@ -218,6 +218,22 @@
   Path 1 / Path 2 design
   5. The cascade — already implemented in your engine with 10-pass fixed-point loop
 
+  ---
+  Current implementation notes (April 2026)
+
+  - Semantic review suggestion filtering now checks the item's effective
+    current assignment state, not just manual categories. That means review
+    candidates are skipped when they are already satisfied, would conflict with
+    an assigned sibling under an exclusive parent, or would be a no-op after
+    reprocess.
+  - The semantic prompt's "Already assigned" context now includes live derived
+    assignments too, which keeps the model from being blind to categories such
+    as `High` that were assigned by rules/actions rather than manually.
+  - TUI assign/unassign flows now preview manual toggles before mutating. If a
+    live rule would immediately re-apply a category, the UI keeps the
+    assignment and shows an explanation instead of leaving the category looking
+    mysteriously stuck.
+
   The biggest fidelity question is no longer whether live conditional
   assignments auto-break; they do. The remaining fidelity questions are around
   date conditions, recurrence/post-done behavior, and how much of Lotus's

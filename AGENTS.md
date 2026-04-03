@@ -117,6 +117,23 @@ Practical implications:
   `agenda-cli show` assignment provenance before assuming the visible category
   was manually assigned
 
+## Continuous Implicit-String Matches Persist As `AutoClassified` (Surprising)
+
+The modern continuous classification path stores substring/category-name matches
+as `AssignmentSource::AutoClassified` with provider
+`implicit_string`, not as the older `AssignmentExplanation::ImplicitMatch`
+shape used by some lower-level engine/tests.
+
+Practical implications:
+- In TUI/CLI provenance, a category that feels like "auto-match from item text"
+  may arrive via `AutoClassified { provider_id: "implicit_string", ... }`
+  rather than `ImplicitMatch`.
+- If you are adding user-facing badges or explanations, normalize both forms to
+  the same UX concept instead of assuming only `ImplicitMatch` represents
+  name/text matching.
+- When a test expects "matched category name ..." behavior, inspect the
+  explanation/provider before deciding whether the wrong path fired.
+
 ## Disabling Implicit Match Only Evicts Live `AutoMatch` Assignments (Surprising)
 
 Turning a category's `enable_implicit_string` flag off and re-running category
