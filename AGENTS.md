@@ -105,6 +105,20 @@ When viewing items, the categories list includes both the assigned category and
 all its parent categories. For example, an item assigned to `High` will show
 `High, Priority` in its categories list (both the child and the parent).
 
+## Exclusive Family Order Now Defines Derived Precedence (Current)
+
+For an exclusive parent category, child order is now meaningful for
+rule-derived conflicts.
+
+Practical implications:
+- If multiple derived children under the same exclusive parent match, the
+  earlier child in the parent's ordered child list wins.
+- Later derived siblings are suppressed instead of replacing the earlier match.
+- Manual and accepted-suggestion assignments still act as durable user choices
+  and should not be replaced by later derived siblings.
+- This is a generic exclusive-family rule, not a special case for categories
+  named `Priority` or `Status`.
+
 ## Implicit String Matching Uses Note Text Too (Surprising)
 
 Implicit-string auto-match is evaluated against `item.text` and the full note

@@ -327,3 +327,21 @@ Adopt explicit exclusive-family arbitration.
 
 This keeps Aglet flexible enough for arbitrary schemas while making rule
 resolution understandable instead of incidental.
+
+## Implementation Notes (April 2026)
+
+The current implementation now follows the top-down family rule for derived
+assignment arbitration:
+
+- earlier child wins over later child inside an exclusive family
+- later derived siblings are suppressed instead of replacing the winner
+- manual and accepted-suggestion assignments still act as durable family locks
+
+Semantic review suggestions remain slightly more conservative than assignment
+arbitration:
+
+- if an item already has a child assigned under an exclusive parent, Aglet does
+  not queue a semantic suggestion for a different sibling in that family
+
+This keeps review suggestions from surfacing obviously conflicting alternatives
+once a family already has an effective winner.
