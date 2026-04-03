@@ -115,6 +115,12 @@ enum Command {
         /// Clear the item's explicit `when` value.
         #[arg(long = "clear-when")]
         clear_when: bool,
+        /// Set recurrence rule (e.g., "daily", "weekly", "every friday", "monthly on the 15th").
+        #[arg(long)]
+        recurrence: Option<String>,
+        /// Remove the recurrence rule from the item.
+        #[arg(long = "clear-recurrence")]
+        clear_recurrence: bool,
     },
 
     /// Show a single item with its assignments
@@ -903,6 +909,8 @@ fn run() -> Result<(), String> {
             done,
             when,
             clear_when,
+            recurrence,
+            clear_recurrence,
         } => {
             let note_stdin = if note_stdin_flag {
                 let mut stdin = io::stdin().lock();
@@ -921,6 +929,8 @@ fn run() -> Result<(), String> {
                 done,
                 when,
                 clear_when,
+                recurrence,
+                clear_recurrence,
             )
         }
         Command::Show { item_id } => cmd_show(&store, item_id),
@@ -1069,6 +1079,8 @@ fn cmd_edit(
     done: Option<bool>,
     when: Option<String>,
     clear_when: bool,
+    recurrence: Option<String>,
+    clear_recurrence: bool,
 ) -> Result<(), String> {
     let item_id = resolve_item_id(&item_id_str, agenda.store())?;
 
@@ -1080,9 +1092,11 @@ fn cmd_edit(
         && done.is_none()
         && when.is_none()
         && !clear_when
+        && recurrence.is_none()
+        && !clear_recurrence
     {
         return Err(
-            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false\n  agenda edit <id> --when 2026-02-20\n  agenda edit <id> --clear-when".to_string()
+            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when] [--recurrence <RULE>] [--clear-recurrence]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false\n  agenda edit <id> --when 2026-02-20\n  agenda edit <id> --clear-when\n  agenda edit <id> --recurrence \"every friday\"\n  agenda edit <id> --clear-recurrence".to_string()
         );
     }
 
@@ -1104,8 +1118,20 @@ fn cmd_edit(
 
     if let Some(done_value) = done {
         if done_value {
-            agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
-            println!("marked done {}", item_id);
+            let result = agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+            if let Some(successor_id) = result.successor_item_id {
+                let successor = agenda.store().get_item(successor_id).map_err(|e| e.to_string())?;
+                let when_str = successor
+                    .when_date
+                    .map(|dt| dt.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                println!(
+                    "marked done {}; successor created: {} (when: {})",
+                    item_id, successor_id, when_str
+                );
+            } else {
+                println!("marked done {}", item_id);
+            }
         } else {
             agenda
                 .mark_item_not_done(item_id)
@@ -1189,6 +1215,35 @@ fn cmd_edit(
         println!("updated {}", item_id);
     }
 
+    if recurrence.is_some() && clear_recurrence {
+        return Err("--recurrence and --clear-recurrence are mutually exclusive".to_string());
+    }
+    if let Some(recurrence_text) = recurrence {
+        let parser = agenda_core::dates::BasicDateParser::default();
+        let reference = jiff::Zoned::now().date();
+        match parser.parse_with_recurrence(&recurrence_text, reference) {
+            Some(agenda_core::dates::DateParseResult::Recurring { rule, .. }) => {
+                let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+                item.recurrence_rule = Some(rule.clone());
+                item.modified_at = jiff::Timestamp::now();
+                agenda.store().update_item(&item).map_err(|e| e.to_string())?;
+                println!("set recurrence: {}", rule.display());
+            }
+            _ => {
+                return Err(format!(
+                    "unrecognized recurrence pattern: \"{}\"\n\nExamples: daily, weekly, every friday, every 2 weeks, monthly on the 15th",
+                    recurrence_text
+                ));
+            }
+        }
+    } else if clear_recurrence {
+        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+        item.recurrence_rule = None;
+        item.modified_at = jiff::Timestamp::now();
+        agenda.store().update_item(&item).map_err(|e| e.to_string())?;
+        println!("cleared recurrence");
+    }
+
     Ok(())
 }
 
@@ -1212,6 +1267,15 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     println!("modified_at: {}", item.modified_at);
     if let Some(done_date) = item.done_date {
         println!("done_date:  {}", done_date);
+    }
+    if let Some(rule) = &item.recurrence_rule {
+        println!("recurrence: {}", rule.display());
+    }
+    if let Some(series_id) = item.recurrence_series_id {
+        println!("series_id:  {}", series_id);
+    }
+    if let Some(parent_id) = item.recurrence_parent_item_id {
+        println!("parent_id:  {}", parent_id);
     }
     if let Some(note) = &item.note {
         println!("note:       {}", note);
@@ -4600,6 +4664,8 @@ mod tests {
             None,
             Some("2026-03-01".to_string()),
             false,
+            None,
+            false,
         )
         .expect("set when");
         let updated = store.get_item(item.id).expect("load item");
@@ -4616,6 +4682,8 @@ mod tests {
             None,
             None,
             true,
+            None,
+            false,
         )
         .expect("clear when");
         let cleared = store.get_item(item.id).expect("load cleared item");
@@ -7058,6 +7126,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         )
         .expect("append to empty");
 
@@ -7084,6 +7154,8 @@ mod tests {
             None,
             false,
             None,
+            None,
+            false,
             None,
             false,
         )
@@ -7117,6 +7189,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         )
         .expect("append multiline");
 
@@ -7144,6 +7218,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
@@ -7164,6 +7240,8 @@ mod tests {
             None,
             true,
             None,
+            None,
+            false,
             None,
             false,
         );
@@ -7199,6 +7277,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         )
         .expect("replace from stdin");
 
@@ -7221,6 +7301,8 @@ mod tests {
             Some("stdin".to_string()),
             false,
             None,
+            None,
+            false,
             None,
             false,
         );
@@ -7248,6 +7330,8 @@ mod tests {
             Some(String::new()),
             false,
             None,
+            None,
+            false,
             None,
             false,
         )

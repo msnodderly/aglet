@@ -26,8 +26,9 @@ use crate::matcher::Classifier;
 use crate::model::{
     origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
-    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section,
-    View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
+    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
+    RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -225,6 +226,17 @@ impl<'a> Agenda<'a> {
         self.sync_when_assignment(item_id, when_date, when_assignment)?;
 
         self.reprocess_existing_item(item_id)
+    }
+
+    pub fn set_item_recurrence_rule(
+        &self,
+        item_id: ItemId,
+        rule: Option<RecurrenceRule>,
+    ) -> Result<()> {
+        let mut item = self.store.get_item(item_id)?;
+        item.recurrence_rule = rule;
+        item.modified_at = Timestamp::now();
+        self.store.update_item(&item)
     }
 
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
@@ -710,7 +722,101 @@ impl<'a> Agenda<'a> {
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
         self.clear_claim_assignment_if_configured(item_id)?;
-        self.reprocess_existing_item(item_id)
+        let mut result = self.reprocess_existing_item(item_id)?;
+
+        // Succession: generate next instance for recurring items
+        if let Some(ref rule) = item.recurrence_rule {
+            let successor_id = self.generate_recurrence_successor(&item, rule, done_at)?;
+            result.successor_item_id = Some(successor_id);
+        }
+
+        Ok(result)
+    }
+
+    /// Generate the next recurrence instance from a completed item.
+    ///
+    /// The successor gets the same text, note, recurrence rule, and sticky non-reserved
+    /// assignments. Its `when_date` is advanced per the rule. The completed and successor
+    /// items share the same `recurrence_series_id`.
+    fn generate_recurrence_successor(
+        &self,
+        completed: &Item,
+        rule: &RecurrenceRule,
+        done_at: jiff::civil::DateTime,
+    ) -> Result<ItemId> {
+        // Double-succession guard: skip if a successor already exists
+        if self.store.has_recurrence_successor(completed.id)? {
+            return Err(AgendaError::InvalidOperation {
+                message: "recurrence successor already exists".to_string(),
+            });
+        }
+
+        let now = Timestamp::now();
+        let anchor = completed.when_date.unwrap_or(done_at);
+        let next_when = rule.next_date(anchor);
+
+        // Ensure series_id exists; create and backfill if needed
+        let series_id = match completed.recurrence_series_id {
+            Some(id) => id,
+            None => {
+                let new_series_id = Uuid::new_v4();
+                // Backfill series_id on the completed item
+                let mut updated = completed.clone();
+                updated.recurrence_series_id = Some(new_series_id);
+                updated.modified_at = now;
+                self.store.update_item(&updated)?;
+                new_series_id
+            }
+        };
+
+        let successor = Item {
+            id: Uuid::new_v4(),
+            text: completed.text.clone(),
+            note: completed.note.clone(),
+            created_at: now,
+            modified_at: now,
+            when_date: Some(next_when),
+            done_date: None,
+            is_done: false,
+            assignments: HashMap::new(),
+            recurrence_rule: Some(rule.clone()),
+            recurrence_series_id: Some(series_id),
+            recurrence_parent_item_id: Some(completed.id),
+        };
+
+        self.store.create_item(&successor)?;
+        self.sync_when_assignment(successor.id, successor.when_date, None)?;
+
+        // Copy sticky non-reserved assignments from the completed item
+        let done_cat = self.done_category_id()?;
+        let when_cat = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
+        let entry_cat = self.category_id_by_name(RESERVED_CATEGORY_NAME_ENTRY)?;
+        let reserved = [done_cat, when_cat, entry_cat];
+
+        for (cat_id, assignment) in &completed.assignments {
+            if reserved.contains(cat_id) {
+                continue;
+            }
+            // Only carry sticky assignments (Manual, SuggestionAccepted, Action)
+            if !assignment.sticky {
+                continue;
+            }
+            let carry = Assignment {
+                source: assignment.source,
+                assigned_at: now,
+                sticky: true,
+                origin: Some(origin_const::RECURRENCE_CARRY.to_string()),
+                explanation: assignment.explanation.clone(),
+                numeric_value: assignment.numeric_value,
+            };
+            self.store.assign_item(successor.id, *cat_id, &carry)?;
+        }
+
+        // Trigger engine reprocessing on the successor
+        let reference_date = jiff::Zoned::now().date();
+        self.process_item_save(successor.id, reference_date, true)?;
+
+        Ok(successor.id)
     }
 
     pub fn mark_item_not_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
@@ -5419,5 +5525,211 @@ mod tests {
             preview.to_unassign.contains(&extra_remove_id),
             "on_remove_unassign should appear in to_unassign"
         );
+    }
+
+    // --- Recurrence / succession tests ---
+
+    use crate::model::{RecurrenceFrequency, RecurrenceRule};
+
+    fn weekly_rule() -> RecurrenceRule {
+        RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        }
+    }
+
+    fn recurring_item(text: &str) -> Item {
+        let mut item = Item::new(text.to_string());
+        item.when_date = Some(jiff::civil::date(2026, 4, 6).at(9, 0, 0, 0)); // Monday
+        item.recurrence_rule = Some(weekly_rule());
+        item
+    }
+
+    #[test]
+    fn mark_recurring_item_done_generates_successor() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = recurring_item("Weekly standup");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+
+        // Successor was created
+        assert!(result.successor_item_id.is_some());
+        let successor_id = result.successor_item_id.unwrap();
+        let successor = store.get_item(successor_id).unwrap();
+
+        // Successor fields
+        assert_eq!(successor.text, "Weekly standup");
+        assert!(!successor.is_done);
+        assert!(successor.done_date.is_none());
+        assert_eq!(
+            successor.when_date,
+            Some(jiff::civil::date(2026, 4, 13).at(9, 0, 0, 0))
+        );
+        assert_eq!(successor.recurrence_rule, Some(weekly_rule()));
+        assert_eq!(successor.recurrence_parent_item_id, Some(item.id));
+
+        // Completed item is still done
+        let completed = store.get_item(item.id).unwrap();
+        assert!(completed.is_done);
+        assert!(completed.done_date.is_some());
+    }
+
+    #[test]
+    fn successor_inherits_series_id() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = recurring_item("Weekly standup");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+        let completed = store.get_item(item.id).unwrap();
+
+        // Both share the same series ID (lazy-created)
+        assert!(completed.recurrence_series_id.is_some());
+        assert_eq!(
+            completed.recurrence_series_id,
+            successor.recurrence_series_id
+        );
+    }
+
+    #[test]
+    fn successor_copies_sticky_manual_assignments_not_reserved() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let project = category("Project", false);
+        agenda.create_category(&project).unwrap();
+        let priority = category("High", false);
+        agenda.create_category(&priority).unwrap();
+        let item = recurring_item("Deploy");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, project.id, Some("manual:test".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, priority.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+
+        // Manual assignments carried forward
+        assert!(successor.assignments.contains_key(&project.id));
+        assert!(successor.assignments.contains_key(&priority.id));
+
+        // Done category NOT carried forward
+        let done_cat = store
+            .get_hierarchy()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name.eq_ignore_ascii_case("Done"))
+            .unwrap()
+            .id;
+        assert!(!successor.assignments.contains_key(&done_cat));
+    }
+
+    #[test]
+    fn non_recurring_done_has_no_successor() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = Item::new("One-time task".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        assert!(result.successor_item_id.is_none());
+    }
+
+    #[test]
+    fn repeated_completion_creates_chain() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = recurring_item("Weekly standup");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        // Complete first instance → successor B
+        let result_a = agenda.mark_item_done(item.id).unwrap();
+        let b_id = result_a.successor_item_id.unwrap();
+        let b = store.get_item(b_id).unwrap();
+        assert_eq!(b.recurrence_parent_item_id, Some(item.id));
+        assert_eq!(
+            b.when_date,
+            Some(jiff::civil::date(2026, 4, 13).at(9, 0, 0, 0))
+        );
+
+        // B needs an actionable category to be marked done
+        agenda
+            .assign_item_manual(b_id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        // Complete B → successor C
+        let result_b = agenda.mark_item_done(b_id).unwrap();
+        let c_id = result_b.successor_item_id.unwrap();
+        let c = store.get_item(c_id).unwrap();
+        assert_eq!(c.recurrence_parent_item_id, Some(b_id));
+        assert_eq!(
+            c.when_date,
+            Some(jiff::civil::date(2026, 4, 20).at(9, 0, 0, 0))
+        );
+
+        // All three share the same series ID
+        let a = store.get_item(item.id).unwrap();
+        let b = store.get_item(b_id).unwrap();
+        assert_eq!(a.recurrence_series_id, b.recurrence_series_id);
+        assert_eq!(b.recurrence_series_id, c.recurrence_series_id);
+    }
+
+    #[test]
+    fn successor_note_is_copied() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let mut item = recurring_item("Standup");
+        item.note = Some("Discuss blockers".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+        assert_eq!(successor.note, Some("Discuss blockers".to_string()));
     }
 }

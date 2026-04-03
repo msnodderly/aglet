@@ -31,6 +31,8 @@ pub struct ProcessItemResult {
     pub semantic_candidates_skipped_already_assigned: usize,
     pub semantic_candidates_skipped_unavailable: usize,
     pub semantic_debug_messages: Vec<String>,
+    /// When a recurring item is marked done, this holds the successor item's ID.
+    pub successor_item_id: Option<ItemId>,
 }
 
 #[derive(Debug, Default)]

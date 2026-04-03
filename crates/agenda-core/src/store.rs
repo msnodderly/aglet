@@ -16,12 +16,12 @@ use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
-    NumericFormat, Query, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
+    NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
     RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 15;
+const SCHEMA_VERSION: i32 = 16;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -40,15 +40,18 @@ pub fn is_system_view_name(name: &str) -> bool {
 
 const SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS items (
-    id          TEXT PRIMARY KEY,
-    text        TEXT NOT NULL,
-    note        TEXT,
-    created_at  TEXT NOT NULL,
-    modified_at TEXT NOT NULL,
-    entry_date  TEXT NOT NULL,
-    when_date   TEXT,
-    done_date   TEXT,
-    is_done     INTEGER NOT NULL DEFAULT 0
+    id                        TEXT PRIMARY KEY,
+    text                      TEXT NOT NULL,
+    note                      TEXT,
+    created_at                TEXT NOT NULL,
+    modified_at               TEXT NOT NULL,
+    entry_date                TEXT NOT NULL,
+    when_date                 TEXT,
+    done_date                 TEXT,
+    is_done                   INTEGER NOT NULL DEFAULT 0,
+    recurrence_rule_json      TEXT,
+    recurrence_series_id      TEXT,
+    recurrence_parent_item_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -387,9 +390,13 @@ impl Store {
     // ── Item CRUD ──────────────────────────────────────────────
 
     pub fn create_item(&self, item: &Item) -> Result<()> {
+        let recurrence_json = item
+            .recurrence_rule
+            .as_ref()
+            .map(|r| serde_json::to_string(r).expect("RecurrenceRule is always serialisable"));
         self.conn.execute(
-            "INSERT INTO items (id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO items (id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 item.id.to_string(),
                 item.text,
@@ -400,6 +407,9 @@ impl Store {
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
+                recurrence_json,
+                item.recurrence_series_id.map(|id| id.to_string()),
+                item.recurrence_parent_item_id.map(|id| id.to_string()),
             ],
         )?;
         Ok(())
@@ -448,7 +458,7 @@ impl Store {
 
     pub fn get_item(&self, id: ItemId) -> Result<Item> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done
+            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id
              FROM items WHERE id = ?1",
         )?;
         let item = stmt
@@ -463,9 +473,13 @@ impl Store {
     }
 
     pub fn update_item(&self, item: &Item) -> Result<()> {
+        let recurrence_json = item
+            .recurrence_rule
+            .as_ref()
+            .map(|r| serde_json::to_string(r).expect("RecurrenceRule is always serialisable"));
         let rows = self.conn.execute(
-            "UPDATE items SET text = ?1, note = ?2, modified_at = ?3, when_date = ?4, done_date = ?5, is_done = ?6
-             WHERE id = ?7",
+            "UPDATE items SET text = ?1, note = ?2, modified_at = ?3, when_date = ?4, done_date = ?5, is_done = ?6, recurrence_rule_json = ?7, recurrence_series_id = ?8, recurrence_parent_item_id = ?9
+             WHERE id = ?10",
             params![
                 item.text,
                 item.note,
@@ -473,6 +487,9 @@ impl Store {
                 item.when_date.map(|d| d.to_string()),
                 item.done_date.map(|d| d.to_string()),
                 item.is_done as i32,
+                recurrence_json,
+                item.recurrence_series_id.map(|id| id.to_string()),
+                item.recurrence_parent_item_id.map(|id| id.to_string()),
                 item.id.to_string(),
             ],
         )?;
@@ -515,9 +532,19 @@ impl Store {
         Ok(())
     }
 
+    /// Check if a successor item already exists for the given parent item.
+    pub fn has_recurrence_successor(&self, parent_item_id: ItemId) -> Result<bool> {
+        let count: i32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE recurrence_parent_item_id = ?1",
+            params![parent_item_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     pub fn list_items(&self) -> Result<Vec<Item>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done
+            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id
              FROM items ORDER BY created_at DESC",
         )?;
         let rows = stmt
@@ -576,6 +603,9 @@ impl Store {
             done_date: entry.done_date,
             is_done: entry.is_done,
             assignments: HashMap::new(),
+            recurrence_rule: None,
+            recurrence_series_id: None,
+            recurrence_parent_item_id: None,
         };
         self.create_item(&item)?;
 
@@ -1162,6 +1192,9 @@ impl Store {
         let when_str: Option<String> = row.get(6)?;
         let done_str: Option<String> = row.get(7)?;
         let is_done_int: i32 = row.get(8)?;
+        let recurrence_json: Option<String> = row.get(9)?;
+        let series_id_str: Option<String> = row.get(10)?;
+        let parent_id_str: Option<String> = row.get(11)?;
 
         Ok(Item {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
@@ -1173,6 +1206,12 @@ impl Store {
             done_date: done_str.and_then(|s| s.parse::<jiff::civil::DateTime>().ok()),
             is_done: is_done_int != 0,
             assignments: HashMap::new(),
+            recurrence_rule: recurrence_json
+                .and_then(|s| serde_json::from_str::<RecurrenceRule>(&s).ok()),
+            recurrence_series_id: series_id_str
+                .and_then(|s| Uuid::parse_str(&s).ok()),
+            recurrence_parent_item_id: parent_id_str
+                .and_then(|s| Uuid::parse_str(&s).ok()),
         })
     }
 
@@ -2255,6 +2294,24 @@ impl Store {
                  UPDATE deletion_log SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
                  UPDATE deletion_log SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;",
             )?;
+        }
+
+        if from_version < 16 {
+            if !self.column_exists("items", "recurrence_rule_json")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE items ADD COLUMN recurrence_rule_json TEXT;",
+                )?;
+            }
+            if !self.column_exists("items", "recurrence_series_id")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE items ADD COLUMN recurrence_series_id TEXT;",
+                )?;
+            }
+            if !self.column_exists("items", "recurrence_parent_item_id")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE items ADD COLUMN recurrence_parent_item_id TEXT;",
+                )?;
+            }
         }
 
         Ok(())

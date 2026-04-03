@@ -39,6 +39,8 @@ pub mod origin {
     /// Engine auto-assigned via category hierarchy subsumption.
     /// Full value: `format!("{}:{category_name}", SUBSUMPTION)`.
     pub const SUBSUMPTION: &str = "subsumption";
+    /// Assignment carried forward from a completed recurrence parent.
+    pub const RECURRENCE_CARRY: &str = "recurrence:carry";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -69,6 +71,181 @@ pub struct ItemLinksForItem {
     pub related: Vec<ItemId>,
 }
 
+/// The frequency component of a [`RecurrenceRule`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecurrenceFrequency {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+/// Defines how a recurring item generates its next instance when marked done.
+///
+/// The rule is stored on the item itself. When `mark_item_done` fires, the engine
+/// uses this rule to compute the successor's `when_date` from the completed item's
+/// anchor date.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecurrenceRule {
+    pub frequency: RecurrenceFrequency,
+    /// Repeat every `interval` units (1 = every, 2 = every other, etc.).
+    pub interval: u16,
+    /// For weekly: which day of the week (1=Mon .. 7=Sun). `None` means same weekday
+    /// as the anchor. Stored as u8 because jiff::civil::Weekday doesn't impl Serialize.
+    pub weekday: Option<u8>,
+    /// For monthly/yearly: which day of the month (1–31). Clamped to the last day
+    /// of the target month when the month has fewer days.
+    pub day_of_month: Option<u8>,
+    /// For yearly: which month (1–12).
+    pub month: Option<u8>,
+}
+
+impl RecurrenceRule {
+    /// Compute the next occurrence date after `anchor`.
+    ///
+    /// For monthly rules with `day_of_month` exceeding the target month's length,
+    /// the date is clamped to the last day of that month.
+    pub fn next_date(&self, anchor: jiff::civil::DateTime) -> jiff::civil::DateTime {
+        use jiff::civil::Date;
+
+        match self.frequency {
+            RecurrenceFrequency::Daily => {
+                let span = jiff::Span::new().days(i64::from(self.interval));
+                anchor.checked_add(span).expect("daily advance overflow")
+            }
+            RecurrenceFrequency::Weekly => {
+                let target_wd = self
+                    .weekday
+                    .map(weekday_from_u8)
+                    .unwrap_or_else(|| anchor.date().weekday());
+                let base = anchor
+                    .checked_add(jiff::Span::new().weeks(i64::from(self.interval)))
+                    .expect("weekly advance overflow");
+                // Adjust to target weekday within the same week
+                let current_wd = base.date().weekday();
+                let diff = (target_wd.to_monday_zero_offset() as i64)
+                    - (current_wd.to_monday_zero_offset() as i64);
+                base.checked_add(jiff::Span::new().days(diff))
+                    .expect("weekday adjust overflow")
+            }
+            RecurrenceFrequency::Monthly => {
+                let target_day = self.day_of_month.unwrap_or(anchor.date().day() as u8);
+                let months_ahead = self.interval as i16;
+                let raw_month = i16::from(anchor.date().month()) + months_ahead;
+                let year = anchor.date().year() + (raw_month - 1) / 12;
+                let month = ((raw_month - 1) % 12 + 1) as u8;
+                let max_day = days_in_month(i32::from(year), month);
+                let day = target_day.min(max_day);
+                let date = Date::new(year, month as i8, day as i8).expect("valid monthly date");
+                date.at(anchor.hour(), anchor.minute(), anchor.second(), 0)
+            }
+            RecurrenceFrequency::Yearly => {
+                let target_month = self.month.unwrap_or(anchor.date().month() as u8);
+                let target_day = self.day_of_month.unwrap_or(anchor.date().day() as u8);
+                let year = anchor.date().year() + self.interval as i16;
+                let max_day = days_in_month(i32::from(year), target_month);
+                let day = target_day.min(max_day);
+                let date =
+                    Date::new(year, target_month as i8, day as i8).expect("valid yearly date");
+                date.at(anchor.hour(), anchor.minute(), anchor.second(), 0)
+            }
+        }
+    }
+
+    /// Human-readable description of the rule.
+    pub fn display(&self) -> String {
+        match self.frequency {
+            RecurrenceFrequency::Daily if self.interval == 1 => "daily".to_string(),
+            RecurrenceFrequency::Daily => format!("every {} days", self.interval),
+            RecurrenceFrequency::Weekly if self.interval == 1 => match self.weekday {
+                Some(wd) => format!("every {}", weekday_name(weekday_from_u8(wd))),
+                None => "weekly".to_string(),
+            },
+            RecurrenceFrequency::Weekly => match self.weekday {
+                Some(wd) => format!(
+                    "every {} weeks on {}",
+                    self.interval,
+                    weekday_name(weekday_from_u8(wd))
+                ),
+                None => format!("every {} weeks", self.interval),
+            },
+            RecurrenceFrequency::Monthly if self.interval == 1 => {
+                match self.day_of_month {
+                    Some(d) => format!("monthly on the {}", ordinal(d)),
+                    None => "monthly".to_string(),
+                }
+            }
+            RecurrenceFrequency::Monthly => {
+                match self.day_of_month {
+                    Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
+                    None => format!("every {} months", self.interval),
+                }
+            }
+            RecurrenceFrequency::Yearly if self.interval == 1 => "yearly".to_string(),
+            RecurrenceFrequency::Yearly => format!("every {} years", self.interval),
+        }
+    }
+}
+
+/// Convert 1=Mon .. 7=Sun to jiff::civil::Weekday. Clamps invalid values to Monday.
+pub fn weekday_from_u8(n: u8) -> jiff::civil::Weekday {
+    use jiff::civil::Weekday;
+    match n {
+        1 => Weekday::Monday,
+        2 => Weekday::Tuesday,
+        3 => Weekday::Wednesday,
+        4 => Weekday::Thursday,
+        5 => Weekday::Friday,
+        6 => Weekday::Saturday,
+        7 => Weekday::Sunday,
+        _ => Weekday::Monday,
+    }
+}
+
+/// Convert jiff::civil::Weekday to 1=Mon .. 7=Sun.
+pub fn weekday_to_u8(wd: jiff::civil::Weekday) -> u8 {
+    wd.to_monday_one_offset() as u8
+}
+
+fn weekday_name(wd: jiff::civil::Weekday) -> &'static str {
+    match wd {
+        jiff::civil::Weekday::Monday => "Monday",
+        jiff::civil::Weekday::Tuesday => "Tuesday",
+        jiff::civil::Weekday::Wednesday => "Wednesday",
+        jiff::civil::Weekday::Thursday => "Thursday",
+        jiff::civil::Weekday::Friday => "Friday",
+        jiff::civil::Weekday::Saturday => "Saturday",
+        jiff::civil::Weekday::Sunday => "Sunday",
+    }
+}
+
+fn ordinal(n: u8) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (1, 11) | (2, 12) | (3, 13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// Returns the number of days in the given month (1–12) for the given year.
+pub fn days_in_month(year: i32, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
     pub id: ItemId,
@@ -80,6 +257,15 @@ pub struct Item {
     pub done_date: Option<jiff::civil::DateTime>,
     pub is_done: bool,
     pub assignments: HashMap<CategoryId, Assignment>,
+    /// Recurrence rule for succession-based recurring items.
+    #[serde(default)]
+    pub recurrence_rule: Option<RecurrenceRule>,
+    /// Groups all items in the same recurrence series.
+    #[serde(default)]
+    pub recurrence_series_id: Option<Uuid>,
+    /// Points to the completed item that spawned this successor.
+    #[serde(default)]
+    pub recurrence_parent_item_id: Option<ItemId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -709,6 +895,9 @@ impl Item {
             done_date: None,
             is_done: false,
             assignments: HashMap::new(),
+            recurrence_rule: None,
+            recurrence_series_id: None,
+            recurrence_parent_item_id: None,
         }
     }
 }
@@ -759,9 +948,260 @@ impl View {
 
 #[cfg(test)]
 mod tests {
-    use super::{Column, ItemLinkKind, SectionFlow, SummaryFn, View};
+    use super::{
+        Column, ItemLinkKind, RecurrenceFrequency, RecurrenceRule, SectionFlow, SummaryFn, View,
+    };
     use serde_json::Value;
     use uuid::Uuid;
+
+    fn dt(year: i16, month: i8, day: i8, hour: i8, min: i8) -> jiff::civil::DateTime {
+        jiff::civil::date(year, month, day).at(hour, min, 0, 0)
+    }
+
+    #[test]
+    fn recurrence_daily_advances_one_day() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        let anchor = dt(2026, 4, 1, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 4, 2, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_daily_interval_3() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 3,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        let anchor = dt(2026, 4, 1, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 4, 4, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_weekly_same_weekday() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        // 2026-04-01 is a Wednesday
+        let anchor = dt(2026, 4, 1, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, dt(2026, 4, 8, 9, 0));
+        assert_eq!(next.date().weekday(), jiff::civil::Weekday::Wednesday);
+    }
+
+    #[test]
+    fn recurrence_weekly_specific_weekday() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            weekday: Some(5), // Friday
+            day_of_month: None,
+            month: None,
+        };
+        // 2026-04-01 is a Wednesday; next week's Friday = 2026-04-10
+        let anchor = dt(2026, 4, 1, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next.date().weekday(), jiff::civil::Weekday::Friday);
+        assert_eq!(next, dt(2026, 4, 10, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_every_2_weeks() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 2,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        let anchor = dt(2026, 4, 1, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 4, 15, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_monthly_same_day() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        let anchor = dt(2026, 4, 15, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 5, 15, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_monthly_specific_day() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(1),
+            month: None,
+        };
+        let anchor = dt(2026, 4, 15, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 5, 1, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_monthly_31st_clamps_to_feb_28() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(31),
+            month: None,
+        };
+        // Jan 31 → Feb: should clamp to 28 (non-leap 2026)
+        let anchor = dt(2026, 1, 31, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 2, 28, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_monthly_31st_clamps_to_feb_29_leap() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(31),
+            month: None,
+        };
+        // Jan 31, 2028 (leap year) → Feb: should clamp to 29
+        let anchor = dt(2028, 1, 31, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2028, 2, 29, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_monthly_31st_clamps_to_apr_30() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(31),
+            month: None,
+        };
+        // Mar 31 → Apr: should clamp to 30
+        let anchor = dt(2026, 3, 31, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 4, 30, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_monthly_crosses_year_boundary() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(15),
+            month: None,
+        };
+        let anchor = dt(2026, 12, 15, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2027, 1, 15, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_every_3_months() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 3,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        let anchor = dt(2026, 1, 15, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2026, 4, 15, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_yearly() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        let anchor = dt(2026, 4, 1, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2027, 4, 1, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_yearly_feb_29_clamps_in_non_leap() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(29),
+            month: Some(2),
+        };
+        // 2028 is a leap year, 2029 is not
+        let anchor = dt(2028, 2, 29, 9, 0);
+        assert_eq!(rule.next_date(anchor), dt(2029, 2, 28, 9, 0));
+    }
+
+    #[test]
+    fn recurrence_rule_serde_roundtrip() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 2,
+            weekday: Some(5),
+            day_of_month: None,
+            month: None,
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let parsed: RecurrenceRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, parsed);
+    }
+
+    #[test]
+    fn recurrence_rule_display() {
+        let daily = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        assert_eq!(daily.display(), "daily");
+
+        let weekly_fri = RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            weekday: Some(5),
+            day_of_month: None,
+            month: None,
+        };
+        assert_eq!(weekly_fri.display(), "every Friday");
+
+        let monthly_15th = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(15),
+            month: None,
+        };
+        assert_eq!(monthly_15th.display(), "monthly on the 15th");
+
+        let every_2_weeks = RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 2,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        };
+        assert_eq!(every_2_weeks.display(), "every 2 weeks");
+    }
 
     #[test]
     fn item_link_kind_serde_names_are_stable() {

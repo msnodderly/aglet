@@ -2602,7 +2602,7 @@ impl App {
         clear_blocked_item_ids: &[ItemId],
     ) -> TuiResult<()> {
         self.push_undo(UndoEntry::ItemDoneToggled { item_id, was_done });
-        agenda.toggle_item_done(item_id)?;
+        let result = agenda.toggle_item_done(item_id)?;
 
         let mut removed_blocker_links = 0usize;
         if !was_done {
@@ -2616,6 +2616,18 @@ impl App {
         self.set_item_selection_by_id(item_id);
         self.mode = Self::done_toggle_return_mode(origin);
         self.status = Self::done_toggle_status_message(origin, was_done, removed_blocker_links);
+
+        // Append successor info for recurring items
+        if let Some(successor_id) = result.successor_item_id {
+            if let Ok(successor) = agenda.store().get_item(successor_id) {
+                let when_str = successor
+                    .when_date
+                    .map(|dt| dt.date().to_string())
+                    .unwrap_or_else(|| "no date".to_string());
+                self.status = format!("{}; successor for {}", self.status, when_str);
+            }
+        }
+
         Ok(())
     }
 

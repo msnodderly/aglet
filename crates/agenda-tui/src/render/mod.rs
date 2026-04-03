@@ -2422,10 +2422,17 @@ impl App {
                                     let is_numeric_column =
                                         column.heading_value_kind == CategoryValueKind::Numeric;
                                     let value = match column.kind {
-                                        ColumnKind::When => item
-                                            .when_date
-                                            .map(|dt| dt.date().to_string())
-                                            .unwrap_or_else(|| "\u{2013}".to_string()),
+                                        ColumnKind::When => {
+                                            let date_str = item
+                                                .when_date
+                                                .map(|dt| dt.date().to_string())
+                                                .unwrap_or_else(|| "\u{2013}".to_string());
+                                            if item.recurrence_rule.is_some() {
+                                                format!("{} \u{21BB}", date_str)
+                                            } else {
+                                                date_str
+                                            }
+                                        }
                                         ColumnKind::Standard if is_numeric_column => {
                                             let numeric_val = item
                                                 .assignments

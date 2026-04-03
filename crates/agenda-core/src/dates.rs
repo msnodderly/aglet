@@ -1,6 +1,8 @@
 use jiff::civil::{Date, DateTime, Weekday};
 use jiff::Span;
 
+use crate::model::{weekday_to_u8, RecurrenceFrequency, RecurrenceRule};
+
 /// Parses date/time expressions from item text.
 pub trait DateParser: Send + Sync {
     /// Extract a date/time from item text.
@@ -854,6 +856,377 @@ fn at_midnight(date: Date) -> DateTime {
     date.at(0, 0, 0, 0)
 }
 
+// ---------------------------------------------------------------------------
+// Recurrence-aware parsing
+// ---------------------------------------------------------------------------
+
+/// Result of parsing a date expression that may be a one-time date or a
+/// recurring pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DateParseResult {
+    OneTime(ParsedDate),
+    Recurring {
+        first_date: ParsedDate,
+        rule: RecurrenceRule,
+    },
+}
+
+impl BasicDateParser {
+    /// Parse `text` and detect recurrence patterns ("every Monday", "daily",
+    /// "monthly on the 15th") in addition to one-time dates.
+    ///
+    /// Recurrence scanners run first; if none match, falls back to the standard
+    /// `DateParser::parse` wrapped in `OneTime`.
+    pub fn parse_with_recurrence(
+        &self,
+        text: &str,
+        reference_date: Date,
+    ) -> Option<DateParseResult> {
+        if let Some(result) = scan_recurrence(text.as_bytes(), reference_date) {
+            return Some(result);
+        }
+        self.parse(text, reference_date)
+            .map(DateParseResult::OneTime)
+    }
+}
+
+/// Scan for recurrence patterns. Returns the best match or None.
+fn scan_recurrence(bytes: &[u8], reference_date: Date) -> Option<DateParseResult> {
+    let mut best: Option<DateParseResult> = None;
+
+    scan_every_weekday(bytes, reference_date, &mut best);
+    scan_every_n_unit(bytes, reference_date, &mut best);
+    scan_every_month_day(bytes, reference_date, &mut best);
+    scan_single_word_frequency(bytes, reference_date, &mut best);
+
+    best
+}
+
+fn choose_best_recurrence(
+    best: &mut Option<DateParseResult>,
+    candidate: DateParseResult,
+) {
+    let candidate_span = match &candidate {
+        DateParseResult::OneTime(p) => p.span,
+        DateParseResult::Recurring { first_date, .. } => first_date.span,
+    };
+    let should_replace = match best {
+        None => true,
+        Some(current) => {
+            let current_span = match current {
+                DateParseResult::OneTime(p) => p.span,
+                DateParseResult::Recurring { first_date, .. } => first_date.span,
+            };
+            let current_len = current_span.1 - current_span.0;
+            let candidate_len = candidate_span.1 - candidate_span.0;
+            candidate_span.0 < current_span.0
+                || (candidate_span.0 == current_span.0 && candidate_len > current_len)
+        }
+    };
+    if should_replace {
+        *best = Some(candidate);
+    }
+}
+
+/// "every Monday", "every friday"
+fn scan_every_weekday(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let every_keywords = [b"every " as &[u8], b"each "];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for keyword in &every_keywords {
+            if !matches_ascii_insensitive(bytes, start, keyword) {
+                continue;
+            }
+            let wd_start = start + keyword.len();
+            for &(name, weekday) in &WEEKDAYS {
+                if !matches_ascii_insensitive(bytes, wd_start, name.as_bytes()) {
+                    continue;
+                }
+                let end = wd_start + name.len();
+                if !has_right_boundary(bytes, end) {
+                    continue;
+                }
+                let days = days_until_weekday_this(reference_date.weekday(), weekday);
+                let days = if days == 0 { 7 } else { days };
+                if let Ok(first) = reference_date.checked_add(Span::new().days(days)) {
+                    let rule = RecurrenceRule {
+                        frequency: RecurrenceFrequency::Weekly,
+                        interval: 1,
+                        weekday: Some(weekday_to_u8(weekday)),
+                        day_of_month: None,
+                        month: None,
+                    };
+                    choose_best_recurrence(
+                        best,
+                        DateParseResult::Recurring {
+                            first_date: ParsedDate {
+                                datetime: at_midnight(first),
+                                span: (start, end),
+                            },
+                            rule,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// "every 2 weeks", "every 3 months", "every 5 days"
+fn scan_every_n_unit(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let every_keywords = [b"every " as &[u8], b"each "];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for keyword in &every_keywords {
+            if !matches_ascii_insensitive(bytes, start, keyword) {
+                continue;
+            }
+            let num_start = start + keyword.len();
+            // Parse a number
+            let mut num_end = num_start;
+            while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
+                num_end += 1;
+            }
+            if num_end == num_start {
+                continue;
+            }
+            let n: u16 = match std::str::from_utf8(&bytes[num_start..num_end])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
+                Some(n) if n > 0 => n,
+                _ => continue,
+            };
+            // Skip space
+            if num_end >= bytes.len() || bytes[num_end] != b' ' {
+                continue;
+            }
+            let unit_start = num_end + 1;
+
+            let units: &[(&[u8], RecurrenceFrequency)] = &[
+                (b"day", RecurrenceFrequency::Daily),
+                (b"days", RecurrenceFrequency::Daily),
+                (b"week", RecurrenceFrequency::Weekly),
+                (b"weeks", RecurrenceFrequency::Weekly),
+                (b"month", RecurrenceFrequency::Monthly),
+                (b"months", RecurrenceFrequency::Monthly),
+                (b"year", RecurrenceFrequency::Yearly),
+                (b"years", RecurrenceFrequency::Yearly),
+            ];
+
+            for &(unit_word, freq) in units {
+                if !matches_ascii_insensitive(bytes, unit_start, unit_word) {
+                    continue;
+                }
+                let end = unit_start + unit_word.len();
+                if !has_right_boundary(bytes, end) {
+                    continue;
+                }
+                let first = match freq {
+                    RecurrenceFrequency::Daily => {
+                        reference_date.checked_add(Span::new().days(i64::from(n))).ok()
+                    }
+                    RecurrenceFrequency::Weekly => {
+                        reference_date.checked_add(Span::new().weeks(i64::from(n))).ok()
+                    }
+                    RecurrenceFrequency::Monthly => {
+                        reference_date.checked_add(Span::new().months(i32::from(n))).ok()
+                    }
+                    RecurrenceFrequency::Yearly => {
+                        reference_date.checked_add(Span::new().years(i32::from(n))).ok()
+                    }
+                };
+                if let Some(first_date) = first {
+                    let rule = RecurrenceRule {
+                        frequency: freq,
+                        interval: n,
+                        weekday: None,
+                        day_of_month: None,
+                        month: None,
+                    };
+                    choose_best_recurrence(
+                        best,
+                        DateParseResult::Recurring {
+                            first_date: ParsedDate {
+                                datetime: at_midnight(first_date),
+                                span: (start, end),
+                            },
+                            rule,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// "every month on the 15th", "monthly on the 1st"
+fn scan_every_month_day(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let prefixes: &[&[u8]] = &[
+        b"every month on the ",
+        b"each month on the ",
+        b"monthly on the ",
+    ];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for prefix in prefixes {
+            if !matches_ascii_insensitive(bytes, start, prefix) {
+                continue;
+            }
+            let num_start = start + prefix.len();
+            let mut num_end = num_start;
+            while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
+                num_end += 1;
+            }
+            if num_end == num_start {
+                continue;
+            }
+            let day: u8 = match std::str::from_utf8(&bytes[num_start..num_end])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
+                Some(d) if (1..=31).contains(&d) => d,
+                _ => continue,
+            };
+            // Accept optional ordinal suffix (st, nd, rd, th)
+            let mut end = num_end;
+            if end + 2 <= bytes.len() {
+                let suffix = &bytes[end..end + 2];
+                if suffix.eq_ignore_ascii_case(b"st")
+                    || suffix.eq_ignore_ascii_case(b"nd")
+                    || suffix.eq_ignore_ascii_case(b"rd")
+                    || suffix.eq_ignore_ascii_case(b"th")
+                {
+                    end += 2;
+                }
+            }
+            if !has_right_boundary(bytes, end) {
+                continue;
+            }
+            // Compute first date: the target day in the next applicable month
+            let target_month = if reference_date.day() as u8 >= day {
+                // Already past this day in current month, go to next
+                reference_date.checked_add(Span::new().months(1)).ok()
+            } else {
+                Some(reference_date)
+            };
+            if let Some(base) = target_month {
+                let max_day = crate::model::days_in_month(
+                    i32::from(base.year()),
+                    base.month() as u8,
+                );
+                let clamped = day.min(max_day);
+                if let Ok(first) = Date::new(base.year(), base.month(), clamped as i8) {
+                    let rule = RecurrenceRule {
+                        frequency: RecurrenceFrequency::Monthly,
+                        interval: 1,
+                        weekday: None,
+                        day_of_month: Some(day),
+                        month: None,
+                    };
+                    choose_best_recurrence(
+                        best,
+                        DateParseResult::Recurring {
+                            first_date: ParsedDate {
+                                datetime: at_midnight(first),
+                                span: (start, end),
+                            },
+                            rule,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// "daily", "weekly", "monthly", "yearly"
+fn scan_single_word_frequency(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let keywords: &[(&[u8], RecurrenceFrequency)] = &[
+        (b"daily", RecurrenceFrequency::Daily),
+        (b"weekly", RecurrenceFrequency::Weekly),
+        (b"monthly", RecurrenceFrequency::Monthly),
+        (b"yearly", RecurrenceFrequency::Yearly),
+        (b"annually", RecurrenceFrequency::Yearly),
+    ];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for &(keyword, freq) in keywords {
+            if !matches_ascii_insensitive(bytes, start, keyword) {
+                continue;
+            }
+            let end = start + keyword.len();
+            // "monthly on the Nth" is handled by scan_every_month_day; skip if followed by " on"
+            if freq == RecurrenceFrequency::Monthly
+                && end + 4 <= bytes.len()
+                && matches_ascii_insensitive(bytes, end, b" on ")
+            {
+                continue;
+            }
+            if !has_right_boundary(bytes, end) {
+                continue;
+            }
+            let first = match freq {
+                RecurrenceFrequency::Daily => {
+                    reference_date.checked_add(Span::new().days(1)).ok()
+                }
+                RecurrenceFrequency::Weekly => {
+                    reference_date.checked_add(Span::new().weeks(1)).ok()
+                }
+                RecurrenceFrequency::Monthly => {
+                    reference_date.checked_add(Span::new().months(1)).ok()
+                }
+                RecurrenceFrequency::Yearly => {
+                    reference_date.checked_add(Span::new().years(1)).ok()
+                }
+            };
+            if let Some(first_date) = first {
+                let rule = RecurrenceRule {
+                    frequency: freq,
+                    interval: 1,
+                    weekday: None,
+                    day_of_month: None,
+                    month: None,
+                };
+                choose_best_recurrence(
+                    best,
+                    DateParseResult::Recurring {
+                        first_date: ParsedDate {
+                            datetime: at_midnight(first_date),
+                            span: (start, end),
+                        },
+                        rule,
+                    },
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{BasicDateParser, DateParser, WeekdayDisambiguationPolicy};
@@ -1686,6 +2059,186 @@ mod tests {
                 parser.parse(name, reference).is_some(),
                 "bare '{name}' should parse"
             );
+        }
+    }
+
+    // --- Recurrence parsing tests ---
+
+    use super::{DateParseResult, RecurrenceFrequency, RecurrenceRule};
+
+    fn assert_recurring(
+        result: Option<DateParseResult>,
+        expected_freq: RecurrenceFrequency,
+        expected_interval: u16,
+        expected_dt: DateTime,
+    ) -> RecurrenceRule {
+        let result = result.expect("expected recurrence parse");
+        match result {
+            DateParseResult::Recurring { first_date, rule } => {
+                assert_eq!(first_date.datetime, expected_dt);
+                assert_eq!(rule.frequency, expected_freq);
+                assert_eq!(rule.interval, expected_interval);
+                rule
+            }
+            DateParseResult::OneTime(_) => panic!("expected Recurring, got OneTime"),
+        }
+    }
+
+    #[test]
+    fn recurrence_every_monday() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is a Wednesday
+        let result = parser.parse_with_recurrence("every Monday", date(2026, 4, 1));
+        let rule = assert_recurring(
+            result,
+            RecurrenceFrequency::Weekly,
+            1,
+            datetime(2026, 4, 6, 0, 0), // next Monday
+        );
+        assert_eq!(rule.weekday, Some(1)); // 1 = Monday
+    }
+
+    #[test]
+    fn recurrence_every_friday_case_insensitive() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("every FRIDAY", date(2026, 4, 1));
+        let rule = assert_recurring(
+            result,
+            RecurrenceFrequency::Weekly,
+            1,
+            datetime(2026, 4, 3, 0, 0), // next Friday
+        );
+        assert_eq!(rule.weekday, Some(5)); // 5 = Friday
+    }
+
+    #[test]
+    fn recurrence_daily() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("daily", date(2026, 4, 1));
+        assert_recurring(result, RecurrenceFrequency::Daily, 1, datetime(2026, 4, 2, 0, 0));
+    }
+
+    #[test]
+    fn recurrence_weekly() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("weekly", date(2026, 4, 1));
+        assert_recurring(
+            result,
+            RecurrenceFrequency::Weekly,
+            1,
+            datetime(2026, 4, 8, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_monthly() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("monthly", date(2026, 4, 1));
+        assert_recurring(
+            result,
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 5, 1, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_yearly() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("yearly", date(2026, 4, 1));
+        assert_recurring(
+            result,
+            RecurrenceFrequency::Yearly,
+            1,
+            datetime(2027, 4, 1, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_every_2_weeks() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("every 2 weeks", date(2026, 4, 1));
+        assert_recurring(
+            result,
+            RecurrenceFrequency::Weekly,
+            2,
+            datetime(2026, 4, 15, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_every_3_months() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("every 3 months", date(2026, 4, 1));
+        assert_recurring(
+            result,
+            RecurrenceFrequency::Monthly,
+            3,
+            datetime(2026, 7, 1, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_monthly_on_the_15th() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("monthly on the 15th", date(2026, 4, 1));
+        let rule = assert_recurring(
+            result,
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 4, 15, 0, 0),
+        );
+        assert_eq!(rule.day_of_month, Some(15));
+    }
+
+    #[test]
+    fn recurrence_monthly_on_the_1st_past_day() {
+        let parser = BasicDateParser::default();
+        // Reference is April 10, day 1 already passed → next month
+        let result = parser.parse_with_recurrence("monthly on the 1st", date(2026, 4, 10));
+        let rule = assert_recurring(
+            result,
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 5, 1, 0, 0),
+        );
+        assert_eq!(rule.day_of_month, Some(1));
+    }
+
+    #[test]
+    fn recurrence_embedded_in_text() {
+        let parser = BasicDateParser::default();
+        let result =
+            parser.parse_with_recurrence("pay rent every month on the 1st", date(2026, 4, 10));
+        assert!(result.is_some());
+        match result.unwrap() {
+            DateParseResult::Recurring { rule, .. } => {
+                assert_eq!(rule.frequency, RecurrenceFrequency::Monthly);
+                assert_eq!(rule.day_of_month, Some(1));
+            }
+            _ => panic!("expected Recurring"),
+        }
+    }
+
+    #[test]
+    fn non_recurrence_falls_through_to_onetime() {
+        let parser = BasicDateParser::default();
+        let result = parser.parse_with_recurrence("next friday", date(2026, 4, 1));
+        match result.expect("should parse") {
+            DateParseResult::OneTime(_) => {}
+            DateParseResult::Recurring { .. } => panic!("expected OneTime"),
+        }
+    }
+
+    #[test]
+    fn no_false_positive_on_every_without_unit() {
+        let parser = BasicDateParser::default();
+        // "every" alone should not match
+        let result = parser.parse_with_recurrence("review every student", date(2026, 4, 1));
+        // Should not produce a Recurring result (may produce OneTime or None)
+        match result {
+            Some(DateParseResult::Recurring { .. }) => panic!("unexpected Recurring"),
+            _ => {} // OK
         }
     }
 }
