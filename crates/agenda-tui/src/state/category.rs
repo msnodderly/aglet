@@ -221,6 +221,7 @@ pub(crate) enum WorkflowRolePickerOrigin {
 pub(crate) enum GlobalSettingsRow {
     AutoRefresh,
     SectionBorders,
+    NoteGlyphs,
     LiteralClassificationMode,
     SemanticClassificationMode,
     SemanticProvider,
@@ -243,6 +244,7 @@ impl GlobalSettingsRow {
         let mut rows = vec![
             Self::AutoRefresh,
             Self::SectionBorders,
+            Self::NoteGlyphs,
             Self::LiteralClassificationMode,
             Self::SemanticClassificationMode,
             Self::SemanticProvider,
