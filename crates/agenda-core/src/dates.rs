@@ -464,7 +464,7 @@ fn scan_month_name_dates(bytes: &[u8], reference_date: Date, best: &mut Option<P
             continue;
         }
 
-        for (name, month) in MONTHS {
+        for (name, month) in MONTHS.iter().chain(MONTHS_ABBREV.iter()) {
             if !matches_ascii_insensitive(bytes, start, name.as_bytes()) {
                 continue;
             }
@@ -497,7 +497,7 @@ fn scan_month_name_dates(bytes: &[u8], reference_date: Date, best: &mut Option<P
             if had_comma || had_space {
                 if let Some((year, year_end)) = parse_digits(bytes, year_pos, 4, 4) {
                     if has_right_boundary(bytes, year_end) {
-                        if let Ok(date) = Date::new(year as i16, month as i8, day as i8) {
+                        if let Ok(date) = Date::new(year as i16, *month as i8, day as i8) {
                             full_date_candidate = Some(ParsedDate {
                                 datetime: at_midnight(date),
                                 span: (start, year_end),
@@ -512,7 +512,7 @@ fn scan_month_name_dates(bytes: &[u8], reference_date: Date, best: &mut Option<P
             }
 
             if has_right_boundary(bytes, day_end) {
-                if let Some(date) = resolve_month_day_without_year(reference_date, month, day) {
+                if let Some(date) = resolve_month_day_without_year(reference_date, *month, day) {
                     choose_best(
                         best,
                         ParsedDate {

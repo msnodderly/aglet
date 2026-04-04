@@ -1,3 +1,4 @@
+use jiff::civil::{Date, DateTime, Time};
 use jiff::Timestamp;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -368,6 +369,11 @@ pub enum AssignmentExplanation {
         condition_index: usize,
         rendered_rule: String,
     },
+    DateCondition {
+        owner_category_name: String,
+        condition_index: usize,
+        rendered_rule: String,
+    },
     Action {
         trigger_category_name: String,
         kind: AssignmentActionKind,
@@ -407,6 +413,16 @@ impl AssignmentExplanation {
                 rendered_rule,
             } => format!(
                 "Derived from profile rule {} on {}: {}",
+                condition_index + 1,
+                owner_category_name,
+                rendered_rule
+            ),
+            Self::DateCondition {
+                owner_category_name,
+                condition_index,
+                rendered_rule,
+            } => format!(
+                "Derived from date rule {} on {}: {}",
                 condition_index + 1,
                 owner_category_name,
                 rendered_rule
@@ -465,6 +481,15 @@ impl AssignmentExplanation {
                 ..
             } => format!(
                 "Profile rule {} on {} no longer matched",
+                condition_index + 1,
+                owner_category_name
+            ),
+            Self::DateCondition {
+                owner_category_name,
+                condition_index,
+                ..
+            } => format!(
+                "Date rule {} on {} no longer matched",
                 condition_index + 1,
                 owner_category_name
             ),
@@ -594,6 +619,49 @@ impl Default for NumericFormat {
 pub enum Condition {
     ImplicitString,
     Profile { criteria: Box<Query> },
+    Date {
+        source: DateSource,
+        matcher: DateMatcher,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DateSource {
+    When,
+    Entry,
+    Done,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DateCompareOp {
+    On,
+    Before,
+    After,
+    AtOrBefore,
+    AtOrAfter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DateValueExpr {
+    Today,
+    Tomorrow,
+    DaysFromToday(i32),
+    DaysAgo(i32),
+    AbsoluteDate(Date),
+    AbsoluteDateTime(DateTime),
+    TimeToday(Time),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DateMatcher {
+    Compare {
+        op: DateCompareOp,
+        value: DateValueExpr,
+    },
+    Range {
+        from: DateValueExpr,
+        through: DateValueExpr,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
