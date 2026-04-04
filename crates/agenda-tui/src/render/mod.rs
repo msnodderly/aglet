@@ -2427,7 +2427,16 @@ impl App {
                                                 .when_date
                                                 .map(|dt| dt.date().to_string())
                                                 .unwrap_or_else(|| "\u{2013}".to_string());
-                                            if item.recurrence_rule.is_some() {
+                                            // Use draft recurrence state from the edit
+                                            // panel when this item is being edited,
+                                            // otherwise fall back to persisted state.
+                                            let has_recurrence = self
+                                                .input_panel
+                                                .as_ref()
+                                                .filter(|p| p.item_id == Some(item.id))
+                                                .map(|p| p.parsed_recurrence_rule.is_some())
+                                                .unwrap_or_else(|| item.recurrence_rule.is_some());
+                                            if has_recurrence {
                                                 format!("{} \u{21BB}", date_str)
                                             } else {
                                                 date_str
@@ -4434,14 +4443,33 @@ impl App {
                 Style::default()
             };
             let when_display = if !when_focused && panel.when_buffer.text().is_empty() {
-                "(none — today, tomorrow, next week, 2026-03-25, …)"
+                "(none — today, tomorrow, every monday, daily, …)"
             } else {
                 &when_visible
             };
-            let when_spans = vec![
+            let mut when_spans = vec![
                 Span::styled(when_prefix, when_prefix_style),
                 Span::styled(when_display, when_value_style),
             ];
+            // Show recurrence annotation (↻ rule → next date) when the buffer
+            // holds a normalized date. While the user is actively typing new raw
+            // text the buffer won't parse as a datetime, so the annotation
+            // naturally hides until the next Enter/Tab resolves it.
+            if let Some(ref rule) = panel.parsed_recurrence_rule {
+                let trimmed = panel.when_buffer.text().trim().replace(' ', "T");
+                if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
+                    let next = rule.next_date(dt);
+                    let annotation = format!(
+                        "  \u{21BB} {} \u{2192} {}",
+                        rule.display(),
+                        next.date()
+                    );
+                    when_spans.push(Span::styled(
+                        annotation,
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+            }
             frame.render_widget(Paragraph::new(Line::from(when_spans)), when_rect);
         }
 
@@ -4995,7 +5023,7 @@ impl App {
             }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
             InputPanelFocus::When => {
-                "When date (today, tomorrow, 2026-03-25, …)  Enter:recalc  Tab:apply+next  Esc:save"
+                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:save"
             }
         };
         let mut help_style = Style::default();

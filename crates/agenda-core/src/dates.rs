@@ -899,7 +899,14 @@ fn scan_recurrence(bytes: &[u8], reference_date: Date) -> Option<DateParseResult
     scan_every_month_day(bytes, reference_date, &mut best);
     scan_single_word_frequency(bytes, reference_date, &mut best);
 
-    best
+    // Attach trailing time ("at 6pm", "at 9:30am") to the first_date if present.
+    best.map(|result| match result {
+        DateParseResult::Recurring { first_date, rule } => DateParseResult::Recurring {
+            first_date: attach_trailing_time(bytes, first_date),
+            rule,
+        },
+        other => other,
+    })
 }
 
 fn choose_best_recurrence(
@@ -2240,5 +2247,40 @@ mod tests {
             Some(DateParseResult::Recurring { .. }) => panic!("unexpected Recurring"),
             _ => {} // OK
         }
+    }
+
+    #[test]
+    fn recurrence_every_weekday_at_time() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is a Wednesday → next Saturday = 2026-04-04
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every saturday at 6pm", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            1,
+            datetime(2026, 4, 4, 18, 0),
+        );
+        assert_eq!(rule.weekday, Some(6)); // 6 = Saturday
+    }
+
+    #[test]
+    fn recurrence_daily_at_time() {
+        let parser = BasicDateParser::default();
+        assert_recurring(
+            parser.parse_with_recurrence("daily at 9am", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 9, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_every_n_unit_at_time() {
+        let parser = BasicDateParser::default();
+        assert_recurring(
+            parser.parse_with_recurrence("every 2 weeks at 10:30am", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            2,
+            datetime(2026, 4, 15, 10, 30),
+        );
     }
 }
