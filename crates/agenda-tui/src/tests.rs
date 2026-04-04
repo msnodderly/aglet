@@ -4,14 +4,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use super::{
     add_capture_status_message, board_column_widths, board_item_label, board_table_spacing_budget,
     bucket_target_set_mut, build_category_rows, category_name_map, compute_board_layout,
-    first_non_reserved_category_index, input_panel, input_panel_popup_area, item_assignment_labels,
-    list_scroll_for_selected_line, next_index, next_index_clamped, should_render_unmatched_lane,
-    text_buffer, truncate_board_cell, when_bucket_options, AddColumnDirection, App,
-    AutoRefreshInterval, BucketEditTarget, CategoryDirectEditAnchor, CategoryDirectEditFocus,
-    CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
-    CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow, ItemAssignPane, Mode,
-    NameInputContext, OllamaModelPickerState, SectionBorderMode, SlotSortDirection,
-    SuggestionDecision, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
+    first_non_reserved_category_index, format_category_action, input_panel, input_panel_popup_area,
+    item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
+    should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
+    AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget, CategoryDirectEditAnchor,
+    CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
+    CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow,
+    ItemAssignPane, Mode, NameInputContext, OllamaModelPickerState, SectionBorderMode,
+    SlotSortDirection, SuggestionDecision, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
+    WorkflowRolePickerOrigin,
 };
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
@@ -35,6 +36,21 @@ use uuid::Uuid;
 
 fn row_depth_map(rows: &[super::CategoryListRow]) -> HashMap<CategoryId, usize> {
     rows.iter().map(|row| (row.id, row.depth)).collect()
+}
+
+#[test]
+fn format_category_action_sorts_targets_and_uses_shared_labels() {
+    let alpha = Category::new("Alpha".to_string());
+    let zed = Category::new("Zed".to_string());
+    let category_names =
+        HashMap::from([(zed.id, zed.name.clone()), (alpha.id, alpha.name.clone())]);
+    let action = Action::Assign {
+        targets: HashSet::from([zed.id, alpha.id]),
+    };
+
+    let label = format_category_action(&action, &category_names);
+
+    assert_eq!(label, "Assign [Alpha, Zed]");
 }
 
 #[test]
@@ -3481,9 +3497,13 @@ fn add_capture_status_message_includes_unknown_hashtag_warning() {
 #[test]
 fn build_category_rows_marks_reserved_and_tracks_depth() {
     let mut work = Category::new("Work".to_string());
+    work.conditions.push(Condition::ImplicitString);
     let mut project = Category::new("Project Y".to_string());
     project.parent = Some(work.id);
     project.note = Some("roadmap details".to_string());
+    project.actions.push(Action::Assign {
+        targets: HashSet::from([work.id]),
+    });
     let mut frabulator = Category::new("Frabulator".to_string());
     frabulator.parent = Some(project.id);
     let done = Category::new("Done".to_string());
@@ -3509,12 +3529,21 @@ fn build_category_rows_marks_reserved_and_tracks_depth() {
         .expect("done row present");
     assert!(done_row.is_reserved);
     assert!(!done_row.has_note);
+    assert_eq!(done_row.condition_count, 0);
+    assert_eq!(done_row.action_count, 0);
 
     let project_row = rows
         .iter()
         .find(|row| row.id == project.id)
         .expect("project row present");
     assert!(project_row.has_note);
+    assert_eq!(project_row.action_count, 1);
+
+    let work_row = rows
+        .iter()
+        .find(|row| row.id == work.id)
+        .expect("work row present");
+    assert_eq!(work_row.condition_count, 1);
 }
 
 #[test]
@@ -3542,7 +3571,8 @@ fn first_non_reserved_category_index_prefers_non_reserved_row() {
         enable_semantic_classification: false,
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
-        has_conditions: false,
+        condition_count: 0,
+        action_count: 0,
     };
     let user = CategoryListRow {
         id: CategoryId::new_v4(),
@@ -3556,7 +3586,8 @@ fn first_non_reserved_category_index_prefers_non_reserved_row() {
         enable_semantic_classification: true,
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
-        has_conditions: false,
+        condition_count: 0,
+        action_count: 0,
     };
 
     assert_eq!(
@@ -3579,7 +3610,8 @@ fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
         enable_semantic_classification: false,
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
-        has_conditions: false,
+        condition_count: 0,
+        action_count: 0,
     };
     let when = CategoryListRow {
         id: CategoryId::new_v4(),
@@ -3593,7 +3625,8 @@ fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
         enable_semantic_classification: false,
         match_category_name: true,
         value_kind: CategoryValueKind::Tag,
-        has_conditions: false,
+        condition_count: 0,
+        action_count: 0,
     };
 
     assert_eq!(first_non_reserved_category_index(&[done, when]), 0);
@@ -4292,6 +4325,7 @@ fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
         semantic_candidates_seen: 2,
         semantic_candidates_queued_review: 0,
         semantic_candidates_skipped_already_assigned: 2,
+        semantic_candidates_skipped_unavailable: 0,
         semantic_debug_messages: vec![
             "semantic[mistral]: raw=3 kept=2 dropped_unknown=1 dropped_duplicate=0".to_string(),
         ],
@@ -4305,6 +4339,30 @@ fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
                 false
             ))
         );
+}
+
+#[test]
+fn classification_feedback_reports_unavailable_semantic_candidates() {
+    let item_id = ItemId::new_v4();
+    let app = App::default();
+    let result = ProcessItemResult {
+        semantic_candidates_seen: 2,
+        semantic_candidates_queued_review: 0,
+        semantic_candidates_skipped_already_assigned: 1,
+        semantic_candidates_skipped_unavailable: 1,
+        semantic_debug_messages: vec![
+            "semantic[mistral]: raw=2 kept=2 dropped_unknown=0 dropped_duplicate=0".to_string(),
+        ],
+        ..ProcessItemResult::default()
+    };
+
+    assert_eq!(
+        app.classification_feedback_for_saved_item(item_id, &result),
+        Some((
+            "semantic ran; no new review suggestions (all already assigned or unavailable) | semantic[mistral]: raw=2 kept=2 dropped_unknown=0 dropped_duplicate=0".to_string(),
+            false
+        ))
+    );
 }
 
 #[test]
@@ -5556,6 +5614,54 @@ fn inspect_unassign_picker_jk_tracks_assignment_rows() {
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn inspect_unassign_explains_rule_locked_auto_match_assignment() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut tui = Category::new("TUI".to_string());
+    tui.enable_implicit_string = true;
+    store.create_category(&tui).expect("create TUI");
+
+    let item = Item::new("Fix TUI assignment UX".to_string());
+    agenda.create_item(&item).expect("create item");
+
+    let assigned = store.get_item(item.id).expect("reload assigned item");
+    assigned
+        .assignments
+        .get(&tui.id)
+        .expect("implicit-name assignment should assign TUI");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::InspectUnassign;
+    app.inspect_assignment_index = 0;
+
+    app.handle_inspect_unassign_key(KeyCode::Enter, &agenda)
+        .expect("inspect unassign enter should explain rule lock");
+
+    let after = store
+        .get_item(item.id)
+        .expect("reload after inspect attempt");
+    assert!(
+        after.assignments.contains_key(&tui.id),
+        "rule-derived assignment should remain after failed inspect unassign"
+    );
+    assert_eq!(app.mode, Mode::InspectUnassign);
+    assert!(
+        app.status.contains("Cannot remove TUI [auto-match]"),
+        "status should explain why the assignment is stuck: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("Matched category name \"TUI\""),
+        "status should include the rule explanation: {}",
+        app.status
+    );
 }
 
 #[test]
@@ -7371,9 +7477,9 @@ fn category_manager_conditions_focus_shows_rule_count() {
             .expect("navigate down");
     }
 
-    // Verify has_conditions is true in the row
+    // Verify condition tracking is true in the row
     let row = app.selected_category_row().expect("selected row");
-    assert!(row.has_conditions);
+    assert_eq!(row.condition_count, 1);
 
     // Navigate to conditions focus
     app.handle_category_manager_key(KeyCode::Tab, &agenda)
@@ -7742,6 +7848,186 @@ fn category_manager_condition_edit_delete_condition() {
     // Verify it was removed
     let cat = store.get_category(escalated.id).expect("load");
     assert!(cat.conditions.is_empty());
+}
+
+#[test]
+fn category_manager_action_edit_add_and_save_assign_action() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let notify = Category::new("Notify".to_string());
+    let escalated = Category::new("Escalated".to_string());
+    store.create_category(&notify).expect("create notify");
+    store.create_category(&escalated).expect("create escalated");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "Escalated" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to actions");
+    assert_eq!(
+        app.category_manager_details_focus(),
+        Some(CategoryManagerDetailsFocus::Actions)
+    );
+
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open action list");
+    assert!(app.category_manager_action_edit().is_some());
+    assert!(!app.category_manager_action_edit().unwrap().picker_open);
+
+    app.handle_category_manager_key(KeyCode::Char('a'), &agenda)
+        .expect("add action");
+    assert!(app.category_manager_action_edit().unwrap().picker_open);
+
+    loop {
+        let edit = app.category_manager_action_edit().unwrap();
+        let idx = edit.picker_index;
+        if let Some(row) = app.category_rows.get(idx) {
+            if row.name == "Notify" {
+                break;
+            }
+        }
+        app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+            .expect("navigate picker");
+    }
+    app.handle_category_manager_key(KeyCode::Char(' '), &agenda)
+        .expect("toggle target");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("save action");
+
+    let cat = store.get_category(escalated.id).expect("load escalated");
+    assert_eq!(cat.actions.len(), 1);
+    match &cat.actions[0] {
+        Action::Assign { targets } => {
+            assert!(targets.contains(&notify.id));
+        }
+        other => panic!("expected Assign action, got {:?}", other),
+    }
+
+    assert!(app.category_manager_action_edit().is_some());
+    assert!(!app.category_manager_action_edit().unwrap().picker_open);
+}
+
+#[test]
+fn category_manager_action_edit_can_switch_existing_action_kind() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let notify = Category::new("Notify".to_string());
+    let low = Category::new("Low".to_string());
+    let mut escalated = Category::new("Escalated".to_string());
+    escalated.actions.push(Action::Assign {
+        targets: HashSet::from([notify.id]),
+    });
+    store.create_category(&notify).expect("create notify");
+    store.create_category(&low).expect("create low");
+    store.create_category(&escalated).expect("create escalated");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "Escalated" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to actions");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open action list");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("edit existing action");
+
+    assert!(app.category_manager_action_edit().unwrap().picker_open);
+    app.handle_category_manager_key(KeyCode::Char('2'), &agenda)
+        .expect("switch to remove");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("save action");
+
+    let cat = store.get_category(escalated.id).expect("load escalated");
+    assert_eq!(cat.actions.len(), 1);
+    match &cat.actions[0] {
+        Action::Remove { targets } => {
+            assert!(targets.contains(&notify.id));
+        }
+        other => panic!("expected Remove action, got {:?}", other),
+    }
+}
+
+#[test]
+fn category_manager_action_edit_delete_action() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let notify = Category::new("Notify".to_string());
+    let mut escalated = Category::new("Escalated".to_string());
+    escalated.actions.push(Action::Assign {
+        targets: HashSet::from([notify.id]),
+    });
+    store.create_category(&notify).expect("create notify");
+    store.create_category(&escalated).expect("create escalated");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "Escalated" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to actions");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open action list");
+    app.handle_category_manager_key(KeyCode::Char('x'), &agenda)
+        .expect("delete action");
+
+    let cat = store.get_category(escalated.id).expect("load escalated");
+    assert!(cat.actions.is_empty());
 }
 
 #[test]
@@ -8534,6 +8820,66 @@ fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
     assert!(
         !after.assignments.contains_key(&critical.id),
         "live profile-derived assignment should auto-break after unassign via item picker"
+    );
+}
+
+#[test]
+fn item_assign_picker_shows_and_explains_rule_locked_auto_match_assignment() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut tui = Category::new("TUI".to_string());
+    tui.enable_implicit_string = true;
+    store.create_category(&tui).expect("create TUI");
+
+    let item = Item::new("Improve TUI action authoring".to_string());
+    agenda.create_item(&item).expect("create item");
+
+    let assigned = store.get_item(item.id).expect("reload assigned item");
+    assert!(
+        assigned.assignments.contains_key(&tui.id),
+        "implicit match should assign TUI before opening picker"
+    );
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+
+    app.handle_normal_key(KeyCode::Char('a'), &agenda)
+        .expect("open assign picker");
+    app.set_item_assign_category_selection_by_id(tui.id);
+
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("[x] TUI [auto-match]"),
+        "assign picker should show inline provenance for rule-derived rows: {rendered}"
+    );
+
+    app.handle_item_assign_category_key(KeyCode::Char(' '), &agenda)
+        .expect("space should report locked assignment instead of unassigning");
+
+    let after = store
+        .get_item(item.id)
+        .expect("reload after toggle attempt");
+    assert!(
+        after.assignments.contains_key(&tui.id),
+        "rule-derived assignment should remain after failed picker unassign"
+    );
+    assert_eq!(app.mode, Mode::ItemAssignPicker);
+    assert!(
+        app.status.contains("Cannot remove TUI [auto-match]"),
+        "status should explain why the assignment is stuck: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("Matched category name \"TUI\""),
+        "status should include the rule explanation: {}",
+        app.status
     );
 }
 
@@ -14977,10 +15323,16 @@ fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(state.is_new_view);
     assert_eq!(state.draft.sections.len(), 1);
-    assert_eq!(state.draft.sections[0].title, App::DEFAULT_VIEW_EDIT_SECTION_TITLE);
+    assert_eq!(
+        state.draft.sections[0].title,
+        App::DEFAULT_VIEW_EDIT_SECTION_TITLE
+    );
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
     assert_eq!(state.region, ViewEditRegion::Criteria);
-    assert_eq!(state.inline_input, Some(super::ViewEditInlineInput::ViewName));
+    assert_eq!(
+        state.inline_input,
+        Some(super::ViewEditInlineInput::ViewName)
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }

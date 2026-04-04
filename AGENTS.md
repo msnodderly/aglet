@@ -105,6 +105,20 @@ When viewing items, the categories list includes both the assigned category and
 all its parent categories. For example, an item assigned to `High` will show
 `High, Priority` in its categories list (both the child and the parent).
 
+## Exclusive Family Order Now Defines Derived Precedence (Current)
+
+For an exclusive parent category, child order is now meaningful for
+rule-derived conflicts.
+
+Practical implications:
+- If multiple derived children under the same exclusive parent match, the
+  earlier child in the parent's ordered child list wins.
+- Later derived siblings are suppressed instead of replacing the earlier match.
+- Manual and accepted-suggestion assignments still act as durable user choices
+  and should not be replaced by later derived siblings.
+- This is a generic exclusive-family rule, not a special case for categories
+  named `Priority` or `Status`.
+
 ## Implicit String Matching Uses Note Text Too (Surprising)
 
 Implicit-string auto-match is evaluated against `item.text` and the full note
@@ -116,6 +130,23 @@ Practical implications:
 - If an item appears in a status/project view unexpectedly, inspect
   `agenda-cli show` assignment provenance before assuming the visible category
   was manually assigned
+
+## Continuous Implicit-String Matches Persist As `AutoClassified` (Surprising)
+
+The modern continuous classification path stores substring/category-name matches
+as `AssignmentSource::AutoClassified` with provider
+`implicit_string`, not as the older `AssignmentExplanation::ImplicitMatch`
+shape used by some lower-level engine/tests.
+
+Practical implications:
+- In TUI/CLI provenance, a category that feels like "auto-match from item text"
+  may arrive via `AutoClassified { provider_id: "implicit_string", ... }`
+  rather than `ImplicitMatch`.
+- If you are adding user-facing badges or explanations, normalize both forms to
+  the same UX concept instead of assuming only `ImplicitMatch` represents
+  name/text matching.
+- When a test expects "matched category name ..." behavior, inspect the
+  explanation/provider before deciding whether the wrong path fired.
 
 ## Disabling Implicit Match Only Evicts Live `AutoMatch` Assignments (Surprising)
 
@@ -133,6 +164,18 @@ Practical implications:
 - If a category still appears assigned after disabling `Auto-match`, inspect
   `sticky`/provenance before assuming the new dynamic behavior is broken.
 
+## Some Older Proposal Docs Still Describe Pre-Live Rule Semantics (Surprising)
+
+Some planning/proposal docs still describe an older simplification where "all
+assignments are sticky" and condition-derived assignments never auto-break.
+
+Practical implications:
+- Treat the shipped engine/tests as source of truth: new implicit/profile
+  assignments are live and can auto-break; action/manual/accepted assignments
+  remain sticky.
+- If a proposal doc disagrees with current behavior, update the doc before
+  using it as implementation guidance.
+
 ## `Agenda::unassign_item_manual` Reprocesses After Removal (Updated)
 
 `Agenda::unassign_item_manual(...)` now mirrors other manual assignment flows:
@@ -144,6 +187,23 @@ Practical implications:
   manual unassign, including from the TUI `a` item-assign picker.
 - Older tests or callers that manually invoked reprocessing after
   `unassign_item_manual(...)` may now be doing redundant work.
+
+## Adding A Category Action Does Not Retroactively Fire It (Surprising)
+
+Updating a category to add or edit an `Action::Assign` / `Action::Remove`
+definition reprocesses items for category-change bookkeeping, but it does **not**
+retroactively execute that action for items already assigned to the owning
+category.
+
+Practical implications:
+- Treat category actions as event-driven "on assignment" behavior, not as
+  destination-style live conditions.
+- If you add an action to `Escalated`, existing items already in `Escalated`
+  will not immediately gain/remove the target categories just because the
+  action was added.
+- Do not write tests that assume `agenda.update_category(...)` or action-authoring
+  commands will backfill action effects across historical assignments unless we
+  intentionally change that semantic later.
 
 ## CLI And TUI Search Semantics Are Centralized In `agenda-core` (Updated)
 

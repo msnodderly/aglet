@@ -10,7 +10,7 @@ use agenda_core::dates::{BasicDateParser, DateParser};
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
+    Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
     CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
@@ -115,6 +115,12 @@ enum Command {
         /// Clear the item's explicit `when` value.
         #[arg(long = "clear-when")]
         clear_when: bool,
+        /// Set recurrence rule (e.g., "daily", "weekly", "every friday", "monthly on the 15th").
+        #[arg(long)]
+        recurrence: Option<String>,
+        /// Remove the recurrence rule from the item.
+        #[arg(long = "clear-recurrence")]
+        clear_recurrence: bool,
     },
 
     /// Show a single item with its assignments
@@ -430,6 +436,26 @@ enum CategoryCommand {
         /// Category name (case-insensitive).
         name: String,
         /// Condition index (1-based, as shown in `category show`).
+        index: usize,
+    },
+
+    /// Add an action to a category
+    AddAction {
+        /// Category name to add the action to (case-insensitive).
+        name: String,
+        /// Categories to assign when this category is assigned.
+        #[arg(long = "assign", value_name = "CATEGORY")]
+        assign_categories: Vec<String>,
+        /// Categories to remove when this category is assigned.
+        #[arg(long = "remove", value_name = "CATEGORY")]
+        remove_categories: Vec<String>,
+    },
+
+    /// Remove an action from a category by index (1-based)
+    RemoveAction {
+        /// Category name (case-insensitive).
+        name: String,
+        /// Action index (1-based, as shown in `category show`).
         index: usize,
     },
 }
@@ -883,6 +909,8 @@ fn run() -> Result<(), String> {
             done,
             when,
             clear_when,
+            recurrence,
+            clear_recurrence,
         } => {
             let note_stdin = if note_stdin_flag {
                 let mut stdin = io::stdin().lock();
@@ -901,6 +929,8 @@ fn run() -> Result<(), String> {
                 done,
                 when,
                 clear_when,
+                recurrence,
+                clear_recurrence,
             )
         }
         Command::Show { item_id } => cmd_show(&store, item_id),
@@ -1049,6 +1079,8 @@ fn cmd_edit(
     done: Option<bool>,
     when: Option<String>,
     clear_when: bool,
+    recurrence: Option<String>,
+    clear_recurrence: bool,
 ) -> Result<(), String> {
     let item_id = resolve_item_id(&item_id_str, agenda.store())?;
 
@@ -1060,9 +1092,11 @@ fn cmd_edit(
         && done.is_none()
         && when.is_none()
         && !clear_when
+        && recurrence.is_none()
+        && !clear_recurrence
     {
         return Err(
-            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false\n  agenda edit <id> --when 2026-02-20\n  agenda edit <id> --clear-when".to_string()
+            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when] [--recurrence <RULE>] [--clear-recurrence]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false\n  agenda edit <id> --when 2026-02-20\n  agenda edit <id> --clear-when\n  agenda edit <id> --recurrence \"every friday\"\n  agenda edit <id> --clear-recurrence".to_string()
         );
     }
 
@@ -1084,8 +1118,20 @@ fn cmd_edit(
 
     if let Some(done_value) = done {
         if done_value {
-            agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
-            println!("marked done {}", item_id);
+            let result = agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
+            if let Some(successor_id) = result.successor_item_id {
+                let successor = agenda.store().get_item(successor_id).map_err(|e| e.to_string())?;
+                let when_str = successor
+                    .when_date
+                    .map(|dt| dt.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                println!(
+                    "marked done {}; successor created: {} (when: {})",
+                    item_id, successor_id, when_str
+                );
+            } else {
+                println!("marked done {}", item_id);
+            }
         } else {
             agenda
                 .mark_item_not_done(item_id)
@@ -1169,6 +1215,35 @@ fn cmd_edit(
         println!("updated {}", item_id);
     }
 
+    if recurrence.is_some() && clear_recurrence {
+        return Err("--recurrence and --clear-recurrence are mutually exclusive".to_string());
+    }
+    if let Some(recurrence_text) = recurrence {
+        let parser = agenda_core::dates::BasicDateParser::default();
+        let reference = jiff::Zoned::now().date();
+        match parser.parse_with_recurrence(&recurrence_text, reference) {
+            Some(agenda_core::dates::DateParseResult::Recurring { rule, .. }) => {
+                let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+                item.recurrence_rule = Some(rule.clone());
+                item.modified_at = jiff::Timestamp::now();
+                agenda.store().update_item(&item).map_err(|e| e.to_string())?;
+                println!("set recurrence: {}", rule.display());
+            }
+            _ => {
+                return Err(format!(
+                    "unrecognized recurrence pattern: \"{}\"\n\nExamples: daily, weekly, every friday, every 2 weeks, monthly on the 15th",
+                    recurrence_text
+                ));
+            }
+        }
+    } else if clear_recurrence {
+        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+        item.recurrence_rule = None;
+        item.modified_at = jiff::Timestamp::now();
+        agenda.store().update_item(&item).map_err(|e| e.to_string())?;
+        println!("cleared recurrence");
+    }
+
     Ok(())
 }
 
@@ -1192,6 +1267,15 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     println!("modified_at: {}", item.modified_at);
     if let Some(done_date) = item.done_date {
         println!("done_date:  {}", done_date);
+    }
+    if let Some(rule) = &item.recurrence_rule {
+        println!("recurrence: {}", rule.display());
+    }
+    if let Some(series_id) = item.recurrence_series_id {
+        println!("series_id:  {}", series_id);
+    }
+    if let Some(parent_id) = item.recurrence_parent_item_id {
+        println!("parent_id:  {}", parent_id);
     }
     if let Some(note) = &item.note {
         println!("note:       {}", note);
@@ -1950,23 +2034,8 @@ fn cmd_category(
             }
             if !category.actions.is_empty() {
                 println!("actions:");
-                for action in &category.actions {
-                    match action {
-                        agenda_core::model::Action::Assign { targets } => {
-                            let names: Vec<&str> = targets
-                                .iter()
-                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
-                                .collect();
-                            println!("  - Assign [{}]", names.join(", "));
-                        }
-                        agenda_core::model::Action::Remove { targets } => {
-                            let names: Vec<&str> = targets
-                                .iter()
-                                .filter_map(|id| category_names.get(id).map(|s| s.as_str()))
-                                .collect();
-                            println!("  - Remove [{}]", names.join(", "));
-                        }
-                    }
+                for (index, action) in category.actions.iter().enumerate() {
+                    println!("  {}", indexed_category_action_row(index, action, &category_names));
                 }
             }
             println!("created_at:      {}", category.created_at);
@@ -2372,6 +2441,75 @@ fn cmd_category(
             };
             println!(
                 "removed condition #{} ({}) from {} (processed_items={}, affected_items={})",
+                index, desc, name, result.processed_items, result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::AddAction {
+            name,
+            assign_categories,
+            remove_categories,
+        } => {
+            let assign_requested = !assign_categories.is_empty();
+            let remove_requested = !remove_categories.is_empty();
+            if assign_requested == remove_requested {
+                return Err(
+                    "specify exactly one action kind: use either --assign or --remove".to_string(),
+                );
+            }
+
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let target_names = if assign_requested {
+                &assign_categories
+            } else {
+                &remove_categories
+            };
+            let mut targets = HashSet::new();
+            for target_name in target_names {
+                let target_id = category_id_by_name(&categories, target_name)?;
+                targets.insert(target_id);
+            }
+
+            let action = if assign_requested {
+                Action::Assign { targets }
+            } else {
+                Action::Remove { targets }
+            };
+            let (action_index, result) = agenda
+                .add_category_action(category_id, action)
+                .map_err(|e| e.to_string())?;
+            let action_kind = if assign_requested { "assign" } else { "remove" };
+            println!(
+                "added {} action #{} to {} (processed_items={}, affected_items={})",
+                action_kind,
+                action_index + 1,
+                name,
+                result.processed_items,
+                result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::RemoveAction { name, index } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let category = store.get_category(category_id).map_err(|e| e.to_string())?;
+
+            if index == 0 || index > category.actions.len() {
+                return Err(format!(
+                    "action index {} out of range: {} has {} action(s)",
+                    index,
+                    name,
+                    category.actions.len()
+                ));
+            }
+            let (removed, result) = agenda
+                .remove_category_action(category_id, index - 1)
+                .map_err(|e| e.to_string())?;
+            let category_names = category_name_map(&categories);
+            let desc = describe_category_action(&removed, &category_names);
+            println!(
+                "removed action #{} ({}) from {} (processed_items={}, affected_items={})",
                 index, desc, name, result.processed_items, result.affected_items
             );
             Ok(())
@@ -3026,6 +3164,49 @@ fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
         .iter()
         .map(|category| (category.id, category.name.clone()))
         .collect()
+}
+
+fn describe_category_targets(
+    targets: &HashSet<CategoryId>,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    let mut names: Vec<String> = targets
+        .iter()
+        .map(|id| {
+            category_names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| "(deleted)".to_string())
+        })
+        .collect();
+    names.sort();
+    format!("[{}]", names.join(", "))
+}
+
+fn describe_category_action(
+    action: &Action,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    match action.category_targets() {
+        Some(targets) => format!(
+            "{} {}",
+            action.kind_label(),
+            describe_category_targets(targets, category_names)
+        ),
+        None => action.kind_label().to_string(),
+    }
+}
+
+fn indexed_category_action_row(
+    index: usize,
+    action: &Action,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    format!(
+        "{}. {}",
+        index + 1,
+        describe_category_action(action, category_names)
+    )
 }
 
 fn category_id_by_name(categories: &[Category], name: &str) -> Result<CategoryId, String> {
@@ -4294,8 +4475,9 @@ mod tests {
     use super::{
         blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_add, cmd_category,
         cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, duplicate_category_create_error, item_link_section_lines,
-        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
+        compare_items_by_sort_keys, describe_category_action, duplicate_category_create_error,
+        indexed_category_action_row, item_link_section_lines, parse_csv_decimals,
+        parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
         parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
         retain_items_by_dependency_state, retain_items_matching_numeric_filters,
         retain_items_with_all_categories, retain_items_with_any_categories,
@@ -4309,7 +4491,7 @@ mod tests {
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item,
+        Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item,
         NumericFormat, Query, Section, SummaryFn, View,
     };
     use agenda_core::store::Store;
@@ -4482,6 +4664,8 @@ mod tests {
             None,
             Some("2026-03-01".to_string()),
             false,
+            None,
+            false,
         )
         .expect("set when");
         let updated = store.get_item(item.id).expect("load item");
@@ -4498,6 +4682,8 @@ mod tests {
             None,
             None,
             true,
+            None,
+            false,
         )
         .expect("clear when");
         let cleared = store.get_item(item.id).expect("load cleared item");
@@ -5880,6 +6066,177 @@ mod tests {
     }
 
     #[test]
+    fn cmd_category_add_action_creates_assign_action() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        let notify = Category::new("Notify".to_string());
+        store.create_category(&source).expect("create source");
+        store.create_category(&notify).expect("create notify");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Notify".to_string()],
+                remove_categories: Vec::new(),
+            },
+        )
+        .expect("add action");
+
+        let updated = store.get_category(source.id).expect("load source");
+        assert_eq!(updated.actions.len(), 1);
+        match &updated.actions[0] {
+            Action::Assign { targets } => {
+                assert_eq!(targets.len(), 1);
+                assert!(targets.contains(&notify.id));
+            }
+            other => panic!("expected Assign action, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn describe_category_action_sorts_targets_and_uses_kind_label() {
+        let alpha = Category::new("Alpha".to_string());
+        let zed = Category::new("Zed".to_string());
+        let category_names = HashMap::from([
+            (zed.id, zed.name.clone()),
+            (alpha.id, alpha.name.clone()),
+        ]);
+        let action = Action::Assign {
+            targets: HashSet::from([zed.id, alpha.id]),
+        };
+
+        let desc = describe_category_action(&action, &category_names);
+
+        assert_eq!(desc, "Assign [Alpha, Zed]");
+    }
+
+    #[test]
+    fn indexed_category_action_row_is_one_based() {
+        let notify = Category::new("Notify".to_string());
+        let category_names = HashMap::from([(notify.id, notify.name.clone())]);
+        let action = Action::Remove {
+            targets: HashSet::from([notify.id]),
+        };
+
+        let row = indexed_category_action_row(1, &action, &category_names);
+
+        assert_eq!(row, "2. Remove [Notify]");
+    }
+
+    #[test]
+    fn cmd_category_add_action_rejects_mixed_kinds() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        let notify = Category::new("Notify".to_string());
+        let low = Category::new("Low".to_string());
+        store.create_category(&source).expect("create source");
+        store.create_category(&notify).expect("create notify");
+        store.create_category(&low).expect("create low");
+
+        let result = cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Notify".to_string()],
+                remove_categories: vec!["Low".to_string()],
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("specify exactly one action kind"));
+    }
+
+    #[test]
+    fn cmd_category_add_action_rejects_self_target() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        store.create_category(&source).expect("create source");
+
+        let result = cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Escalated".to_string()],
+                remove_categories: Vec::new(),
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("cannot target itself in an action"));
+    }
+
+    #[test]
+    fn cmd_category_remove_action_removes_by_index() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = Category::new("Escalated".to_string());
+        let notify = Category::new("Notify".to_string());
+        let low = Category::new("Low".to_string());
+        store.create_category(&source).expect("create source");
+        store.create_category(&notify).expect("create notify");
+        store.create_category(&low).expect("create low");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: vec!["Notify".to_string()],
+                remove_categories: Vec::new(),
+            },
+        )
+        .expect("add action 1");
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddAction {
+                name: "Escalated".to_string(),
+                assign_categories: Vec::new(),
+                remove_categories: vec!["Low".to_string()],
+            },
+        )
+        .expect("add action 2");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::RemoveAction {
+                name: "Escalated".to_string(),
+                index: 1,
+            },
+        )
+        .expect("remove action");
+
+        let updated = store.get_category(source.id).expect("load source");
+        assert_eq!(updated.actions.len(), 1);
+        match &updated.actions[0] {
+            Action::Remove { targets } => {
+                assert!(targets.contains(&low.id));
+            }
+            other => panic!("expected Remove action, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn cmd_view_authoring_commands_update_view_incrementally() {
         let store = Store::open_memory().expect("store");
         let classifier = SubstringClassifier;
@@ -6769,6 +7126,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         )
         .expect("append to empty");
 
@@ -6795,6 +7154,8 @@ mod tests {
             None,
             false,
             None,
+            None,
+            false,
             None,
             false,
         )
@@ -6828,6 +7189,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         )
         .expect("append multiline");
 
@@ -6855,6 +7218,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("mutually exclusive"));
@@ -6875,6 +7240,8 @@ mod tests {
             None,
             true,
             None,
+            None,
+            false,
             None,
             false,
         );
@@ -6910,6 +7277,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
         )
         .expect("replace from stdin");
 
@@ -6932,6 +7301,8 @@ mod tests {
             Some("stdin".to_string()),
             false,
             None,
+            None,
+            false,
             None,
             false,
         );
@@ -6959,6 +7330,8 @@ mod tests {
             Some(String::new()),
             false,
             None,
+            None,
+            false,
             None,
             false,
         )

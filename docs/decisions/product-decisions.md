@@ -75,25 +75,30 @@ conditions vec says another.
 
 ---
 
-## 3. Assignments are sticky
+## 3. Assignment stickiness depends on provenance
 
-**Date**: 2026-02-15
+**Date**: 2026-02-15 (original), updated 2026-04-02
 **Relevant tasks**: T017, T018
 
-The engine never revokes existing assignments during re-evaluation. It only
-adds new ones. If an item is already assigned to a category, the engine
-skips it — no duplicate assignment, no re-firing of actions. Only the user
-can remove assignments.
+**Manual, action-produced, and accepted-suggestion assignments are sticky**:
+the engine never automatically removes them. Only the user (or an explicit
+`Action::Remove`) can unassign them.
 
-This is critical for:
-- **Termination**: The fixed-point loop converges because the set of
-  assignments is monotonically increasing.
-- **User trust**: Auto-classification is additive. The system never silently
-  un-organizes your items.
+**Condition-derived assignments (`auto_match`) are non-sticky (live)**: the
+engine automatically removes them when the triggering condition stops
+matching — e.g., matched text is edited away, or a prerequisite category is
+removed. This "auto-break" keeps derived state consistent with current item
+state.
 
-`Action::Remove` is the one exception — it can unassign — but remove results
-are deferred until the cascade completes (T018), preventing mid-cascade
-instability.
+This split is critical for:
+- **Termination**: The fixed-point loop still converges — condition-derived
+  assignments may be added or removed, but the engine reaches a stable state
+  because changes are deterministic and bounded by the finite rule set.
+- **User trust**: Manual organization is never silently undone. Derived
+  assignments stay accurate and self-correcting.
+
+`Action::Remove` can also unassign — remove results are deferred until the
+cascade completes (T018), preventing mid-cascade instability.
 
 ---
 

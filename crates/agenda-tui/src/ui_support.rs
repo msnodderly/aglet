@@ -99,6 +99,37 @@ pub(super) fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, 
         .collect()
 }
 
+pub(super) fn format_action_targets(
+    targets: &HashSet<CategoryId>,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    let mut names: Vec<String> = targets
+        .iter()
+        .map(|id| {
+            category_names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| "(deleted)".to_string())
+        })
+        .collect();
+    names.sort();
+    format!("[{}]", names.join(", "))
+}
+
+pub(super) fn format_category_action(
+    action: &Action,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    match action.category_targets() {
+        Some(targets) => format!(
+            "{} {}",
+            action.kind_label(),
+            format_action_targets(targets, category_names)
+        ),
+        None => action.kind_label().to_string(),
+    }
+}
+
 pub(super) fn item_assignment_labels(
     item: &Item,
     category_names: &HashMap<CategoryId, String>,
@@ -757,7 +788,8 @@ pub(super) fn build_category_rows(categories: &[Category]) -> Vec<CategoryListRo
             enable_semantic_classification: category.enable_semantic_classification,
             match_category_name: category.match_category_name,
             value_kind: category.value_kind,
-            has_conditions: !category.conditions.is_empty(),
+            condition_count: category.conditions.len(),
+            action_count: category.actions.len(),
         })
         .collect()
 }

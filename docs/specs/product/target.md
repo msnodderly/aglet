@@ -171,10 +171,11 @@ RecurrenceRule {
 - Assignments with source `manual` or `suggestion_accepted` are **sticky**: they are
   never automatically removed by the rule engine, even if the matched text is later
   edited away. Only the user can remove them explicitly.
-- Assignments with source `auto_match` are also sticky once made — the rule engine does
-  not retroactively remove assignments from prior passes. Re-evaluation only adds new
-  assignments; it never revokes existing ones. Actions may still remove assignments via
-  `RemoveAction`, but the rule engine itself never revokes matches.
+- Assignments with source `auto_match` (implicit-string and profile-condition) are
+  **non-sticky (live)**: the rule engine automatically removes them when the triggering
+  condition stops matching (e.g., the matched text is edited away, or a prerequisite
+  category is removed). This "auto-break" behavior keeps derived state consistent with
+  current item state. Actions may also remove assignments via `RemoveAction`.
 - The `rejected_suggestions` set prevents re-suggestion of the same category for the
   same item. If the item text changes materially (e.g., Levenshtein edit distance > 20%
   of original length, or other implementation-defined threshold), the rejected set is
@@ -1171,9 +1172,9 @@ responsive enough that the user builds a habit of switching views frequently.
 3. The modification triggers a re-evaluation by the classification engine. If the new text
    matches additional categories (e.g., "Testing"), new assignments may occur.
 4. If the edit removes a matched word (e.g., the user deletes "Sarah" from the text),
-   the string-match assignment to "Sarah" is NOT automatically removed — assignments
-   are sticky regardless of provenance (see §2.1). Only new text changes trigger new
-   evaluations; the engine never revokes existing assignments.
+   the string-match assignment to "Sarah" is automatically removed because
+   condition-derived assignments are live/non-sticky (see §2.1). Manual and accepted
+   suggestion assignments remain sticky and are unaffected by text edits.
 
 **Satisfaction criteria:** There is one item, one truth. Edits propagate everywhere.
 The user never has to wonder "which copy did I update?"

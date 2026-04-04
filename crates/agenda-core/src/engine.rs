@@ -29,7 +29,10 @@ pub struct ProcessItemResult {
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
     pub semantic_candidates_skipped_already_assigned: usize,
+    pub semantic_candidates_skipped_unavailable: usize,
     pub semantic_debug_messages: Vec<String>,
+    /// When a recurring item is marked done, this holds the successor item's ID.
+    pub successor_item_id: Option<ItemId>,
 }
 
 #[derive(Debug, Default)]
@@ -206,7 +209,9 @@ fn process_item_inner(
         let changed = pass_result.changed;
 
         result.new_assignments.extend(pass_result.new_assignments);
-        result.assignment_events.extend(pass_result.assignment_events);
+        result
+            .assignment_events
+            .extend(pass_result.assignment_events);
         result
             .deferred_removals
             .extend(pass_result.deferred_removals);
@@ -273,7 +278,7 @@ fn run_hierarchy_pass(
         if !can_assign(input.item_id, category.id, assignments, seen_pairs) {
             continue;
         }
-        if has_manual_exclusive_sibling(category.id, input.categories_by_id, assignments) {
+        if has_blocking_exclusive_sibling(category.id, input.categories_by_id, assignments) {
             continue;
         }
 
@@ -408,6 +413,9 @@ fn fire_actions(
             Action::Assign { targets } => {
                 for target_id in targets {
                     if !can_assign(item_id, *target_id, assignments, seen_pairs) {
+                        continue;
+                    }
+                    if has_blocking_exclusive_sibling(*target_id, categories_by_id, assignments) {
                         continue;
                     }
 
@@ -551,7 +559,7 @@ fn enforce_mutual_exclusion(
     Ok(())
 }
 
-fn has_manual_exclusive_sibling(
+fn has_blocking_exclusive_sibling(
     category_id: CategoryId,
     categories_by_id: &HashMap<CategoryId, &Category>,
     assignments: &HashMap<CategoryId, Assignment>,
@@ -569,15 +577,23 @@ fn has_manual_exclusive_sibling(
         return false;
     }
 
-    parent.children.iter().any(|sibling_id| {
-        *sibling_id != category_id
-            && assignments
-                .get(sibling_id)
-                .map(|assignment| {
-                    assignment.source == AssignmentSource::Manual
-                        || assignment.source == AssignmentSource::SuggestionAccepted
-                })
-                .unwrap_or(false)
+    let current_index = parent
+        .children
+        .iter()
+        .position(|child_id| *child_id == category_id)
+        .unwrap_or(parent.children.len());
+
+    parent.children.iter().enumerate().any(|(sibling_index, sibling_id)| {
+        if *sibling_id == category_id {
+            return false;
+        }
+        let Some(assignment) = assignments.get(sibling_id) else {
+            return false;
+        };
+        matches!(
+            assignment.source,
+            AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
+        ) || sibling_index < current_index
     })
 }
 
@@ -1285,12 +1301,18 @@ mod tests {
         process_item(&store, &classifier, item.id).unwrap();
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
-        assert!(assignments.contains_key(&in_progress.id));
-        assert!(!assignments.contains_key(&todo.id));
+        assert!(
+            assignments.contains_key(&todo.id),
+            "earlier child should keep precedence over later action-derived sibling"
+        );
+        assert!(
+            !assignments.contains_key(&in_progress.id),
+            "later action-derived sibling should be suppressed inside the exclusive family"
+        );
     }
 
     #[test]
-    fn process_item_mutual_exclusion_unassigns_manual_source() {
+    fn process_item_mutual_exclusion_keeps_manual_source_over_action_assignment() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
 
@@ -1318,8 +1340,14 @@ mod tests {
         process_item(&store, &classifier, item.id).unwrap();
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
-        assert!(!assignments.contains_key(&todo.id));
-        assert!(assignments.contains_key(&in_progress.id));
+        assert!(
+            assignments.contains_key(&todo.id),
+            "manual exclusive choice should survive later derived action assignments"
+        );
+        assert!(
+            !assignments.contains_key(&in_progress.id),
+            "derived action should not replace an existing manual exclusive choice"
+        );
     }
 
     #[test]
@@ -1397,6 +1425,92 @@ mod tests {
         assert!(
             !assignments.contains_key(&high.id),
             "implicit-string sibling should not override the manual choice"
+        );
+    }
+
+    #[test]
+    fn process_item_exclusive_family_prefers_earlier_profile_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let tui = category("TUI", true);
+        create_category(&store, &tui);
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        create_category(&store, &priority);
+
+        let mut high = child_category("High", priority.id, false);
+        let mut high_criteria = Query::default();
+        high_criteria.set_criterion(CriterionMode::And, tui.id);
+        high.conditions.push(Condition::Profile {
+            criteria: Box::new(high_criteria),
+        });
+        create_category(&store, &high);
+
+        let mut low = child_category("Low", priority.id, false);
+        let mut low_criteria = Query::default();
+        low_criteria.set_criterion(CriterionMode::And, tui.id);
+        low.conditions.push(Condition::Profile {
+            criteria: Box::new(low_criteria),
+        });
+        create_category(&store, &low);
+
+        let item = create_item(&store, "TUI task");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&tui.id));
+        assert!(
+            assignments.contains_key(&high.id),
+            "earlier matching child should win inside the exclusive family"
+        );
+        assert!(
+            !assignments.contains_key(&low.id),
+            "later matching child should be suppressed"
+        );
+    }
+
+    #[test]
+    fn process_item_exclusive_family_prefers_earlier_action_target_over_later_condition() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut tui = category("TUI", true);
+        create_category(&store, &tui);
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        create_category(&store, &priority);
+
+        let high = child_category("High", priority.id, false);
+        create_category(&store, &high);
+
+        let mut low = child_category("Low", priority.id, false);
+        let mut low_criteria = Query::default();
+        low_criteria.set_criterion(CriterionMode::And, tui.id);
+        low.conditions.push(Condition::Profile {
+            criteria: Box::new(low_criteria),
+        });
+        create_category(&store, &low);
+
+        tui.actions.push(Action::Assign {
+            targets: HashSet::from([high.id]),
+        });
+        store.update_category(&tui).unwrap();
+
+        let item = create_item(&store, "TUI task");
+        process_item(&store, &classifier, item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&tui.id));
+        assert!(
+            assignments.contains_key(&high.id),
+            "earlier action-derived child should keep precedence"
+        );
+        assert!(
+            !assignments.contains_key(&low.id),
+            "later condition-derived sibling should be suppressed"
         );
     }
 

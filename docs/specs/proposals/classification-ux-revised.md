@@ -137,6 +137,18 @@ The engine layer is complete:
   implementation will be synchronous (blocking on API call, result appears
   immediately). Async execution is a follow-on phase.
 
+**Implementation notes added in April 2026:**
+
+- Semantic review suggestions are filtered against the item's **effective**
+  current assignments, not only manual assignments. The prompt sees the full
+  currently assigned category set, and queueing skips suggestions that are
+  already satisfied, conflict with an assigned sibling under an exclusive
+  parent, or would not produce a stable post-reprocess change.
+- The TUI assignment/unassign flows now treat "can this change stick?" as a
+  previewed question. If removing a category would immediately be re-applied by
+  rules, the picker/inspect flow keeps the assignment in place and explains
+  why instead of pretending the unassign succeeded.
+
 ### What is missing (TUI surface area)
 
 - **No TUI to create/edit conditions or actions** — cannot visually define
@@ -157,11 +169,11 @@ The engine layer is complete:
 5. Progressive disclosure: basic users see auto-match toggles; power users
    define profile conditions and actions.
 6. Keep `ContinuousMode` as the single global policy knob (intentional design choice).
-7. All assignments are sticky (permanent). We do not implement Lotus Agenda's
-   "auto-breaking" conditional assignments. This is an intentional simplification
-   — items do not silently disappear from categories when conditions stop matching.
-   Conditions and actions differ in *when they evaluate* and *what triggers them*,
-   not in assignment permanence.
+7. Reflect shipped engine semantics accurately: condition-derived assignments
+   (implicit string and profile) are live and can auto-break when their
+   triggering condition stops matching, while manual, action-produced, and
+   accepted-suggestion assignments remain sticky. Conditions and actions differ
+   both in trigger direction and in assignment lifecycle.
 
 ## Two Review Paths
 
@@ -539,7 +551,8 @@ either auto-applied assignments or new suggestions depending on
 - `AssignmentSource` variants (AutoClassified, SuggestionAccepted)
 - Item revision hashing
 - Engine cascade logic (conditions, actions, subsumption, exclusivity) —
-  all assignments remain sticky (no auto-breaking)
+  live condition-derived assignments auto-break; sticky action/manual/accepted
+  assignments persist
 - CLI structured capture (`--when`, `--category`, `--value`, import)
 - CLI classify/review/accept/reject subcommands
 - All Category Manager UX improvements (hints, badges, connectors, etc.)

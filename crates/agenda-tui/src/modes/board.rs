@@ -1,5 +1,6 @@
 use crate::*;
 use agenda_core::error::AgendaError;
+use agenda_core::model::RecurrenceRule;
 
 #[derive(Clone)]
 pub(crate) struct InputPanelCategorySelection {
@@ -2602,7 +2603,7 @@ impl App {
         clear_blocked_item_ids: &[ItemId],
     ) -> TuiResult<()> {
         self.push_undo(UndoEntry::ItemDoneToggled { item_id, was_done });
-        agenda.toggle_item_done(item_id)?;
+        let result = agenda.toggle_item_done(item_id)?;
 
         let mut removed_blocker_links = 0usize;
         if !was_done {
@@ -2616,6 +2617,18 @@ impl App {
         self.set_item_selection_by_id(item_id);
         self.mode = Self::done_toggle_return_mode(origin);
         self.status = Self::done_toggle_status_message(origin, was_done, removed_blocker_links);
+
+        // Append successor info for recurring items
+        if let Some(successor_id) = result.successor_item_id {
+            if let Ok(successor) = agenda.store().get_item(successor_id) {
+                let when_str = successor
+                    .when_date
+                    .map(|dt| dt.date().to_string())
+                    .unwrap_or_else(|| "no date".to_string());
+                self.status = format!("{}; successor for {}", self.status, when_str);
+            }
+        }
+
         Ok(())
     }
 
@@ -4061,6 +4074,7 @@ impl App {
                 }
             }
             let item_id = item.id;
+            let existing_recurrence = item.recurrence_rule.clone();
             let when_value = item
                 .when_date
                 .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
@@ -4074,6 +4088,7 @@ impl App {
                 numeric_buffers,
                 numeric_originals,
             );
+            panel.parsed_recurrence_rule = existing_recurrence;
             // Populate pending classification suggestions for inline review.
             if let Some(review_item) = self
                 .classification
@@ -4149,19 +4164,34 @@ impl App {
 
         let raw = panel.when_buffer.trimmed().to_string();
         if raw.is_empty() {
+            panel.parsed_recurrence_rule = None;
             self.status = "When cleared".to_string();
             return Ok(true);
         }
 
         match Self::parse_when_datetime_input(&raw) {
-            Ok(Some(dt)) => {
+            Ok(Some((dt, rule))) => {
                 let normalized = dt.strftime("%Y-%m-%d %H:%M").to_string();
+                // If the user typed new text (not the already-normalized value),
+                // always update the rule — including clearing it when the new
+                // input is a plain one-time date like "tomorrow at 2pm".
+                // Only preserve the existing rule when re-parsing the normalized
+                // buffer itself (second Tab/Enter on the same value).
+                let is_reparse_of_normalized = raw == normalized;
+                if rule.is_some() {
+                    panel.parsed_recurrence_rule = rule;
+                } else if !is_reparse_of_normalized {
+                    panel.parsed_recurrence_rule = None;
+                }
                 panel.when_buffer.set(normalized.clone());
-                self.status = format!("When set to {normalized}");
+                let effective_rule = panel.parsed_recurrence_rule.as_ref();
+                let rule_display = effective_rule.map(|r| format!(" ({})", r.display()));
+                self.status = format!("When set to {normalized}{}", rule_display.unwrap_or_default());
                 Ok(true)
             }
             Ok(None) => {
                 panel.when_buffer.set(String::new());
+                panel.parsed_recurrence_rule = None;
                 self.status = "When cleared".to_string();
                 Ok(true)
             }
@@ -4664,11 +4694,37 @@ impl App {
             Some(note_raw)
         };
         let categories_to_assign: Vec<_> = panel.categories.iter().copied().collect();
+        let when_text = panel.when_buffer.trimmed().to_string();
+        let panel_recurrence_rule = panel.parsed_recurrence_rule.clone();
 
-        // Create item (parses When, applies on_insert_assign via insert_into_context).
+        // Create item (applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
         let reference_date = jiff::Zoned::now().date();
         let mut process_result = agenda.create_item_cheap(&item, reference_date)?;
+
+        // Parse and apply when-date + recurrence from panel buffer.
+        if !when_text.is_empty() {
+            match Self::parse_when_datetime_input(&when_text) {
+                Ok(Some((dt, parsed_rule))) => {
+                    agenda.set_item_when_date(
+                        item.id,
+                        Some(dt),
+                        Some("manual:input_panel.add".to_string()),
+                    )?;
+                    // Prefer rule from recalculate (Tab/Enter) over re-parse,
+                    // but fall back to re-parse for direct-save (capital S).
+                    let rule = panel_recurrence_rule.or(parsed_rule);
+                    if let Some(rule) = rule {
+                        agenda.set_item_recurrence_rule(item.id, Some(rule))?;
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    // Buffer wasn't normalized (user never Tab'd out of When).
+                    // Item was already created; skip when-date silently.
+                }
+            }
+        }
 
         // Set note if provided.
         if note.is_some() {
@@ -4687,6 +4743,8 @@ impl App {
                 note_update_result.semantic_candidates_queued_review;
             process_result.semantic_candidates_skipped_already_assigned +=
                 note_update_result.semantic_candidates_skipped_already_assigned;
+            process_result.semantic_candidates_skipped_unavailable +=
+                note_update_result.semantic_candidates_skipped_unavailable;
             process_result
                 .semantic_debug_messages
                 .extend(note_update_result.semantic_debug_messages);
@@ -4797,13 +4855,21 @@ impl App {
             return Ok(());
         }
 
+        let panel_recurrence_rule = panel.parsed_recurrence_rule.clone();
+
         // Validate when-date input before making any changes.
-        let parsed_when = if !no_when_change {
+        let (parsed_when, recurrence_rule) = if !no_when_change {
             if when_text.is_empty() {
-                Some(None) // clear the when date
+                (Some(None), None) // clear the when date and recurrence
             } else {
                 match Self::parse_when_datetime_input(&when_text) {
-                    Ok(dt) => Some(dt),
+                    Ok(Some((dt, parsed_rule))) => {
+                        // Prefer rule from recalculate (Tab/Enter) over re-parse,
+                        // but fall back to re-parse for direct-save (capital S).
+                        let rule = panel_recurrence_rule.or(parsed_rule);
+                        (Some(Some(dt)), rule)
+                    }
+                    Ok(None) => (Some(None), None),
                     Err(e) => {
                         self.status = format!("Could not parse when date: {e}");
                         return Ok(());
@@ -4811,7 +4877,10 @@ impl App {
                 }
             }
         } else {
-            None // no change
+            // When text unchanged, but recurrence may have been set via
+            // recalculate_input_panel_when (e.g., "every monday" normalized to
+            // the same date the item already had).
+            (None, panel_recurrence_rule)
         };
 
         // Update text and note.
@@ -4828,6 +4897,14 @@ impl App {
                 new_when,
                 Some("manual:input_panel.edit".to_string()),
             )?;
+        }
+
+        // Apply recurrence rule change.
+        if let Some(rule) = recurrence_rule {
+            agenda.set_item_recurrence_rule(item_id, Some(rule))?;
+        } else if !no_when_change && when_text.is_empty() {
+            // Clearing the when field also clears recurrence.
+            agenda.set_item_recurrence_rule(item_id, None)?;
         }
 
         // Apply suggestion decisions.
@@ -4900,8 +4977,8 @@ impl App {
     fn parse_when_datetime_input_with_reference_date(
         input: &str,
         reference_date: Date,
-    ) -> TuiResult<Option<DateTime>> {
-        use agenda_core::dates::DateParser;
+    ) -> TuiResult<Option<(DateTime, Option<RecurrenceRule>)>> {
+        use agenda_core::dates::DateParseResult;
 
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -4909,24 +4986,29 @@ impl App {
         }
 
         if let Ok(value) = trimmed.replace(' ', "T").parse::<DateTime>() {
-            return Ok(Some(value));
+            return Ok(Some((value, None)));
         }
         if let Ok(date_only) = trimmed.parse::<Date>() {
-            return Ok(Some(date_only.at(0, 0, 0, 0)));
+            return Ok(Some((date_only.at(0, 0, 0, 0), None)));
         }
 
         let parser = agenda_core::dates::BasicDateParser::default();
-        if let Some(parsed) = parser.parse(trimmed, reference_date) {
-            return Ok(Some(parsed.datetime));
+        if let Some(result) = parser.parse_with_recurrence(trimmed, reference_date) {
+            return match result {
+                DateParseResult::OneTime(parsed) => Ok(Some((parsed.datetime, None))),
+                DateParseResult::Recurring { first_date, rule } => {
+                    Ok(Some((first_date.datetime, Some(rule))))
+                }
+            };
         }
 
         Err(format!(
-            "Could not parse '{}'. Try: today, tomorrow, next week, in 3 days, end of month, YYYY-MM-DD, M/D/YY",
+            "Could not parse '{}'. Try: today, tomorrow, next week, every monday, daily, YYYY-MM-DD",
             trimmed,
         ).into())
     }
 
-    fn parse_when_datetime_input(input: &str) -> TuiResult<Option<DateTime>> {
+    fn parse_when_datetime_input(input: &str) -> TuiResult<Option<(DateTime, Option<RecurrenceRule>)>> {
         Self::parse_when_datetime_input_with_reference_date(input, jiff::Zoned::now().date())
     }
 
@@ -5113,8 +5195,9 @@ impl App {
                     return Ok(());
                 };
 
-                let parsed_when = match Self::parse_when_datetime_input(&input_text) {
-                    Ok(value) => value,
+                let (parsed_when, inline_rule) = match Self::parse_when_datetime_input(&input_text) {
+                    Ok(Some((dt, rule))) => (Some(dt), rule),
+                    Ok(None) => (None, None),
                     Err(err) => {
                         self.when_edit_target = Some(target);
                         self.status = err.to_string();
@@ -5128,6 +5211,13 @@ impl App {
                     Some("manual:tui.when-edit".to_string()),
                 ) {
                     Ok(_result) => {
+                        // Apply recurrence rule if parsed from inline editor.
+                        if inline_rule.is_some() || parsed_when.is_none() {
+                            let _ = agenda.set_item_recurrence_rule(
+                                target.item_id,
+                                inline_rule,
+                            );
+                        }
                         self.refresh(agenda.store())?;
                         self.set_item_selection_by_id(target.item_id);
                         self.input_panel = None;
@@ -5335,6 +5425,33 @@ impl App {
         Ok(())
     }
 
+    fn item_assign_reapply_status(
+        &self,
+        agenda: &Agenda<'_>,
+        item_id: ItemId,
+        category_id: CategoryId,
+        category_name: &str,
+    ) -> TuiResult<Option<String>> {
+        let Some(item) = self.all_items.iter().find(|item| item.id == item_id) else {
+            return Ok(None);
+        };
+        let Some(assignment) = item.assignments.get(&category_id) else {
+            return Ok(None);
+        };
+        let hypothetical = agenda.preview_manual_category_toggle(item_id, category_id)?;
+        if !hypothetical.assignments.contains_key(&category_id) {
+            return Ok(None);
+        }
+
+        let summary = Self::assignment_status_summary(assignment);
+        let badge_suffix = Self::assignment_badge_from_assignment(assignment)
+            .map(|badge| format!(" [{badge}]"))
+            .unwrap_or_default();
+        Ok(Some(format!(
+            "Cannot remove {category_name}{badge_suffix}: it will be re-applied ({summary})"
+        )))
+    }
+
     pub(crate) fn handle_item_assign_category_key(
         &mut self,
         code: KeyCode,
@@ -5437,9 +5554,19 @@ impl App {
 
                     for action_item_id in &action_item_ids {
                         let result = if should_unassign {
-                            agenda
-                                .unassign_item_manual(*action_item_id, row.id)
-                                .map(|_| ())
+                            if let Some(reason) = self.item_assign_reapply_status(
+                                agenda,
+                                *action_item_id,
+                                row.id,
+                                &row.name,
+                            )? {
+                                Err(reason)
+                            } else {
+                                agenda
+                                    .unassign_item_manual(*action_item_id, row.id)
+                                    .map(|_| ())
+                                    .map_err(|err| err.to_string())
+                            }
                         } else {
                             agenda
                                 .assign_item_manual(
@@ -5448,13 +5575,14 @@ impl App {
                                     Some("manual:tui.assign".to_string()),
                                 )
                                 .map(|_| ())
+                                .map_err(|err| err.to_string())
                         };
                         match result {
                             Ok(()) => changed += 1,
                             Err(err) => {
                                 failed += 1;
                                 if first_error.is_none() {
-                                    first_error = Some(err.to_string());
+                                    first_error = Some(err);
                                 }
                             }
                         }
@@ -5489,6 +5617,12 @@ impl App {
                         summary
                     };
                 } else if self.selected_item_has_assignment(row.id) {
+                    if let Some(reason) =
+                        self.item_assign_reapply_status(agenda, item_id, row.id, &row.name)?
+                    {
+                        self.status = reason;
+                        return Ok(false);
+                    }
                     // Capture old assignment for undo
                     let old_assignment = self
                         .all_items
@@ -5862,6 +5996,16 @@ impl App {
                     return Ok(false);
                 };
 
+                if let Some(reason) = self.item_assign_reapply_status(
+                    agenda,
+                    item_id,
+                    row.category_id,
+                    &row.category_name,
+                )? {
+                    self.status = reason;
+                    return Ok(false);
+                }
+
                 agenda.unassign_item_manual(item_id, row.category_id)?;
                 self.refresh(agenda.store())?;
                 self.set_item_selection_by_id(item_id);
@@ -6015,7 +6159,8 @@ mod tests {
             enable_semantic_classification: false,
             match_category_name: true,
             value_kind: CategoryValueKind::Tag,
-            has_conditions: false,
+            condition_count: 0,
+            action_count: 0,
         }
     }
 
@@ -6664,11 +6809,12 @@ mod tests {
             .expect("core parser should parse")
             .datetime;
 
-        let parsed = App::parse_when_datetime_input_with_reference_date(input, reference)
+        let (parsed, rule) = App::parse_when_datetime_input_with_reference_date(input, reference)
             .expect("input should parse")
             .expect("should return datetime");
 
         assert_eq!(parsed, expected);
+        assert!(rule.is_none(), "one-time date should have no recurrence rule");
     }
 
     #[test]

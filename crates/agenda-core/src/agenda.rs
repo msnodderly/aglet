@@ -11,10 +11,10 @@ use crate::classification::{
     ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
     LiteralClassificationMode, OllamaProvider, OllamaTransport, OpenAiProvider, OpenAiTransport,
     OpenRouterProvider, OpenRouterTransport, ReqwestOllamaTransport, ReqwestOpenAiTransport,
-    ReqwestOpenRouterTransport, SemanticClassificationMode, SemanticProviderKind,
-    SuggestionStatus, WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH,
-    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI,
-    PROVIDER_ID_OPENROUTER, PROVIDER_ID_WHEN_PARSER,
+    ReqwestOpenRouterTransport, SemanticClassificationMode, SemanticProviderKind, SuggestionStatus,
+    WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH, PROVIDER_ID_IMPLICIT_STRING,
+    PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI, PROVIDER_ID_OPENROUTER,
+    PROVIDER_ID_WHEN_PARSER,
 };
 use crate::dates::BasicDateParser;
 use crate::engine::{
@@ -26,8 +26,9 @@ use crate::matcher::Classifier;
 use crate::model::{
     origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
-    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, Section,
-    View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
+    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
+    RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -66,6 +67,12 @@ enum CandidateDisposition {
     Skip,
     AutoApply,
     QueueReview,
+}
+
+enum SemanticCandidateAvailability {
+    AlreadyAssigned,
+    Unavailable,
+    Available,
 }
 
 impl<'a> Agenda<'a> {
@@ -221,6 +228,17 @@ impl<'a> Agenda<'a> {
         self.reprocess_existing_item(item_id)
     }
 
+    pub fn set_item_recurrence_rule(
+        &self,
+        item_id: ItemId,
+        rule: Option<RecurrenceRule>,
+    ) -> Result<()> {
+        let mut item = self.store.get_item(item_id)?;
+        item.recurrence_rule = rule;
+        item.modified_at = Timestamp::now();
+        self.store.update_item(&item)
+    }
+
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
         self.store.create_category(category)?;
         self.process_category_change(category.id)
@@ -229,6 +247,81 @@ impl<'a> Agenda<'a> {
     pub fn update_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
         self.store.update_category(category)?;
         self.process_category_change(category.id)
+    }
+
+    pub fn add_category_action(
+        &self,
+        category_id: CategoryId,
+        action: Action,
+    ) -> Result<(usize, EvaluateAllItemsResult)> {
+        let mut category = self.store.get_category(category_id)?;
+        self.validate_category_action(&category, &action)?;
+        category.actions.push(action);
+        let action_index = category.actions.len() - 1;
+        let result = self.update_category(&category)?;
+        Ok((action_index, result))
+    }
+
+    pub fn update_category_action(
+        &self,
+        category_id: CategoryId,
+        action_index: usize,
+        action: Action,
+    ) -> Result<EvaluateAllItemsResult> {
+        let mut category = self.store.get_category(category_id)?;
+        if action_index >= category.actions.len() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "action index {} out of range for category '{}' (has {} action(s))",
+                    action_index + 1,
+                    category.name,
+                    category.actions.len()
+                ),
+            });
+        }
+        self.validate_category_action(&category, &action)?;
+        category.actions[action_index] = action;
+        self.update_category(&category)
+    }
+
+    pub fn remove_category_action(
+        &self,
+        category_id: CategoryId,
+        action_index: usize,
+    ) -> Result<(Action, EvaluateAllItemsResult)> {
+        let mut category = self.store.get_category(category_id)?;
+        if action_index >= category.actions.len() {
+            return Err(AgendaError::InvalidOperation {
+                message: format!(
+                    "action index {} out of range for category '{}' (has {} action(s))",
+                    action_index + 1,
+                    category.name,
+                    category.actions.len()
+                ),
+            });
+        }
+        let removed = category.actions.remove(action_index);
+        let result = self.update_category(&category)?;
+        Ok((removed, result))
+    }
+
+    fn validate_category_action(&self, category: &Category, action: &Action) -> Result<()> {
+        if let Some(targets) = action.category_targets() {
+            if targets.is_empty() {
+                return Err(AgendaError::InvalidOperation {
+                    message: "category actions must target at least one category".to_string(),
+                });
+            }
+            if targets.contains(&category.id) {
+                return Err(AgendaError::InvalidOperation {
+                    message: format!(
+                        "category '{}' cannot target itself in an action",
+                        category.name
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn move_category_within_parent(&self, category_id: CategoryId, delta: i32) -> Result<()> {
@@ -629,7 +722,101 @@ impl<'a> Agenda<'a> {
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
         self.clear_claim_assignment_if_configured(item_id)?;
-        self.reprocess_existing_item(item_id)
+        let mut result = self.reprocess_existing_item(item_id)?;
+
+        // Succession: generate next instance for recurring items
+        if let Some(ref rule) = item.recurrence_rule {
+            let successor_id = self.generate_recurrence_successor(&item, rule, done_at)?;
+            result.successor_item_id = Some(successor_id);
+        }
+
+        Ok(result)
+    }
+
+    /// Generate the next recurrence instance from a completed item.
+    ///
+    /// The successor gets the same text, note, recurrence rule, and sticky non-reserved
+    /// assignments. Its `when_date` is advanced per the rule. The completed and successor
+    /// items share the same `recurrence_series_id`.
+    fn generate_recurrence_successor(
+        &self,
+        completed: &Item,
+        rule: &RecurrenceRule,
+        done_at: jiff::civil::DateTime,
+    ) -> Result<ItemId> {
+        // Double-succession guard: skip if a successor already exists
+        if self.store.has_recurrence_successor(completed.id)? {
+            return Err(AgendaError::InvalidOperation {
+                message: "recurrence successor already exists".to_string(),
+            });
+        }
+
+        let now = Timestamp::now();
+        let anchor = completed.when_date.unwrap_or(done_at);
+        let next_when = rule.next_date(anchor);
+
+        // Ensure series_id exists; create and backfill if needed
+        let series_id = match completed.recurrence_series_id {
+            Some(id) => id,
+            None => {
+                let new_series_id = Uuid::new_v4();
+                // Backfill series_id on the completed item
+                let mut updated = completed.clone();
+                updated.recurrence_series_id = Some(new_series_id);
+                updated.modified_at = now;
+                self.store.update_item(&updated)?;
+                new_series_id
+            }
+        };
+
+        let successor = Item {
+            id: Uuid::new_v4(),
+            text: completed.text.clone(),
+            note: completed.note.clone(),
+            created_at: now,
+            modified_at: now,
+            when_date: Some(next_when),
+            done_date: None,
+            is_done: false,
+            assignments: HashMap::new(),
+            recurrence_rule: Some(rule.clone()),
+            recurrence_series_id: Some(series_id),
+            recurrence_parent_item_id: Some(completed.id),
+        };
+
+        self.store.create_item(&successor)?;
+        self.sync_when_assignment(successor.id, successor.when_date, None)?;
+
+        // Copy sticky non-reserved assignments from the completed item
+        let done_cat = self.done_category_id()?;
+        let when_cat = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
+        let entry_cat = self.category_id_by_name(RESERVED_CATEGORY_NAME_ENTRY)?;
+        let reserved = [done_cat, when_cat, entry_cat];
+
+        for (cat_id, assignment) in &completed.assignments {
+            if reserved.contains(cat_id) {
+                continue;
+            }
+            // Only carry sticky assignments (Manual, SuggestionAccepted, Action)
+            if !assignment.sticky {
+                continue;
+            }
+            let carry = Assignment {
+                source: assignment.source,
+                assigned_at: now,
+                sticky: true,
+                origin: Some(origin_const::RECURRENCE_CARRY.to_string()),
+                explanation: assignment.explanation.clone(),
+                numeric_value: assignment.numeric_value,
+            };
+            self.store.assign_item(successor.id, *cat_id, &carry)?;
+        }
+
+        // Trigger engine reprocessing on the successor
+        let reference_date = jiff::Zoned::now().date();
+        self.process_item_save(successor.id, reference_date, true)?;
+
+        Ok(successor.id)
     }
 
     pub fn mark_item_not_done(&self, item_id: ItemId) -> Result<ProcessItemResult> {
@@ -879,8 +1066,10 @@ impl<'a> Agenda<'a> {
                     self.apply_auto_classification_candidate(item_id, candidate)?;
                 }
                 CandidateDisposition::QueueReview => {
-                    if self.candidate_assignment_already_present(item_id, candidate)? {
-                        continue;
+                    match self.semantic_candidate_availability(item_id, candidate)? {
+                        SemanticCandidateAvailability::AlreadyAssigned => continue,
+                        SemanticCandidateAvailability::Unavailable => continue,
+                        SemanticCandidateAvailability::Available => {}
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
                         candidate,
@@ -1060,11 +1249,20 @@ impl<'a> Agenda<'a> {
                     );
                 }
                 CandidateDisposition::QueueReview => {
-                    if self.candidate_assignment_already_present(item_id, &candidate)? {
-                        if is_semantic {
-                            result.semantic_candidates_skipped_already_assigned += 1;
+                    match self.semantic_candidate_availability(item_id, &candidate)? {
+                        SemanticCandidateAvailability::AlreadyAssigned => {
+                            if is_semantic {
+                                result.semantic_candidates_skipped_already_assigned += 1;
+                            }
+                            continue;
                         }
-                        continue;
+                        SemanticCandidateAvailability::Unavailable => {
+                            if is_semantic {
+                                result.semantic_candidates_skipped_unavailable += 1;
+                            }
+                            continue;
+                        }
+                        SemanticCandidateAvailability::Available => {}
                     }
                     let suggestion = ClassificationSuggestion::from_candidate(
                         &candidate,
@@ -1110,6 +1308,162 @@ impl<'a> Agenda<'a> {
                 .when_date
                 .is_some_and(|current| current == when_date)),
         }
+    }
+
+    fn semantic_candidate_availability(
+        &self,
+        item_id: ItemId,
+        candidate: &ClassificationCandidate,
+    ) -> Result<SemanticCandidateAvailability> {
+        match candidate.assignment {
+            crate::classification::CandidateAssignment::Category(category_id) => {
+                if self.candidate_assignment_already_present(item_id, candidate)? {
+                    return Ok(SemanticCandidateAvailability::AlreadyAssigned);
+                }
+                if self.has_any_exclusive_sibling_assigned(item_id, category_id)? {
+                    return Ok(SemanticCandidateAvailability::Unavailable);
+                }
+                if !self.preview_suggestion_assignment_would_change_effective_state(
+                    item_id,
+                    category_id,
+                )? {
+                    return Ok(SemanticCandidateAvailability::Unavailable);
+                }
+                Ok(SemanticCandidateAvailability::Available)
+            }
+            crate::classification::CandidateAssignment::When(_) => {
+                if self.candidate_assignment_already_present(item_id, candidate)? {
+                    Ok(SemanticCandidateAvailability::AlreadyAssigned)
+                } else {
+                    Ok(SemanticCandidateAvailability::Available)
+                }
+            }
+        }
+    }
+
+    fn has_blocking_exclusive_sibling_assignment(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let category = self.store.get_category(category_id)?;
+        let Some(parent_id) = category.parent else {
+            return Ok(false);
+        };
+        let parent = self.store.get_category(parent_id)?;
+        if !parent.is_exclusive {
+            return Ok(false);
+        }
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        let current_index = parent
+            .children
+            .iter()
+            .position(|child_id| *child_id == category_id)
+            .unwrap_or(parent.children.len());
+        Ok(parent
+            .children
+            .into_iter()
+            .enumerate()
+            .any(|(sibling_index, sibling_id)| {
+                if sibling_id == category_id {
+                    return false;
+                }
+                let Some(assignment) = assignments.get(&sibling_id) else {
+                    return false;
+                };
+                matches!(
+                    assignment.source,
+                    AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
+                ) || sibling_index < current_index
+            }))
+    }
+
+    fn has_any_exclusive_sibling_assigned(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let category = self.store.get_category(category_id)?;
+        let Some(parent_id) = category.parent else {
+            return Ok(false);
+        };
+        let parent = self.store.get_category(parent_id)?;
+        if !parent.is_exclusive {
+            return Ok(false);
+        }
+        let assignments = self.store.get_assignments_for_item(item_id)?;
+        Ok(parent
+            .children
+            .into_iter()
+            .any(|sibling_id| sibling_id != category_id && assignments.contains_key(&sibling_id)))
+    }
+
+    fn preview_suggestion_assignment_would_change_effective_state(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<bool> {
+        let source_item = self.store.get_item(item_id)?;
+        let current_assignments: HashSet<CategoryId> =
+            source_item.assignments.keys().copied().collect();
+        let preview_item = self.preview_suggestion_assignment(item_id, category_id)?;
+        let preview_assignments: HashSet<CategoryId> =
+            preview_item.assignments.keys().copied().collect();
+        Ok(preview_assignments != current_assignments)
+    }
+
+    fn preview_suggestion_assignment(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+    ) -> Result<Item> {
+        let source_item = self.store.get_item(item_id)?;
+        let preview_store = Store::open_memory()?;
+        preview_store.set_classification_config(&self.store.get_classification_config()?)?;
+
+        let source_categories = self.store.get_hierarchy()?;
+        let id_map = Self::copy_preview_categories(&preview_store, &source_categories)?;
+
+        let mut preview_item = source_item.clone();
+        preview_item.assignments.clear();
+        preview_store.create_item(&preview_item)?;
+        for (assigned_category_id, assignment) in &source_item.assignments {
+            if let Some(preview_category_id) = id_map.get(assigned_category_id) {
+                preview_store.assign_item(item_id, *preview_category_id, assignment)?;
+            }
+        }
+
+        let preview_agenda = Agenda::new(&preview_store, self.classifier);
+        let preview_category_id =
+            Self::mapped_category_id(category_id, &id_map, "preview suggestion category")?;
+        let preview_suggestion = ClassificationSuggestion {
+            id: Uuid::new_v4(),
+            item_id,
+            assignment: crate::classification::CandidateAssignment::Category(preview_category_id),
+            provider_id: "preview".to_string(),
+            model: None,
+            confidence: None,
+            rationale: None,
+            context_hash: "preview".to_string(),
+            item_revision_hash: "preview".to_string(),
+            status: SuggestionStatus::Pending,
+            created_at: Timestamp::now(),
+            decided_at: None,
+        };
+        preview_agenda.apply_suggestion_assignment(&preview_suggestion)?;
+
+        let mut preview_result = preview_store.get_item(item_id)?;
+        preview_result.assignments = preview_result
+            .assignments
+            .into_iter()
+            .map(|(preview_id, assignment)| {
+                let source_id =
+                    Self::source_category_id(preview_id, &id_map, "preview suggestion result")
+                        .expect("preview category mapping should round-trip");
+                (source_id, assignment)
+            })
+            .collect();
+        Ok(preview_result)
     }
 
     fn process_category_change(&self, category_id: CategoryId) -> Result<EvaluateAllItemsResult> {
@@ -1404,10 +1758,12 @@ impl<'a> Agenda<'a> {
                 LiteralClassificationMode::AutoApply => CandidateDisposition::AutoApply,
                 LiteralClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
             },
-            PROVIDER_ID_OLLAMA_OPENAI_COMPAT | PROVIDER_ID_OPENROUTER | PROVIDER_ID_OPENAI => match cfg.semantic_mode {
-                SemanticClassificationMode::Off => CandidateDisposition::Skip,
-                SemanticClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
-            },
+            PROVIDER_ID_OLLAMA_OPENAI_COMPAT | PROVIDER_ID_OPENROUTER | PROVIDER_ID_OPENAI => {
+                match cfg.semantic_mode {
+                    SemanticClassificationMode::Off => CandidateDisposition::Skip,
+                    SemanticClassificationMode::SuggestReview => CandidateDisposition::QueueReview,
+                }
+            }
             _ => CandidateDisposition::Skip,
         }
     }
@@ -1567,14 +1923,14 @@ impl<'a> Agenda<'a> {
         source: AssignmentSource,
         origin: Option<String>,
         explanation: Option<AssignmentExplanation>,
-        allow_manual_exclusive_override: bool,
+        allow_exclusive_override: bool,
     ) -> Result<bool> {
         let assignments = self.store.get_assignments_for_item(item_id)?;
         if assignments.contains_key(&category_id) {
             return Ok(false);
         }
-        if !allow_manual_exclusive_override
-            && self.has_manual_exclusive_sibling(item_id, category_id)?
+        if !allow_exclusive_override
+            && self.has_blocking_exclusive_sibling_assignment(item_id, category_id)?
         {
             return Ok(false);
         }
@@ -1642,7 +1998,7 @@ impl<'a> Agenda<'a> {
                                 trigger_category_name: category.name.clone(),
                                 kind: AssignmentActionKind::Assign,
                             }),
-                            true,
+                            false,
                         )? {
                             result.new_assignments.insert(*target_id);
                             result.assignment_events.push(AssignmentEvent {
@@ -1685,29 +2041,6 @@ impl<'a> Agenda<'a> {
         }
 
         Ok(result)
-    }
-
-    fn has_manual_exclusive_sibling(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-    ) -> Result<bool> {
-        let category = self.store.get_category(category_id)?;
-        let Some(parent_id) = category.parent else {
-            return Ok(false);
-        };
-        let parent = self.store.get_category(parent_id)?;
-        if !parent.is_exclusive {
-            return Ok(false);
-        }
-        let assignments = self.store.get_assignments_for_item(item_id)?;
-        Ok(parent.children.into_iter().any(|sibling_id| {
-            sibling_id != category_id
-                && assignments.get(&sibling_id).is_some_and(|assignment| {
-                    assignment.source == AssignmentSource::Manual
-                        || assignment.source == AssignmentSource::SuggestionAccepted
-                })
-        }))
     }
 
     fn assign_manual_categories(
@@ -2102,6 +2435,8 @@ fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemRe
     target.semantic_candidates_queued_review += incoming.semantic_candidates_queued_review;
     target.semantic_candidates_skipped_already_assigned +=
         incoming.semantic_candidates_skipped_already_assigned;
+    target.semantic_candidates_skipped_unavailable +=
+        incoming.semantic_candidates_skipped_unavailable;
     target
         .semantic_debug_messages
         .extend(incoming.semantic_debug_messages);
@@ -2489,6 +2824,61 @@ mod tests {
     }
 
     #[test]
+    fn semantic_review_skips_exclusive_sibling_when_other_child_already_assigned() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let transport = Arc::new(FakeOllamaTransport {
+            response: Some(
+                r#"{"suggestions":[{"category":"Normal","confidence":0.95,"rationale":"default priority"}]}"#
+                    .to_string(),
+            ),
+        });
+        let agenda = Agenda::with_ollama_transport(&store, &classifier, transport);
+
+        let mut cfg = ClassificationConfig {
+            literal_mode: LiteralClassificationMode::Off,
+            semantic_mode: SemanticClassificationMode::SuggestReview,
+            ..ClassificationConfig::default()
+        };
+        cfg.ollama.enabled = true;
+        cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+        store.set_classification_config(&cfg).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        agenda.create_category(&priority).unwrap();
+
+        let mut high = child_category("High", priority.id, false);
+        high.enable_semantic_classification = true;
+        agenda.create_category(&high).unwrap();
+
+        let mut normal = child_category("Normal", priority.id, false);
+        normal.enable_semantic_classification = true;
+        agenda.create_category(&normal).unwrap();
+
+        let item = Item::new("TUI task".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda.assign_item_manual(item.id, high.id, None).unwrap();
+
+        let result = agenda
+            .process_item_save(item.id, jiff::Zoned::now().date(), false)
+            .unwrap();
+
+        assert_eq!(result.semantic_candidates_seen, 1);
+        assert_eq!(result.semantic_candidates_queued_review, 0);
+        assert_eq!(result.semantic_candidates_skipped_already_assigned, 0);
+        assert_eq!(result.semantic_candidates_skipped_unavailable, 1);
+
+        let pending = agenda
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap();
+        assert!(
+            pending.is_empty(),
+            "should not queue semantic suggestion for an exclusive sibling"
+        );
+    }
+
+    #[test]
     fn semantic_mode_can_run_without_literal_matching() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;
@@ -2615,6 +3005,118 @@ mod tests {
             crate::classification::CandidateAssignment::Category(category_id)
                 if category_id == travel.id
         ));
+    }
+
+    #[test]
+    fn create_item_prefers_earlier_child_when_multiple_exclusive_derived_rules_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let bug = category("Bug", true);
+        store.create_category(&bug).unwrap();
+
+        let mut tui = category("TUI", true);
+        store.create_category(&tui).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        store.create_category(&priority).unwrap();
+
+        let mut critical = child_category("Critical", priority.id, false);
+        let mut critical_criteria = Query::default();
+        critical_criteria.set_criterion(CriterionMode::And, bug.id);
+        critical_criteria.set_criterion(CriterionMode::And, tui.id);
+        critical.conditions.push(Condition::Profile {
+            criteria: Box::new(critical_criteria),
+        });
+        store.create_category(&critical).unwrap();
+
+        let mut high = child_category("High", priority.id, false);
+        let mut high_criteria = Query::default();
+        high_criteria.set_criterion(CriterionMode::And, tui.id);
+        high.conditions.push(Condition::Profile {
+            criteria: Box::new(high_criteria),
+        });
+        store.create_category(&high).unwrap();
+
+        let mut low = child_category("Low", priority.id, false);
+        let mut low_criteria = Query::default();
+        low_criteria.set_criterion(CriterionMode::And, tui.id);
+        low.conditions.push(Condition::Profile {
+            criteria: Box::new(low_criteria),
+        });
+        store.create_category(&low).unwrap();
+
+        tui.actions.push(Action::Assign {
+            targets: HashSet::from([high.id]),
+        });
+        store.update_category(&tui).unwrap();
+
+        let item = Item::new("Bug in TUI".to_string());
+        agenda.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&bug.id));
+        assert!(assignments.contains_key(&tui.id));
+        assert!(
+            assignments.contains_key(&critical.id),
+            "earliest matching child should win the exclusive family"
+        );
+        assert!(
+            !assignments.contains_key(&high.id),
+            "later derived sibling should be suppressed"
+        );
+        assert!(
+            !assignments.contains_key(&low.id),
+            "later derived sibling should be suppressed"
+        );
+    }
+
+    #[test]
+    fn update_item_keeps_manual_exclusive_choice_over_later_auto_classified_action() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let mut tui = category("TUI", true);
+        store.create_category(&tui).unwrap();
+
+        let mut priority = category("Priority", false);
+        priority.is_exclusive = true;
+        store.create_category(&priority).unwrap();
+
+        let high = child_category("High", priority.id, false);
+        let low = child_category("Low", priority.id, false);
+        store.create_category(&high).unwrap();
+        store.create_category(&low).unwrap();
+
+        tui.actions.push(Action::Assign {
+            targets: HashSet::from([high.id]),
+        });
+        store.update_category(&tui).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        store.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, low.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "TUI task".to_string();
+        updated.modified_at = Timestamp::now();
+        agenda.update_item(&updated).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&tui.id));
+        assert!(
+            assignments.contains_key(&low.id),
+            "manual exclusive choice should survive later derived action assignments"
+        );
+        assert!(
+            !assignments.contains_key(&high.id),
+            "derived action should not replace the existing manual family choice"
+        );
     }
 
     #[test]
@@ -3047,6 +3549,58 @@ mod tests {
         agenda.create_item(&new_item).unwrap();
         let new_assignments = store.get_assignments_for_item(new_item.id).unwrap();
         assert!(new_assignments.contains_key(&foo.id));
+    }
+
+    #[test]
+    fn add_category_action_does_not_retroactively_fire_for_existing_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = category("Escalated", false);
+        let notify = category("Notify", false);
+        agenda.create_category(&source).unwrap();
+        agenda.create_category(&notify).unwrap();
+
+        let item = Item::new("Task".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda.assign_item_manual(item.id, source.id, None).unwrap();
+
+        let (_index, result) = agenda
+            .add_category_action(
+                source.id,
+                Action::Assign {
+                    targets: HashSet::from([notify.id]),
+                },
+            )
+            .unwrap();
+
+        assert!(result.processed_items >= 1);
+        assert!(!store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&notify.id));
+    }
+
+    #[test]
+    fn add_category_action_rejects_self_target() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let source = category("Escalated", false);
+        agenda.create_category(&source).unwrap();
+
+        let err = agenda
+            .add_category_action(
+                source.id,
+                Action::Assign {
+                    targets: HashSet::from([source.id]),
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
     }
 
     #[test]
@@ -4971,5 +5525,211 @@ mod tests {
             preview.to_unassign.contains(&extra_remove_id),
             "on_remove_unassign should appear in to_unassign"
         );
+    }
+
+    // --- Recurrence / succession tests ---
+
+    use crate::model::{RecurrenceFrequency, RecurrenceRule};
+
+    fn weekly_rule() -> RecurrenceRule {
+        RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+        }
+    }
+
+    fn recurring_item(text: &str) -> Item {
+        let mut item = Item::new(text.to_string());
+        item.when_date = Some(jiff::civil::date(2026, 4, 6).at(9, 0, 0, 0)); // Monday
+        item.recurrence_rule = Some(weekly_rule());
+        item
+    }
+
+    #[test]
+    fn mark_recurring_item_done_generates_successor() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = recurring_item("Weekly standup");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+
+        // Successor was created
+        assert!(result.successor_item_id.is_some());
+        let successor_id = result.successor_item_id.unwrap();
+        let successor = store.get_item(successor_id).unwrap();
+
+        // Successor fields
+        assert_eq!(successor.text, "Weekly standup");
+        assert!(!successor.is_done);
+        assert!(successor.done_date.is_none());
+        assert_eq!(
+            successor.when_date,
+            Some(jiff::civil::date(2026, 4, 13).at(9, 0, 0, 0))
+        );
+        assert_eq!(successor.recurrence_rule, Some(weekly_rule()));
+        assert_eq!(successor.recurrence_parent_item_id, Some(item.id));
+
+        // Completed item is still done
+        let completed = store.get_item(item.id).unwrap();
+        assert!(completed.is_done);
+        assert!(completed.done_date.is_some());
+    }
+
+    #[test]
+    fn successor_inherits_series_id() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = recurring_item("Weekly standup");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+        let completed = store.get_item(item.id).unwrap();
+
+        // Both share the same series ID (lazy-created)
+        assert!(completed.recurrence_series_id.is_some());
+        assert_eq!(
+            completed.recurrence_series_id,
+            successor.recurrence_series_id
+        );
+    }
+
+    #[test]
+    fn successor_copies_sticky_manual_assignments_not_reserved() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let project = category("Project", false);
+        agenda.create_category(&project).unwrap();
+        let priority = category("High", false);
+        agenda.create_category(&priority).unwrap();
+        let item = recurring_item("Deploy");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, project.id, Some("manual:test".to_string()))
+            .unwrap();
+        agenda
+            .assign_item_manual(item.id, priority.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+
+        // Manual assignments carried forward
+        assert!(successor.assignments.contains_key(&project.id));
+        assert!(successor.assignments.contains_key(&priority.id));
+
+        // Done category NOT carried forward
+        let done_cat = store
+            .get_hierarchy()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name.eq_ignore_ascii_case("Done"))
+            .unwrap()
+            .id;
+        assert!(!successor.assignments.contains_key(&done_cat));
+    }
+
+    #[test]
+    fn non_recurring_done_has_no_successor() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = Item::new("One-time task".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        assert!(result.successor_item_id.is_none());
+    }
+
+    #[test]
+    fn repeated_completion_creates_chain() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let item = recurring_item("Weekly standup");
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        // Complete first instance → successor B
+        let result_a = agenda.mark_item_done(item.id).unwrap();
+        let b_id = result_a.successor_item_id.unwrap();
+        let b = store.get_item(b_id).unwrap();
+        assert_eq!(b.recurrence_parent_item_id, Some(item.id));
+        assert_eq!(
+            b.when_date,
+            Some(jiff::civil::date(2026, 4, 13).at(9, 0, 0, 0))
+        );
+
+        // B needs an actionable category to be marked done
+        agenda
+            .assign_item_manual(b_id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        // Complete B → successor C
+        let result_b = agenda.mark_item_done(b_id).unwrap();
+        let c_id = result_b.successor_item_id.unwrap();
+        let c = store.get_item(c_id).unwrap();
+        assert_eq!(c.recurrence_parent_item_id, Some(b_id));
+        assert_eq!(
+            c.when_date,
+            Some(jiff::civil::date(2026, 4, 20).at(9, 0, 0, 0))
+        );
+
+        // All three share the same series ID
+        let a = store.get_item(item.id).unwrap();
+        let b = store.get_item(b_id).unwrap();
+        assert_eq!(a.recurrence_series_id, b.recurrence_series_id);
+        assert_eq!(b.recurrence_series_id, c.recurrence_series_id);
+    }
+
+    #[test]
+    fn successor_note_is_copied() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let mut item = recurring_item("Standup");
+        item.note = Some("Discuss blockers".to_string());
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+        assert_eq!(successor.note, Some("Discuss blockers".to_string()));
     }
 }

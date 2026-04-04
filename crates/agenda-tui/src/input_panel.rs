@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use agenda_core::classification::ClassificationSuggestion;
-use agenda_core::model::{CategoryId, CategoryValueKind, ItemId};
+use agenda_core::model::{CategoryId, CategoryValueKind, ItemId, RecurrenceRule};
 #[cfg(test)]
 use crossterm::event::KeyModifiers;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -96,6 +96,8 @@ pub(crate) struct InputPanel {
     pub(crate) pending_suggestions: Vec<(ClassificationSuggestion, SuggestionDecision)>,
     /// When-date editor buffer (AddItem/EditItem only).
     pub(crate) when_buffer: TextBuffer,
+    /// Parsed recurrence rule from the When field (set by recalculate_input_panel_when).
+    pub(crate) parsed_recurrence_rule: Option<RecurrenceRule>,
     /// Scroll offset for the EditItem details popup.
     pub(crate) details_scroll: usize,
     /// Whether the EditItem details popup is currently open.
@@ -131,6 +133,7 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
             original_text: String::new(),
@@ -172,6 +175,7 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::new(when_value),
+            parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
             original_text,
@@ -201,6 +205,7 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
             original_text: current_name.to_string(),
@@ -230,6 +235,7 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
             original_text: current_value.to_string(),
@@ -259,6 +265,7 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
             original_text: current_value.to_string(),
@@ -288,6 +295,7 @@ impl InputPanel {
             value_kind: CategoryValueKind::Tag,
             pending_suggestions: Vec::new(),
             when_buffer: TextBuffer::empty(),
+            parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
             original_text: String::new(),
