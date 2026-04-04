@@ -133,12 +133,61 @@ pub(crate) enum CategoryInlineAction {
 }
 
 #[derive(Clone)]
+pub(crate) enum ConditionEditorKind {
+    ProfilePicker,
+    DateEditor,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DateConditionField {
+    Source,
+    Match,
+    Value,
+    From,
+    Through,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DateConditionDraftKind {
+    Compare(DateCompareOp),
+    Range,
+    TodayAfter,
+    TodayBefore,
+    ThisAfternoon,
+}
+
+#[derive(Clone)]
+pub(crate) struct DateConditionDraft {
+    pub(crate) source: DateSource,
+    pub(crate) kind: DateConditionDraftKind,
+    pub(crate) value_input: text_buffer::TextBuffer,
+    pub(crate) from_input: text_buffer::TextBuffer,
+    pub(crate) through_input: text_buffer::TextBuffer,
+    pub(crate) field_focus: DateConditionField,
+}
+
+impl Default for DateConditionDraft {
+    fn default() -> Self {
+        Self {
+            source: DateSource::When,
+            kind: DateConditionDraftKind::Compare(DateCompareOp::Before),
+            value_input: text_buffer::TextBuffer::new("today".to_string()),
+            from_input: text_buffer::TextBuffer::new("today".to_string()),
+            through_input: text_buffer::TextBuffer::new("tomorrow".to_string()),
+            field_focus: DateConditionField::Source,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct ConditionEditState {
     pub(crate) condition_index: Option<usize>,
     pub(crate) draft_query: Query,
     pub(crate) list_index: usize,
     pub(crate) picker_open: bool,
     pub(crate) picker_index: usize,
+    pub(crate) editor_kind: ConditionEditorKind,
+    pub(crate) draft_date: DateConditionDraft,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

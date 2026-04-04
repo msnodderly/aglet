@@ -1,5 +1,6 @@
 pub mod agenda;
 pub mod classification;
+pub mod date_rules;
 pub mod dates;
 pub mod engine;
 pub mod error;

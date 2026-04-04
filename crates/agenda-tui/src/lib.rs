@@ -12,8 +12,9 @@ use agenda_core::classification::{
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Assignment, AssignmentExplanation, BoardDisplayMode, Category, CategoryId,
-    CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
-    ItemLinksForItem, NumericFormat, Query, Section, SectionFlow, SummaryFn, View, WhenBucket,
+    CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, DateCompareOp, DateSource,
+    Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow, SummaryFn, View,
+    WhenBucket,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::Store;
@@ -72,8 +73,9 @@ use state::category::{
     CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction, CategoryListRow,
     CategoryManagerDetailsFocus, CategoryManagerDetailsInlineField,
     CategoryManagerDetailsInlineInput, CategoryManagerFocus, CategoryManagerState,
-    CategorySuggestState, ConditionEditState, GlobalSettingsRow, GlobalSettingsState,
-    OllamaModelPickerState, WorkflowRolePickerOrigin, WorkflowRolePickerState,
+    CategorySuggestState, ConditionEditState, ConditionEditorKind, DateConditionDraft,
+    DateConditionDraftKind, DateConditionField, GlobalSettingsRow, GlobalSettingsState, OllamaModelPickerState,
+    WorkflowRolePickerOrigin, WorkflowRolePickerState,
 };
 use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
@@ -443,6 +445,7 @@ struct App {
     section_border_mode: SectionBorderMode,
     show_note_glyphs: bool,
     auto_refresh_last_tick: Instant,
+    last_temporal_refresh_minute: Option<(i16, i8, i8, i8, i8)>,
     transient: TransientUiState,
     category_assignment_counts: HashMap<CategoryId, usize>,
     classification: ClassificationAppState,
@@ -520,6 +523,7 @@ impl Default for App {
             section_border_mode: SectionBorderMode::Full,
             show_note_glyphs: true,
             auto_refresh_last_tick: Instant::now(),
+            last_temporal_refresh_minute: None,
             transient: TransientUiState::default(),
             category_assignment_counts: HashMap::new(),
             classification: ClassificationAppState::default(),

@@ -16,10 +16,11 @@ use crate::classification::{
     PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI, PROVIDER_ID_OPENROUTER,
     PROVIDER_ID_WHEN_PARSER,
 };
+use crate::date_rules::{category_uses_date_conditions, EvaluationContext};
 use crate::dates::BasicDateParser;
 use crate::engine::{
-    evaluate_all_items_with_options, process_item_with_options, EvaluateAllItemsResult,
-    ProcessItemResult, ProcessOptions,
+    evaluate_all_items_with_options, process_item_with_options, reevaluate_all_items_with_options,
+    EvaluateAllItemsResult, ProcessItemResult, ProcessOptions,
 };
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
@@ -126,6 +127,32 @@ impl<'a> Agenda<'a> {
 
     pub fn store(&self) -> &Store {
         self.store
+    }
+
+    pub fn has_date_conditions(&self) -> Result<bool> {
+        Ok(self
+            .store
+            .get_hierarchy()?
+            .iter()
+            .any(|category| category_uses_date_conditions(&category.conditions)))
+    }
+
+    pub fn reevaluate_temporal_conditions(&self) -> Result<EvaluateAllItemsResult> {
+        self.reevaluate_temporal_conditions_with_context(EvaluationContext::now())
+    }
+
+    pub fn reevaluate_temporal_conditions_with_context(
+        &self,
+        evaluation_context: EvaluationContext,
+    ) -> Result<EvaluateAllItemsResult> {
+        reevaluate_all_items_with_options(
+            self.store,
+            self.classifier,
+            ProcessOptions {
+                enable_implicit_string: false,
+                evaluation_context,
+            },
+        )
     }
 
     pub fn debug_enabled(&self) -> bool {
@@ -1171,10 +1198,11 @@ impl<'a> Agenda<'a> {
         text_changed: bool,
         include_semantic: bool,
     ) -> Result<ProcessItemResult> {
+        let evaluation_context = EvaluationContext::for_date(reference_date);
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
         if !cfg.should_run_continuously() || !cfg.run_on_item_save {
-            let result = self.process_cascades(item_id)?;
+            let result = self.reprocess_with_options(item_id, false, evaluation_context)?;
             self.debug_log_process_result("item.process", item_id, &result);
             return Ok(result);
         }
@@ -1185,7 +1213,7 @@ impl<'a> Agenda<'a> {
             self.classification_service_cheap(reference_date, &cfg, text_changed)
         };
         if !service.has_providers() {
-            let result = self.process_cascades(item_id)?;
+            let result = self.reprocess_with_options(item_id, false, evaluation_context)?;
             self.debug_log_process_result("item.process", item_id, &result);
             return Ok(result);
         }
@@ -1477,6 +1505,7 @@ impl<'a> Agenda<'a> {
             category_id,
             ProcessOptions {
                 enable_implicit_string,
+                evaluation_context: EvaluationContext::now(),
             },
         )
     }
@@ -1573,6 +1602,23 @@ impl<'a> Agenda<'a> {
         self.reprocess_with_implicit(item_id, false)
     }
 
+    fn reprocess_with_options(
+        &self,
+        item_id: ItemId,
+        enable_implicit_string: bool,
+        evaluation_context: EvaluationContext,
+    ) -> Result<ProcessItemResult> {
+        process_item_with_options(
+            self.store,
+            self.classifier,
+            item_id,
+            ProcessOptions {
+                enable_implicit_string,
+                evaluation_context,
+            },
+        )
+    }
+
     fn copy_preview_categories(
         preview_store: &Store,
         source_categories: &[Category],
@@ -1642,6 +1688,10 @@ impl<'a> Agenda<'a> {
             Condition::ImplicitString => Ok(Condition::ImplicitString),
             Condition::Profile { criteria } => Ok(Condition::Profile {
                 criteria: Box::new(Self::remap_query_for_preview(criteria, id_map)?),
+            }),
+            Condition::Date { source, matcher } => Ok(Condition::Date {
+                source: *source,
+                matcher: matcher.clone(),
             }),
         }
     }
@@ -1733,14 +1783,7 @@ impl<'a> Agenda<'a> {
         item_id: ItemId,
         enable_implicit_string: bool,
     ) -> Result<ProcessItemResult> {
-        process_item_with_options(
-            self.store,
-            self.classifier,
-            item_id,
-            ProcessOptions {
-                enable_implicit_string,
-            },
-        )
+        self.reprocess_with_options(item_id, enable_implicit_string, EvaluationContext::now())
     }
 
     fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {
