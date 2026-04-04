@@ -98,6 +98,9 @@ pub struct RecurrenceRule {
     pub day_of_month: Option<u8>,
     /// For yearly: which month (1–12).
     pub month: Option<u8>,
+    /// When `true` on a Daily rule, skip Saturday and Sunday.
+    #[serde(default)]
+    pub weekdays_only: Option<bool>,
 }
 
 impl RecurrenceRule {
@@ -111,7 +114,26 @@ impl RecurrenceRule {
         match self.frequency {
             RecurrenceFrequency::Daily => {
                 let span = jiff::Span::new().days(i64::from(self.interval));
-                anchor.checked_add(span).expect("daily advance overflow")
+                let mut next = anchor.checked_add(span).expect("daily advance overflow");
+                if self.weekdays_only == Some(true) {
+                    use jiff::civil::Weekday;
+                    loop {
+                        match next.date().weekday() {
+                            Weekday::Saturday => {
+                                next = next
+                                    .checked_add(jiff::Span::new().days(2))
+                                    .expect("weekday skip overflow");
+                            }
+                            Weekday::Sunday => {
+                                next = next
+                                    .checked_add(jiff::Span::new().days(1))
+                                    .expect("weekday skip overflow");
+                            }
+                            _ => break,
+                        }
+                    }
+                }
+                next
             }
             RecurrenceFrequency::Weekly => {
                 let target_wd = self
@@ -155,6 +177,9 @@ impl RecurrenceRule {
     /// Human-readable description of the rule.
     pub fn display(&self) -> String {
         match self.frequency {
+            RecurrenceFrequency::Daily if self.weekdays_only == Some(true) => {
+                "every weekday".to_string()
+            }
             RecurrenceFrequency::Daily if self.interval == 1 => "daily".to_string(),
             RecurrenceFrequency::Daily => format!("every {} days", self.interval),
             RecurrenceFrequency::Weekly if self.interval == 1 => match self.weekday {
@@ -175,13 +200,21 @@ impl RecurrenceRule {
                     None => "monthly".to_string(),
                 }
             }
+            RecurrenceFrequency::Monthly
+                if self.interval == 3 && self.day_of_month == Some(1) =>
+            {
+                "quarterly".to_string()
+            }
             RecurrenceFrequency::Monthly => {
                 match self.day_of_month {
                     Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
                     None => format!("every {} months", self.interval),
                 }
             }
-            RecurrenceFrequency::Yearly if self.interval == 1 => "yearly".to_string(),
+            RecurrenceFrequency::Yearly if self.interval == 1 => match (self.month, self.day_of_month) {
+                (Some(m), Some(d)) => format!("every {} {}", month_name(m), d),
+                _ => "yearly".to_string(),
+            },
             RecurrenceFrequency::Yearly => format!("every {} years", self.interval),
         }
     }
@@ -216,6 +249,24 @@ fn weekday_name(wd: jiff::civil::Weekday) -> &'static str {
         jiff::civil::Weekday::Friday => "Friday",
         jiff::civil::Weekday::Saturday => "Saturday",
         jiff::civil::Weekday::Sunday => "Sunday",
+    }
+}
+
+fn month_name(m: u8) -> &'static str {
+    match m {
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
+        _ => "???",
     }
 }
 
@@ -966,6 +1017,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 4, 1, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2026, 4, 2, 9, 0));
@@ -979,6 +1031,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 4, 1, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2026, 4, 4, 9, 0));
@@ -992,6 +1045,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         // 2026-04-01 is a Wednesday
         let anchor = dt(2026, 4, 1, 9, 0);
@@ -1008,6 +1062,7 @@ mod tests {
             weekday: Some(5), // Friday
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         // 2026-04-01 is a Wednesday; next week's Friday = 2026-04-10
         let anchor = dt(2026, 4, 1, 9, 0);
@@ -1024,6 +1079,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 4, 1, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2026, 4, 15, 9, 0));
@@ -1037,6 +1093,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 4, 15, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2026, 5, 15, 9, 0));
@@ -1050,6 +1107,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(1),
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 4, 15, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2026, 5, 1, 9, 0));
@@ -1063,6 +1121,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(31),
             month: None,
+            weekdays_only: None,
         };
         // Jan 31 → Feb: should clamp to 28 (non-leap 2026)
         let anchor = dt(2026, 1, 31, 9, 0);
@@ -1077,6 +1136,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(31),
             month: None,
+            weekdays_only: None,
         };
         // Jan 31, 2028 (leap year) → Feb: should clamp to 29
         let anchor = dt(2028, 1, 31, 9, 0);
@@ -1091,6 +1151,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(31),
             month: None,
+            weekdays_only: None,
         };
         // Mar 31 → Apr: should clamp to 30
         let anchor = dt(2026, 3, 31, 9, 0);
@@ -1105,6 +1166,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(15),
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 12, 15, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2027, 1, 15, 9, 0));
@@ -1118,6 +1180,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 1, 15, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2026, 4, 15, 9, 0));
@@ -1131,6 +1194,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let anchor = dt(2026, 4, 1, 9, 0);
         assert_eq!(rule.next_date(anchor), dt(2027, 4, 1, 9, 0));
@@ -1144,6 +1208,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(29),
             month: Some(2),
+            weekdays_only: None,
         };
         // 2028 is a leap year, 2029 is not
         let anchor = dt(2028, 2, 29, 9, 0);
@@ -1158,6 +1223,7 @@ mod tests {
             weekday: Some(5),
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         let json = serde_json::to_string(&rule).unwrap();
         let parsed: RecurrenceRule = serde_json::from_str(&json).unwrap();
@@ -1172,6 +1238,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         assert_eq!(daily.display(), "daily");
 
@@ -1181,6 +1248,7 @@ mod tests {
             weekday: Some(5),
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         assert_eq!(weekly_fri.display(), "every Friday");
 
@@ -1190,6 +1258,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(15),
             month: None,
+            weekdays_only: None,
         };
         assert_eq!(monthly_15th.display(), "monthly on the 15th");
 
@@ -1199,6 +1268,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         };
         assert_eq!(every_2_weeks.display(), "every 2 weeks");
     }

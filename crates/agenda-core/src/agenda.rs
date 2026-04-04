@@ -5538,6 +5538,7 @@ mod tests {
             weekday: None,
             day_of_month: None,
             month: None,
+            weekdays_only: None,
         }
     }
 

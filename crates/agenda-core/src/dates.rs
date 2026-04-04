@@ -92,6 +92,21 @@ const MONTHS: [(&str, u32); 12] = [
     ("december", 12),
 ];
 
+const MONTHS_ABBREV: [(&str, u32); 12] = [
+    ("jan", 1),
+    ("feb", 2),
+    ("mar", 3),
+    ("apr", 4),
+    ("may", 5),
+    ("jun", 6),
+    ("jul", 7),
+    ("aug", 8),
+    ("sep", 9),
+    ("oct", 10),
+    ("nov", 11),
+    ("dec", 12),
+];
+
 const WEEKDAYS: [(&str, Weekday); 7] = [
     ("monday", Weekday::Monday),
     ("tuesday", Weekday::Tuesday),
@@ -895,18 +910,89 @@ fn scan_recurrence(bytes: &[u8], reference_date: Date) -> Option<DateParseResult
     let mut best: Option<DateParseResult> = None;
 
     scan_every_weekday(bytes, reference_date, &mut best);
+    scan_every_business_day(bytes, reference_date, &mut best);
     scan_every_n_unit(bytes, reference_date, &mut best);
     scan_every_month_day(bytes, reference_date, &mut best);
+    scan_ordinal_of_every_month(bytes, reference_date, &mut best);
+    scan_every_month_date(bytes, reference_date, &mut best);
     scan_single_word_frequency(bytes, reference_date, &mut best);
 
     // Attach trailing time ("at 6pm", "at 9:30am") to the first_date if present.
-    best.map(|result| match result {
+    let best = best.map(|result| match result {
         DateParseResult::Recurring { first_date, rule } => DateParseResult::Recurring {
             first_date: attach_trailing_time(bytes, first_date),
             rule,
         },
         other => other,
+    });
+
+    // Attach "starting <date>" anchor to override first_date if present.
+    best.map(|result| match result {
+        DateParseResult::Recurring { first_date, rule } => {
+            let with_anchor = attach_starting_anchor(bytes, first_date, &rule, reference_date);
+            DateParseResult::Recurring {
+                first_date: with_anchor,
+                rule,
+            }
+        }
+        other => other,
     })
+}
+
+/// Check for "starting <date>" after the recurrence span and override first_date.
+fn attach_starting_anchor(
+    bytes: &[u8],
+    parsed: ParsedDate,
+    rule: &RecurrenceRule,
+    reference_date: Date,
+) -> ParsedDate {
+    let mut pos = skip_whitespace(bytes, parsed.span.1);
+    if !matches_ascii_insensitive(bytes, pos, b"starting ") {
+        return parsed;
+    }
+    pos += 9; // len("starting ")
+    pos = skip_whitespace(bytes, pos);
+
+    // Parse the anchor date using the standard one-time parser.
+    let remaining = &bytes[pos..];
+    let remaining_str = match std::str::from_utf8(remaining) {
+        Ok(s) => s,
+        Err(_) => return parsed,
+    };
+    let anchor_parser = BasicDateParser::default();
+    let Some(anchor_parsed) = anchor_parser.parse(remaining_str, reference_date) else {
+        return parsed;
+    };
+    let anchor_date = anchor_parsed.datetime.date();
+
+    // For weekly rules with a specific weekday, find the first occurrence
+    // of that weekday on or after the anchor date.
+    let first_date = if rule.frequency == RecurrenceFrequency::Weekly {
+        if let Some(wd_u8) = rule.weekday {
+            let target_wd = crate::model::weekday_from_u8(wd_u8);
+            let days_ahead = days_until_weekday_this(anchor_date.weekday(), target_wd);
+            anchor_date
+                .checked_add(Span::new().days(days_ahead))
+                .unwrap_or(anchor_date)
+        } else {
+            anchor_date
+        }
+    } else {
+        anchor_date
+    };
+
+    // Preserve time from the original parsed result (e.g., "at 6pm" was already attached).
+    let datetime = first_date.at(
+        parsed.datetime.hour(),
+        parsed.datetime.minute(),
+        parsed.datetime.second(),
+        0,
+    );
+    let anchor_span_end = pos + anchor_parsed.span.1;
+    ParsedDate {
+        datetime,
+        span: (parsed.span.0, anchor_span_end),
+    }
 }
 
 fn choose_best_recurrence(
@@ -935,7 +1021,7 @@ fn choose_best_recurrence(
     }
 }
 
-/// "every Monday", "every friday"
+/// "every Monday", "every friday", "every other tuesday"
 fn scan_every_weekday(
     bytes: &[u8],
     reference_date: Date,
@@ -950,7 +1036,14 @@ fn scan_every_weekday(
             if !matches_ascii_insensitive(bytes, start, keyword) {
                 continue;
             }
-            let wd_start = start + keyword.len();
+            let after_every = start + keyword.len();
+            // Check for "other " modifier → interval=2
+            let (wd_start, interval) =
+                if matches_ascii_insensitive(bytes, after_every, b"other ") {
+                    (after_every + 6, 2u16)
+                } else {
+                    (after_every, 1u16)
+                };
             for &(name, weekday) in &WEEKDAYS {
                 if !matches_ascii_insensitive(bytes, wd_start, name.as_bytes()) {
                     continue;
@@ -964,10 +1057,11 @@ fn scan_every_weekday(
                 if let Ok(first) = reference_date.checked_add(Span::new().days(days)) {
                     let rule = RecurrenceRule {
                         frequency: RecurrenceFrequency::Weekly,
-                        interval: 1,
+                        interval,
                         weekday: Some(weekday_to_u8(weekday)),
                         day_of_month: None,
                         month: None,
+                        weekdays_only: None,
                     };
                     choose_best_recurrence(
                         best,
@@ -981,6 +1075,67 @@ fn scan_every_weekday(
                     );
                 }
             }
+        }
+    }
+}
+
+/// "every weekday", "every business day"
+fn scan_every_business_day(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let patterns: &[&[u8]] = &[
+        b"every weekday",
+        b"each weekday",
+        b"every business day",
+        b"each business day",
+    ];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for pattern in patterns {
+            if !matches_ascii_insensitive(bytes, start, pattern) {
+                continue;
+            }
+            let end = start + pattern.len();
+            if !has_right_boundary(bytes, end) {
+                continue;
+            }
+            // first_date: next weekday (Mon–Fri) from reference_date
+            let mut first = reference_date
+                .checked_add(Span::new().days(1))
+                .expect("day advance overflow");
+            loop {
+                match first.weekday() {
+                    Weekday::Saturday => {
+                        first = first.checked_add(Span::new().days(2)).unwrap();
+                    }
+                    Weekday::Sunday => {
+                        first = first.checked_add(Span::new().days(1)).unwrap();
+                    }
+                    _ => break,
+                }
+            }
+            let rule = RecurrenceRule {
+                frequency: RecurrenceFrequency::Daily,
+                interval: 1,
+                weekday: None,
+                day_of_month: None,
+                month: None,
+                weekdays_only: Some(true),
+            };
+            choose_best_recurrence(
+                best,
+                DateParseResult::Recurring {
+                    first_date: ParsedDate {
+                        datetime: at_midnight(first),
+                        span: (start, end),
+                    },
+                    rule,
+                },
+            );
         }
     }
 }
@@ -1062,6 +1217,7 @@ fn scan_every_n_unit(
                         weekday: None,
                         day_of_month: None,
                         month: None,
+                        weekdays_only: None,
                     };
                     choose_best_recurrence(
                         best,
@@ -1148,6 +1304,7 @@ fn scan_every_month_day(
                         weekday: None,
                         day_of_month: Some(day),
                         month: None,
+                        weekdays_only: None,
                     };
                     choose_best_recurrence(
                         best,
@@ -1165,7 +1322,190 @@ fn scan_every_month_day(
     }
 }
 
-/// "daily", "weekly", "monthly", "yearly"
+/// "1st of every month", "13th of each month"
+fn scan_ordinal_of_every_month(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        // Parse day digits
+        let Some((day, day_end)) = parse_digits(bytes, start, 1, 2) else {
+            continue;
+        };
+        if day == 0 || day > 31 {
+            continue;
+        }
+        let day = day as u8;
+        // Skip optional ordinal suffix
+        let mut pos = day_end;
+        if pos + 2 <= bytes.len() {
+            let suffix = &bytes[pos..pos + 2];
+            if suffix.eq_ignore_ascii_case(b"st")
+                || suffix.eq_ignore_ascii_case(b"nd")
+                || suffix.eq_ignore_ascii_case(b"rd")
+                || suffix.eq_ignore_ascii_case(b"th")
+            {
+                pos += 2;
+            }
+        }
+        // " of every month" or " of each month"
+        let pos = skip_whitespace(bytes, pos);
+        if !matches_ascii_insensitive(bytes, pos, b"of ") {
+            continue;
+        }
+        let pos = skip_whitespace(bytes, pos + 3);
+        let after_keyword = if matches_ascii_insensitive(bytes, pos, b"every ") {
+            pos + 6
+        } else if matches_ascii_insensitive(bytes, pos, b"each ") {
+            pos + 5
+        } else {
+            continue;
+        };
+        if !matches_ascii_insensitive(bytes, after_keyword, b"month") {
+            continue;
+        }
+        let end = after_keyword + 5;
+        if !has_right_boundary(bytes, end) {
+            continue;
+        }
+        // Compute first date (same logic as scan_every_month_day)
+        let target_month = if reference_date.day() as u8 >= day {
+            reference_date.checked_add(Span::new().months(1)).ok()
+        } else {
+            Some(reference_date)
+        };
+        if let Some(base) = target_month {
+            let max_day =
+                crate::model::days_in_month(i32::from(base.year()), base.month() as u8);
+            let clamped = day.min(max_day);
+            if let Ok(first) = Date::new(base.year(), base.month(), clamped as i8) {
+                choose_best_recurrence(
+                    best,
+                    DateParseResult::Recurring {
+                        first_date: ParsedDate {
+                            datetime: at_midnight(first),
+                            span: (start, end),
+                        },
+                        rule: RecurrenceRule {
+                            frequency: RecurrenceFrequency::Monthly,
+                            interval: 1,
+                            weekday: None,
+                            day_of_month: Some(day),
+                            month: None,
+                            weekdays_only: None,
+                        },
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// "every january 1", "every mar 15", "every march 15th"
+fn scan_every_month_date(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let every_keywords = [b"every " as &[u8], b"each "];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for keyword in &every_keywords {
+            if !matches_ascii_insensitive(bytes, start, keyword) {
+                continue;
+            }
+            let month_start = start + keyword.len();
+            // Try full month names first, then abbreviations
+            let mut found_month = None;
+            for &(name, month_num) in MONTHS.iter().chain(MONTHS_ABBREV.iter()) {
+                if matches_ascii_insensitive(bytes, month_start, name.as_bytes()) {
+                    let after_name = month_start + name.len();
+                    // Must be followed by space (not just a boundary — "may5" shouldn't match)
+                    if after_name < bytes.len() && bytes[after_name].is_ascii_whitespace() {
+                        // For abbreviations, make sure a longer full name doesn't also match
+                        // (prefer full name). Since full names come first, just take first match.
+                        if found_month.is_none()
+                            || name.len()
+                                > found_month.map(|(_, _, len): (u32, usize, usize)| len).unwrap_or(0)
+                        {
+                            found_month = Some((month_num, after_name, name.len()));
+                        }
+                    }
+                }
+            }
+            let Some((month_num, after_name, _)) = found_month else {
+                continue;
+            };
+            let day_start = skip_whitespace(bytes, after_name);
+            let Some((day, day_end)) = parse_digits(bytes, day_start, 1, 2) else {
+                continue;
+            };
+            if day == 0 || day > 31 {
+                continue;
+            }
+            // Skip optional ordinal suffix
+            let mut end = day_end;
+            if end + 2 <= bytes.len() {
+                let suffix = &bytes[end..end + 2];
+                if suffix.eq_ignore_ascii_case(b"st")
+                    || suffix.eq_ignore_ascii_case(b"nd")
+                    || suffix.eq_ignore_ascii_case(b"rd")
+                    || suffix.eq_ignore_ascii_case(b"th")
+                {
+                    end += 2;
+                }
+            }
+            if !has_right_boundary(bytes, end) {
+                continue;
+            }
+            let day = day as u8;
+            let month = month_num as u8;
+            // Compute first_date: this year if not past, else next year
+            let this_year = reference_date.year();
+            let max_day = crate::model::days_in_month(i32::from(this_year), month);
+            let clamped = day.min(max_day);
+            let (first_year, first_day) =
+                if let Ok(candidate) = Date::new(this_year, month as i8, clamped as i8) {
+                    if candidate > reference_date {
+                        (this_year, clamped)
+                    } else {
+                        let next_max =
+                            crate::model::days_in_month(i32::from(this_year + 1), month);
+                        (this_year + 1, day.min(next_max))
+                    }
+                } else {
+                    continue;
+                };
+            if let Ok(first) = Date::new(first_year, month as i8, first_day as i8) {
+                choose_best_recurrence(
+                    best,
+                    DateParseResult::Recurring {
+                        first_date: ParsedDate {
+                            datetime: at_midnight(first),
+                            span: (start, end),
+                        },
+                        rule: RecurrenceRule {
+                            frequency: RecurrenceFrequency::Yearly,
+                            interval: 1,
+                            weekday: None,
+                            day_of_month: Some(day),
+                            month: Some(month),
+                            weekdays_only: None,
+                        },
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// "daily", "weekly", "monthly", "yearly", "quarterly", "biweekly", "bimonthly"
 fn scan_single_word_frequency(
     bytes: &[u8],
     reference_date: Date,
@@ -1177,6 +1517,9 @@ fn scan_single_word_frequency(
         (b"monthly", RecurrenceFrequency::Monthly),
         (b"yearly", RecurrenceFrequency::Yearly),
         (b"annually", RecurrenceFrequency::Yearly),
+        (b"biweekly", RecurrenceFrequency::Weekly),
+        (b"bimonthly", RecurrenceFrequency::Monthly),
+        (b"quarterly", RecurrenceFrequency::Monthly),
     ];
     for start in 0..bytes.len() {
         if !has_left_boundary(bytes, start) {
@@ -1197,27 +1540,44 @@ fn scan_single_word_frequency(
             if !has_right_boundary(bytes, end) {
                 continue;
             }
-            let first = match freq {
-                RecurrenceFrequency::Daily => {
-                    reference_date.checked_add(Span::new().days(1)).ok()
-                }
-                RecurrenceFrequency::Weekly => {
-                    reference_date.checked_add(Span::new().weeks(1)).ok()
-                }
-                RecurrenceFrequency::Monthly => {
-                    reference_date.checked_add(Span::new().months(1)).ok()
-                }
-                RecurrenceFrequency::Yearly => {
-                    reference_date.checked_add(Span::new().years(1)).ok()
-                }
+            let is_bi = keyword == b"biweekly" || keyword == b"bimonthly";
+            let is_quarterly = keyword == b"quarterly";
+            let interval: u16 = if is_bi { 2 } else if is_quarterly { 3 } else { 1 };
+            let (first, day_of_month) = if is_quarterly {
+                // Snap to next quarter boundary: Jan 1, Apr 1, Jul 1, Oct 1.
+                let m = reference_date.month() as u32;
+                let next_q = ((m - 1) / 3 + 1) * 3 + 1; // 4, 7, 10, or 13
+                let (y, qm) = if next_q > 12 {
+                    (reference_date.year() + 1, 1u8)
+                } else {
+                    (reference_date.year(), next_q as u8)
+                };
+                (Date::new(y, qm as i8, 1).ok(), Some(1u8))
+            } else {
+                let first = match freq {
+                    RecurrenceFrequency::Daily => {
+                        reference_date.checked_add(Span::new().days(i64::from(interval))).ok()
+                    }
+                    RecurrenceFrequency::Weekly => {
+                        reference_date.checked_add(Span::new().weeks(i64::from(interval))).ok()
+                    }
+                    RecurrenceFrequency::Monthly => {
+                        reference_date.checked_add(Span::new().months(i32::from(interval))).ok()
+                    }
+                    RecurrenceFrequency::Yearly => {
+                        reference_date.checked_add(Span::new().years(i32::from(interval))).ok()
+                    }
+                };
+                (first, None)
             };
             if let Some(first_date) = first {
                 let rule = RecurrenceRule {
                     frequency: freq,
-                    interval: 1,
+                    interval,
                     weekday: None,
-                    day_of_month: None,
+                    day_of_month,
                     month: None,
+                    weekdays_only: None,
                 };
                 choose_best_recurrence(
                     best,
@@ -2282,5 +2642,401 @@ mod tests {
             2,
             datetime(2026, 4, 15, 10, 30),
         );
+    }
+
+    // --- Slice 1: word aliases ---
+
+    #[test]
+    fn recurrence_quarterly() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 → next quarter = Jul 1
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("quarterly", date(2026, 4, 1)),
+            RecurrenceFrequency::Monthly,
+            3,
+            datetime(2026, 7, 1, 0, 0),
+        );
+        assert_eq!(rule.day_of_month, Some(1));
+    }
+
+    #[test]
+    fn recurrence_quarterly_in_december() {
+        let parser = BasicDateParser::default();
+        // Dec → next quarter = Jan 1 next year
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("quarterly", date(2026, 12, 15)),
+            RecurrenceFrequency::Monthly,
+            3,
+            datetime(2027, 1, 1, 0, 0),
+        );
+        assert_eq!(rule.day_of_month, Some(1));
+    }
+
+    #[test]
+    fn recurrence_quarterly_display() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 3,
+            weekday: None,
+            day_of_month: Some(1),
+            month: None,
+            weekdays_only: None,
+        };
+        assert_eq!(rule.display(), "quarterly");
+    }
+
+    #[test]
+    fn recurrence_biweekly() {
+        let parser = BasicDateParser::default();
+        assert_recurring(
+            parser.parse_with_recurrence("biweekly", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            2,
+            datetime(2026, 4, 15, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_bimonthly() {
+        let parser = BasicDateParser::default();
+        assert_recurring(
+            parser.parse_with_recurrence("bimonthly", date(2026, 4, 1)),
+            RecurrenceFrequency::Monthly,
+            2,
+            datetime(2026, 6, 1, 0, 0),
+        );
+    }
+
+    // --- Slice 2: inverted day-of-month order ---
+
+    #[test]
+    fn recurrence_1st_of_every_month() {
+        let parser = BasicDateParser::default();
+        // Apr 10 → past 1st, so May 1
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("1st of every month", date(2026, 4, 10)),
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 5, 1, 0, 0),
+        );
+        assert_eq!(rule.day_of_month, Some(1));
+    }
+
+    #[test]
+    fn recurrence_13th_of_every_month() {
+        let parser = BasicDateParser::default();
+        // Apr 10 → 13th is ahead, so Apr 13
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("13th of every month", date(2026, 4, 10)),
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 4, 13, 0, 0),
+        );
+        assert_eq!(rule.day_of_month, Some(13));
+    }
+
+    #[test]
+    fn recurrence_15th_of_each_month() {
+        let parser = BasicDateParser::default();
+        assert_recurring(
+            parser.parse_with_recurrence("15th of each month", date(2026, 4, 1)),
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 4, 15, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_3rd_of_every_month() {
+        let parser = BasicDateParser::default();
+        // Apr 10 → past 3rd, so May 3
+        assert_recurring(
+            parser.parse_with_recurrence("3rd of every month", date(2026, 4, 10)),
+            RecurrenceFrequency::Monthly,
+            1,
+            datetime(2026, 5, 3, 0, 0),
+        );
+    }
+
+    // --- Slice 3: every other ---
+
+    #[test]
+    fn recurrence_every_other_tuesday() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is a Wednesday → next Tuesday = Apr 7
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every other tuesday", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            2,
+            datetime(2026, 4, 7, 0, 0),
+        );
+        assert_eq!(rule.weekday, Some(2)); // Tuesday
+    }
+
+    #[test]
+    fn recurrence_every_other_friday() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is a Wednesday → next Friday = Apr 3
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every other friday", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            2,
+            datetime(2026, 4, 3, 0, 0),
+        );
+        assert_eq!(rule.weekday, Some(5)); // Friday
+    }
+
+    // --- Slice 5: yearly dates ---
+
+    #[test]
+    fn recurrence_every_january_1() {
+        let parser = BasicDateParser::default();
+        // Apr 2026 → past Jan 1, so Jan 1 2027
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every january 1", date(2026, 4, 1)),
+            RecurrenceFrequency::Yearly,
+            1,
+            datetime(2027, 1, 1, 0, 0),
+        );
+        assert_eq!(rule.month, Some(1));
+        assert_eq!(rule.day_of_month, Some(1));
+    }
+
+    #[test]
+    fn recurrence_every_mar_15() {
+        let parser = BasicDateParser::default();
+        // Feb 2026 → Mar 15 is ahead, so this year
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every mar 15", date(2026, 2, 1)),
+            RecurrenceFrequency::Yearly,
+            1,
+            datetime(2026, 3, 15, 0, 0),
+        );
+        assert_eq!(rule.month, Some(3));
+        assert_eq!(rule.day_of_month, Some(15));
+    }
+
+    #[test]
+    fn recurrence_every_march_15th() {
+        let parser = BasicDateParser::default();
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every march 15th", date(2026, 2, 1)),
+            RecurrenceFrequency::Yearly,
+            1,
+            datetime(2026, 3, 15, 0, 0),
+        );
+        assert_eq!(rule.month, Some(3));
+        assert_eq!(rule.day_of_month, Some(15));
+    }
+
+    #[test]
+    fn recurrence_every_december_25() {
+        let parser = BasicDateParser::default();
+        // Nov → Dec 25 is ahead, so this year
+        assert_recurring(
+            parser.parse_with_recurrence("every december 25", date(2026, 11, 1)),
+            RecurrenceFrequency::Yearly,
+            1,
+            datetime(2026, 12, 25, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_yearly_date_display() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            weekday: None,
+            day_of_month: Some(15),
+            month: Some(3),
+            weekdays_only: None,
+        };
+        assert_eq!(rule.display(), "every March 15");
+    }
+
+    // --- Slice 6: starting anchor ---
+
+    #[test]
+    fn recurrence_every_3_months_starting_jan_1() {
+        let parser = BasicDateParser::default();
+        // From Apr 1: "starting jan 1" → past, so next Jan 1 2027
+        // But the recurrence first_date should be the starting anchor
+        let result = parser
+            .parse_with_recurrence("every 3 months starting january 1", date(2026, 4, 1));
+        let rule = assert_recurring(
+            result,
+            RecurrenceFrequency::Monthly,
+            3,
+            datetime(2027, 1, 1, 0, 0),
+        );
+        assert!(rule.weekday.is_none());
+    }
+
+    #[test]
+    fn recurrence_weekly_starting_march_1() {
+        let parser = BasicDateParser::default();
+        // From Feb 1: "starting march 1" → Mar 1 is a Sunday
+        // Weekly rule, so first_date = Mar 1
+        assert_recurring(
+            parser.parse_with_recurrence("weekly starting march 1", date(2026, 2, 1)),
+            RecurrenceFrequency::Weekly,
+            1,
+            datetime(2026, 3, 1, 0, 0),
+        );
+    }
+
+    #[test]
+    fn recurrence_every_monday_starting_april_15() {
+        let parser = BasicDateParser::default();
+        // Apr 15 2026 is a Wednesday → first Monday on/after = Apr 20
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every monday starting april 15", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            1,
+            datetime(2026, 4, 20, 0, 0),
+        );
+        assert_eq!(rule.weekday, Some(1)); // Monday
+    }
+
+    #[test]
+    fn recurrence_biweekly_starting_next_monday() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is Wednesday → next Monday = Apr 6
+        assert_recurring(
+            parser.parse_with_recurrence("biweekly starting next monday", date(2026, 4, 1)),
+            RecurrenceFrequency::Weekly,
+            2,
+            datetime(2026, 4, 6, 0, 0),
+        );
+    }
+
+    // --- every weekday / business day ---
+
+    #[test]
+    fn recurrence_every_weekday() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is Wednesday → next weekday = Thu Apr 2
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_business_day() {
+        let parser = BasicDateParser::default();
+        // Same as "every weekday"
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every business day", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_from_friday_skips_weekend() {
+        let parser = BasicDateParser::default();
+        // 2026-04-03 is Friday → next weekday = Mon Apr 6
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday", date(2026, 4, 3)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 6, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_from_saturday_skips_weekend() {
+        let parser = BasicDateParser::default();
+        // 2026-04-04 is Saturday → next weekday = Mon Apr 6
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday", date(2026, 4, 4)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 6, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_with_time() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is Wednesday → next weekday = Thu Apr 2 at 9am
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday at 9am", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 9, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_display() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        assert_eq!(rule.display(), "every weekday");
+    }
+
+    #[test]
+    fn recurrence_weekday_next_date_friday_to_monday() {
+        // Friday → next weekday should be Monday
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        // 2026-04-03 is Friday
+        let anchor = datetime(2026, 4, 3, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, datetime(2026, 4, 6, 9, 0)); // Monday
+    }
+
+    #[test]
+    fn recurrence_weekday_next_date_thursday_to_friday() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        // 2026-04-02 is Thursday
+        let anchor = datetime(2026, 4, 2, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, datetime(2026, 4, 3, 9, 0)); // Friday
+    }
+
+    #[test]
+    fn recurrence_weekday_next_date_saturday_to_monday() {
+        // If somehow anchored on Saturday, next weekday should be Monday
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        // 2026-04-04 is Saturday
+        let anchor = datetime(2026, 4, 4, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, datetime(2026, 4, 6, 9, 0)); // Monday
     }
 }

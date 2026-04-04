@@ -418,7 +418,6 @@ fn fire_actions(
                     if has_blocking_exclusive_sibling(*target_id, categories_by_id, assignments) {
                         continue;
                     }
-
                     enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
 
                     let assigned = assign_if_unassigned(
@@ -1648,8 +1647,14 @@ mod tests {
         assert_eq!(result.affected_items, 1);
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
-        assert!(!assignments.contains_key(&todo.id));
-        assert!(assignments.contains_key(&in_progress.id));
+        assert!(
+            assignments.contains_key(&todo.id),
+            "manual exclusive choice should survive during bulk evaluation too"
+        );
+        assert!(
+            !assignments.contains_key(&in_progress.id),
+            "bulk evaluation should suppress later action-derived siblings in an exclusive family"
+        );
     }
 
     #[test]
