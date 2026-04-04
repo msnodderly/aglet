@@ -1,6 +1,6 @@
 use crate::*;
 use agenda_core::date_rules::{parse_date_value_expr, render_date_value_expr, EvaluationContext};
-use agenda_core::model::{AssignmentSource, DateValueExpr};
+use agenda_core::model::{AssignmentSource, ConditionMatchMode, DateValueExpr};
 use jiff::civil::{Date, DateTime, Time};
 use jiff::Span;
 
@@ -39,6 +39,13 @@ fn editable_condition_indices(category: &Category) -> Vec<usize> {
         .filter(|(_, condition)| !matches!(condition, Condition::ImplicitString))
         .map(|(index, _)| index)
         .collect()
+}
+
+pub(crate) fn condition_match_mode_label(mode: ConditionMatchMode) -> &'static str {
+    match mode {
+        ConditionMatchMode::Any => "ANY",
+        ConditionMatchMode::All => "ALL",
+    }
 }
 
 fn date_draft_from_condition(condition: &Condition) -> Option<DateConditionDraft> {
@@ -2528,8 +2535,7 @@ impl App {
                 draft_date: DateConditionDraft::default(),
             });
         }
-        self.status = "Conditions: a:add profile  d:add date  Enter:edit  x:delete  Esc:close"
-            .to_string();
+        self.condition_list_status();
     }
 
     fn close_condition_edit(&mut self) {
@@ -2540,8 +2546,13 @@ impl App {
     }
 
     fn condition_list_status(&mut self) {
-        self.status = "Conditions: a:add profile  d:add date  Enter:edit  x:delete  Esc:close"
-            .to_string();
+        let mode = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+            .map(|category| condition_match_mode_label(category.condition_match_mode))
+            .unwrap_or("ANY");
+        self.status =
+            format!("Conditions ({mode}): m:toggle  a:add profile  d:add date  Enter:edit  x:delete  Esc:close");
     }
 
     fn condition_picker_status(&mut self) {
@@ -2683,6 +2694,34 @@ impl App {
         true
     }
 
+    fn toggle_condition_match_mode(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let category_id = match self.selected_category_row() {
+            Some(row) => row.id,
+            None => return Ok(false),
+        };
+        let mut category = match self.categories.iter().find(|c| c.id == category_id) {
+            Some(category) => category.clone(),
+            None => return Ok(false),
+        };
+        category.condition_match_mode = match category.condition_match_mode {
+            ConditionMatchMode::Any => ConditionMatchMode::All,
+            ConditionMatchMode::All => ConditionMatchMode::Any,
+        };
+
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+        self.condition_list_status();
+        self.status = format!(
+            "{} rules now use {} matching (processed={}, affected={})",
+            category.name,
+            condition_match_mode_label(category.condition_match_mode),
+            result.processed_items,
+            result.affected_items
+        );
+        Ok(true)
+    }
+
     fn save_condition_from_date_editor(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
         let (condition_index, draft) = {
             let edit = match self.category_manager_condition_edit() {
@@ -2768,7 +2807,7 @@ impl App {
             "added"
         };
         self.status = format!(
-            "Condition {} (processed={}, affected={})  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
+            "Condition {} (processed={}, affected={})  m:toggle  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
             action, result.processed_items, result.affected_items
         );
         Ok(true)
@@ -2808,7 +2847,7 @@ impl App {
             }
         }
         self.status = format!(
-            "Condition removed (processed={}, affected={})  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
+            "Condition removed (processed={}, affected={})  m:toggle  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
             result.processed_items, result.affected_items
         );
         Ok(true)
@@ -2932,6 +2971,9 @@ impl App {
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 self.open_condition_date_editor(None);
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                return self.toggle_condition_match_mode(agenda);
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if condition_count > 0 && edit.list_index < condition_count {

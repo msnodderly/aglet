@@ -374,6 +374,11 @@ pub enum AssignmentExplanation {
         condition_index: usize,
         rendered_rule: String,
     },
+    ConditionGroup {
+        owner_category_name: String,
+        match_mode: ConditionMatchMode,
+        rendered_rules: Vec<String>,
+    },
     Action {
         trigger_category_name: String,
         kind: AssignmentActionKind,
@@ -427,6 +432,25 @@ impl AssignmentExplanation {
                 owner_category_name,
                 rendered_rule
             ),
+            Self::ConditionGroup {
+                owner_category_name,
+                match_mode,
+                rendered_rules,
+            } => {
+                let mode = match match_mode {
+                    ConditionMatchMode::Any => "ANY",
+                    ConditionMatchMode::All => "ALL",
+                };
+                if rendered_rules.is_empty() {
+                    format!("Derived from {mode} rules on {owner_category_name}")
+                } else {
+                    format!(
+                        "Derived from {mode} rules on {}: {}",
+                        owner_category_name,
+                        rendered_rules.join(" AND ")
+                    )
+                }
+            }
             Self::Action {
                 trigger_category_name,
                 kind,
@@ -493,6 +517,18 @@ impl AssignmentExplanation {
                 condition_index + 1,
                 owner_category_name
             ),
+            Self::ConditionGroup {
+                owner_category_name,
+                match_mode,
+                ..
+            } => match match_mode {
+                ConditionMatchMode::Any => {
+                    format!("No rules on {} matched anymore", owner_category_name)
+                }
+                ConditionMatchMode::All => {
+                    format!("Not all rules on {} matched anymore", owner_category_name)
+                }
+            },
             Self::Action {
                 trigger_category_name,
                 kind,
@@ -572,6 +608,8 @@ pub struct Category {
     pub note: Option<String>,
     pub created_at: Timestamp,
     pub modified_at: Timestamp,
+    #[serde(default)]
+    pub condition_match_mode: ConditionMatchMode,
     pub conditions: Vec<Condition>,
     pub actions: Vec<Action>,
     #[serde(default)]
@@ -589,6 +627,13 @@ pub enum CategoryValueKind {
     #[default]
     Tag,
     Numeric,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ConditionMatchMode {
+    #[default]
+    Any,
+    All,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1038,6 +1083,7 @@ impl Category {
             note: None,
             created_at: now,
             modified_at: now,
+            condition_match_mode: ConditionMatchMode::Any,
             conditions: Vec::new(),
             actions: Vec::new(),
             value_kind: CategoryValueKind::Tag,

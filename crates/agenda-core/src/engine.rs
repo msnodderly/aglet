@@ -8,7 +8,7 @@ use crate::matcher::Classifier;
 use crate::model::{
     origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition,
-    Item, ItemId, Query, TextMatchSource,
+    ConditionMatchMode, Item, ItemId, Query, TextMatchSource,
 };
 use crate::store::Store;
 
@@ -386,47 +386,109 @@ fn evaluate_category_match(
         }
     }
 
-    for (condition_index, condition) in category.conditions.iter().enumerate() {
-        match condition {
-            Condition::Profile { criteria } => {
-                if profile_matches(criteria, assignments) {
-                    return Some(MatchReason {
-                        origin: match_origin_profile(&category.name),
-                        explanation: AssignmentExplanation::ProfileCondition {
-                            owner_category_name: category.name.clone(),
-                            condition_index,
-                            rendered_rule: criteria.format_trigger(&|category_id| {
-                                categories_by_id
-                                    .get(&category_id)
-                                    .map(|candidate| candidate.name.clone())
-                                    .unwrap_or_else(|| category_id.to_string())
-                            }),
-                        },
-                    });
+    match category.condition_match_mode {
+        ConditionMatchMode::Any => {
+            for (condition_index, condition) in category.conditions.iter().enumerate() {
+                match condition {
+                    Condition::Profile { criteria } => {
+                        if profile_matches(criteria, assignments) {
+                            return Some(MatchReason {
+                                origin: match_origin_profile(&category.name),
+                                explanation: AssignmentExplanation::ProfileCondition {
+                                    owner_category_name: category.name.clone(),
+                                    condition_index,
+                                    rendered_rule: render_condition_rule(condition, categories_by_id),
+                                },
+                            });
+                        }
+                    }
+                    Condition::Date { source, matcher } => {
+                        if item_matches_date_condition(
+                            item,
+                            *source,
+                            matcher,
+                            &options.evaluation_context,
+                        ) {
+                            return Some(MatchReason {
+                                origin: format!("match:date:{}", category.name),
+                                explanation: AssignmentExplanation::DateCondition {
+                                    owner_category_name: category.name.clone(),
+                                    condition_index,
+                                    rendered_rule: render_condition_rule(condition, categories_by_id),
+                                },
+                            });
+                        }
+                    }
+                    Condition::ImplicitString => {}
                 }
             }
-            Condition::Date { source, matcher } => {
-                if item_matches_date_condition(
-                    item,
-                    *source,
-                    matcher,
-                    &options.evaluation_context,
-                ) {
-                    return Some(MatchReason {
-                        origin: format!("match:date:{}", category.name),
-                        explanation: AssignmentExplanation::DateCondition {
-                            owner_category_name: category.name.clone(),
-                            condition_index,
-                            rendered_rule: render_date_condition(*source, matcher),
-                        },
-                    });
-                }
+        }
+        ConditionMatchMode::All => {
+            let explicit_conditions: Vec<_> = category
+                .conditions
+                .iter()
+                .filter(|condition| !matches!(condition, Condition::ImplicitString))
+                .collect();
+            if !explicit_conditions.is_empty()
+                && explicit_conditions.iter().all(|condition| {
+                    condition_matches(
+                        condition,
+                        item,
+                        assignments,
+                        categories_by_id,
+                        options,
+                    )
+                })
+            {
+                let rendered_rules = explicit_conditions
+                    .iter()
+                    .map(|condition| render_condition_rule(condition, categories_by_id))
+                    .collect();
+                return Some(MatchReason {
+                    origin: format!("match:conditions:all:{}", category.name),
+                    explanation: AssignmentExplanation::ConditionGroup {
+                        owner_category_name: category.name.clone(),
+                        match_mode: ConditionMatchMode::All,
+                        rendered_rules,
+                    },
+                });
             }
-            Condition::ImplicitString => {}
         }
     }
 
     None
+}
+
+fn condition_matches(
+    condition: &Condition,
+    item: &Item,
+    assignments: &HashMap<CategoryId, Assignment>,
+    _categories_by_id: &HashMap<CategoryId, &Category>,
+    options: &ProcessOptions,
+) -> bool {
+    match condition {
+        Condition::Profile { criteria } => profile_matches(criteria, assignments),
+        Condition::Date { source, matcher } => {
+            item_matches_date_condition(item, *source, matcher, &options.evaluation_context)
+        }
+        Condition::ImplicitString => false,
+    }
+}
+
+fn render_condition_rule(
+    condition: &Condition,
+    categories_by_id: &HashMap<CategoryId, &Category>,
+) -> String {
+    match condition {
+        Condition::Profile { criteria } => criteria.format_trigger(&|category_id| {
+            categories_by_id
+                .get(&category_id)
+                .map(|candidate| candidate.name.clone())
+                .unwrap_or_else(|| category_id.to_string())
+        }),
+        Condition::Date { source, matcher } => render_date_condition(*source, matcher),
+        Condition::ImplicitString => "ImplicitString".to_string(),
+    }
 }
 
 fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignment>) -> bool {
@@ -849,8 +911,8 @@ mod tests {
     use crate::matcher::SubstringClassifier;
     use crate::model::{
         Action, Assignment, AssignmentExplanation, AssignmentSource, Category, CategoryId,
-        Condition, CriterionMode, DateCompareOp, DateMatcher, DateSource, DateValueExpr, Item,
-        ItemId, Query,
+        Condition, ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource,
+        DateValueExpr, Item, ItemId, Query,
     };
     use crate::store::Store;
 
@@ -2481,6 +2543,68 @@ mod tests {
             .unwrap();
         let result = process_item(&store, &classifier, item.id).unwrap();
         assert!(result.new_assignments.contains(&target.id));
+    }
+
+    #[test]
+    fn condition_match_mode_all_requires_date_and_profile_rules() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let cost = category("Cost", false);
+        create_category(&store, &cost);
+
+        let mut target = category_with_date(
+            "Moto Budget 2025",
+            DateSource::When,
+            DateMatcher::Range {
+                from: DateValueExpr::AbsoluteDate(jiff::civil::date(2026, 1, 1)),
+                through: DateValueExpr::AbsoluteDate(jiff::civil::date(2026, 12, 31)),
+            },
+        );
+        target.condition_match_mode = ConditionMatchMode::All;
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, cost.id);
+        target.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        create_category(&store, &target);
+
+        let item = create_item(&store, "Moto registration");
+        set_item_when(
+            &store,
+            item.id,
+            Some(jiff::civil::date(2026, 4, 4).at(10, 0, 0, 0)),
+        );
+        store
+            .assign_item(item.id, cost.id, &manual_assignment())
+            .unwrap();
+
+        let result = process_item(&store, &classifier, item.id).unwrap();
+        assert!(result.new_assignments.contains(&target.id));
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(matches!(
+            assignments.get(&target.id).and_then(|assignment| assignment.explanation.as_ref()),
+            Some(AssignmentExplanation::ConditionGroup {
+                match_mode: ConditionMatchMode::All,
+                ..
+            })
+        ));
+
+        let missing_cost = create_item(&store, "Moto insurance");
+        set_item_when(
+            &store,
+            missing_cost.id,
+            Some(jiff::civil::date(2026, 4, 5).at(10, 0, 0, 0)),
+        );
+        let missing_cost_result = process_item(&store, &classifier, missing_cost.id).unwrap();
+        assert!(!missing_cost_result.new_assignments.contains(&target.id));
+
+        let missing_date = create_item(&store, "Moto inspection");
+        store
+            .assign_item(missing_date.id, cost.id, &manual_assignment())
+            .unwrap();
+        let missing_date_result = process_item(&store, &classifier, missing_date.id).unwrap();
+        assert!(!missing_date_result.new_assignments.contains(&target.id));
     }
 
     // ---------------------------------------------------------------
