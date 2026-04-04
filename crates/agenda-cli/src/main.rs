@@ -6,12 +6,14 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use agenda_core::agenda::Agenda;
+use agenda_core::date_rules::{parse_date_value_expr, render_date_condition};
 use agenda_core::dates::{BasicDateParser, DateParser};
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
-    CriterionMode, Item, ItemId, Query, Section, SummaryFn, View,
+    CriterionMode, DateCompareOp, DateMatcher, DateSource, Item, ItemId, Query, Section,
+    SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
@@ -431,6 +433,36 @@ enum CategoryCommand {
         or_categories: Vec<String>,
     },
 
+    /// Add a date condition to a category
+    AddDateCondition {
+        /// Category name to add the condition to (case-insensitive).
+        name: String,
+        /// Which intrinsic item date to evaluate.
+        #[arg(long, value_enum)]
+        source: DateSourceArg,
+        /// Match items whose date falls on the given expression.
+        #[arg(long)]
+        on: Option<String>,
+        /// Match items whose date falls before the given expression.
+        #[arg(long)]
+        before: Option<String>,
+        /// Match items whose date falls after the given expression.
+        #[arg(long)]
+        after: Option<String>,
+        /// Match items whose date falls at or before the given expression.
+        #[arg(long = "at-or-before")]
+        at_or_before: Option<String>,
+        /// Match items whose date falls at or after the given expression.
+        #[arg(long = "at-or-after")]
+        at_or_after: Option<String>,
+        /// Range start expression for an inclusive date range.
+        #[arg(long)]
+        from: Option<String>,
+        /// Range end expression for an inclusive date range; requires `--from`.
+        #[arg(long)]
+        through: Option<String>,
+    },
+
     /// Remove a profile condition from a category by index (1-based)
     RemoveCondition {
         /// Category name (case-insensitive).
@@ -594,6 +626,23 @@ enum ViewCommand {
         #[arg(long)]
         clear: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum DateSourceArg {
+    When,
+    Entry,
+    Done,
+}
+
+impl DateSourceArg {
+    fn into_model(self) -> DateSource {
+        match self {
+            Self::When => DateSource::When,
+            Self::Entry => DateSource::Entry,
+            Self::Done => DateSource::Done,
+        }
+    }
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
@@ -890,6 +939,7 @@ fn run() -> Result<(), String> {
     let store = Store::open(&db_path).map_err(|e| e.to_string())?;
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
+    temporal_reevaluate_before_command(&agenda)?;
 
     match command {
         Command::Add {
@@ -1057,6 +1107,72 @@ fn cmd_add(
         println!("{line}");
     }
     Ok(())
+}
+
+fn temporal_reevaluate_before_command(agenda: &Agenda<'_>) -> Result<(), String> {
+    if agenda.has_date_conditions().map_err(|e| e.to_string())? {
+        let _ = agenda
+            .reevaluate_temporal_conditions()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn build_date_matcher_from_args(
+    on: Option<String>,
+    before: Option<String>,
+    after: Option<String>,
+    at_or_before: Option<String>,
+    at_or_after: Option<String>,
+    from: Option<String>,
+    through: Option<String>,
+) -> Result<DateMatcher, String> {
+    let compare_inputs = [
+        ("on", on.as_ref(), DateCompareOp::On),
+        ("before", before.as_ref(), DateCompareOp::Before),
+        ("after", after.as_ref(), DateCompareOp::After),
+        ("at-or-before", at_or_before.as_ref(), DateCompareOp::AtOrBefore),
+        ("at-or-after", at_or_after.as_ref(), DateCompareOp::AtOrAfter),
+    ];
+
+    let compare_count = compare_inputs
+        .iter()
+        .filter(|(_, value, _)| value.is_some())
+        .count();
+    let has_range = from.is_some() || through.is_some();
+
+    if has_range {
+        if compare_count > 0 {
+            return Err(
+                "use either a compare flag (--on/--before/--after/--at-or-before/--at-or-after) or a range (--from/--through), not both"
+                    .to_string(),
+            );
+        }
+        let from = from.ok_or_else(|| "--from requires a value".to_string())?;
+        let through = through.ok_or_else(|| "--from also requires --through".to_string())?;
+        return Ok(DateMatcher::Range {
+            from: parse_date_value_expr(&from)?,
+            through: parse_date_value_expr(&through)?,
+        });
+    }
+
+    if compare_count != 1 {
+        return Err(
+            "specify exactly one of --on, --before, --after, --at-or-before, --at-or-after, or --from/--through"
+                .to_string(),
+        );
+    }
+
+    for (_label, maybe_value, op) in compare_inputs {
+        if let Some(value) = maybe_value {
+            return Ok(DateMatcher::Compare {
+                op,
+                value: parse_date_value_expr(value)?,
+            });
+        }
+    }
+
+    unreachable!("validated compare inputs should always return a matcher")
 }
 
 fn read_note_from_stdin(reader: &mut impl Read) -> Result<String, String> {
@@ -2027,7 +2143,15 @@ fn cmd_category(
                         }
                         agenda_core::model::Condition::Profile { criteria } => {
                             let trigger = criteria.format_trigger(&resolve);
-                            println!("  {}. {} -> {}", i + 1, trigger, category.name);
+                            println!("  {}. [Profile] {} -> {}", i + 1, trigger, category.name);
+                        }
+                        agenda_core::model::Condition::Date { source, matcher } => {
+                            println!(
+                                "  {}. [Date] {} -> {}",
+                                i + 1,
+                                render_date_condition(*source, matcher),
+                                category.name
+                            );
                         }
                     }
                 }
@@ -2408,6 +2532,50 @@ fn cmd_category(
             );
             Ok(())
         }
+        CategoryCommand::AddDateCondition {
+            name,
+            source,
+            on,
+            before,
+            after,
+            at_or_before,
+            at_or_after,
+            from,
+            through,
+        } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+
+            let matcher = build_date_matcher_from_args(
+                on,
+                before,
+                after,
+                at_or_before,
+                at_or_after,
+                from,
+                through,
+            )?;
+            let condition = Condition::Date {
+                source: source.into_model(),
+                matcher: matcher.clone(),
+            };
+            category.conditions.push(condition);
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+
+            let condition_index = category.conditions.len();
+            println!(
+                "added date condition #{} to {}: {} (processed_items={}, affected_items={})",
+                condition_index,
+                name,
+                render_date_condition(source.into_model(), &matcher),
+                result.processed_items,
+                result.affected_items
+            );
+            Ok(())
+        }
         CategoryCommand::RemoveCondition { name, index } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
@@ -2438,6 +2606,7 @@ fn cmd_category(
                     };
                     criteria.format_trigger(&resolve)
                 }
+                Condition::Date { source, matcher } => render_date_condition(*source, matcher),
             };
             println!(
                 "removed condition #{} ({}) from {} (processed_items={}, affected_items={})",
@@ -4484,15 +4653,16 @@ mod tests {
         section_summary_entries, section_summary_line, unknown_hashtag_feedback_line, view_by_name,
         view_category_alias_rows, write_output_allow_broken_pipe, write_stdout_allow_broken_pipe,
         CategoryCommand, Cli, CliColumnKind, CliSortDirection, CliSortField, CliSortKey,
-        CliSummaryFn, Command, ImportCommand, LinkCommand, ListFilters, NumericFilter,
-        NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand, ViewColumnCommand,
-        ViewCommand, ViewSectionCommand,
+        CliSummaryFn, Command, DateSourceArg, ImportCommand, LinkCommand, ListFilters,
+        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand,
+        ViewColumnCommand, ViewCommand, ViewSectionCommand,
     };
     use agenda_core::agenda::Agenda;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
-        Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item,
-        NumericFormat, Query, Section, SummaryFn, View,
+        Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode,
+        DateCompareOp, DateMatcher, DateSource, Item, NumericFormat, Query, Section, SummaryFn,
+        View,
     };
     use agenda_core::store::Store;
     use clap::{CommandFactory, Parser};
@@ -4791,6 +4961,49 @@ mod tests {
         match cli.command {
             Some(Command::Release { item_id }) => {
                 assert_eq!(item_id, "123e4567-e89b-12d3-a456-426614174000");
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_category_add_date_condition() {
+        let cli = Cli::try_parse_from([
+            "agenda",
+            "category",
+            "add-date-condition",
+            "Overdue",
+            "--source",
+            "when",
+            "--before",
+            "today",
+        ])
+        .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Category {
+                command:
+                    CategoryCommand::AddDateCondition {
+                        name,
+                        source,
+                        before,
+                        on,
+                        after,
+                        at_or_before,
+                        at_or_after,
+                        from,
+                        through,
+                    },
+            }) => {
+                assert_eq!(name, "Overdue");
+                assert_eq!(source, DateSourceArg::When);
+                assert_eq!(before.as_deref(), Some("today"));
+                assert!(on.is_none());
+                assert!(after.is_none());
+                assert!(at_or_before.is_none());
+                assert!(at_or_after.is_none());
+                assert!(from.is_none());
+                assert!(through.is_none());
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -5979,6 +6192,49 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("at least one criterion"));
+    }
+
+    #[test]
+    fn cmd_category_add_date_condition_creates_date_condition() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let overdue = Category::new("Overdue".to_string());
+        store.create_category(&overdue).expect("create overdue");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::AddDateCondition {
+                name: "Overdue".to_string(),
+                source: DateSourceArg::When,
+                on: None,
+                before: Some("today".to_string()),
+                after: None,
+                at_or_before: None,
+                at_or_after: None,
+                from: None,
+                through: None,
+            },
+        )
+        .expect("add date condition");
+
+        let updated = store.get_category(overdue.id).expect("load overdue");
+        assert_eq!(updated.conditions.len(), 1);
+        match &updated.conditions[0] {
+            Condition::Date { source, matcher } => {
+                assert_eq!(*source, DateSource::When);
+                assert_eq!(
+                    *matcher,
+                    DateMatcher::Compare {
+                        op: DateCompareOp::Before,
+                        value: agenda_core::model::DateValueExpr::Today,
+                    }
+                );
+            }
+            other => panic!("expected Date condition, got {:?}", other),
+        }
     }
 
     #[test]

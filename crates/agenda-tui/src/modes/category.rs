@@ -1,5 +1,8 @@
 use crate::*;
-use agenda_core::model::AssignmentSource;
+use agenda_core::date_rules::{parse_date_value_expr, render_date_value_expr, EvaluationContext};
+use agenda_core::model::{AssignmentSource, DateValueExpr};
+use jiff::civil::{Date, DateTime, Time};
+use jiff::Span;
 
 enum CategoryInlineConfirmKeyAction {
     Confirm,
@@ -28,7 +31,494 @@ fn parse_also_match_entries(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn editable_condition_indices(category: &Category) -> Vec<usize> {
+    category
+        .conditions
+        .iter()
+        .enumerate()
+        .filter(|(_, condition)| !matches!(condition, Condition::ImplicitString))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn date_draft_from_condition(condition: &Condition) -> Option<DateConditionDraft> {
+    let Condition::Date { source, matcher } = condition else {
+        return None;
+    };
+    let mut draft = DateConditionDraft {
+        source: *source,
+        ..DateConditionDraft::default()
+    };
+    match matcher {
+        agenda_core::model::DateMatcher::Compare { op, value } => {
+            draft.kind = DateConditionDraftKind::Compare(*op);
+            draft.value_input = text_buffer::TextBuffer::new(render_date_value_expr(value));
+        }
+        agenda_core::model::DateMatcher::Range { from, through } => {
+            match (from, through) {
+                (DateValueExpr::TimeToday(time), DateValueExpr::Today) => {
+                    if *time == default_afternoon_start() {
+                        draft.kind = DateConditionDraftKind::ThisAfternoon;
+                    } else {
+                        draft.kind = DateConditionDraftKind::TodayAfter;
+                        draft.value_input =
+                            text_buffer::TextBuffer::new(render_date_value_expr(from));
+                    }
+                }
+                (DateValueExpr::Today, DateValueExpr::TimeToday(_time)) => {
+                    draft.kind = DateConditionDraftKind::TodayBefore;
+                    draft.value_input = text_buffer::TextBuffer::new(render_date_value_expr(through));
+                }
+                _ => {
+                    draft.kind = DateConditionDraftKind::Range;
+                    draft.from_input = text_buffer::TextBuffer::new(render_date_value_expr(from));
+                    draft.through_input =
+                        text_buffer::TextBuffer::new(render_date_value_expr(through));
+                }
+            }
+        }
+    }
+    Some(draft)
+}
+
+fn cycle_date_match_mode(draft: &mut DateConditionDraft, forward: bool) {
+    const MODES: [DateConditionDraftKind; 9] = [
+        DateConditionDraftKind::Compare(DateCompareOp::On),
+        DateConditionDraftKind::Compare(DateCompareOp::Before),
+        DateConditionDraftKind::Compare(DateCompareOp::After),
+        DateConditionDraftKind::Compare(DateCompareOp::AtOrBefore),
+        DateConditionDraftKind::Compare(DateCompareOp::AtOrAfter),
+        DateConditionDraftKind::Range,
+        DateConditionDraftKind::TodayAfter,
+        DateConditionDraftKind::TodayBefore,
+        DateConditionDraftKind::ThisAfternoon,
+    ];
+
+    let current = MODES
+        .iter()
+        .position(|mode| *mode == draft.kind)
+        .unwrap_or(0);
+    let next = if forward {
+        (current + 1) % MODES.len()
+    } else {
+        (current + MODES.len() - 1) % MODES.len()
+    };
+    draft.kind = MODES[next];
+
+    match draft.kind {
+        DateConditionDraftKind::TodayAfter => {
+            if draft.value_input.trimmed().is_empty() || draft.value_input.trimmed() == "today" {
+                draft.value_input = text_buffer::TextBuffer::new("1:00pm today".to_string());
+            }
+        }
+        DateConditionDraftKind::TodayBefore => {
+            if draft.value_input.trimmed().is_empty() || draft.value_input.trimmed() == "today" {
+                draft.value_input = text_buffer::TextBuffer::new("1:00pm today".to_string());
+            }
+        }
+        DateConditionDraftKind::ThisAfternoon => {}
+        DateConditionDraftKind::Range => {}
+        DateConditionDraftKind::Compare(_) => {}
+    }
+}
+
+fn default_afternoon_start() -> Time {
+    Time::new(13, 0, 0, 0).expect("1pm should be representable")
+}
+
+pub(crate) fn draft_uses_range_fields(kind: DateConditionDraftKind) -> bool {
+    matches!(kind, DateConditionDraftKind::Range)
+}
+
+pub(crate) fn draft_uses_value_field(kind: DateConditionDraftKind) -> bool {
+    matches!(
+        kind,
+        DateConditionDraftKind::Compare(_)
+            | DateConditionDraftKind::TodayAfter
+            | DateConditionDraftKind::TodayBefore
+    )
+}
+
+pub(crate) fn draft_match_label(kind: DateConditionDraftKind) -> String {
+    match kind {
+        DateConditionDraftKind::Compare(op) => agenda_core::date_rules::render_compare_op(op).to_string(),
+        DateConditionDraftKind::Range => "Range".to_string(),
+        DateConditionDraftKind::TodayAfter => "Today After".to_string(),
+        DateConditionDraftKind::TodayBefore => "Today Before".to_string(),
+        DateConditionDraftKind::ThisAfternoon => "This Afternoon".to_string(),
+    }
+}
+
+pub(crate) fn draft_value_label(kind: DateConditionDraftKind) -> &'static str {
+    match kind {
+        DateConditionDraftKind::TodayAfter => "After",
+        DateConditionDraftKind::TodayBefore => "Before",
+        _ => "Value",
+    }
+}
+
+fn parse_time_today_value_expr(input: &str) -> Result<DateValueExpr, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("time value cannot be empty".to_string());
+    }
+    if let Ok(expr) = parse_date_value_expr(trimmed) {
+        return match expr {
+            DateValueExpr::TimeToday(_) => Ok(expr),
+            _ => Err(format!("expected a time like '1:00pm' or '1:00pm today', got '{trimmed}'")),
+        };
+    }
+    parse_date_value_expr(&format!("{trimmed} today")).and_then(|expr| match expr {
+        DateValueExpr::TimeToday(_) => Ok(expr),
+        _ => Err(format!("expected a time like '1:00pm', got '{trimmed}'")),
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DateDraftMessageSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Clone)]
+pub(crate) struct DateDraftMessage {
+    pub(crate) severity: DateDraftMessageSeverity,
+    pub(crate) text: String,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DateDraftFieldFeedback {
+    pub(crate) normalized: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DateConditionDraftFeedback {
+    pub(crate) preview: String,
+    pub(crate) value: DateDraftFieldFeedback,
+    pub(crate) from: DateDraftFieldFeedback,
+    pub(crate) through: DateDraftFieldFeedback,
+    pub(crate) messages: Vec<DateDraftMessage>,
+}
+
+#[derive(Clone, Copy)]
+enum DraftResolvedValue {
+    Date(Date),
+    DateTime(DateTime),
+}
+
+fn resolve_draft_value(expr: &DateValueExpr, ctx: &EvaluationContext) -> DraftResolvedValue {
+    match expr {
+        DateValueExpr::Today => DraftResolvedValue::Date(ctx.today()),
+        DateValueExpr::Tomorrow => DraftResolvedValue::Date(
+            ctx.today()
+                .checked_add(Span::new().days(1))
+                .expect("tomorrow should be representable"),
+        ),
+        DateValueExpr::DaysFromToday(days) => DraftResolvedValue::Date(
+            ctx.today()
+                .checked_add(Span::new().days(i64::from(*days)))
+                .expect("future relative date should be representable"),
+        ),
+        DateValueExpr::DaysAgo(days) => DraftResolvedValue::Date(
+            ctx.today()
+                .checked_add(Span::new().days(-i64::from(*days)))
+                .expect("past relative date should be representable"),
+        ),
+        DateValueExpr::AbsoluteDate(date) => DraftResolvedValue::Date(*date),
+        DateValueExpr::AbsoluteDateTime(datetime) => DraftResolvedValue::DateTime(*datetime),
+        DateValueExpr::TimeToday(time) => {
+            DraftResolvedValue::DateTime(ctx.today().to_datetime(*time))
+        }
+    }
+}
+
+fn resolved_range_lower(value: DraftResolvedValue) -> DateTime {
+    match value {
+        DraftResolvedValue::Date(date) => date.to_datetime(jiff::civil::Time::midnight()),
+        DraftResolvedValue::DateTime(datetime) => datetime,
+    }
+}
+
+fn resolved_range_upper(value: DraftResolvedValue) -> DateTime {
+    match value {
+        DraftResolvedValue::Date(date) => date
+            .checked_add(Span::new().days(1))
+            .expect("next day should be representable")
+            .to_datetime(jiff::civil::Time::midnight()),
+        DraftResolvedValue::DateTime(datetime) => datetime,
+    }
+}
+
+fn is_date_only_expr(expr: &DateValueExpr) -> bool {
+    matches!(
+        expr,
+        DateValueExpr::Today
+            | DateValueExpr::Tomorrow
+            | DateValueExpr::DaysFromToday(_)
+            | DateValueExpr::DaysAgo(_)
+            | DateValueExpr::AbsoluteDate(_)
+    )
+}
+
+pub(crate) fn date_condition_draft_feedback(
+    draft: &DateConditionDraft,
+    category_name: &str,
+) -> DateConditionDraftFeedback {
+    let ctx = EvaluationContext::now();
+    let mut feedback = DateConditionDraftFeedback::default();
+
+    let parse_date_field =
+        |text: &str| -> (DateDraftFieldFeedback, Option<DateValueExpr>, String) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return (
+                DateDraftFieldFeedback {
+                    normalized: None,
+                    error: Some("date value cannot be empty".to_string()),
+                },
+                None,
+                trimmed.to_string(),
+            );
+        }
+        match parse_date_value_expr(trimmed) {
+            Ok(expr) => {
+                let normalized = render_date_value_expr(&expr);
+                (
+                    DateDraftFieldFeedback {
+                        normalized: Some(normalized.clone()),
+                        error: None,
+                    },
+                    Some(expr),
+                    normalized,
+                )
+            }
+            Err(err) => (
+                DateDraftFieldFeedback {
+                    normalized: None,
+                    error: Some(err),
+                },
+                None,
+                trimmed.to_string(),
+            ),
+        }
+    };
+
+    let parse_time_field =
+        |text: &str| -> (DateDraftFieldFeedback, Option<DateValueExpr>, String) {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return (
+                    DateDraftFieldFeedback {
+                        normalized: None,
+                        error: Some("time value cannot be empty".to_string()),
+                    },
+                    None,
+                    trimmed.to_string(),
+                );
+            }
+            match parse_time_today_value_expr(trimmed) {
+                Ok(expr) => {
+                    let normalized = render_date_value_expr(&expr);
+                    (
+                        DateDraftFieldFeedback {
+                            normalized: Some(normalized.clone()),
+                            error: None,
+                        },
+                        Some(expr),
+                        normalized,
+                    )
+                }
+                Err(err) => (
+                    DateDraftFieldFeedback {
+                        normalized: None,
+                        error: Some(err),
+                    },
+                    None,
+                    trimmed.to_string(),
+                ),
+            }
+        };
+
+    if draft_uses_range_fields(draft.kind) {
+        let (from_feedback, from_expr, from_preview) = parse_date_field(draft.from_input.text());
+        let (through_feedback, through_expr, through_preview) =
+            parse_date_field(draft.through_input.text());
+        feedback.from = from_feedback;
+        feedback.through = through_feedback;
+        feedback.preview = format!(
+            "{} from {} through {} -> {}",
+            agenda_core::date_rules::render_date_source(draft.source),
+            from_preview,
+            through_preview,
+            category_name
+        );
+
+        if let Some(error) = feedback.from.error.as_ref() {
+            feedback.messages.push(DateDraftMessage {
+                severity: DateDraftMessageSeverity::Error,
+                text: format!("From: {error}"),
+            });
+        }
+        if let Some(error) = feedback.through.error.as_ref() {
+            feedback.messages.push(DateDraftMessage {
+                severity: DateDraftMessageSeverity::Error,
+                text: format!("Through: {error}"),
+            });
+        }
+
+        if let (Some(from_expr), Some(through_expr)) = (from_expr.as_ref(), through_expr.as_ref()) {
+            let lower = resolved_range_lower(resolve_draft_value(from_expr, &ctx));
+            let upper = resolved_range_upper(resolve_draft_value(through_expr, &ctx));
+            match lower.cmp(&upper) {
+                std::cmp::Ordering::Greater => {
+                    feedback.messages.push(DateDraftMessage {
+                        severity: DateDraftMessageSeverity::Error,
+                        text: "Impossible range: 'Through' is earlier than 'From'.".to_string(),
+                    });
+                }
+                std::cmp::Ordering::Equal => {
+                    feedback.messages.push(DateDraftMessage {
+                        severity: DateDraftMessageSeverity::Warning,
+                        text: "Suspicious range: this matches only a single instant.".to_string(),
+                    });
+                }
+                std::cmp::Ordering::Less => {}
+            }
+        }
+    } else if draft_uses_value_field(draft.kind) {
+        let (value_feedback, value_expr, value_preview) = match draft.kind {
+            DateConditionDraftKind::TodayAfter | DateConditionDraftKind::TodayBefore => {
+                parse_time_field(draft.value_input.text())
+            }
+            _ => parse_date_field(draft.value_input.text()),
+        };
+        feedback.value = value_feedback;
+        feedback.preview = match draft.kind {
+            DateConditionDraftKind::Compare(op) => format!(
+                "{} {} {} -> {}",
+                agenda_core::date_rules::render_date_source(draft.source),
+                agenda_core::date_rules::render_compare_op(op),
+                value_preview,
+                category_name
+            ),
+            DateConditionDraftKind::TodayAfter => format!(
+                "{} today, after {} -> {}",
+                agenda_core::date_rules::render_date_source(draft.source),
+                value_preview,
+                category_name
+            ),
+            DateConditionDraftKind::TodayBefore => format!(
+                "{} today, before {} -> {}",
+                agenda_core::date_rules::render_date_source(draft.source),
+                value_preview,
+                category_name
+            ),
+            _ => unreachable!("value field only applies to compare/today before-after"),
+        };
+
+        if let Some(error) = feedback.value.error.as_ref() {
+            feedback.messages.push(DateDraftMessage {
+                severity: DateDraftMessageSeverity::Error,
+                text: format!("{}: {error}", draft_value_label(draft.kind)),
+            });
+        } else if let Some(expr) = value_expr.as_ref() {
+            if matches!(
+                draft.kind,
+                DateConditionDraftKind::Compare(DateCompareOp::AtOrBefore)
+                    | DateConditionDraftKind::Compare(DateCompareOp::AtOrAfter)
+            )
+                && is_date_only_expr(expr)
+            {
+                feedback.messages.push(DateDraftMessage {
+                    severity: DateDraftMessageSeverity::Warning,
+                    text: "Date-only cutoff spans a whole day. Add a time if you meant a clock boundary.".to_string(),
+                });
+            }
+        }
+    } else {
+        feedback.preview = format!(
+            "{} this afternoon -> {}",
+            agenda_core::date_rules::render_date_source(draft.source),
+            category_name
+        );
+        feedback.messages.push(DateDraftMessage {
+            severity: DateDraftMessageSeverity::Info,
+            text: "Parsed: from 1:00pm today through today".to_string(),
+        });
+    }
+
+    if feedback.messages.is_empty() {
+        let normalized = if draft_uses_range_fields(draft.kind) {
+            feedback
+                .through
+                .normalized
+                .as_ref()
+                .zip(feedback.from.normalized.as_ref())
+                .map(|(through, from)| format!("Parsed: {from} through {through}"))
+        } else {
+            feedback
+                .value
+                .normalized
+                .as_ref()
+                .map(|value| match draft.kind {
+                    DateConditionDraftKind::TodayAfter => {
+                        format!("Parsed: today, after {value}")
+                    }
+                    DateConditionDraftKind::TodayBefore => {
+                        format!("Parsed: today, before {value}")
+                    }
+                    _ => format!("Parsed: {value}"),
+                })
+        };
+        if let Some(text) = normalized {
+            feedback.messages.push(DateDraftMessage {
+                severity: DateDraftMessageSeverity::Info,
+                text,
+            });
+        }
+    }
+
+    feedback
+}
+
 impl App {
+    fn normalize_focused_date_condition_field(&mut self) {
+        let Some(edit) = self.category_manager_condition_edit_mut() else {
+            return;
+        };
+        let active_input = match edit.draft_date.field_focus {
+            DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
+                Some(&mut edit.draft_date.value_input)
+            }
+            DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
+                Some(&mut edit.draft_date.from_input)
+            }
+            DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
+                Some(&mut edit.draft_date.through_input)
+            }
+            _ => None,
+        };
+
+        let Some(input) = active_input else {
+            return;
+        };
+        let trimmed = input.trimmed().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        let parsed = match edit.draft_date.kind {
+            DateConditionDraftKind::TodayAfter | DateConditionDraftKind::TodayBefore => {
+                parse_time_today_value_expr(&trimmed)
+            }
+            _ => parse_date_value_expr(&trimmed),
+        };
+        if let Ok(expr) = parsed {
+            input.set(render_date_value_expr(&expr));
+        }
+    }
+
     fn prepare_category_for_workflow_role(
         &mut self,
         category_id: CategoryId,
@@ -2034,9 +2524,12 @@ impl App {
                 list_index: 0,
                 picker_open: false,
                 picker_index: 0,
+                editor_kind: ConditionEditorKind::ProfilePicker,
+                draft_date: DateConditionDraft::default(),
             });
         }
-        self.status = "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+        self.status = "Conditions: a:add profile  d:add date  Enter:edit  x:delete  Esc:close"
+            .to_string();
     }
 
     fn close_condition_edit(&mut self) {
@@ -2047,13 +2540,19 @@ impl App {
     }
 
     fn condition_list_status(&mut self) {
-        self.status = "Conditions: a:add  Enter:edit  x:delete  Esc:close".to_string();
+        self.status = "Conditions: a:add profile  d:add date  Enter:edit  x:delete  Esc:close"
+            .to_string();
     }
 
     fn condition_picker_status(&mut self) {
         self.status =
             "Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Enter:save  Esc:cancel"
                 .to_string();
+    }
+
+    fn condition_date_status(&mut self) {
+        self.status =
+            "Tab/Shift-Tab or Up/Down: field  Source/Match h/l: cycle  Enter:save  Esc:cancel".to_string();
     }
 
     fn open_condition_edit_picker(&mut self, condition_index: Option<usize>) {
@@ -2087,9 +2586,30 @@ impl App {
                 edit.draft_query = draft;
                 edit.picker_open = true;
                 edit.picker_index = initial_picker_index;
+                edit.editor_kind = ConditionEditorKind::ProfilePicker;
             }
         }
         self.condition_picker_status();
+    }
+
+    fn open_condition_date_editor(&mut self, condition_index: Option<usize>) {
+        let draft = condition_index
+            .and_then(|idx| {
+                self.selected_category_row()
+                    .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+                    .and_then(|cat| cat.conditions.get(idx))
+                    .and_then(date_draft_from_condition)
+            })
+            .unwrap_or_default();
+        if let Some(state) = &mut self.category_manager {
+            if let Some(edit) = &mut state.condition_edit {
+                edit.condition_index = condition_index;
+                edit.picker_open = true;
+                edit.editor_kind = ConditionEditorKind::DateEditor;
+                edit.draft_date = draft;
+            }
+        }
+        self.condition_date_status();
     }
 
     fn save_condition_from_picker(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
@@ -2163,6 +2683,97 @@ impl App {
         true
     }
 
+    fn save_condition_from_date_editor(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
+        let (condition_index, draft) = {
+            let edit = match self.category_manager_condition_edit() {
+                Some(e) => e,
+                None => return Ok(false),
+            };
+            (edit.condition_index, edit.draft_date.clone())
+        };
+
+        let feedback = date_condition_draft_feedback(
+            &draft,
+            &self.selected_category_row().map(|r| r.name.clone()).unwrap_or_default(),
+        );
+        if let Some(error) = feedback
+            .messages
+            .iter()
+            .find(|message| message.severity == DateDraftMessageSeverity::Error)
+        {
+            self.status = error.text.clone();
+            return Ok(true);
+        }
+
+        let matcher = match draft.kind {
+            DateConditionDraftKind::Range => agenda_core::model::DateMatcher::Range {
+                from: parse_date_value_expr(draft.from_input.trimmed())
+                    .map_err(TuiError::App)?,
+                through: parse_date_value_expr(draft.through_input.trimmed())
+                    .map_err(TuiError::App)?,
+            },
+            DateConditionDraftKind::Compare(op) => agenda_core::model::DateMatcher::Compare {
+                op,
+                value: parse_date_value_expr(draft.value_input.trimmed())
+                    .map_err(TuiError::App)?,
+            },
+            DateConditionDraftKind::TodayAfter => agenda_core::model::DateMatcher::Range {
+                from: parse_time_today_value_expr(draft.value_input.trimmed())
+                    .map_err(TuiError::App)?,
+                through: DateValueExpr::Today,
+            },
+            DateConditionDraftKind::TodayBefore => agenda_core::model::DateMatcher::Range {
+                from: DateValueExpr::Today,
+                through: parse_time_today_value_expr(draft.value_input.trimmed())
+                    .map_err(TuiError::App)?,
+            },
+            DateConditionDraftKind::ThisAfternoon => agenda_core::model::DateMatcher::Range {
+                from: DateValueExpr::TimeToday(default_afternoon_start()),
+                through: DateValueExpr::Today,
+            },
+        };
+
+        let category_id = match self.selected_category_row() {
+            Some(r) => r.id,
+            None => return Ok(false),
+        };
+        let mut category = match self.categories.iter().find(|c| c.id == category_id) {
+            Some(c) => c.clone(),
+            None => return Ok(false),
+        };
+
+        let new_condition = Condition::Date {
+            source: draft.source,
+            matcher,
+        };
+
+        if let Some(idx) = condition_index {
+            if idx < category.conditions.len() {
+                category.conditions[idx] = new_condition;
+            }
+        } else {
+            category.conditions.push(new_condition);
+        }
+
+        let result = agenda.update_category(&category)?;
+        self.refresh(agenda.store())?;
+        self.set_category_selection_by_id(category_id);
+
+        if let Some(edit) = self.category_manager_condition_edit_mut() {
+            edit.picker_open = false;
+        }
+        let action = if condition_index.is_some() {
+            "updated"
+        } else {
+            "added"
+        };
+        self.status = format!(
+            "Condition {} (processed={}, affected={})  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
+            action, result.processed_items, result.affected_items
+        );
+        Ok(true)
+    }
+
     fn delete_condition_at_list_index(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
         let list_index = match self.category_manager_condition_edit() {
             Some(e) => e.list_index,
@@ -2177,19 +2788,12 @@ impl App {
             None => return Ok(false),
         };
 
-        // Only count Profile conditions for indexing
-        let profile_indices: Vec<usize> = category
-            .conditions
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| matches!(c, Condition::Profile { .. }))
-            .map(|(i, _)| i)
-            .collect();
+        let condition_indices = editable_condition_indices(&category);
 
-        if list_index >= profile_indices.len() {
+        if list_index >= condition_indices.len() {
             return Ok(false);
         }
-        let actual_index = profile_indices[list_index];
+        let actual_index = condition_indices[list_index];
         category.conditions.remove(actual_index);
 
         let result = agenda.update_category(&category)?;
@@ -2198,13 +2802,13 @@ impl App {
 
         // Adjust list_index if it's now out of bounds
         if let Some(edit) = self.category_manager_condition_edit_mut() {
-            let new_count = profile_indices.len() - 1;
+            let new_count = condition_indices.len() - 1;
             if edit.list_index >= new_count && new_count > 0 {
                 edit.list_index = new_count - 1;
             }
         }
         self.status = format!(
-            "Condition removed (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
+            "Condition removed (processed={}, affected={})  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
             result.processed_items, result.affected_items
         );
         Ok(true)
@@ -2282,7 +2886,14 @@ impl App {
         };
 
         if edit.picker_open {
-            self.handle_condition_picker_key(code, agenda, &edit)
+            match edit.editor_kind {
+                ConditionEditorKind::ProfilePicker => {
+                    self.handle_condition_picker_key(code, agenda, &edit)
+                }
+                ConditionEditorKind::DateEditor => {
+                    self.handle_condition_date_key(code, agenda, &edit)
+                }
+            }
         } else {
             self.handle_condition_list_key(code, agenda, &edit)
         }
@@ -2297,12 +2908,7 @@ impl App {
         let condition_count = self
             .selected_category_row()
             .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
-            .map(|cat| {
-                cat.conditions
-                    .iter()
-                    .filter(|c| matches!(c, Condition::Profile { .. }))
-                    .count()
-            })
+            .map(|cat| editable_condition_indices(cat).len())
             .unwrap_or(0);
 
         match code {
@@ -2324,35 +2930,209 @@ impl App {
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.open_condition_edit_picker(None);
             }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                self.open_condition_date_editor(None);
+            }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if condition_count > 0 && edit.list_index < condition_count {
-                    // Map list_index to actual condition index
                     let actual_index = self
                         .selected_category_row()
                         .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
-                        .and_then(|cat| {
-                            cat.conditions
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, c)| matches!(c, Condition::Profile { .. }))
-                                .map(|(i, _)| i)
-                                .nth(edit.list_index)
-                        });
+                        .and_then(|cat| editable_condition_indices(cat).get(edit.list_index).copied());
                     if let Some(idx) = actual_index {
-                        self.open_condition_edit_picker(Some(idx));
+                        let selected_condition = self
+                            .selected_category_row()
+                            .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
+                            .and_then(|cat| cat.conditions.get(idx));
+                        match selected_condition {
+                            Some(Condition::Date { .. }) => self.open_condition_date_editor(Some(idx)),
+                            _ => self.open_condition_edit_picker(Some(idx)),
+                        }
                     }
                 } else {
-                    // No conditions — open picker to add
                     self.open_condition_edit_picker(None);
                 }
             }
-            KeyCode::Char('x') | KeyCode::Char('d') => {
+            KeyCode::Char('x') => {
                 if condition_count > 0 && edit.list_index < condition_count {
                     self.delete_condition_at_list_index(agenda)?;
                 }
             }
             _ => {}
         }
+        Ok(true)
+    }
+
+    fn cycle_date_condition_source(source: DateSource, forward: bool) -> DateSource {
+        match (source, forward) {
+            (DateSource::When, true) => DateSource::Entry,
+            (DateSource::Entry, true) => DateSource::Done,
+            (DateSource::Done, true) => DateSource::When,
+            (DateSource::When, false) => DateSource::Done,
+            (DateSource::Entry, false) => DateSource::When,
+            (DateSource::Done, false) => DateSource::Entry,
+        }
+    }
+
+    fn handle_condition_date_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+        _edit: &ConditionEditState,
+    ) -> TuiResult<bool> {
+        let editable_focus = self
+            .category_manager_condition_edit()
+            .map(|edit| match edit.draft_date.field_focus {
+                DateConditionField::Value => draft_uses_value_field(edit.draft_date.kind),
+                DateConditionField::From | DateConditionField::Through => {
+                    draft_uses_range_fields(edit.draft_date.kind)
+                }
+                DateConditionField::Source | DateConditionField::Match => false,
+            })
+            .unwrap_or(false);
+        match code {
+            KeyCode::Esc => {
+                self.cancel_condition_picker();
+                return Ok(true);
+            }
+            KeyCode::Enter => {
+                self.normalize_focused_date_condition_field();
+                self.save_condition_from_date_editor(agenda)?;
+                return Ok(true);
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                self.normalize_focused_date_condition_field();
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    edit.draft_date.field_focus = match edit.draft_date.field_focus {
+                        DateConditionField::Source => DateConditionField::Match,
+                        DateConditionField::Match => {
+                            if draft_uses_range_fields(edit.draft_date.kind) {
+                                DateConditionField::From
+                            } else if draft_uses_value_field(edit.draft_date.kind) {
+                                DateConditionField::Value
+                            } else {
+                                DateConditionField::Source
+                            }
+                        }
+                        DateConditionField::Value => DateConditionField::Source,
+                        DateConditionField::From => DateConditionField::Through,
+                        DateConditionField::Through => DateConditionField::Source,
+                    };
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                self.normalize_focused_date_condition_field();
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    edit.draft_date.field_focus = match edit.draft_date.field_focus {
+                        DateConditionField::Source => {
+                            if draft_uses_range_fields(edit.draft_date.kind) {
+                                DateConditionField::Through
+                            } else if draft_uses_value_field(edit.draft_date.kind) {
+                                DateConditionField::Value
+                            } else {
+                                DateConditionField::Match
+                            }
+                        }
+                        DateConditionField::Match => DateConditionField::Source,
+                        DateConditionField::Value => DateConditionField::Match,
+                        DateConditionField::From => DateConditionField::Match,
+                        DateConditionField::Through => DateConditionField::From,
+                    };
+                }
+            }
+            KeyCode::Char('j') if !editable_focus => {
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    edit.draft_date.field_focus = match edit.draft_date.field_focus {
+                        DateConditionField::Source => DateConditionField::Match,
+                        DateConditionField::Match => {
+                            if draft_uses_range_fields(edit.draft_date.kind) {
+                                DateConditionField::From
+                            } else if draft_uses_value_field(edit.draft_date.kind) {
+                                DateConditionField::Value
+                            } else {
+                                DateConditionField::Source
+                            }
+                        }
+                        DateConditionField::Value => DateConditionField::Source,
+                        DateConditionField::From => DateConditionField::Through,
+                        DateConditionField::Through => DateConditionField::Source,
+                    };
+                }
+            }
+            KeyCode::Char('k') if !editable_focus => {
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    edit.draft_date.field_focus = match edit.draft_date.field_focus {
+                        DateConditionField::Source => {
+                            if draft_uses_range_fields(edit.draft_date.kind) {
+                                DateConditionField::Through
+                            } else if draft_uses_value_field(edit.draft_date.kind) {
+                                DateConditionField::Value
+                            } else {
+                                DateConditionField::Match
+                            }
+                        }
+                        DateConditionField::Match => DateConditionField::Source,
+                        DateConditionField::Value => DateConditionField::Match,
+                        DateConditionField::From => DateConditionField::Match,
+                        DateConditionField::Through => DateConditionField::From,
+                    };
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') if !editable_focus => {
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    match edit.draft_date.field_focus {
+                        DateConditionField::Source => {
+                            edit.draft_date.source =
+                                Self::cycle_date_condition_source(edit.draft_date.source, false);
+                        }
+                        DateConditionField::Match => {
+                            cycle_date_match_mode(&mut edit.draft_date, false);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') if !editable_focus => {
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    match edit.draft_date.field_focus {
+                        DateConditionField::Source => {
+                            edit.draft_date.source =
+                                Self::cycle_date_condition_source(edit.draft_date.source, true);
+                        }
+                        DateConditionField::Match => {
+                            cycle_date_match_mode(&mut edit.draft_date, true);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {
+                let text_key = editable_focus.then(|| self.text_key_event(code));
+                if let Some(edit) = self.category_manager_condition_edit_mut() {
+                    if editable_focus {
+                        match edit.draft_date.field_focus {
+                            DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
+                                edit.draft_date
+                                    .value_input
+                                    .handle_key_event(text_key.expect("text key"), false);
+                            }
+                            DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
+                                edit.draft_date
+                                    .from_input
+                                    .handle_key_event(text_key.expect("text key"), false);
+                            }
+                            DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
+                                edit.draft_date
+                                    .through_input
+                                    .handle_key_event(text_key.expect("text key"), false);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        self.condition_date_status();
         Ok(true)
     }
 

@@ -2,12 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
 
+use crate::date_rules::{item_matches_date_condition, render_date_condition, EvaluationContext};
 use crate::error::{AgendaError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
     origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition,
-    ItemId, Query, TextMatchSource,
+    Item, ItemId, Query, TextMatchSource,
 };
 use crate::store::Store;
 
@@ -54,6 +55,7 @@ struct PassResult {
 
 struct HierarchyPassInput<'a> {
     classifier: &'a dyn Classifier,
+    item: &'a Item,
     item_id: ItemId,
     item_text: &'a str,
     categories: &'a [Category],
@@ -76,15 +78,17 @@ struct AssignmentTemplate {
     explanation: Option<AssignmentExplanation>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ProcessOptions {
     pub enable_implicit_string: bool,
+    pub evaluation_context: EvaluationContext,
 }
 
 impl Default for ProcessOptions {
     fn default() -> Self {
         Self {
             enable_implicit_string: true,
+            evaluation_context: EvaluationContext::now(),
         }
     }
 }
@@ -131,6 +135,14 @@ pub fn evaluate_all_items(
     evaluate_all_items_with_options(store, classifier, category_id, ProcessOptions::default())
 }
 
+pub fn reevaluate_all_items_with_options(
+    store: &Store,
+    classifier: &dyn Classifier,
+    options: ProcessOptions,
+) -> Result<EvaluateAllItemsResult> {
+    evaluate_items_internal(store, classifier, options)
+}
+
 pub fn evaluate_all_items_with_options(
     store: &Store,
     classifier: &dyn Classifier,
@@ -140,11 +152,20 @@ pub fn evaluate_all_items_with_options(
     // Validate the target category exists before beginning retroactive work.
     store.get_category(category_id)?;
 
+    evaluate_items_internal(store, classifier, options)
+}
+
+fn evaluate_items_internal(
+    store: &Store,
+    classifier: &dyn Classifier,
+    options: ProcessOptions,
+) -> Result<EvaluateAllItemsResult> {
     let mut result = EvaluateAllItemsResult::default();
     let items = store.list_items()?;
 
     for item in items {
-        let process_result = process_item_with_options(store, classifier, item.id, options)?;
+        let process_result =
+            process_item_with_options(store, classifier, item.id, options.clone())?;
 
         result.processed_items += 1;
         result.total_new_assignments += process_result.new_assignments.len();
@@ -176,7 +197,7 @@ fn process_item_inner(
         .collect();
     let match_text = item_match_text(&item);
 
-    let original_assignments = item.assignments;
+    let original_assignments = item.assignments.clone();
     let mut assignments = retained_assignments(&original_assignments);
     let mut seen_pairs: HashSet<(ItemId, CategoryId)> = assignments
         .keys()
@@ -195,6 +216,7 @@ fn process_item_inner(
     let mut result = ProcessItemResult::default();
     let pass_input = HierarchyPassInput {
         classifier,
+        item: &item,
         item_id,
         item_text: &match_text,
         categories: &categories,
@@ -266,11 +288,12 @@ fn run_hierarchy_pass(
     for category in input.categories {
         let Some(reason) = evaluate_category_match(
             category,
+            input.item,
             input.item_text,
             assignments,
             input.classifier,
             input.categories_by_id,
-            input.options.enable_implicit_string,
+            &input.options,
         ) else {
             continue;
         };
@@ -335,13 +358,14 @@ fn run_hierarchy_pass(
 
 fn evaluate_category_match(
     category: &Category,
+    item: &Item,
     item_text: &str,
     assignments: &HashMap<CategoryId, Assignment>,
     classifier: &dyn Classifier,
     categories_by_id: &HashMap<CategoryId, &Category>,
-    enable_implicit_string: bool,
+    options: &ProcessOptions,
 ) -> Option<MatchReason> {
-    if enable_implicit_string && category.enable_implicit_string {
+    if options.enable_implicit_string && category.enable_implicit_string {
         if let Some(matched) = classifier.classify(
             item_text,
             &category.name,
@@ -363,23 +387,42 @@ fn evaluate_category_match(
     }
 
     for (condition_index, condition) in category.conditions.iter().enumerate() {
-        let Condition::Profile { criteria } = condition else {
-            continue;
-        };
-        if profile_matches(criteria, assignments) {
-            return Some(MatchReason {
-                origin: match_origin_profile(&category.name),
-                explanation: AssignmentExplanation::ProfileCondition {
-                    owner_category_name: category.name.clone(),
-                    condition_index,
-                    rendered_rule: criteria.format_trigger(&|category_id| {
-                        categories_by_id
-                            .get(&category_id)
-                            .map(|candidate| candidate.name.clone())
-                            .unwrap_or_else(|| category_id.to_string())
-                    }),
-                },
-            });
+        match condition {
+            Condition::Profile { criteria } => {
+                if profile_matches(criteria, assignments) {
+                    return Some(MatchReason {
+                        origin: match_origin_profile(&category.name),
+                        explanation: AssignmentExplanation::ProfileCondition {
+                            owner_category_name: category.name.clone(),
+                            condition_index,
+                            rendered_rule: criteria.format_trigger(&|category_id| {
+                                categories_by_id
+                                    .get(&category_id)
+                                    .map(|candidate| candidate.name.clone())
+                                    .unwrap_or_else(|| category_id.to_string())
+                            }),
+                        },
+                    });
+                }
+            }
+            Condition::Date { source, matcher } => {
+                if item_matches_date_condition(
+                    item,
+                    *source,
+                    matcher,
+                    &options.evaluation_context,
+                ) {
+                    return Some(MatchReason {
+                        origin: format!("match:date:{}", category.name),
+                        explanation: AssignmentExplanation::DateCondition {
+                            owner_category_name: category.name.clone(),
+                            condition_index,
+                            rendered_rule: render_date_condition(*source, matcher),
+                        },
+                    });
+                }
+            }
+            Condition::ImplicitString => {}
         }
     }
 
@@ -795,16 +838,18 @@ where
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use jiff::Timestamp;
+    use jiff::{Timestamp, Zoned};
 
     use super::{
         evaluate_all_items, process_item, process_item_with_options, run_hierarchy_pass,
         HierarchyPassInput, ProcessOptions,
     };
+    use crate::date_rules::EvaluationContext;
     use crate::error::AgendaError;
     use crate::matcher::SubstringClassifier;
     use crate::model::{
-        Action, Assignment, AssignmentSource, Category, CategoryId, Condition, CriterionMode, Item,
+        Action, Assignment, AssignmentExplanation, AssignmentSource, Category, CategoryId,
+        Condition, CriterionMode, DateCompareOp, DateMatcher, DateSource, DateValueExpr, Item,
         ItemId, Query,
     };
     use crate::store::Store;
@@ -815,6 +860,14 @@ mod tests {
 
     fn create_item(store: &Store, text: &str) -> Item {
         let item = Item::new(text.to_string());
+        store.create_item(&item).unwrap();
+        item
+    }
+
+    fn create_item_with_created_at(store: &Store, text: &str, created_at: Timestamp) -> Item {
+        let mut item = Item::new(text.to_string());
+        item.created_at = created_at;
+        item.modified_at = created_at;
         store.create_item(&item).unwrap();
         item
     }
@@ -869,10 +922,35 @@ mod tests {
         category
     }
 
+    fn category_with_date(name: &str, source: DateSource, matcher: DateMatcher) -> Category {
+        let mut category = category(name, false);
+        category.conditions.push(Condition::Date { source, matcher });
+        category
+    }
+
     fn child_category(name: &str, parent: CategoryId, implicit: bool) -> Category {
         let mut category = category(name, implicit);
         category.parent = Some(parent);
         category
+    }
+
+    fn set_item_when(store: &Store, item_id: ItemId, when_date: Option<jiff::civil::DateTime>) {
+        let mut item = store.get_item(item_id).unwrap();
+        item.when_date = when_date;
+        item.modified_at = Timestamp::now();
+        store.update_item(&item).unwrap();
+    }
+
+    fn set_item_done(store: &Store, item_id: ItemId, done_date: Option<jiff::civil::DateTime>) {
+        let mut item = store.get_item(item_id).unwrap();
+        item.done_date = done_date;
+        item.is_done = done_date.is_some();
+        item.modified_at = Timestamp::now();
+        store.update_item(&item).unwrap();
+    }
+
+    fn evaluation_context_at(zoned: &str) -> EvaluationContext {
+        EvaluationContext::from_zoned(zoned.parse::<Zoned>().unwrap())
     }
 
     #[test]
@@ -993,6 +1071,7 @@ mod tests {
             item.id,
             ProcessOptions {
                 enable_implicit_string: false,
+                evaluation_context: EvaluationContext::now(),
             },
         )
         .unwrap();
@@ -1001,6 +1080,126 @@ mod tests {
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(assignments.contains_key(&calendar.id));
         assert!(assignments.contains_key(&reminders.id));
+    }
+
+    #[test]
+    fn process_item_date_condition_when_before_today_matches() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let overdue = category_with_date(
+            "Overdue",
+            DateSource::When,
+            DateMatcher::Compare {
+                op: DateCompareOp::Before,
+                value: DateValueExpr::Today,
+            },
+        );
+        create_category(&store, &overdue);
+
+        let item = create_item(&store, "Finish report");
+        set_item_when(
+            &store,
+            item.id,
+            Some(jiff::civil::DateTime::new(2026, 2, 15, 9, 0, 0, 0).unwrap()),
+        );
+
+        let result = process_item_with_options(
+            &store,
+            &classifier,
+            item.id,
+            ProcessOptions {
+                enable_implicit_string: true,
+                evaluation_context: EvaluationContext::for_date(
+                    jiff::civil::Date::new(2026, 2, 16).unwrap(),
+                ),
+            },
+        )
+        .unwrap();
+
+        assert!(result.new_assignments.contains(&overdue.id));
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let assignment = assignments.get(&overdue.id).unwrap();
+        assert_eq!(assignment.source, AssignmentSource::AutoMatch);
+        assert!(matches!(
+            assignment.explanation,
+            Some(AssignmentExplanation::DateCondition { .. })
+        ));
+    }
+
+    #[test]
+    fn process_item_date_condition_entry_uses_evaluation_timezone() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let inbox = category_with_date(
+            "Inbox",
+            DateSource::Entry,
+            DateMatcher::Compare {
+                op: DateCompareOp::On,
+                value: DateValueExpr::DaysAgo(1),
+            },
+        );
+        create_category(&store, &inbox);
+
+        let item = create_item_with_created_at(
+            &store,
+            "Capture idea",
+            "2026-02-16T07:30:00Z".parse::<Timestamp>().unwrap(),
+        );
+
+        let result = process_item_with_options(
+            &store,
+            &classifier,
+            item.id,
+            ProcessOptions {
+                enable_implicit_string: true,
+                evaluation_context: evaluation_context_at(
+                    "2026-02-16T12:00:00-08:00[America/Los_Angeles]",
+                ),
+            },
+        )
+        .unwrap();
+
+        assert!(result.new_assignments.contains(&inbox.id));
+    }
+
+    #[test]
+    fn process_item_date_condition_done_recent_window_matches() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let wins = category_with_date(
+            "Wins",
+            DateSource::Done,
+            DateMatcher::Compare {
+                op: DateCompareOp::AtOrAfter,
+                value: DateValueExpr::DaysAgo(2),
+            },
+        );
+        create_category(&store, &wins);
+
+        let item = create_item(&store, "Ship feature");
+        set_item_done(
+            &store,
+            item.id,
+            Some(jiff::civil::DateTime::new(2026, 2, 15, 14, 0, 0, 0).unwrap()),
+        );
+
+        let result = process_item_with_options(
+            &store,
+            &classifier,
+            item.id,
+            ProcessOptions {
+                enable_implicit_string: true,
+                evaluation_context: EvaluationContext::for_date(
+                    jiff::civil::Date::new(2026, 2, 16).unwrap(),
+                ),
+            },
+        )
+        .unwrap();
+
+        assert!(result.new_assignments.contains(&wins.id));
     }
 
     #[test]
@@ -1145,6 +1344,7 @@ mod tests {
         let mut seen_pairs = HashSet::new();
         let pass_input = HierarchyPassInput {
             classifier: &classifier,
+            item: &item,
             item_id: item.id,
             item_text: &item.text,
             categories: &categories,

@@ -57,6 +57,28 @@ impl App {
         self.mode == Mode::Normal && self.auto_refresh_last_tick.elapsed() >= interval
     }
 
+    fn current_minute_key() -> (i16, i8, i8, i8, i8) {
+        let now = jiff::Zoned::now().datetime();
+        (now.year(), now.month(), now.day(), now.hour(), now.minute())
+    }
+
+    fn mark_temporal_refresh_now(&mut self) {
+        self.last_temporal_refresh_minute = Some(Self::current_minute_key());
+    }
+
+    fn maybe_run_temporal_reevaluation(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        if !agenda.has_date_conditions()? {
+            return Ok(());
+        }
+        let current_minute = Self::current_minute_key();
+        if self.last_temporal_refresh_minute == Some(current_minute) {
+            return Ok(());
+        }
+        let _ = agenda.reevaluate_temporal_conditions()?;
+        self.last_temporal_refresh_minute = Some(current_minute);
+        Ok(())
+    }
+
     pub(crate) fn auto_refresh_mode_label(&self) -> &'static str {
         self.auto_refresh_interval.label()
     }
@@ -145,9 +167,10 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn maybe_run_auto_refresh(&mut self, store: &Store) -> TuiResult<()> {
+    pub(crate) fn maybe_run_auto_refresh(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         if self.should_auto_refresh_now() {
-            self.refresh(store)?;
+            self.maybe_run_temporal_reevaluation(agenda)?;
+            self.refresh(agenda.store())?;
             self.auto_refresh_last_tick = Instant::now();
         }
         Ok(())
@@ -189,12 +212,14 @@ impl App {
     }
 
     pub(crate) fn run(&mut self, terminal: &mut TuiTerminal, agenda: &Agenda<'_>) -> TuiResult<()> {
+        self.maybe_run_temporal_reevaluation(agenda)?;
         self.refresh(agenda.store())?;
         self.load_last_view_name(agenda.store())?;
         self.refresh(agenda.store())?; // re-resolve slots for the restored view
         self.load_auto_refresh_interval(agenda.store())?;
         self.load_section_border_mode(agenda.store())?;
         self.auto_refresh_last_tick = Instant::now();
+        self.mark_temporal_refresh_now();
 
         loop {
             self.clear_expired_transient_status();
@@ -202,7 +227,7 @@ impl App {
             terminal.draw(|frame| self.draw(frame))?;
 
             if !event::poll(std::time::Duration::from_millis(200))? {
-                self.maybe_run_auto_refresh(agenda.store())?;
+                self.maybe_run_auto_refresh(agenda)?;
                 continue;
             }
 
@@ -231,7 +256,7 @@ impl App {
                 self.run_external_editor(terminal, target)?;
             }
 
-            self.maybe_run_auto_refresh(agenda.store())?;
+            self.maybe_run_auto_refresh(agenda)?;
         }
 
         Ok(())
@@ -1034,6 +1059,7 @@ impl App {
         match assignment.explanation.as_ref() {
             Some(AssignmentExplanation::ImplicitMatch { .. }) => Some("auto-match"),
             Some(AssignmentExplanation::ProfileCondition { .. }) => Some("profile"),
+            Some(AssignmentExplanation::DateCondition { .. }) => Some("date"),
             Some(AssignmentExplanation::Action { .. }) => Some("action"),
             Some(AssignmentExplanation::Subsumption { .. }) => Some("inherited"),
             Some(AssignmentExplanation::SuggestionAccepted { .. }) => Some("suggested"),

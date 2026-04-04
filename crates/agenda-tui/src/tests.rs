@@ -9,10 +9,10 @@ use super::{
     should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
     AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget, CategoryDirectEditAnchor,
     CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
-    CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, GlobalSettingsRow,
-    ItemAssignPane, Mode, NameInputContext, OllamaModelPickerState, SectionBorderMode,
-    SlotSortDirection, SuggestionDecision, ViewAssignRow, ViewEditPaneFocus, ViewEditRegion,
-    WorkflowRolePickerOrigin,
+    CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, DateConditionDraftKind,
+    DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext, OllamaModelPickerState,
+    SectionBorderMode, SlotSortDirection, SuggestionDecision, ViewAssignRow, ViewEditPaneFocus,
+    ViewEditRegion, WorkflowRolePickerOrigin,
 };
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
@@ -3926,6 +3926,44 @@ fn category_manager_details_cursor_position_tracks_numeric_inline_input() {
 }
 
 #[test]
+fn category_manager_condition_cursor_position_tracks_date_value_input() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Conference Tasks".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.field_focus = DateConditionField::Value;
+        edit.draft_date.value_input = text_buffer::TextBuffer::with_cursor(
+            "1990-11-12 09:00".to_string(),
+            7,
+        );
+    }
+
+    let main_area = Rect::new(0, 0, 120, 40);
+    let expected_overlay = Rect::new(30, 8, 60, 24);
+    let expected_x = expected_overlay.x + 1 + "> Value:    ".chars().count() as u16 + 7;
+    let expected_y = expected_overlay.y + 6;
+    assert_eq!(
+        app.category_manager_condition_cursor_position(main_area),
+        Some((expected_x, expected_y))
+    );
+}
+
+#[test]
 fn input_panel_edit_tab_switches_to_note_and_saves() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -6402,6 +6440,8 @@ fn auto_refresh_timer_reloads_in_normal_mode_when_due() {
         .as_nanos();
     let db_path = std::env::temp_dir().join(format!("agenda-tui-auto-refresh-due-{nanos}.ag"));
     let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
 
     let mut app = App::default();
     app.refresh(&store).expect("initial refresh");
@@ -6418,7 +6458,7 @@ fn auto_refresh_timer_reloads_in_normal_mode_when_due() {
         "state should be stale before timer refresh"
     );
 
-    app.maybe_run_auto_refresh(&store)
+    app.maybe_run_auto_refresh(&agenda)
         .expect("auto refresh should run");
 
     assert!(
@@ -6440,6 +6480,8 @@ fn auto_refresh_timer_skips_text_entry_modes() {
         .as_nanos();
     let db_path = std::env::temp_dir().join(format!("agenda-tui-auto-refresh-gated-{nanos}.ag"));
     let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
 
     let mut app = App::default();
     app.refresh(&store).expect("initial refresh");
@@ -6450,7 +6492,7 @@ fn auto_refresh_timer_skips_text_entry_modes() {
     let external = Item::new("Should remain hidden while editing".to_string());
     store.create_item(&external).expect("create external item");
 
-    app.maybe_run_auto_refresh(&store)
+    app.maybe_run_auto_refresh(&agenda)
         .expect("auto refresh should be safely skipped");
 
     assert!(
@@ -7859,6 +7901,511 @@ fn category_manager_condition_edit_delete_condition() {
     // Verify it was removed
     let cat = store.get_category(escalated.id).expect("load");
     assert!(cat.conditions.is_empty());
+}
+
+#[test]
+fn category_manager_date_condition_match_cycle_includes_range() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let overdue = Category::new("Overdue".to_string());
+    store.create_category(&overdue).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "Overdue" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+
+    app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+        .expect("focus match");
+
+    for _ in 0..4 {
+        app.handle_category_manager_key(KeyCode::Char('l'), &agenda)
+            .expect("cycle match");
+    }
+
+    let edit = app
+        .category_manager_condition_edit()
+        .expect("condition editor open");
+    assert!(edit.picker_open, "date editor should remain open");
+    assert_eq!(
+        edit.draft_date.kind,
+        DateConditionDraftKind::Range,
+        "match cycle should include range without requiring a dedicated toggle key"
+    );
+    assert_eq!(edit.draft_date.field_focus, DateConditionField::Match);
+}
+
+#[test]
+fn category_manager_date_condition_range_fields_accept_direct_typing() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let week = Category::new("This Week".to_string());
+    store.create_category(&week).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "This Week" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+        .expect("focus match");
+
+    for _ in 0..4 {
+        app.handle_category_manager_key(KeyCode::Char('l'), &agenda)
+            .expect("cycle match to range");
+    }
+
+    app.handle_category_manager_key(KeyCode::Char('j'), &agenda)
+        .expect("focus from");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.from_input.clear();
+    }
+    for key in [
+        KeyCode::Char('m'),
+        KeyCode::Char('a'),
+        KeyCode::Char('y'),
+        KeyCode::Char(' '),
+        KeyCode::Char('1'),
+        KeyCode::Char('0'),
+    ] {
+        app.handle_category_manager_key(key, &agenda)
+            .expect("type from field");
+    }
+    {
+        let edit = app
+            .category_manager_condition_edit()
+            .expect("condition editor open");
+        assert_eq!(edit.draft_date.field_focus, DateConditionField::From);
+        assert_eq!(edit.draft_date.from_input.text(), "may 10");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("focus through");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.through_input.clear();
+    }
+    for key in [
+        KeyCode::Char('m'),
+        KeyCode::Char('a'),
+        KeyCode::Char('y'),
+        KeyCode::Char(' '),
+        KeyCode::Char('3'),
+        KeyCode::Char('0'),
+    ] {
+        app.handle_category_manager_key(key, &agenda)
+            .expect("type through field");
+    }
+    {
+        let edit = app
+            .category_manager_condition_edit()
+            .expect("condition editor open");
+        assert_eq!(edit.draft_date.field_focus, DateConditionField::Through);
+        assert_eq!(edit.draft_date.through_input.text(), "may 30");
+    }
+}
+
+#[test]
+fn category_manager_date_condition_value_field_accepts_space_and_hjkl_text() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Morning Rush".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+
+    loop {
+        let row = app.selected_category_row().expect("row");
+        if row.name == "Morning Rush" {
+            break;
+        }
+        app.handle_category_manager_key(KeyCode::Down, &agenda)
+            .expect("down");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to details");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to also-match");
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to conditions");
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus value");
+
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.value_input.clear();
+    }
+
+    for key in [
+        KeyCode::Char('m'),
+        KeyCode::Char('a'),
+        KeyCode::Char('y'),
+        KeyCode::Char(' '),
+        KeyCode::Char('1'),
+        KeyCode::Char('0'),
+        KeyCode::Char(' '),
+        KeyCode::Char('h'),
+        KeyCode::Char('j'),
+        KeyCode::Char('k'),
+        KeyCode::Char('l'),
+    ] {
+        app.handle_category_manager_key(key, &agenda)
+            .expect("type into value field");
+    }
+
+    let edit = app
+        .category_manager_condition_edit()
+        .expect("condition editor open");
+    assert_eq!(edit.draft_date.field_focus, DateConditionField::Value);
+    assert_eq!(edit.draft_date.value_input.text(), "may 10 hjkl");
+}
+
+#[test]
+fn category_manager_date_condition_blur_normalizes_typed_value() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Conference Tasks".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus value");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.value_input.clear();
+    }
+    for key in "Nov 12, 1990".chars().map(KeyCode::Char) {
+        app.handle_category_manager_key(key, &agenda)
+            .expect("type value");
+    }
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("blur value");
+
+    let edit = app
+        .category_manager_condition_edit()
+        .expect("condition editor open");
+    assert_eq!(edit.draft_date.field_focus, DateConditionField::Source);
+    assert_eq!(edit.draft_date.value_input.text(), "1990-11-12");
+}
+
+#[test]
+fn category_manager_date_condition_impossible_range_is_flagged_and_blocked() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Conference Tasks".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    for _ in 0..4 {
+        app.handle_category_manager_key(KeyCode::Char('l'), &agenda)
+            .expect("cycle to range");
+    }
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.from_input.set("1990-11-30".to_string());
+        edit.draft_date.through_input.set("1990-11-12".to_string());
+        edit.draft_date.field_focus = DateConditionField::Through;
+    }
+
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("attempt save");
+
+    let cat = store.get_category(category.id).expect("reload category");
+    assert!(cat.conditions.is_empty(), "impossible range should not save");
+    assert!(
+        app.status.contains("Impossible range"),
+        "status should explain blocked save: {}",
+        app.status
+    );
+}
+
+#[test]
+fn category_manager_date_condition_render_shows_typing_and_live_feedback() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Conference Tasks".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus value");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.value_input.set("Nov 12, 1990".to_string());
+    }
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Examples: today, tomorrow, may 10"),
+        "date editor should show concise input guidance: {rendered}"
+    );
+    assert!(
+        rendered.contains("Parsed: 1990-11-12"),
+        "date editor should show live normalized parse feedback: {rendered}"
+    );
+}
+
+#[test]
+fn category_manager_date_condition_today_after_saves_as_same_day_range() {
+    use agenda_core::model::{Condition, DateMatcher, DateValueExpr};
+    use jiff::civil::Time;
+
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Afternoon Window".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    for _ in 0..5 {
+        app.handle_category_manager_key(KeyCode::Char('l'), &agenda)
+            .expect("cycle to today after");
+    }
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus today-after value");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.value_input.set("1pm".to_string());
+    }
+
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("save condition");
+
+    let saved = store.get_category(category.id).expect("load category");
+    assert_eq!(saved.conditions.len(), 1);
+    match &saved.conditions[0] {
+        Condition::Date { matcher, .. } => assert_eq!(
+            matcher,
+            &DateMatcher::Range {
+                from: DateValueExpr::TimeToday(
+                    Time::new(13, 0, 0, 0).expect("1pm should be representable")
+                ),
+                through: DateValueExpr::Today,
+            }
+        ),
+        other => panic!("expected Date condition, got {other:?}"),
+    }
+}
+
+#[test]
+fn category_manager_date_condition_today_before_saves_as_same_day_range() {
+    use agenda_core::model::{Condition, DateMatcher, DateValueExpr};
+    use jiff::civil::Time;
+
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Morning Rush".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    for _ in 0..6 {
+        app.handle_category_manager_key(KeyCode::Char('l'), &agenda)
+            .expect("cycle to today before");
+    }
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus today-before value");
+    if let Some(edit) = app.category_manager_condition_edit_mut() {
+        edit.draft_date.value_input.set("11:30am".to_string());
+    }
+
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("save condition");
+
+    let saved = store.get_category(category.id).expect("load category");
+    assert_eq!(saved.conditions.len(), 1);
+    match &saved.conditions[0] {
+        Condition::Date { matcher, .. } => assert_eq!(
+            matcher,
+            &DateMatcher::Range {
+                from: DateValueExpr::Today,
+                through: DateValueExpr::TimeToday(
+                    Time::new(11, 30, 0, 0).expect("11:30am should be representable")
+                ),
+            }
+        ),
+        other => panic!("expected Date condition, got {other:?}"),
+    }
+}
+
+#[test]
+fn category_manager_date_condition_this_afternoon_saves_and_renders_as_shortcut() {
+    use agenda_core::date_rules::render_date_condition;
+    use agenda_core::model::{Condition, DateMatcher, DateValueExpr, DateSource};
+    use jiff::civil::Time;
+
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Afternoon Window".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+    app.handle_category_manager_key(KeyCode::Char('d'), &agenda)
+        .expect("open date editor");
+    app.handle_category_manager_key(KeyCode::Down, &agenda)
+        .expect("focus match");
+    for _ in 0..7 {
+        app.handle_category_manager_key(KeyCode::Char('l'), &agenda)
+            .expect("cycle to this afternoon");
+    }
+
+    let edit = app
+        .category_manager_condition_edit()
+        .expect("condition editor open");
+    assert_eq!(edit.draft_date.kind, DateConditionDraftKind::ThisAfternoon);
+
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("save condition");
+
+    let saved = store.get_category(category.id).expect("load category");
+    assert_eq!(saved.conditions.len(), 1);
+    match &saved.conditions[0] {
+        Condition::Date { source, matcher } => {
+            assert_eq!(*source, DateSource::When);
+            assert_eq!(
+                matcher,
+                &DateMatcher::Range {
+                    from: DateValueExpr::TimeToday(
+                        Time::new(13, 0, 0, 0).expect("1pm should be representable")
+                    ),
+                    through: DateValueExpr::Today,
+                }
+            );
+            assert_eq!(render_date_condition(*source, matcher), "When this afternoon");
+        }
+        other => panic!("expected Date condition, got {other:?}"),
+    }
 }
 
 #[test]

@@ -1,5 +1,5 @@
 pub(super) mod board;
-mod category;
+pub(crate) mod category;
 pub(crate) mod classification;
 pub(crate) mod global_settings;
 mod suggestion_review;

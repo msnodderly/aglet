@@ -1,4 +1,9 @@
 use crate::*;
+use agenda_core::date_rules::render_date_source;
+use crate::modes::category::{
+    date_condition_draft_feedback, draft_match_label, draft_uses_range_fields,
+    draft_uses_value_field, draft_value_label, DateDraftMessageSeverity,
+};
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
 const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
@@ -1762,6 +1767,107 @@ impl App {
                 .saturating_add(cursor_chars)
                 .min(max_x),
             flags_inner.y.saturating_add(line_offset),
+        ))
+    }
+
+    pub(crate) fn category_manager_condition_cursor_position(
+        &self,
+        area: Rect,
+    ) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
+            return None;
+        }
+        let edit = self.category_manager_condition_edit()?;
+        if !edit.picker_open || !matches!(edit.editor_kind, ConditionEditorKind::DateEditor) {
+            return None;
+        }
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(8),
+                Constraint::Length(1),
+            ])
+            .split(overlay_area);
+
+        let inner = Rect {
+            x: chunks[1].x.saturating_add(1),
+            y: chunks[1].y.saturating_add(1),
+            width: chunks[1].width.saturating_sub(2),
+            height: chunks[1].height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+        let max_x = inner.x.saturating_add(inner.width.saturating_sub(1));
+        let text_width = inner.width as usize;
+
+        let (line_offset, prefix, cursor_chars): (u16, String, u16) = match edit.draft_date.field_focus {
+            DateConditionField::Source => (
+                0u16,
+                "> Source:   ".to_string(),
+                render_date_source(edit.draft_date.source)
+                    .chars()
+                    .count()
+                    .min(u16::MAX as usize) as u16,
+            ),
+            DateConditionField::Match => {
+                let value = draft_match_label(edit.draft_date.kind);
+                (
+                    1u16,
+                    "> Match:    ".to_string(),
+                    value.chars().count().min(u16::MAX as usize) as u16,
+                )
+            }
+            DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
+                let prefix = format!("> {}:    ", draft_value_label(edit.draft_date.kind));
+                let available = text_width.saturating_sub(prefix.chars().count());
+                let (_, cursor) = clip_text_for_row(
+                    edit.draft_date.value_input.text(),
+                    edit.draft_date.value_input.cursor(),
+                    available,
+                    true,
+                );
+                (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
+            }
+            DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
+                let prefix = "> From:     ".to_string();
+                let available = text_width.saturating_sub(prefix.chars().count());
+                let (_, cursor) = clip_text_for_row(
+                    edit.draft_date.from_input.text(),
+                    edit.draft_date.from_input.cursor(),
+                    available,
+                    true,
+                );
+                (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
+            }
+            DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
+                let prefix = "> Through:  ".to_string();
+                let available = text_width.saturating_sub(prefix.chars().count());
+                let (_, cursor) = clip_text_for_row(
+                    edit.draft_date.through_input.text(),
+                    edit.draft_date.through_input.cursor(),
+                    available,
+                    true,
+                );
+                (3u16, prefix, cursor.min(u16::MAX as usize) as u16)
+            }
+            _ => return None,
+        };
+
+        let prefix_len = prefix.chars().count().min(u16::MAX as usize) as u16;
+        Some((
+            inner.x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            inner.y.saturating_add(line_offset),
         ))
     }
 
@@ -5799,120 +5905,377 @@ impl App {
             .collect();
 
         if edit.picker_open {
-            // Level 2: criteria picker
-            let title = if edit.condition_index.is_some() {
-                format!(" Edit Condition: {} ", category_name)
-            } else {
-                format!(" New Condition: {} ", category_name)
-            };
+            match edit.editor_kind {
+                ConditionEditorKind::ProfilePicker => {
+                    let title = if edit.condition_index.is_some() {
+                        format!(" Edit Condition: {} ", category_name)
+                    } else {
+                        format!(" New Condition: {} ", category_name)
+                    };
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(8),
-                    Constraint::Length(1),
-                ])
-                .split(overlay_area);
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(8),
+                            Constraint::Length(1),
+                        ])
+                        .split(overlay_area);
 
-            // Summary of current draft criteria
-            let resolve = |id: CategoryId| -> String {
-                category_names.get(&id).unwrap_or(&"(deleted)").to_string()
-            };
-            let trigger = edit.draft_query.format_trigger(&resolve);
-            let summary_text = if edit.draft_query.criteria.is_empty() {
-                "(no criteria selected yet)".to_string()
-            } else {
-                format!("{} -> {}", trigger, category_name)
-            };
-            frame.render_widget(
-                Paragraph::new(vec![Line::from(Span::styled(
-                    summary_text,
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                ))])
-                .block(
-                    Block::default()
-                        .title(title)
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
-                )
-                .wrap(Wrap { trim: false }),
-                chunks[0],
-            );
+                    let resolve = |id: CategoryId| -> String {
+                        category_names.get(&id).unwrap_or(&"(deleted)").to_string()
+                    };
+                    let trigger = edit.draft_query.format_trigger(&resolve);
+                    let summary_text = if edit.draft_query.criteria.is_empty() {
+                        "(no criteria selected yet)".to_string()
+                    } else {
+                        format!("{} -> {}", trigger, category_name)
+                    };
+                    frame.render_widget(
+                        Paragraph::new(vec![Line::from(Span::styled(
+                            summary_text,
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ))])
+                        .block(
+                            Block::default()
+                                .title(title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        )
+                        .wrap(Wrap { trim: false }),
+                        chunks[0],
+                    );
 
-            // Category picker list
-            let filtered_indices: Vec<usize> = self
-                .category_rows
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| !row.is_reserved)
-                .map(|(i, _)| i)
-                .collect();
-            let selected_row = filtered_indices
-                .iter()
-                .position(|&idx| idx == edit.picker_index)
-                .unwrap_or(0);
+                    let filtered_indices: Vec<usize> = self
+                        .category_rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, row)| !row.is_reserved)
+                        .map(|(i, _)| i)
+                        .collect();
+                    let selected_row = filtered_indices
+                        .iter()
+                        .position(|&idx| idx == edit.picker_index)
+                        .unwrap_or(0);
 
-            let items: Vec<ListItem<'_>> = filtered_indices
-                .iter()
-                .filter_map(|idx| self.category_rows.get(*idx))
-                .map(|row| {
-                    let mode = edit.draft_query.mode_for(row.id);
-                    let is_self = Some(row.id) == selected_category_id;
-                    let (prefix, color) = if is_self {
-                        match mode {
-                            Some(_) => ("[!] ", MUTED_TEXT_COLOR),
-                            None => ("[ ] ", MUTED_TEXT_COLOR),
+                    let items: Vec<ListItem<'_>> = filtered_indices
+                        .iter()
+                        .filter_map(|idx| self.category_rows.get(*idx))
+                        .map(|row| {
+                            let mode = edit.draft_query.mode_for(row.id);
+                            let is_self = Some(row.id) == selected_category_id;
+                            let (prefix, color) = if is_self {
+                                match mode {
+                                    Some(_) => ("[!] ", MUTED_TEXT_COLOR),
+                                    None => ("[ ] ", MUTED_TEXT_COLOR),
+                                }
+                            } else {
+                                match mode {
+                                    Some(CriterionMode::And) => ("[+] ", Color::Green),
+                                    Some(CriterionMode::Not) => ("[-] ", Color::Red),
+                                    Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
+                                    None => ("    ", Color::White),
+                                }
+                            };
+                            let label = format!(
+                                "{}{}{}{}",
+                                "  ".repeat(row.depth),
+                                prefix,
+                                row.name,
+                                if is_self { " (self)" } else { "" }
+                            );
+                            ListItem::new(Line::from(Span::styled(
+                                label,
+                                Style::default().fg(color),
+                            )))
+                        })
+                        .collect();
+
+                    let mut state = ListState::default().with_selected(Some(selected_row));
+                    frame.render_stateful_widget(
+                        List::new(items)
+                            .highlight_symbol("> ")
+                            .highlight_style(selected_row_style())
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                            ),
+                        chunks[1],
+                        &mut state,
+                    );
+
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            "Space:cycle  +/-/3:set  0:clear  Enter:save  Esc:cancel",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ))),
+                        chunks[2],
+                    );
+                }
+                ConditionEditorKind::DateEditor => {
+                    let feedback = date_condition_draft_feedback(&edit.draft_date, &category_name);
+                    let title = if edit.condition_index.is_some() {
+                        format!(" Edit Date Condition: {} ", category_name)
+                    } else {
+                        format!(" New Date Condition: {} ", category_name)
+                    };
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(10),
+                            Constraint::Length(2),
+                        ])
+                        .split(overlay_area);
+
+                    frame.render_widget(
+                        Paragraph::new(vec![Line::from(Span::styled(
+                            feedback.preview.clone(),
+                            Style::default().fg(
+                                if feedback
+                                    .messages
+                                    .iter()
+                                    .any(|m| m.severity == DateDraftMessageSeverity::Error)
+                                {
+                                    Color::LightRed
+                                } else {
+                                    MUTED_TEXT_COLOR
+                                },
+                            ),
+                        ))])
+                        .block(
+                            Block::default()
+                                .title(title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        ),
+                        chunks[0],
+                    );
+
+                    let field_prefix = |focused: bool| if focused { "> " } else { "  " };
+                    let focused_label_style = Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD);
+                    let match_label = draft_match_label(edit.draft_date.kind);
+                    let mut lines = vec![
+                        Line::from(vec![
+                            Span::styled(
+                                field_prefix(
+                                    edit.draft_date.field_focus == DateConditionField::Source,
+                                ),
+                                if edit.draft_date.field_focus == DateConditionField::Source {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::styled(
+                                "Source:   ",
+                                if edit.draft_date.field_focus == DateConditionField::Source {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::raw(render_date_source(edit.draft_date.source)),
+                        ]),
+                        Line::from(vec![
+                            Span::styled(
+                                field_prefix(
+                                    edit.draft_date.field_focus == DateConditionField::Match,
+                                ),
+                                if edit.draft_date.field_focus == DateConditionField::Match {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::styled(
+                                "Match:    ",
+                                if edit.draft_date.field_focus == DateConditionField::Match {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::raw(match_label),
+                        ]),
+                    ];
+                    if draft_uses_range_fields(edit.draft_date.kind) {
+                        let from_prefix = format!(
+                            "{}From:     ",
+                            field_prefix(edit.draft_date.field_focus == DateConditionField::From)
+                        );
+                        let through_prefix = format!(
+                            "{}Through:  ",
+                            field_prefix(
+                                edit.draft_date.field_focus == DateConditionField::Through
+                            )
+                        );
+                        let from_width = chunks[1]
+                            .width
+                            .saturating_sub(2)
+                            .saturating_sub(from_prefix.chars().count() as u16)
+                            as usize;
+                        let through_width = chunks[1]
+                            .width
+                            .saturating_sub(2)
+                            .saturating_sub(through_prefix.chars().count() as u16)
+                            as usize;
+                        let (from_visible, _) = clip_text_for_row(
+                            edit.draft_date.from_input.text(),
+                            edit.draft_date.from_input.cursor(),
+                            from_width,
+                            edit.draft_date.field_focus == DateConditionField::From,
+                        );
+                        let (through_visible, _) = clip_text_for_row(
+                            edit.draft_date.through_input.text(),
+                            edit.draft_date.through_input.cursor(),
+                            through_width,
+                            edit.draft_date.field_focus == DateConditionField::Through,
+                        );
+                        lines.push(Line::from(format!(
+                            "{}{}",
+                            from_prefix, from_visible
+                        )));
+                        lines.push(Line::from(format!("{}{}", through_prefix, through_visible)));
+                        if let Some(line) = lines.get_mut(2) {
+                            *line = Line::from(vec![
+                                Span::styled(
+                                    from_prefix,
+                                    if edit.draft_date.field_focus == DateConditionField::From {
+                                        focused_label_style
+                                    } else {
+                                        Style::default()
+                                    },
+                                ),
+                                Span::raw(from_visible),
+                            ]);
+                        }
+                        if let Some(line) = lines.get_mut(3) {
+                            *line = Line::from(vec![
+                                Span::styled(
+                                    through_prefix,
+                                    if edit.draft_date.field_focus == DateConditionField::Through {
+                                        focused_label_style
+                                    } else {
+                                        Style::default()
+                                    },
+                                ),
+                                Span::raw(through_visible),
+                            ]);
                         }
                     } else {
-                        match mode {
-                            Some(CriterionMode::And) => ("[+] ", Color::Green),
-                            Some(CriterionMode::Not) => ("[-] ", Color::Red),
-                            Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
-                            None => ("    ", Color::White),
+                        let value_prefix = format!(
+                            "{}{}:    ",
+                            field_prefix(edit.draft_date.field_focus == DateConditionField::Value),
+                            draft_value_label(edit.draft_date.kind)
+                        );
+                        let value_width = chunks[1]
+                            .width
+                            .saturating_sub(2)
+                            .saturating_sub(value_prefix.chars().count() as u16)
+                            as usize;
+                        let (value_visible, _) = clip_text_for_row(
+                            edit.draft_date.value_input.text(),
+                            edit.draft_date.value_input.cursor(),
+                            value_width,
+                            edit.draft_date.field_focus == DateConditionField::Value,
+                        );
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                value_prefix,
+                                if edit.draft_date.field_focus == DateConditionField::Value {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::raw(value_visible),
+                        ]));
+                    }
+                    let helper_text = match edit.draft_date.kind {
+                        DateConditionDraftKind::TodayAfter | DateConditionDraftKind::TodayBefore => {
+                            "  Examples: 1pm, 1:00pm, 1:00pm today"
                         }
+                        DateConditionDraftKind::ThisAfternoon => {
+                            "  Fixed shortcut: from 1:00pm today through today"
+                        }
+                        _ => "  Examples: today, tomorrow, may 10, 1990-11-12, 12:00pm today",
                     };
-                    let label = format!(
-                        "{}{}{}{}",
-                        "  ".repeat(row.depth),
-                        prefix,
-                        row.name,
-                        if is_self { " (self)" } else { "" }
+                    lines.push(Line::from(Span::styled(
+                        helper_text,
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )));
+                    for message in feedback.messages.iter().take(3) {
+                        let style = match message.severity {
+                            DateDraftMessageSeverity::Error => Style::default().fg(Color::LightRed),
+                            DateDraftMessageSeverity::Warning => {
+                                Style::default().fg(Color::Yellow)
+                            }
+                            DateDraftMessageSeverity::Info => Style::default().fg(Color::Green),
+                        };
+                        lines.push(Line::from(Span::styled(format!("  {}", message.text), style)));
+                    }
+
+                    frame.render_widget(
+                        Paragraph::new(lines)
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(
+                                        CATEGORY_MANAGER_EDIT_FOCUS,
+                                    )),
+                            )
+                            .wrap(Wrap { trim: false }),
+                        chunks[1],
                     );
-                    ListItem::new(Line::from(Span::styled(label, Style::default().fg(color))))
-                })
-                .collect();
 
-            let mut state = ListState::default().with_selected(Some(selected_row));
-            frame.render_stateful_widget(
-                List::new(items)
-                    .highlight_symbol("> ")
-                    .highlight_style(selected_row_style())
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
-                    ),
-                chunks[1],
-                &mut state,
-            );
-
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "Space:cycle  +/-/3:set  0:clear  Enter:save  Esc:cancel",
-                    Style::default().fg(MUTED_TEXT_COLOR),
-                ))),
-                chunks[2],
-            );
+                    frame.render_widget(
+                        Paragraph::new(vec![
+                            Line::from(Span::styled(
+                                "Tab/Shift-Tab or Up/Down: field  Source/Match h/l: cycle",
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )),
+                            Line::from(Span::styled(
+                                "Enter:save  Esc:cancel",
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )),
+                        ])
+                        .wrap(Wrap { trim: false })
+                        ,
+                        chunks[2],
+                    );
+                    if let Some((x, y)) = self.category_manager_condition_cursor_position(area) {
+                        frame.set_cursor_position((x, y));
+                    }
+                }
+            }
         } else {
             // Level 1: condition list
-            let profile_conditions: Vec<(usize, &Query)> = category
+            let editable_conditions: Vec<(usize, String)> = category
                 .map(|cat| {
                     cat.conditions
                         .iter()
                         .enumerate()
                         .filter_map(|(i, c)| match c {
-                            Condition::Profile { criteria } => Some((i, criteria.as_ref())),
+                            Condition::Profile { criteria } => Some((
+                                i,
+                                format!("[Profile] {}", criteria.format_trigger(&|id| {
+                                    category_names
+                                        .get(&id)
+                                        .unwrap_or(&"(deleted)")
+                                        .to_string()
+                                })),
+                            )),
+                            Condition::Date { source, matcher } => Some((
+                                i,
+                                format!(
+                                    "[Date] {}",
+                                    agenda_core::date_rules::render_date_condition(*source, matcher)
+                                ),
+                            )),
                             _ => None,
                         })
                         .collect()
@@ -5943,35 +6306,26 @@ impl App {
                 chunks[0],
             );
 
-            let resolve = |id: CategoryId| -> String {
-                category_names
-                    .get(&id)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "(deleted)".to_string())
-            };
-            let items: Vec<ListItem<'_>> = if profile_conditions.is_empty() {
+            let items: Vec<ListItem<'_>> = if editable_conditions.is_empty() {
                 vec![ListItem::new(Line::from(Span::styled(
-                    "(no rules — press 'a' to add)",
+                    "(no rules — press 'a' for profile or 'd' for date)",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 )))]
             } else {
-                profile_conditions
+                editable_conditions
                     .iter()
                     .enumerate()
-                    .map(|(display_idx, (_actual_idx, query))| {
-                        let trigger = query.format_trigger(&resolve);
-                        let label =
-                            format!("{}. {} -> {}", display_idx + 1, trigger, category_name);
+                    .map(|(display_idx, (_actual_idx, summary))| {
+                        let label = format!("{}. {} -> {}", display_idx + 1, summary, category_name);
                         ListItem::new(Line::from(label))
                     })
                     .collect()
             };
 
-            let selected_row = if profile_conditions.is_empty() {
+            let selected_row = if editable_conditions.is_empty() {
                 0
             } else {
-                edit.list_index
-                    .min(profile_conditions.len().saturating_sub(1))
+                edit.list_index.min(editable_conditions.len().saturating_sub(1))
             };
             let mut state = ListState::default().with_selected(Some(selected_row));
             frame.render_stateful_widget(
@@ -5989,7 +6343,7 @@ impl App {
 
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "a:add  Enter:edit  x:delete  Esc:close",
+                    "a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 ))),
                 chunks[2],
@@ -6873,7 +7227,7 @@ impl App {
                         .map(|c| {
                             c.conditions
                                 .iter()
-                                .filter(|cond| matches!(cond, Condition::Profile { .. }))
+                                .filter(|cond| !matches!(cond, Condition::ImplicitString))
                                 .count()
                         })
                         .unwrap_or(0);
@@ -6899,8 +7253,15 @@ impl App {
                                     .iter()
                                     .filter_map(|cond| match cond {
                                         Condition::Profile { criteria } => Some(format!(
-                                            "  {} -> {}",
+                                            "  [Profile] {} -> {}",
                                             criteria.format_trigger(&resolve),
+                                            row.name
+                                        )),
+                                        Condition::Date { source, matcher } => Some(format!(
+                                            "  [Date] {} -> {}",
+                                            agenda_core::date_rules::render_date_condition(
+                                                *source, matcher
+                                            ),
                                             row.name
                                         )),
                                         _ => None,
