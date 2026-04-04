@@ -521,7 +521,7 @@ impl Default for App {
             board_pending_delete_column_label: None,
             auto_refresh_interval: AutoRefreshInterval::Off,
             section_border_mode: SectionBorderMode::Full,
-            show_note_glyphs: true,
+            show_note_glyphs: false,
             auto_refresh_last_tick: Instant::now(),
             last_temporal_refresh_minute: None,
             transient: TransientUiState::default(),

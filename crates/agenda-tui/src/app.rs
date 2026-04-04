@@ -146,7 +146,7 @@ impl App {
 
     pub(crate) fn load_show_note_glyphs(&mut self, store: &Store) -> TuiResult<()> {
         let persisted = store.get_app_setting(Self::SHOW_NOTE_GLYPHS_SETTING_KEY)?;
-        self.show_note_glyphs = persisted.as_deref() != Some("off");
+        self.show_note_glyphs = persisted.as_deref() == Some("on");
         Ok(())
     }
 
