@@ -910,6 +910,7 @@ fn scan_recurrence(bytes: &[u8], reference_date: Date) -> Option<DateParseResult
     let mut best: Option<DateParseResult> = None;
 
     scan_every_weekday(bytes, reference_date, &mut best);
+    scan_every_business_day(bytes, reference_date, &mut best);
     scan_every_n_unit(bytes, reference_date, &mut best);
     scan_every_month_day(bytes, reference_date, &mut best);
     scan_ordinal_of_every_month(bytes, reference_date, &mut best);
@@ -1060,6 +1061,7 @@ fn scan_every_weekday(
                         weekday: Some(weekday_to_u8(weekday)),
                         day_of_month: None,
                         month: None,
+                        weekdays_only: None,
                     };
                     choose_best_recurrence(
                         best,
@@ -1073,6 +1075,67 @@ fn scan_every_weekday(
                     );
                 }
             }
+        }
+    }
+}
+
+/// "every weekday", "every business day"
+fn scan_every_business_day(
+    bytes: &[u8],
+    reference_date: Date,
+    best: &mut Option<DateParseResult>,
+) {
+    let patterns: &[&[u8]] = &[
+        b"every weekday",
+        b"each weekday",
+        b"every business day",
+        b"each business day",
+    ];
+    for start in 0..bytes.len() {
+        if !has_left_boundary(bytes, start) {
+            continue;
+        }
+        for pattern in patterns {
+            if !matches_ascii_insensitive(bytes, start, pattern) {
+                continue;
+            }
+            let end = start + pattern.len();
+            if !has_right_boundary(bytes, end) {
+                continue;
+            }
+            // first_date: next weekday (Mon–Fri) from reference_date
+            let mut first = reference_date
+                .checked_add(Span::new().days(1))
+                .expect("day advance overflow");
+            loop {
+                match first.weekday() {
+                    Weekday::Saturday => {
+                        first = first.checked_add(Span::new().days(2)).unwrap();
+                    }
+                    Weekday::Sunday => {
+                        first = first.checked_add(Span::new().days(1)).unwrap();
+                    }
+                    _ => break,
+                }
+            }
+            let rule = RecurrenceRule {
+                frequency: RecurrenceFrequency::Daily,
+                interval: 1,
+                weekday: None,
+                day_of_month: None,
+                month: None,
+                weekdays_only: Some(true),
+            };
+            choose_best_recurrence(
+                best,
+                DateParseResult::Recurring {
+                    first_date: ParsedDate {
+                        datetime: at_midnight(first),
+                        span: (start, end),
+                    },
+                    rule,
+                },
+            );
         }
     }
 }
@@ -1154,6 +1217,7 @@ fn scan_every_n_unit(
                         weekday: None,
                         day_of_month: None,
                         month: None,
+                        weekdays_only: None,
                     };
                     choose_best_recurrence(
                         best,
@@ -1240,6 +1304,7 @@ fn scan_every_month_day(
                         weekday: None,
                         day_of_month: Some(day),
                         month: None,
+                        weekdays_only: None,
                     };
                     choose_best_recurrence(
                         best,
@@ -1331,6 +1396,7 @@ fn scan_ordinal_of_every_month(
                             weekday: None,
                             day_of_month: Some(day),
                             month: None,
+                            weekdays_only: None,
                         },
                     },
                 );
@@ -1430,6 +1496,7 @@ fn scan_every_month_date(
                             weekday: None,
                             day_of_month: Some(day),
                             month: Some(month),
+                            weekdays_only: None,
                         },
                     },
                 );
@@ -1510,6 +1577,7 @@ fn scan_single_word_frequency(
                     weekday: None,
                     day_of_month,
                     month: None,
+                    weekdays_only: None,
                 };
                 choose_best_recurrence(
                     best,
@@ -2612,6 +2680,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(1),
             month: None,
+            weekdays_only: None,
         };
         assert_eq!(rule.display(), "quarterly");
     }
@@ -2780,6 +2849,7 @@ mod tests {
             weekday: None,
             day_of_month: Some(15),
             month: Some(3),
+            weekdays_only: None,
         };
         assert_eq!(rule.display(), "every March 15");
     }
@@ -2838,5 +2908,135 @@ mod tests {
             2,
             datetime(2026, 4, 6, 0, 0),
         );
+    }
+
+    // --- every weekday / business day ---
+
+    #[test]
+    fn recurrence_every_weekday() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is Wednesday → next weekday = Thu Apr 2
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_business_day() {
+        let parser = BasicDateParser::default();
+        // Same as "every weekday"
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every business day", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_from_friday_skips_weekend() {
+        let parser = BasicDateParser::default();
+        // 2026-04-03 is Friday → next weekday = Mon Apr 6
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday", date(2026, 4, 3)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 6, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_from_saturday_skips_weekend() {
+        let parser = BasicDateParser::default();
+        // 2026-04-04 is Saturday → next weekday = Mon Apr 6
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday", date(2026, 4, 4)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 6, 0, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_with_time() {
+        let parser = BasicDateParser::default();
+        // 2026-04-01 is Wednesday → next weekday = Thu Apr 2 at 9am
+        let rule = assert_recurring(
+            parser.parse_with_recurrence("every weekday at 9am", date(2026, 4, 1)),
+            RecurrenceFrequency::Daily,
+            1,
+            datetime(2026, 4, 2, 9, 0),
+        );
+        assert_eq!(rule.weekdays_only, Some(true));
+    }
+
+    #[test]
+    fn recurrence_every_weekday_display() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        assert_eq!(rule.display(), "every weekday");
+    }
+
+    #[test]
+    fn recurrence_weekday_next_date_friday_to_monday() {
+        // Friday → next weekday should be Monday
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        // 2026-04-03 is Friday
+        let anchor = datetime(2026, 4, 3, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, datetime(2026, 4, 6, 9, 0)); // Monday
+    }
+
+    #[test]
+    fn recurrence_weekday_next_date_thursday_to_friday() {
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        // 2026-04-02 is Thursday
+        let anchor = datetime(2026, 4, 2, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, datetime(2026, 4, 3, 9, 0)); // Friday
+    }
+
+    #[test]
+    fn recurrence_weekday_next_date_saturday_to_monday() {
+        // If somehow anchored on Saturday, next weekday should be Monday
+        let rule = RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            weekday: None,
+            day_of_month: None,
+            month: None,
+            weekdays_only: Some(true),
+        };
+        // 2026-04-04 is Saturday
+        let anchor = datetime(2026, 4, 4, 9, 0);
+        let next = rule.next_date(anchor);
+        assert_eq!(next, datetime(2026, 4, 6, 9, 0)); // Monday
     }
 }

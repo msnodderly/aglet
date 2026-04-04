@@ -7406,6 +7406,17 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
     );
 
     app.handle_category_manager_key(KeyCode::Tab, &agenda)
+        .expect("tab to actions");
+    assert_eq!(
+        app.category_manager_focus(),
+        Some(CategoryManagerFocus::Details)
+    );
+    assert_eq!(
+        app.category_manager_details_focus(),
+        Some(CategoryManagerDetailsFocus::Actions)
+    );
+
+    app.handle_category_manager_key(KeyCode::Tab, &agenda)
         .expect("tab to note");
     assert_eq!(
         app.category_manager_focus(),
