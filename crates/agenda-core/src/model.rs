@@ -175,13 +175,21 @@ impl RecurrenceRule {
                     None => "monthly".to_string(),
                 }
             }
+            RecurrenceFrequency::Monthly
+                if self.interval == 3 && self.day_of_month == Some(1) =>
+            {
+                "quarterly".to_string()
+            }
             RecurrenceFrequency::Monthly => {
                 match self.day_of_month {
                     Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
                     None => format!("every {} months", self.interval),
                 }
             }
-            RecurrenceFrequency::Yearly if self.interval == 1 => "yearly".to_string(),
+            RecurrenceFrequency::Yearly if self.interval == 1 => match (self.month, self.day_of_month) {
+                (Some(m), Some(d)) => format!("every {} {}", month_name(m), d),
+                _ => "yearly".to_string(),
+            },
             RecurrenceFrequency::Yearly => format!("every {} years", self.interval),
         }
     }
@@ -216,6 +224,24 @@ fn weekday_name(wd: jiff::civil::Weekday) -> &'static str {
         jiff::civil::Weekday::Friday => "Friday",
         jiff::civil::Weekday::Saturday => "Saturday",
         jiff::civil::Weekday::Sunday => "Sunday",
+    }
+}
+
+fn month_name(m: u8) -> &'static str {
+    match m {
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
+        _ => "???",
     }
 }
 
