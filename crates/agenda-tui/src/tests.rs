@@ -7711,7 +7711,7 @@ fn category_manager_condition_edit_cancel_discards_draft() {
         .expect("condition list open");
     assert!(!edit.picker_open, "cancel should return to condition list");
     assert!(
-        app.status.contains("Conditions: a:add"),
+        app.status.contains("Conditions (") && app.status.contains("a:add"),
         "status should return to condition list hints: {}",
         app.status
     );
@@ -18837,7 +18837,10 @@ fn horizontal_multiline_cards_wrap_titles_and_use_label_metadata() {
         .assign_item_manual(second_item.id, ready.id, None)
         .expect("assign second ready");
 
-    let mut app = App::default();
+    let mut app = App {
+        show_note_glyphs: true, // note glyphs default to off; enable for glyph test
+        ..Default::default()
+    };
     app.refresh(&store).expect("refresh");
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
@@ -19041,7 +19044,10 @@ fn horizontal_singleline_cards_preserve_glyphs() {
         .link_items_depends_on(item.id, blocker.id)
         .expect("link depends-on");
 
-    let mut app = App::default();
+    let mut app = App {
+        show_note_glyphs: true, // note glyphs default to off; enable for glyph test
+        ..Default::default()
+    };
     app.refresh(&store).expect("refresh");
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
