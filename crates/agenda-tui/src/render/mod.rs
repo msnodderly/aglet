@@ -3917,27 +3917,32 @@ impl App {
             Mode::InspectUnassign => "Select assignment".to_string(),
             Mode::InputPanel => {
                 if let Some(panel) = &self.input_panel {
-                    use input_panel::InputPanelFocus;
-                    format!(
-                        "{} (focus: {})",
-                        match panel.kind {
-                            input_panel::InputPanelKind::AddItem => "Add item",
-                            input_panel::InputPanelKind::EditItem => "Edit item",
-                            input_panel::InputPanelKind::NameInput => "Name input",
-                            input_panel::InputPanelKind::WhenDate => "When editor",
-                            input_panel::InputPanelKind::NumericValue => "Set value",
-                            input_panel::InputPanelKind::CategoryCreate => "Create category",
-                        },
-                        match panel.focus {
-                            InputPanelFocus::Text => "Text",
-                            InputPanelFocus::When => "When",
-                            InputPanelFocus::Note => "Note",
-                            InputPanelFocus::Categories => "Categories",
-                            InputPanelFocus::Actions => "Actions",
-                            InputPanelFocus::Suggestions => "Suggestions",
-                            InputPanelFocus::TypePicker => "Type",
-                        }
-                    )
+                    if panel.discard_confirm {
+                        // Show the confirm prompt as status text
+                        "Save changes? y:save  n:discard  Esc:keep editing".to_string()
+                    } else {
+                        use input_panel::InputPanelFocus;
+                        format!(
+                            "{} (focus: {})",
+                            match panel.kind {
+                                input_panel::InputPanelKind::AddItem => "Add item",
+                                input_panel::InputPanelKind::EditItem => "Edit item",
+                                input_panel::InputPanelKind::NameInput => "Name input",
+                                input_panel::InputPanelKind::WhenDate => "When editor",
+                                input_panel::InputPanelKind::NumericValue => "Set value",
+                                input_panel::InputPanelKind::CategoryCreate => "Create category",
+                            },
+                            match panel.focus {
+                                InputPanelFocus::Text => "Text",
+                                InputPanelFocus::When => "When",
+                                InputPanelFocus::Note => "Note",
+                                InputPanelFocus::Categories => "Categories",
+                                InputPanelFocus::Actions => "Actions",
+                                InputPanelFocus::Suggestions => "Suggestions",
+                                InputPanelFocus::TypePicker => "Type",
+                            }
+                        )
+                    }
                 } else {
                     self.status.clone()
                 }
