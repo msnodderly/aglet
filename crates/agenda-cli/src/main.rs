@@ -12,8 +12,9 @@ use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
-    ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource, Item, ItemId, Query, Section,
-    SummaryFn, View,
+    ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource, DatebookAnchor,
+    DatebookConfig, DatebookInterval, DatebookPeriod, Item, ItemId, Query, Section, SummaryFn,
+    View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
@@ -634,6 +635,35 @@ enum ViewCommand {
         #[arg(long)]
         clear: bool,
     },
+
+    /// Create a datebook (date-interval) view
+    #[command(name = "create-datebook")]
+    CreateDatebook {
+        /// New view name.
+        name: String,
+        /// Time window size.
+        #[arg(long, value_enum, default_value_t = CliDatebookPeriod::Week)]
+        period: CliDatebookPeriod,
+        /// Section granularity within the period.
+        #[arg(long, value_enum, default_value_t = CliDatebookInterval::Daily)]
+        interval: CliDatebookInterval,
+        /// Date anchor for the window start.
+        #[arg(long, value_enum, default_value_t = CliDatebookAnchor::StartOfWeek)]
+        anchor: CliDatebookAnchor,
+        /// Which date field to use for item placement.
+        #[arg(long, value_enum, default_value_t = DateSourceArg::When)]
+        date_source: DateSourceArg,
+    },
+
+    /// Shift a datebook view's browse window
+    #[command(name = "datebook-browse")]
+    DatebookBrowse {
+        /// View name (case-insensitive).
+        name: String,
+        /// Offset to apply: +N forward, -N backward, 0 reset to anchor.
+        #[arg(long, default_value_t = 1)]
+        offset: i32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -702,6 +732,71 @@ impl CliColumnKind {
         match self {
             Self::Standard => ColumnKind::Standard,
             Self::When => ColumnKind::When,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliDatebookPeriod {
+    Day,
+    Week,
+    Month,
+    Quarter,
+    Year,
+}
+
+impl CliDatebookPeriod {
+    fn into_model(self) -> DatebookPeriod {
+        match self {
+            Self::Day => DatebookPeriod::Day,
+            Self::Week => DatebookPeriod::Week,
+            Self::Month => DatebookPeriod::Month,
+            Self::Quarter => DatebookPeriod::Quarter,
+            Self::Year => DatebookPeriod::Year,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliDatebookInterval {
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+impl CliDatebookInterval {
+    fn into_model(self) -> DatebookInterval {
+        match self {
+            Self::Hourly => DatebookInterval::Hourly,
+            Self::Daily => DatebookInterval::Daily,
+            Self::Weekly => DatebookInterval::Weekly,
+            Self::Monthly => DatebookInterval::Monthly,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliDatebookAnchor {
+    Today,
+    #[value(name = "start-of-week")]
+    StartOfWeek,
+    #[value(name = "start-of-month")]
+    StartOfMonth,
+    #[value(name = "start-of-quarter")]
+    StartOfQuarter,
+    #[value(name = "start-of-year")]
+    StartOfYear,
+}
+
+impl CliDatebookAnchor {
+    fn into_model(self) -> DatebookAnchor {
+        match self {
+            Self::Today => DatebookAnchor::Today,
+            Self::StartOfWeek => DatebookAnchor::StartOfWeek,
+            Self::StartOfMonth => DatebookAnchor::StartOfMonth,
+            Self::StartOfQuarter => DatebookAnchor::StartOfQuarter,
+            Self::StartOfYear => DatebookAnchor::StartOfYear,
         }
     }
 }
@@ -3203,6 +3298,55 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             };
             store.update_view(&view).map_err(|e| e.to_string())?;
             println!("updated remove-from-view categories for view {}", view.name);
+            Ok(())
+        }
+
+        ViewCommand::CreateDatebook {
+            name,
+            period,
+            interval,
+            anchor,
+            date_source,
+        } => {
+            let config = DatebookConfig {
+                period: period.into_model(),
+                interval: interval.into_model(),
+                anchor: anchor.into_model(),
+                date_source: date_source.into_model(),
+                browse_offset: 0,
+            };
+            if !config.is_valid() {
+                return Err(format!(
+                    "invalid datebook config: {} interval is too coarse for {} period",
+                    config.interval.label(),
+                    config.period.label(),
+                ));
+            }
+            let mut view = View::new(name);
+            view.datebook_config = Some(config);
+            store.create_view(&view).map_err(|e| e.to_string())?;
+            println!("created datebook view \"{}\"", view.name);
+            Ok(())
+        }
+
+        ViewCommand::DatebookBrowse { name, offset } => {
+            let mut view = view_by_name(store, &name)?;
+            ensure_mutable_view(&view)?;
+            if view.datebook_config.is_none() {
+                return Err(format!("\"{}\" is not a datebook view", view.name));
+            }
+            let config = view.datebook_config.as_mut().unwrap();
+            if offset == 0 {
+                config.browse_offset = 0;
+            } else {
+                config.browse_offset += offset;
+            }
+            let new_offset = config.browse_offset;
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!(
+                "browse offset for \"{}\" set to {}",
+                view.name, new_offset
+            );
             Ok(())
         }
     }
