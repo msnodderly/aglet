@@ -34,15 +34,16 @@ impl App {
         })
     }
 
-    pub(crate) fn clear_expired_transient_status(&mut self) {
-        if self
+    pub(crate) fn clear_expired_transient_status(&mut self) -> bool {
+        let expired = self
             .transient
             .status
             .as_ref()
-            .is_some_and(|transient| Instant::now() >= transient.expires_at)
-        {
+            .is_some_and(|transient| Instant::now() >= transient.expires_at);
+        if expired {
             self.transient.status = None;
         }
+        expired
     }
 
     pub(crate) fn clear_transient_status_on_key(&mut self, _key: KeyEvent) {
@@ -191,13 +192,14 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn maybe_run_auto_refresh(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    pub(crate) fn maybe_run_auto_refresh(&mut self, agenda: &Agenda<'_>) -> TuiResult<bool> {
         if self.should_auto_refresh_now() {
             self.maybe_run_temporal_reevaluation(agenda)?;
             self.refresh(agenda.store())?;
             self.auto_refresh_last_tick = Instant::now();
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     pub(crate) fn effective_section_flow(&self) -> SectionFlow {
@@ -245,43 +247,55 @@ impl App {
         self.load_show_note_glyphs(agenda.store())?;
         self.auto_refresh_last_tick = Instant::now();
         self.mark_temporal_refresh_now();
+        let mut needs_redraw = true;
 
         loop {
-            self.clear_expired_transient_status();
-            self.process_classification_results(agenda)?;
-            terminal.draw(|frame| self.draw(frame))?;
+            needs_redraw |= self.clear_expired_transient_status();
+            needs_redraw |= self.process_classification_results(agenda)?;
+            if needs_redraw {
+                terminal.draw(|frame| self.draw(frame))?;
+                needs_redraw = false;
+            }
 
             if !event::poll(std::time::Duration::from_millis(200))? {
-                self.maybe_run_auto_refresh(agenda)?;
+                needs_redraw |= self.maybe_run_auto_refresh(agenda)?;
                 continue;
             }
 
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-
-            let should_quit = match self.handle_key_event(key, agenda) {
-                Ok(value) => value,
-                Err(err) => {
-                    self.mode = Mode::Normal;
-                    self.clear_input();
-                    self.status = format!("Error: {err}");
-                    false
+            match event::read()? {
+                Event::Resize(_, _) => {
+                    needs_redraw = true;
+                    continue;
                 }
+                Event::Key(key) => {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    let should_quit = match self.handle_key_event(key, agenda) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.mode = Mode::Normal;
+                            self.clear_input();
+                            self.status = format!("Error: {err}");
+                            false
+                        }
+                    };
+                    needs_redraw = true;
+                    if should_quit {
+                        let _ = self.persist_last_view_name(agenda.store());
+                        break;
+                    }
+
+                    if let Some(target) = self.transient.pending_external_edit.take() {
+                        self.run_external_editor(terminal, target)?;
+                        needs_redraw = true;
+                    }
+
+                    needs_redraw |= self.maybe_run_auto_refresh(agenda)?;
+                }
+                _ => continue,
             };
-            if should_quit {
-                let _ = self.persist_last_view_name(agenda.store());
-                break;
-            }
-
-            if let Some(target) = self.transient.pending_external_edit.take() {
-                self.run_external_editor(terminal, target)?;
-            }
-
-            self.maybe_run_auto_refresh(agenda)?;
         }
 
         Ok(())
@@ -465,9 +479,14 @@ impl App {
     }
 
     /// Drain completed background classification results and apply them.
-    pub(crate) fn process_classification_results(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+    pub(crate) fn process_classification_results(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
         let mut any_applied = false;
+        let mut state_changed = false;
         while let Some(result) = self.classification.worker.try_recv() {
+            state_changed = true;
             self.classification
                 .in_flight_classifications
                 .remove(&result.item_id);
@@ -547,7 +566,7 @@ impl App {
         if any_applied {
             self.refresh(agenda.store())?;
         }
-        Ok(())
+        Ok(state_changed)
     }
 
     /// Submit background classification for a single item.

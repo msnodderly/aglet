@@ -750,6 +750,24 @@ Practical implications:
   no invalid state).
 - Keep coverage for migration/table-creation plus reopen roundtrip persistence.
 
+## TUI Run Loop Must Not Redraw While Idle (Surprising)
+
+`App::run` used to call `terminal.draw(...)` unconditionally before every
+`event::poll(Duration::from_millis(200))`, which meant the main board view
+re-ran Ratatui table/layout work about 5 times per second even when no input
+or data changed.
+
+Practical implications:
+- Treat redraw as state-driven, not timer-driven: only draw after actual UI
+  changes (key handling, resize, auto-refresh, background classification
+  completion, transient-status expiry, etc.).
+- Idle wakeups for polling/background work are fine; the expensive part was the
+  unconditional board redraw path (`render_board_columns` /
+  Ratatui table layout).
+- If idle CPU spikes in Activity Monitor or `sample`, inspect
+  `App::run` first for accidental unconditional draw regressions before
+  optimizing render helpers.
+
 ## Normal Mode Enter On Empty Slot Opens Add Item (Behavior)
 
 In `Mode::Normal`, `Enter` on the item column has dual behavior:
