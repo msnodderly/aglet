@@ -49,8 +49,10 @@ pub(crate) enum InputPanelAction {
     ToggleCategory,
     /// Move the category cursor by a delta.
     MoveCategoryCursor(i32),
-    /// Save / submit the panel contents (also triggered by Esc for auto-save).
+    /// Save / submit the panel contents.
     Save,
+    /// Cancel / close the panel without saving.
+    Cancel,
     /// Toggle the value kind between Tag/Numeric (CategoryCreate).
     ToggleType,
     /// A text key was consumed internally.
@@ -102,6 +104,8 @@ pub(crate) struct InputPanel {
     pub(crate) details_scroll: usize,
     /// Whether the EditItem details popup is currently open.
     pub(crate) details_popup_open: bool,
+    /// Whether a discard-confirm prompt is active (AddItem/EditItem only).
+    pub(crate) discard_confirm: bool,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -136,6 +140,7 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            discard_confirm: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: on_insert_assign.clone(),
@@ -178,6 +183,7 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            discard_confirm: false,
             original_text,
             original_note,
             original_categories,
@@ -208,6 +214,7 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            discard_confirm: false,
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -238,6 +245,7 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            discard_confirm: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -268,6 +276,7 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            discard_confirm: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -298,6 +307,7 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            discard_confirm: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -379,8 +389,8 @@ impl InputPanel {
                 self.cycle_focus_backward();
                 Some(InputPanelAction::FocusPrev)
             }
-            // Esc auto-saves everywhere (caller handles empty-text as cancel)
-            KeyCode::Esc => Some(InputPanelAction::Save),
+            // Esc cancels (caller decides whether to prompt dirty-confirm)
+            KeyCode::Esc => Some(InputPanelAction::Cancel),
             // Capital S saves only when not editing text fields or numeric value buffers
             KeyCode::Char('S')
                 if !(matches!(
@@ -612,10 +622,10 @@ mod tests {
         assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
-    // --- Esc auto-saves from any focus ---
+    // --- Esc cancels from any focus ---
 
     #[test]
-    fn esc_returns_save_from_any_focus() {
+    fn esc_returns_cancel_from_any_focus() {
         let mut p = add_panel();
         for focus in [
             InputPanelFocus::Text,
@@ -625,8 +635,8 @@ mod tests {
             p.focus = focus;
             assert_eq!(
                 p.handle_key(KeyCode::Esc, false),
-                InputPanelAction::Save,
-                "expected Save at focus {:?}",
+                InputPanelAction::Cancel,
+                "expected Cancel at focus {:?}",
                 focus
             );
         }

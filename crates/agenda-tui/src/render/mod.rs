@@ -4238,7 +4238,18 @@ impl App {
             }
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
             Mode::InputPanel => {
+                // Discard-confirm prompt takes priority
                 if self
+                    .input_panel
+                    .as_ref()
+                    .is_some_and(|p| p.discard_confirm)
+                {
+                    vec![
+                        ("y", "save & close"),
+                        ("n", "discard"),
+                        ("Esc", "keep editing"),
+                    ]
+                } else if self
                     .input_panel
                     .as_ref()
                     .map(|p| {
@@ -4247,7 +4258,7 @@ impl App {
                     })
                     .unwrap_or(false)
                 {
-                    vec![("Enter", "save"), ("Esc", "close")]
+                    vec![("Enter", "save"), ("Esc", "cancel")]
                 } else if self.input_panel.as_ref().is_some_and(|p| {
                     p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
                 }) {
@@ -4266,10 +4277,16 @@ impl App {
                         ("Tab", "next"),
                         ("/", "filter"),
                         ("Space", "toggle"),
-                        ("Esc", "close"),
+                        ("S", "save"),
+                        ("Esc", "cancel"),
                     ]
                 } else {
-                    vec![("Tab", "next"), ("Ctrl-G", "$EDITOR"), ("Esc", "close")]
+                    vec![
+                        ("Tab", "next"),
+                        ("S", "save"),
+                        ("Ctrl-G", "$EDITOR"),
+                        ("Esc", "cancel"),
+                    ]
                 }
             }
             Mode::Normal => {

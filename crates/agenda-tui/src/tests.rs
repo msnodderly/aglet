@@ -4178,9 +4178,12 @@ fn input_panel_edit_enter_in_note_inserts_newline() {
         app.handle_input_panel_key(KeyCode::Char(c), &agenda)
             .expect("type note line2");
     }
-    // Esc auto-saves
-    app.handle_input_panel_key(KeyCode::Esc, &agenda)
-        .expect("auto-save");
+    // Tab to Categories (non-text focus) so S can save
+    app.handle_input_panel_key(KeyCode::Tab, &agenda)
+        .expect("focus categories");
+    // Capital S saves from non-text focus
+    app.handle_input_panel_key(KeyCode::Char('S'), &agenda)
+        .expect("save");
     assert_eq!(app.mode, Mode::Normal);
 
     let saved = store.get_item(item.id).expect("load item");
@@ -11268,13 +11271,13 @@ fn category_create_panel_esc_with_empty_name_cancels() {
 }
 
 #[test]
-fn category_create_panel_esc_with_name_auto_saves() {
+fn category_create_panel_esc_cancels_without_saving() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after epoch")
         .as_nanos();
     let db_path = std::env::temp_dir().join(format!(
-        "agenda-tui-category-create-panel-esc-save-{nanos}.ag"
+        "agenda-tui-category-create-panel-esc-cancel-{nanos}.ag"
     ));
     let store = Store::open(&db_path).expect("open temp db");
     let classifier = SubstringClassifier;
@@ -11292,14 +11295,17 @@ fn category_create_panel_esc_with_name_auto_saves() {
             .expect("type create name");
     }
 
-    // Esc with non-empty text auto-saves
+    // Esc cancels (single-field editor = immediate cancel)
     app.handle_input_panel_key(KeyCode::Esc, &agenda)
-        .expect("auto-save create");
+        .expect("cancel create");
 
     assert_eq!(app.mode, Mode::CategoryManager);
     assert!(app.input_panel.is_none());
-    // Category should have been created via auto-save
-    assert!(app.categories.iter().any(|c| c.name == "Score"));
+    // Category should NOT have been created
+    assert!(
+        !app.categories.iter().any(|c| c.name == "Score"),
+        "Esc should cancel without saving the category"
+    );
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);
@@ -20309,8 +20315,18 @@ fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
         app.input_panel.as_ref().unwrap().text.text(),
         "Test item updated"
     );
+    // Esc triggers discard-confirm since panel is dirty
     app.handle_key(KeyCode::Esc, &agenda)
-        .expect("save edited text");
+        .expect("trigger discard confirm");
+    assert!(
+        app.input_panel
+            .as_ref()
+            .is_some_and(|p| p.discard_confirm),
+        "dirty edit panel should show discard confirm"
+    );
+    // y saves
+    app.handle_key(KeyCode::Char('y'), &agenda)
+        .expect("confirm save");
 
     let saved = store.get_item(item_id).expect("load item");
     assert_eq!(saved.text, "Test item updated");

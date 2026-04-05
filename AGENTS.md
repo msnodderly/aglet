@@ -648,21 +648,25 @@ Practical implications:
 
 ## Esc Exit Semantics (Updated)
 
-`Esc` behavior is now split by editing surface:
+`Esc` now consistently means **cancel** across all editing surfaces:
 
-- Dirty `Mode::InputPanel` `EditItem` opens a discard-confirm prompt
-  (`y` discard, `n`/`Esc` keep editing)
-- `Mode::InputPanel` `AddItem`/name/numeric/category-create panels still exit in
-  one step and discard changes immediately
-- `Mode::NoteEdit` and `Mode::ViewEdit` keep their existing behavior
+- `Mode::InputPanel` `AddItem`/`EditItem`: Esc cancels. If the panel is dirty,
+  a discard-confirm prompt appears (`y` save, `n` discard, `Esc` keep editing).
+  If clean, the panel closes immediately.
+- `Mode::InputPanel` single-field panels (`NameInput`, `WhenDate`,
+  `NumericValue`, `CategoryCreate`): Esc cancels immediately (no confirm).
+- `Mode::ViewEdit`: Esc cancels with dirty-confirm if changes exist.
+- `Mode::CategoryDirectEdit`: Esc cancels immediately.
 
 Practical implications:
-- Do not assume all InputPanel flows are one-step exit anymore; `EditItem` is
-  the exception.
-- Footer/status hints for dirty item-edit panels should advertise the
-  `y/n/Esc` discard-confirm prompt.
+- `Esc` never saves. Use `S` (capital) to save complex editors
+  (AddItem/EditItem/ViewEdit/CategoryDirectEdit) or `Enter` for single-field
+  panels and from the Text focus in AddItem/EditItem.
+- The discard-confirm prompt uses the same `y/n/Esc` pattern as ViewEdit.
+- Footer hints show `S:save  Esc:cancel` for complex editors and
+  `Enter:save  Esc:cancel` for single-field editors.
 - In InputPanel category-filter editing, `Esc` still closes filter editing
-  directly and keeps the typed filter text (it no longer does clear-then-exit).
+  directly and keeps the typed filter text.
 
 ## Board Table Column Spacing Budget (Surprising)
 

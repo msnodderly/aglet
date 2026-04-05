@@ -261,6 +261,52 @@ impl App {
         self.status = "Canceled".to_string();
     }
 
+    fn handle_input_panel_discard_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        match code {
+            KeyCode::Char('y') => {
+                // Save: delegate to existing save functions
+                let kind = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.kind)
+                    .unwrap_or(input_panel::InputPanelKind::AddItem);
+                match kind {
+                    input_panel::InputPanelKind::AddItem => {
+                        self.save_input_panel_add(agenda)?;
+                    }
+                    input_panel::InputPanelKind::EditItem => {
+                        self.save_input_panel_edit(agenda)?;
+                    }
+                    _ => {
+                        self.save_input_panel_name(agenda)?;
+                    }
+                }
+            }
+            KeyCode::Char('n') => {
+                // Discard: close without saving
+                let kind = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.kind)
+                    .unwrap_or(input_panel::InputPanelKind::AddItem);
+                self.cancel_input_panel_with_status(kind);
+            }
+            KeyCode::Esc => {
+                // Keep editing: clear confirm flag
+                if let Some(panel) = &mut self.input_panel {
+                    panel.discard_confirm = false;
+                }
+                self.status = "Resumed editing".to_string();
+            }
+            _ => {} // ignore other keys during confirm
+        }
+        Ok(false)
+    }
+
     pub(crate) fn category_column_picker_state(&self) -> Option<&CategoryColumnPickerState> {
         self.category_column_picker.as_ref()
     }
@@ -4387,6 +4433,15 @@ impl App {
             }
         }
 
+        // Handle discard-confirm prompt before normal key routing.
+        if self
+            .input_panel
+            .as_ref()
+            .is_some_and(|p| p.discard_confirm)
+        {
+            return self.handle_input_panel_discard_confirm_key(code, agenda);
+        }
+
         let current_row_is_assigned_numeric = self
             .input_panel
             .as_ref()
@@ -4439,6 +4494,40 @@ impl App {
                     }
                     input_panel::InputPanelKind::CategoryCreate => {
                         self.save_input_panel_category_create(agenda)?;
+                    }
+                }
+            }
+            InputPanelAction::Cancel => {
+                let kind = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.kind)
+                    .unwrap_or(input_panel::InputPanelKind::AddItem);
+                match kind {
+                    // Complex editors: dirty-confirm if changes exist
+                    input_panel::InputPanelKind::AddItem
+                    | input_panel::InputPanelKind::EditItem => {
+                        let is_dirty = self
+                            .input_panel
+                            .as_ref()
+                            .map(|p| p.is_dirty())
+                            .unwrap_or(false);
+                        if is_dirty {
+                            if let Some(panel) = &mut self.input_panel {
+                                panel.discard_confirm = true;
+                            }
+                            self.status =
+                                "Save changes? y:save  n:discard  Esc:keep editing".to_string();
+                        } else {
+                            self.cancel_input_panel_with_status(kind);
+                        }
+                    }
+                    // Simple single-field editors: cancel immediately
+                    input_panel::InputPanelKind::NameInput
+                    | input_panel::InputPanelKind::WhenDate
+                    | input_panel::InputPanelKind::NumericValue
+                    | input_panel::InputPanelKind::CategoryCreate => {
+                        self.cancel_input_panel_with_status(kind);
                     }
                 }
             }
