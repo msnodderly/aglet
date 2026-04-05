@@ -21,6 +21,7 @@ impl App {
     const AUTO_REFRESH_STATUS_TTL: Duration = Duration::from_millis(2_000);
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
     const SECTION_BORDER_MODE_SETTING_KEY: &'static str = "tui.section_border_mode";
+    const SHOW_NOTE_GLYPHS_SETTING_KEY: &'static str = "tui.show_note_glyphs";
     const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
 
     pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
@@ -135,6 +136,28 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn show_note_glyphs_label(&self) -> &'static str {
+        if self.show_note_glyphs {
+            "on"
+        } else {
+            "off"
+        }
+    }
+
+    pub(crate) fn load_show_note_glyphs(&mut self, store: &Store) -> TuiResult<()> {
+        let persisted = store.get_app_setting(Self::SHOW_NOTE_GLYPHS_SETTING_KEY)?;
+        self.show_note_glyphs = persisted.as_deref() == Some("on");
+        Ok(())
+    }
+
+    pub(crate) fn persist_show_note_glyphs(&self, store: &Store) -> TuiResult<()> {
+        store.set_app_setting(
+            Self::SHOW_NOTE_GLYPHS_SETTING_KEY,
+            if self.show_note_glyphs { "on" } else { "off" },
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn load_last_view_name(&mut self, store: &Store) -> TuiResult<()> {
         let persisted = store.get_app_setting(Self::LAST_VIEW_NAME_SETTING_KEY)?;
         if let Some(view_name) = persisted {
@@ -160,6 +183,7 @@ impl App {
         self.refresh(store)?;
         self.load_auto_refresh_interval(store)?;
         self.load_section_border_mode(store)?;
+        self.load_show_note_glyphs(store)?;
         self.settings.global_settings = Some(GlobalSettingsState::default());
         self.mode = Mode::GlobalSettings;
         self.status =
@@ -218,6 +242,7 @@ impl App {
         self.refresh(agenda.store())?; // re-resolve slots for the restored view
         self.load_auto_refresh_interval(agenda.store())?;
         self.load_section_border_mode(agenda.store())?;
+        self.load_show_note_glyphs(agenda.store())?;
         self.auto_refresh_last_tick = Instant::now();
         self.mark_temporal_refresh_now();
 

@@ -2511,7 +2511,7 @@ impl App {
                                 item.is_done,
                                 self.is_item_blocked(item.id),
                                 self.pending_suggestion_count_for_item(item.id) > 0,
-                                has_note_text(item.note.as_deref()),
+                                self.show_note_glyphs && has_note_text(item.note.as_deref()),
                             );
                             let item_cell_content =
                                 if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -2889,7 +2889,7 @@ impl App {
                                 item.is_done,
                                 self.is_item_blocked(item.id),
                                 self.pending_suggestion_count_for_item(item.id) > 0,
-                                has_note_text(item.note.as_deref()),
+                                self.show_note_glyphs && has_note_text(item.note.as_deref()),
                             );
                             let item_text = board_item_label(item);
                             let categories = item_assignment_labels(item, &category_display_names);
@@ -3104,7 +3104,7 @@ impl App {
                     item.is_done,
                     self.is_item_blocked(item.id),
                     self.pending_suggestion_count_for_item(item.id) > 0,
-                    has_note_text(item.note.as_deref()),
+                    self.show_note_glyphs && has_note_text(item.note.as_deref()),
                 );
                 if !glyphs.is_empty() {
                     meta_parts.push(glyphs.clone());
@@ -5559,6 +5559,12 @@ impl App {
                             self.section_border_mode_label()
                         )
                     }
+                    GlobalSettingsRow::NoteGlyphs => {
+                        format!(
+                            "Note glyphs         < {} >",
+                            self.show_note_glyphs_label()
+                        )
+                    }
                     GlobalSettingsRow::LiteralClassificationMode => {
                         format!(
                             "Literal classify    < {} >",
@@ -5841,7 +5847,7 @@ impl App {
                     let text = format!(
                         "{}{}{}",
                         "  ".repeat(row.depth),
-                        with_note_marker(row.name.clone(), row.has_note),
+                        with_note_marker(row.name.clone(), self.show_note_glyphs && row.has_note),
                         suffix
                     );
                     ListItem::new(Line::from(text))
@@ -6718,7 +6724,7 @@ impl App {
                 .filter_map(|idx| self.category_rows.get(*idx))
                 .map(|row| {
                     let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
-                    label = with_note_marker(label, row.has_note);
+                    label = with_note_marker(label, self.show_note_glyphs && row.has_note);
                     let mut badges: Vec<String> = Vec::new();
                     if row.is_reserved {
                         badges.push("reserved".to_string());

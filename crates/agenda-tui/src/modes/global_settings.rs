@@ -65,6 +65,16 @@ impl App {
         Ok(())
     }
 
+    fn toggle_global_settings_note_glyphs(
+        &mut self,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<()> {
+        self.show_note_glyphs = !self.show_note_glyphs;
+        self.persist_show_note_glyphs(agenda.store())?;
+        self.status = format!("Note glyphs: {}", self.show_note_glyphs_label());
+        Ok(())
+    }
+
     fn cycle_global_settings_literal_mode(
         &mut self,
         agenda: &Agenda<'_>,
@@ -251,6 +261,9 @@ impl App {
                     GlobalSettingsRow::SectionBorders => {
                         self.cycle_global_settings_section_borders(agenda, true)?;
                     }
+                    GlobalSettingsRow::NoteGlyphs => {
+                        self.toggle_global_settings_note_glyphs(agenda)?;
+                    }
                     GlobalSettingsRow::LiteralClassificationMode => {
                         self.cycle_global_settings_literal_mode(agenda, true)?;
                     }
@@ -278,6 +291,9 @@ impl App {
                 GlobalSettingsRow::SectionBorders => {
                     self.cycle_global_settings_section_borders(agenda, false)?;
                 }
+                GlobalSettingsRow::NoteGlyphs => {
+                    self.toggle_global_settings_note_glyphs(agenda)?;
+                }
                 GlobalSettingsRow::LiteralClassificationMode => {
                     self.cycle_global_settings_literal_mode(agenda, false)?;
                 }
@@ -303,6 +319,9 @@ impl App {
                 }
                 GlobalSettingsRow::SectionBorders => {
                     self.cycle_global_settings_section_borders(agenda, true)?;
+                }
+                GlobalSettingsRow::NoteGlyphs => {
+                    self.toggle_global_settings_note_glyphs(agenda)?;
                 }
                 GlobalSettingsRow::LiteralClassificationMode => {
                     self.cycle_global_settings_literal_mode(agenda, true)?;
