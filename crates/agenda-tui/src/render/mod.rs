@@ -1,8 +1,9 @@
 use crate::*;
 use agenda_core::date_rules::render_date_source;
+use agenda_core::model::ConditionMatchMode;
 use crate::modes::category::{
-    date_condition_draft_feedback, draft_match_label, draft_uses_range_fields,
-    draft_uses_value_field, draft_value_label, DateDraftMessageSeverity,
+    condition_match_mode_label, date_condition_draft_feedback, draft_match_label,
+    draft_uses_range_fields, draft_uses_value_field, draft_value_label, DateDraftMessageSeverity,
 };
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
@@ -17,6 +18,13 @@ const ALSO_MATCH_PLACEHOLDER_TEXT: &str = "One term or phrase per line...";
 const FOOTER_HEIGHT: u16 = 4;
 const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
 const CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC: u16 = 6;
+
+fn condition_match_mode_copy(mode: ConditionMatchMode) -> &'static str {
+    match mode {
+        ConditionMatchMode::Any => "ANY",
+        ConditionMatchMode::All => "ALL",
+    }
+}
 
 #[derive(Clone, Debug)]
 struct InlineBorderSegment {
@@ -6297,14 +6305,29 @@ impl App {
                 ])
                 .split(overlay_area);
 
+            let condition_mode = category
+                .map(|cat| cat.condition_match_mode)
+                .unwrap_or(ConditionMatchMode::Any);
             frame.render_widget(
                 Paragraph::new(vec![Line::from(Span::styled(
-                    "Items matching ANY rule get assigned:",
+                    format!(
+                        "Items matching {} {} get assigned:",
+                        condition_match_mode_copy(condition_mode),
+                        if condition_mode == ConditionMatchMode::Any {
+                            "rule"
+                        } else {
+                            "rules"
+                        }
+                    ),
                     Style::default().fg(MUTED_TEXT_COLOR),
                 ))])
                 .block(
                     Block::default()
-                        .title(format!(" Rules: {} ", category_name))
+                        .title(format!(
+                            " Rules: {} [{}] ",
+                            category_name,
+                            condition_match_mode_copy(condition_mode)
+                        ))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
                 )
@@ -6349,7 +6372,7 @@ impl App {
 
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
+                    "m:toggle any/all  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
                     Style::default().fg(MUTED_TEXT_COLOR),
                 ))),
                 chunks[2],
@@ -7238,7 +7261,16 @@ impl App {
                         })
                         .unwrap_or(0);
                     let conditions_summary = if conditions_count == 0 {
-                        "  (none — Enter to add)".to_string()
+                        format!(
+                            "  Mode: {}\n  (none — Enter to add)",
+                            condition_match_mode_label(
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == row.id)
+                                    .map(|c| c.condition_match_mode)
+                                    .unwrap_or(ConditionMatchMode::Any)
+                            )
+                        )
                     } else {
                         let category_names: std::collections::HashMap<CategoryId, &str> = self
                             .categories
@@ -7255,7 +7287,12 @@ impl App {
                             .iter()
                             .find(|c| c.id == row.id)
                             .map(|cat| {
-                                cat.conditions
+                                std::iter::once(format!(
+                                    "  Mode: {}",
+                                    condition_match_mode_label(cat.condition_match_mode)
+                                ))
+                                .chain(
+                                    cat.conditions
                                     .iter()
                                     .filter_map(|cond| match cond {
                                         Condition::Profile { criteria } => Some(format!(
@@ -7272,20 +7309,39 @@ impl App {
                                         )),
                                         _ => None,
                                     })
+                                )
                                     .collect::<Vec<_>>()
                                     .join("\n")
                             })
                             .unwrap_or_default()
                     };
                     let conditions_title = if conditions_count == 0 {
-                        "Conditions"
+                        format!(
+                            "Conditions [{}]",
+                            condition_match_mode_label(
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == row.id)
+                                    .map(|c| c.condition_match_mode)
+                                    .unwrap_or(ConditionMatchMode::Any)
+                            )
+                        )
                     } else {
-                        "Conditions (Enter to edit)"
+                        format!(
+                            "Conditions [{}] (Enter to edit)",
+                            condition_match_mode_label(
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == row.id)
+                                    .map(|c| c.condition_match_mode)
+                                    .unwrap_or(ConditionMatchMode::Any)
+                            )
+                        )
                     };
                     let conditions_title_display = if conditions_focused {
                         format!("> {conditions_title}")
                     } else {
-                        conditions_title.to_string()
+                        conditions_title
                     };
                     frame.render_widget(
                         Paragraph::new(conditions_summary)

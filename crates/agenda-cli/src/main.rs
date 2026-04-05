@@ -12,7 +12,7 @@ use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
-    CriterionMode, DateCompareOp, DateMatcher, DateSource, Item, ItemId, Query, Section,
+    ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource, Item, ItemId, Query, Section,
     SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
@@ -463,6 +463,14 @@ enum CategoryCommand {
         through: Option<String>,
     },
 
+    /// Set how a category combines its explicit conditions
+    SetConditionMode {
+        /// Category name (case-insensitive).
+        name: String,
+        /// Whether explicit conditions are combined with ANY or ALL semantics.
+        mode: ConditionMatchModeArg,
+    },
+
     /// Remove a profile condition from a category by index (1-based)
     RemoveCondition {
         /// Category name (case-insensitive).
@@ -641,6 +649,21 @@ impl DateSourceArg {
             Self::When => DateSource::When,
             Self::Entry => DateSource::Entry,
             Self::Done => DateSource::Done,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum ConditionMatchModeArg {
+    Any,
+    All,
+}
+
+impl ConditionMatchModeArg {
+    fn into_model(self) -> ConditionMatchMode {
+        match self {
+            Self::Any => ConditionMatchMode::Any,
+            Self::All => ConditionMatchMode::All,
         }
     }
 }
@@ -2164,6 +2187,13 @@ fn cmd_category(
             }
             println!("created_at:      {}", category.created_at);
             println!("modified_at:     {}", category.modified_at);
+            println!(
+                "condition_mode:  {}",
+                match category.condition_match_mode {
+                    ConditionMatchMode::Any => "any",
+                    ConditionMatchMode::All => "all",
+                }
+            );
             Ok(())
         }
         CategoryCommand::Create {
@@ -2571,6 +2601,26 @@ fn cmd_category(
                 condition_index,
                 name,
                 render_date_condition(source.into_model(), &matcher),
+                result.processed_items,
+                result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::SetConditionMode { name, mode } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            category.condition_match_mode = mode.into_model();
+            let result = agenda
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+            println!(
+                "set condition mode on {} to {} (processed_items={}, affected_items={})",
+                name,
+                match category.condition_match_mode {
+                    ConditionMatchMode::Any => "any",
+                    ConditionMatchMode::All => "all",
+                },
                 result.processed_items,
                 result.affected_items
             );
@@ -4653,11 +4703,12 @@ mod tests {
         section_summary_entries, section_summary_line, unknown_hashtag_feedback_line, view_by_name,
         view_category_alias_rows, write_output_allow_broken_pipe, write_stdout_allow_broken_pipe,
         CategoryCommand, Cli, CliColumnKind, CliSortDirection, CliSortField, CliSortKey,
-        CliSummaryFn, Command, DateSourceArg, ImportCommand, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand,
-        ViewColumnCommand, ViewCommand, ViewSectionCommand,
+        CliSummaryFn, Command, ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand,
+        ListFilters, NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand,
+        ViewAliasCommand, ViewColumnCommand, ViewCommand, ViewSectionCommand,
     };
     use agenda_core::agenda::Agenda;
+    use agenda_core::model::ConditionMatchMode;
     use agenda_core::matcher::SubstringClassifier;
     use agenda_core::model::{
         Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode,
@@ -4947,6 +4998,22 @@ mod tests {
             Some(Command::Ready { sort, format }) => {
                 assert_eq!(sort, vec!["item".to_string()]);
                 assert_eq!(format, OutputFormatArg::Json);
+            }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_category_set_condition_mode() {
+        let cli = Cli::try_parse_from(["agenda", "category", "set-condition-mode", "Budget", "all"])
+            .expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Category {
+                command: CategoryCommand::SetConditionMode { name, mode },
+            }) => {
+                assert_eq!(name, "Budget");
+                assert_eq!(mode, ConditionMatchModeArg::All);
             }
             other => panic!("unexpected parse result: {other:?}"),
         }
@@ -6235,6 +6302,29 @@ mod tests {
             }
             other => panic!("expected Date condition, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn cmd_category_set_condition_mode_updates_category() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let budget = Category::new("Moto Budget 2025".to_string());
+        store.create_category(&budget).expect("create budget");
+
+        cmd_category(
+            &agenda,
+            &store,
+            CategoryCommand::SetConditionMode {
+                name: "Moto Budget 2025".to_string(),
+                mode: ConditionMatchModeArg::All,
+            },
+        )
+        .expect("set condition mode");
+
+        let updated = store.get_category(budget.id).expect("load");
+        assert_eq!(updated.condition_match_mode, ConditionMatchMode::All);
     }
 
     #[test]

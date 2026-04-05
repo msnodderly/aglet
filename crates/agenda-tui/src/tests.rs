@@ -23,8 +23,9 @@ use agenda_core::engine::ProcessItemResult;
 use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
-    CategoryId, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, Item, ItemId,
-    NumericFormat, Query, Section, SectionFlow, SummaryFn, TextMatchSource, View, WhenBucket,
+    CategoryId, CategoryValueKind, Column, ColumnKind, Condition, ConditionMatchMode,
+    CriterionMode, Item, ItemId, NumericFormat, Query, Section, SectionFlow, SummaryFn,
+    TextMatchSource, View, WhenBucket,
 };
 use agenda_core::store::Store;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -8238,6 +8239,41 @@ fn category_manager_date_condition_render_shows_typing_and_live_feedback() {
     assert!(
         rendered.contains("Parsed: 1990-11-12"),
         "date editor should show live normalized parse feedback: {rendered}"
+    );
+}
+
+#[test]
+fn category_manager_condition_list_can_toggle_any_all_mode() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Moto Budget 2025".to_string());
+    store.create_category(&category).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
+    app.handle_category_manager_key(KeyCode::Enter, &agenda)
+        .expect("open condition list");
+
+    app.handle_category_manager_key(KeyCode::Char('m'), &agenda)
+        .expect("toggle condition mode");
+
+    let saved = store.get_category(category.id).expect("reload category");
+    assert_eq!(saved.condition_match_mode, ConditionMatchMode::All);
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Items matching ALL rules get assigned:"),
+        "overlay should show ALL mode: {rendered}"
     );
 }
 

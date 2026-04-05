@@ -15,13 +15,13 @@ use crate::classification::{
 use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category, CategoryId,
-    CategoryValueKind, Condition, DeletionLogEntry, Item, ItemId, ItemLink, ItemLinkKind,
-    NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
+    CategoryValueKind, Condition, ConditionMatchMode, DeletionLogEntry, Item, ItemId, ItemLink,
+    ItemLinkKind, NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
     RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 16;
+const SCHEMA_VERSION: i32 = 17;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS categories (
     note                   TEXT,
     created_at             TEXT NOT NULL,
     modified_at            TEXT NOT NULL,
+    condition_match_mode   TEXT NOT NULL DEFAULT 'Any',
     sort_order             INTEGER NOT NULL DEFAULT 0,
     conditions_json        TEXT NOT NULL DEFAULT '[]',
     actions_json           TEXT NOT NULL DEFAULT '[]',
@@ -666,9 +667,9 @@ impl Store {
                 "INSERT INTO categories (
                     id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
                     enable_semantic_classification, match_category_name, also_match_json, note,
-                    created_at, modified_at, sort_order, conditions_json, actions_json,
-                    value_kind, numeric_format_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                    created_at, modified_at, condition_match_mode, sort_order, conditions_json,
+                    actions_json, value_kind, numeric_format_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
                     category.id.to_string(),
                     category.name,
@@ -682,6 +683,7 @@ impl Store {
                     category.note,
                     category.created_at.to_string(),
                     category.modified_at.to_string(),
+                    Self::condition_match_mode_to_db(category.condition_match_mode),
                     sort_order,
                     conditions_json,
                     actions_json,
@@ -698,8 +700,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
                     enable_semantic_classification, match_category_name, also_match_json, note,
-                    created_at, modified_at, conditions_json, actions_json, sort_order,
-                    value_kind, numeric_format_json
+                    created_at, modified_at, condition_match_mode, conditions_json, actions_json,
+                    sort_order, value_kind, numeric_format_json
              FROM categories WHERE id = ?1",
         )?;
         let (mut category, _) = stmt
@@ -784,11 +786,12 @@ impl Store {
                      also_match_json = ?8,
                      note = ?9,
                      modified_at = ?10,
-                     conditions_json = ?11,
-                     actions_json = ?12,
-                     value_kind = ?13,
-                     numeric_format_json = ?14
-                 WHERE id = ?15",
+                     condition_match_mode = ?11,
+                     conditions_json = ?12,
+                     actions_json = ?13,
+                     value_kind = ?14,
+                     numeric_format_json = ?15
+                 WHERE id = ?16",
                 params![
                     category.name,
                     category.parent.map(|id| id.to_string()),
@@ -800,6 +803,7 @@ impl Store {
                     also_match_json,
                     category.note,
                     modified_at.to_string(),
+                    Self::condition_match_mode_to_db(category.condition_match_mode),
                     conditions_json,
                     actions_json,
                     Self::category_value_kind_to_db(category.value_kind),
@@ -929,8 +933,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
                     enable_semantic_classification, match_category_name, also_match_json, note,
-                    created_at, modified_at, conditions_json, actions_json, sort_order,
-                    value_kind, numeric_format_json
+                    created_at, modified_at, condition_match_mode, conditions_json, actions_json,
+                    sort_order, value_kind, numeric_format_json
              FROM categories
              ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
         )?;
@@ -1657,11 +1661,12 @@ impl Store {
         let also_match_json: String = row.get(8)?;
         let created_str: String = row.get(10)?;
         let modified_str: String = row.get(11)?;
-        let conditions_json: String = row.get(12)?;
-        let actions_json: String = row.get(13)?;
-        let sort_order: i64 = row.get(14)?;
-        let value_kind_str: String = row.get(15)?;
-        let numeric_format_json: String = row.get(16)?;
+        let condition_match_mode_str: String = row.get(12)?;
+        let conditions_json: String = row.get(13)?;
+        let actions_json: String = row.get(14)?;
+        let sort_order: i64 = row.get(15)?;
+        let value_kind_str: String = row.get(16)?;
+        let numeric_format_json: String = row.get(17)?;
 
         // Corrupt or legacy category row: fall back to no conditions/actions
         // so the category still loads without its rules rather than failing.
@@ -1669,6 +1674,7 @@ impl Store {
         let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
         let also_match: Vec<String> = serde_json::from_str(&also_match_json).unwrap_or_default();
         let value_kind = Self::category_value_kind_from_db(&value_kind_str);
+        let condition_match_mode = Self::condition_match_mode_from_db(&condition_match_mode_str);
         let numeric_format: Option<NumericFormat> =
             serde_json::from_str(&numeric_format_json).unwrap_or(None);
 
@@ -1687,6 +1693,7 @@ impl Store {
                 note: row.get(9)?,
                 created_at: created_str.parse::<Timestamp>().unwrap_or_default(),
                 modified_at: modified_str.parse::<Timestamp>().unwrap_or_default(),
+                condition_match_mode,
                 conditions,
                 actions,
                 value_kind,
@@ -1948,6 +1955,21 @@ impl Store {
         }
     }
 
+    fn condition_match_mode_to_db(mode: ConditionMatchMode) -> &'static str {
+        match mode {
+            ConditionMatchMode::Any => "Any",
+            ConditionMatchMode::All => "All",
+        }
+    }
+
+    fn condition_match_mode_from_db(raw: &str) -> ConditionMatchMode {
+        if raw.eq_ignore_ascii_case("all") {
+            ConditionMatchMode::All
+        } else {
+            ConditionMatchMode::Any
+        }
+    }
+
     fn validate_parent_accepts_children(parent: &Category) -> Result<()> {
         if parent.value_kind == CategoryValueKind::Numeric {
             return Err(AgendaError::InvalidOperation {
@@ -2022,9 +2044,9 @@ impl Store {
             .execute(
                 "INSERT INTO categories (
                     id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string, note,
-                    created_at, modified_at, sort_order, conditions_json, actions_json,
-                    value_kind, numeric_format_json
-                 ) VALUES (?1, ?2, NULL, 0, 0, 0, NULL, ?3, ?3, ?4, '[]', '[]', 'Tag', 'null')",
+                    created_at, modified_at, condition_match_mode, sort_order, conditions_json,
+                    actions_json, value_kind, numeric_format_json
+                 ) VALUES (?1, ?2, NULL, 0, 0, 0, NULL, ?3, ?3, 'Any', ?4, '[]', '[]', 'Tag', 'null')",
                 params![id.to_string(), name, now, sort_order],
             )
             .map_err(|err| Self::map_category_write_error(err, name))?;
@@ -2171,6 +2193,11 @@ impl Store {
         if !self.column_exists("categories", "enable_semantic_classification")? {
             self.conn.execute_batch(
                 "ALTER TABLE categories ADD COLUMN enable_semantic_classification INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
+        if !self.column_exists("categories", "condition_match_mode")? {
+            self.conn.execute_batch(
+                "ALTER TABLE categories ADD COLUMN condition_match_mode TEXT NOT NULL DEFAULT 'Any';",
             )?;
         }
         if !self.column_exists("assignments", "explanation_json")? {
@@ -4494,9 +4521,9 @@ mod tests {
         conn.execute(
             "INSERT INTO categories
              (id, name, is_exclusive, is_actionable, enable_implicit_string,
-              conditions_json, actions_json, sort_order, created_at, modified_at,
+              condition_match_mode, conditions_json, actions_json, sort_order, created_at, modified_at,
               value_kind, numeric_format_json)
-             VALUES (?1, 'When', 0, 0, 0, '[]', '[]', 0,
+             VALUES (?1, 'When', 0, 0, 0, 'Any', '[]', '[]', 0,
                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
                      'Tag', 'null')",
             params![when_id.to_string()],

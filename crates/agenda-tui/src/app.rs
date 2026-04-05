@@ -1085,6 +1085,7 @@ impl App {
             Some(AssignmentExplanation::ImplicitMatch { .. }) => Some("auto-match"),
             Some(AssignmentExplanation::ProfileCondition { .. }) => Some("profile"),
             Some(AssignmentExplanation::DateCondition { .. }) => Some("date"),
+            Some(AssignmentExplanation::ConditionGroup { .. }) => Some("rules"),
             Some(AssignmentExplanation::Action { .. }) => Some("action"),
             Some(AssignmentExplanation::Subsumption { .. }) => Some("inherited"),
             Some(AssignmentExplanation::SuggestionAccepted { .. }) => Some("suggested"),

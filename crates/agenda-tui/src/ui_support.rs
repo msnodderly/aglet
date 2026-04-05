@@ -1246,6 +1246,7 @@ mod tests {
             note: None,
             created_at: Timestamp::now(),
             modified_at: Timestamp::now(),
+            condition_match_mode: agenda_core::model::ConditionMatchMode::Any,
             conditions: Vec::new(),
             actions: Vec::new(),
             value_kind: Default::default(),
