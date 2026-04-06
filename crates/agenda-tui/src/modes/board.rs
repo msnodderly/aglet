@@ -4917,9 +4917,13 @@ impl App {
         }
 
         // Insert into section context (applies on_insert_assign rules).
+        // Skip for datebook views: items land in sections by when_date, not
+        // category assignment, and datebook views have no manual sections.
         if let Some(view) = self.current_view().cloned() {
-            if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
-                self.insert_into_context(agenda, item.id, &view, &context)?;
+            if view.datebook_config.is_none() {
+                if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
+                    self.insert_into_context(agenda, item.id, &view, &context)?;
+                }
             }
         }
 

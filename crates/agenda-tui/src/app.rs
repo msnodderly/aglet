@@ -717,6 +717,15 @@ impl App {
         delta: i32,
         agenda: &Agenda<'_>,
     ) -> TuiResult<()> {
+        // Datebook sections are time-based; moving items between them would
+        // require changing the when_date, not category assignments.
+        if self
+            .current_view()
+            .is_some_and(|v| v.datebook_config.is_some())
+        {
+            self.status = "Cannot move items between datebook sections".to_string();
+            return Ok(());
+        }
         if self.slots.len() < 2 {
             return Ok(());
         }
