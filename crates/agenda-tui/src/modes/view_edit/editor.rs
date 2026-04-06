@@ -81,6 +81,7 @@ impl App {
             discard_confirm: false,
             section_delete_confirm: None,
             datebook_field_index: 0,
+            name_focused: false,
         });
         self.mode = Mode::ViewEdit;
         self.status = Self::view_edit_default_status();
@@ -112,6 +113,7 @@ impl App {
                 }
             };
             state.pane_focus = next;
+            state.name_focused = false;
 
             if state.pane_focus == ViewEditPaneFocus::Sections {
                 if state.region != ViewEditRegion::Sections {

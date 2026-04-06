@@ -7978,12 +7978,15 @@ impl App {
                 // ── Name ──
                 let editing_view_name =
                     matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
+                let name_row_focused = details_focused
+                    && Self::view_details_on_name_row(state)
+                    && !editing_view_name;
                 let view_name_text = if editing_view_name {
                     format!("◀ {}", state.inline_buf.text())
                 } else {
                     state.draft.name.clone()
                 };
-                let view_name_style = if editing_view_name {
+                let view_name_style = if editing_view_name || name_row_focused {
                     selected_line = Some(items.len());
                     sel_style
                 } else {
