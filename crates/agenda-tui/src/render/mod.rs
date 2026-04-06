@@ -8596,7 +8596,11 @@ impl App {
                 }
             };
 
-            if state.draft.sections.is_empty() {
+            if state.draft.datebook_config.is_some() {
+                items.push(ListItem::new(Line::from(
+                    "  (sections auto-generated from dates)",
+                )));
+            } else if state.draft.sections.is_empty() {
                 items.push(ListItem::new(Line::from("  (no sections — n:add)")));
             } else if visible_section_indices.is_empty() {
                 items.push(ListItem::new(Line::from("  (no matching sections)")));

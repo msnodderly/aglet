@@ -214,6 +214,7 @@ impl App {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
+        let is_datebook = state.draft.datebook_config.is_some();
         let len = state.draft.sections.len();
         let idx = state.section_index;
         let selecting_view_row = state.sections_view_row_selected;
@@ -263,6 +264,11 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('n') | KeyCode::Char('N') if is_datebook => {
+                self.status =
+                    "Datebook sections are auto-generated; edit Period/Interval in details"
+                        .to_string();
+            }
             KeyCode::Char('n') => {
                 let filter_active = self
                     .view_edit_state
@@ -299,12 +305,14 @@ impl App {
                     self.begin_view_edit_new_section_title_input(new_index);
                 }
             }
+            KeyCode::Char('x') if is_datebook => {}
             KeyCode::Char('x') => {
                 if selecting_view_row {
                     return Ok(true);
                 }
                 self.request_view_edit_section_delete(idx);
             }
+            KeyCode::Char('[') | KeyCode::Char('K') if is_datebook => {}
             KeyCode::Char('[') | KeyCode::Char('K') => {
                 if selecting_view_row {
                     return Ok(true);
@@ -318,6 +326,7 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char(']') | KeyCode::Char('J') if is_datebook => {}
             KeyCode::Char(']') | KeyCode::Char('J') => {
                 if selecting_view_row {
                     return Ok(true);

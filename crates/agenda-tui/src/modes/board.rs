@@ -2430,7 +2430,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =
-                    "View palette: Enter switch, n create, r rename, x delete, e edit view, Esc cancel"
+                    "View palette: Enter switch, n new, d datebook, r rename, x delete, e edit, Esc cancel"
                         .to_string();
             }
             KeyCode::F(10) => {
