@@ -13,6 +13,7 @@ impl App {
         state.region != ViewEditRegion::Sections
             || state.sections_view_row_selected
             || state.draft.sections.get(state.section_index).is_none()
+            || state.region == ViewEditRegion::Datebook
     }
 
     fn view_edit_section_filter_query(state: &ViewEditState) -> Option<String> {
@@ -134,12 +135,23 @@ impl App {
         }
     }
 
+    pub(crate) const DATEBOOK_FIELD_COUNT: usize = 4; // Period, Interval, Anchor, DateSource
+
     fn view_details_focus_index(state: &ViewEditState) -> usize {
         let criteria_rows = Self::view_details_criteria_row_count(state);
+        let datebook_rows = if state.draft.datebook_config.is_some() {
+            Self::DATEBOOK_FIELD_COUNT
+        } else {
+            0
+        };
         match state.region {
             ViewEditRegion::Criteria => state.criteria_index.min(criteria_rows.saturating_sub(1)),
+            ViewEditRegion::Datebook => {
+                criteria_rows + state.datebook_field_index.min(datebook_rows.saturating_sub(1))
+            }
             ViewEditRegion::Unmatched => {
                 criteria_rows
+                    + datebook_rows
                     + state
                         .unmatched_field_index
                         .min(Self::view_details_aux_field_count() - 1)
@@ -151,6 +163,11 @@ impl App {
     fn set_view_details_focus_index(&mut self, new_index: usize) {
         if let Some(state) = &mut self.view_edit_state {
             let criteria_rows = Self::view_details_criteria_row_count(state);
+            let datebook_rows = if state.draft.datebook_config.is_some() {
+                Self::DATEBOOK_FIELD_COUNT
+            } else {
+                0
+            };
             if new_index < criteria_rows {
                 state.region = ViewEditRegion::Criteria;
                 state.criteria_index = if state.draft.criteria.criteria.is_empty() {
@@ -158,10 +175,13 @@ impl App {
                 } else {
                     new_index.min(state.draft.criteria.criteria.len().saturating_sub(1))
                 };
+            } else if datebook_rows > 0 && new_index < criteria_rows + datebook_rows {
+                state.region = ViewEditRegion::Datebook;
+                state.datebook_field_index = new_index - criteria_rows;
             } else {
                 state.region = ViewEditRegion::Unmatched;
-                state.unmatched_field_index =
-                    (new_index - criteria_rows).min(Self::view_details_aux_field_count() - 1);
+                state.unmatched_field_index = (new_index - criteria_rows - datebook_rows)
+                    .min(Self::view_details_aux_field_count() - 1);
             }
         }
     }
@@ -172,6 +192,11 @@ impl App {
         };
         let idx = state.criteria_index;
         let criteria_rows = Self::view_details_criteria_row_count(state);
+        let datebook_rows = if state.draft.datebook_config.is_some() {
+            Self::DATEBOOK_FIELD_COUNT
+        } else {
+            0
+        };
 
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
@@ -180,7 +205,8 @@ impl App {
                     .as_ref()
                     .map(Self::view_details_focus_index)
                     .unwrap_or(0);
-                let max_index = criteria_rows + Self::view_details_aux_field_count() - 1;
+                let max_index =
+                    criteria_rows + datebook_rows + Self::view_details_aux_field_count() - 1;
                 self.set_view_details_focus_index((current + 1).min(max_index));
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -267,6 +293,60 @@ impl App {
                     state.dirty = true;
                     state.discard_confirm = false;
                 }
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn handle_view_edit_datebook_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+        let Some(state) = &self.view_edit_state else {
+            return Ok(false);
+        };
+        let datebook_rows = Self::DATEBOOK_FIELD_COUNT;
+        let criteria_rows = Self::view_details_criteria_row_count(state);
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_details_focus_index)
+                    .unwrap_or(0);
+                let max_index =
+                    criteria_rows + datebook_rows + Self::view_details_aux_field_count() - 1;
+                self.set_view_details_focus_index((current + 1).min(max_index));
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_details_focus_index)
+                    .unwrap_or(0);
+                self.set_view_details_focus_index(current.saturating_sub(1));
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if let Some(state) = &mut self.view_edit_state {
+                    if let Some(config) = &mut state.draft.datebook_config {
+                        match state.datebook_field_index {
+                            0 => config.period = config.period.next(),
+                            1 => config.interval = config.interval.next(),
+                            2 => config.anchor = config.anchor.next(),
+                            3 => config.date_source = config.date_source.next(),
+                            _ => {}
+                        }
+                        // Auto-fix invalid combos
+                        while !config.is_valid() {
+                            config.interval = config.interval.next();
+                        }
+                        state.dirty = true;
+                        state.discard_confirm = false;
+                    }
+                }
+                self.refresh_view_edit_preview();
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.begin_view_edit_name_input();
             }
             _ => {}
         }

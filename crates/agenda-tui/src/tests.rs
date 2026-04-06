@@ -4625,9 +4625,10 @@ fn view_picker_delete_uses_x_and_removes_selected_view() {
         .iter()
         .position(|view| view.name == "Keep Me")
         .expect("keep view should exist");
+    // 'd' now creates a new datebook view (opens ViewEdit), not delete
     app.handle_view_picker_key(KeyCode::Char('d'), &agenda)
-        .expect("d key should be ignored");
-    assert_eq!(app.mode, Mode::ViewPicker);
+        .expect("d key should open datebook creation");
+    assert_eq!(app.mode, Mode::ViewEdit);
     assert!(store
         .list_views()
         .expect("list views")

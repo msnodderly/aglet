@@ -21,6 +21,7 @@ pub(crate) enum ViewEditRegion {
     Criteria,
     Sections,
     Unmatched,
+    Datebook,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,4 +69,5 @@ pub(crate) struct ViewEditState {
     pub(crate) dirty: bool,
     pub(crate) discard_confirm: bool,
     pub(crate) section_delete_confirm: Option<usize>,
+    pub(crate) datebook_field_index: usize,
 }

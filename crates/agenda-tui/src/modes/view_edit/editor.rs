@@ -80,6 +80,7 @@ impl App {
             dirty: false,
             discard_confirm: false,
             section_delete_confirm: None,
+            datebook_field_index: 0,
         });
         self.mode = Mode::ViewEdit;
         self.status = Self::view_edit_default_status();
@@ -120,7 +121,13 @@ impl App {
                 && state.region == ViewEditRegion::Sections
             {
                 if state.sections_view_row_selected {
-                    state.region = ViewEditRegion::Criteria;
+                    // For datebook views, default to Datebook region
+                    if state.draft.datebook_config.is_some() {
+                        state.region = ViewEditRegion::Datebook;
+                        state.datebook_field_index = 0;
+                    } else {
+                        state.region = ViewEditRegion::Criteria;
+                    }
                 }
                 state.section_details_field_index = 0;
             }
@@ -351,6 +358,7 @@ impl App {
                         ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),
                         ViewEditRegion::Unmatched => self.handle_view_edit_unmatched_key(code),
                         ViewEditRegion::Sections => self.handle_view_edit_criteria_key(code),
+                        ViewEditRegion::Datebook => self.handle_view_edit_datebook_key(code),
                     }
                 } else {
                     self.handle_view_edit_section_details_key(code)

@@ -2263,8 +2263,10 @@ impl App {
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
             .filter(|label| !label.trim().is_empty());
+        let today_slot = self.datebook_today_slot_index();
+
         if self.is_horizontal_section_flow() {
-            self.render_horizontal_board_lanes(frame, &columns, &category_display_names);
+            self.render_horizontal_board_lanes(frame, &columns, &category_display_names, today_slot);
             return;
         }
         for (slot_index, slot) in self.slots.iter().enumerate() {
@@ -2296,8 +2298,11 @@ impl App {
             let slot_item_label = explicit_item_label
                 .clone()
                 .unwrap_or_else(|| slot.title.clone());
+            let is_today_slot = today_slot == Some(slot_index);
             let border_color = if is_selected_slot {
                 Color::Cyan
+            } else if is_today_slot {
+                Color::Yellow
             } else {
                 Color::Blue
             };
@@ -2994,6 +2999,7 @@ impl App {
         frame: &mut ratatui::Frame<'_>,
         columns: &[Rect],
         category_display_names: &HashMap<CategoryId, String>,
+        today_slot: Option<usize>,
     ) {
         let all_slots_empty = self.slots.iter().all(|slot| slot.items.is_empty());
         for (slot_index, slot) in self.slots.iter().enumerate() {
@@ -3011,8 +3017,11 @@ impl App {
                 .map(|needle| format!("  filter:{needle}"))
                 .unwrap_or_default();
             let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let is_today_slot = today_slot == Some(slot_index);
             let border_color = if is_selected_slot {
                 Color::Cyan
+            } else if is_today_slot {
+                Color::Yellow
             } else {
                 Color::Blue
             };
@@ -4083,6 +4092,7 @@ impl App {
                 vec![
                     ("Enter", "switch"),
                     ("N", "new"),
+                    ("d", "datebook"),
                     ("c", "clone"),
                     ("r", "rename"),
                     ("e", "edit"),
@@ -4338,6 +4348,16 @@ impl App {
                     if self.section_filters.iter().any(|f| f.is_some()) {
                         let insert_pos = hints.len().min(5);
                         hints.insert(insert_pos, ("Esc", "clear search"));
+                    }
+                    if self
+                        .current_view()
+                        .is_some_and(|v| v.datebook_config.is_some())
+                    {
+                        hints.extend_from_slice(&[
+                            ("}", "fwd"),
+                            ("{", "back"),
+                            ("0", "today"),
+                        ]);
                     }
                     hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
                 }
@@ -8024,6 +8044,44 @@ impl App {
                             Style::default()
                         };
                         items.push(ListItem::new(line).style(style));
+                    }
+                }
+
+                // ── Datebook config (only for datebook views) ──
+                if let Some(config) = &state.draft.datebook_config {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "  ─────────────────────────────────────────",
+                        separator_style,
+                    ))));
+                    items.push(ListItem::new(Line::from("  Datebook config:")));
+
+                    let datebook_fields: &[(&str, String)] = &[
+                        ("Period", config.period.label().to_string()),
+                        ("Interval", config.interval.label().to_string()),
+                        ("Anchor", config.anchor.label().to_string()),
+                        ("Date source", config.date_source.label().to_string()),
+                    ];
+                    for (fi, (label, value)) in datebook_fields.iter().enumerate() {
+                        let is_selected = details_focused
+                            && state.region == ViewEditRegion::Datebook
+                            && state.datebook_field_index == fi;
+                        if is_selected {
+                            selected_line = Some(items.len());
+                        }
+                        let style = if is_selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(
+                            ListItem::new(Line::from(format!(
+                                "    {:<width$}{}",
+                                label,
+                                value,
+                                width = pad - 2
+                            )))
+                            .style(style),
+                        );
                     }
                 }
 

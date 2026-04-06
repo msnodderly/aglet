@@ -2553,6 +2553,15 @@ impl App {
             KeyCode::Char('[') => {
                 self.move_selected_item_between_slots(-1, agenda)?;
             }
+            KeyCode::Char('}') => {
+                self.datebook_browse(1, agenda)?;
+            }
+            KeyCode::Char('{') => {
+                self.datebook_browse(-1, agenda)?;
+            }
+            KeyCode::Char('0') => {
+                self.datebook_browse(0, agenda)?;
+            }
             KeyCode::Char('=') => {
                 let item_ids: Vec<ItemId> = if self.has_selected_items() {
                     self.selected_item_ids_in_view_order()
@@ -3174,6 +3183,43 @@ impl App {
                 SectionFlow::Horizontal => "horizontal",
             }
         );
+        Ok(())
+    }
+
+    /// Browse a datebook view forward/backward by one period, or reset to today.
+    /// `delta`: +1 = forward, -1 = backward, 0 = reset to today.
+    fn datebook_browse(&mut self, delta: i32, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(mut view) = self.current_view().cloned() else {
+            return Ok(());
+        };
+        let Some(config) = &mut view.datebook_config else {
+            self.status = "Not a datebook view".to_string();
+            return Ok(());
+        };
+        if delta == 0 {
+            config.browse_offset = 0;
+        } else {
+            config.browse_offset += delta;
+        }
+        let offset = config.browse_offset;
+        let period_label = config.period.label().to_lowercase();
+        let view_name = view.name.clone();
+
+        agenda.store().update_view(&view)?;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+
+        self.status = if offset == 0 {
+            format!("Datebook: this {period_label}")
+        } else if offset == 1 {
+            format!("Datebook: next {period_label}")
+        } else if offset == -1 {
+            format!("Datebook: last {period_label}")
+        } else if offset > 0 {
+            format!("Datebook: {offset} {period_label}s ahead")
+        } else {
+            format!("Datebook: {} {period_label}s ago", offset.abs())
+        };
         Ok(())
     }
 

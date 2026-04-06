@@ -820,6 +820,18 @@ impl App {
         self.slots.get(self.slot_index)
     }
 
+    /// For datebook views, returns the slot index whose date range contains today.
+    pub(crate) fn datebook_today_slot_index(&self) -> Option<usize> {
+        let view = self.current_view()?;
+        let config = view.datebook_config.as_ref()?;
+        let today = jiff::Zoned::now().date();
+        let today_dt = today.at(0, 0, 0, 0);
+        let sections = generate_datebook_sections(config, today);
+        sections
+            .iter()
+            .position(|s| today_dt >= s.range_start && today_dt < s.range_end)
+    }
+
     pub(crate) fn current_slot_sort_column(&self) -> Option<SlotSortColumn> {
         let slot = self.current_slot()?;
         self.slot_sort_column_for_board_index(slot, self.column_index)
