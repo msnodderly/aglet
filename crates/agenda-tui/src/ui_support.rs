@@ -803,6 +803,11 @@ pub(super) fn build_view_assign_rows(views: &[View]) -> Vec<ViewAssignRow> {
         if agenda_core::store::is_system_view_name(&view.name) {
             continue;
         }
+        // Datebook views have auto-generated time sections, not category-based
+        // sections, so they can't participate in section assignment.
+        if view.datebook_config.is_some() {
+            continue;
+        }
         rows.push(ViewAssignRow::ViewHeader {
             view_idx,
             name: view.name.clone(),

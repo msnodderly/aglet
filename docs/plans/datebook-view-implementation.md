@@ -17,12 +17,12 @@ Lotus Agenda's datebook view auto-generates sections from time intervals (Day/We
 - [x] 1f. Unit tests for datebook engine (12 tests, all passing)
 
 ### Tier 2 -- TUI Surface
-- [ ] 2a. Datebook view creation in ViewPicker ('d' keybinding)
-- [ ] 2b. ViewEdit datebook config region (ViewEditRegion::Datebook, field cycling)
-- [ ] 2c. Render datebook config in ViewEdit details pane
-- [ ] 2d. Browse keybindings in Normal mode (]/[/0)
-- [ ] 2e. Today-section highlighting
-- [ ] 2f. Footer hints for datebook views
+- [x] 2a. Datebook view creation in ViewPicker ('d' keybinding)
+- [x] 2b. ViewEdit datebook config region (ViewEditRegion::Datebook, field cycling)
+- [x] 2c. Render datebook config in ViewEdit details pane
+- [x] 2d. Browse keybindings in Normal mode (}/{ for fwd/back, 0 for today)
+- [x] 2e. Today-section highlighting (yellow border in vertical + horizontal layouts)
+- [x] 2f. Footer hints for datebook views (Normal mode browse hints, ViewPicker 'd' hint)
 
 ### Tier 3 -- Polish & Extensions (defer)
 - [ ] 3a. End date on items (event duration)

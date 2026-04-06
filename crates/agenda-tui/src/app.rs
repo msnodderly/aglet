@@ -832,6 +832,28 @@ impl App {
             .position(|s| today_dt >= s.range_start && today_dt < s.range_end)
     }
 
+    /// For datebook views, returns the start date of the current slot as a
+    /// "YYYY-MM-DD" string, suitable for pre-filling the when_buffer.
+    pub(crate) fn datebook_slot_date_string(&self) -> Option<String> {
+        let view = self.current_view()?;
+        let config = view.datebook_config.as_ref()?;
+        let slot = self.current_slot()?;
+        // Only Section slots map 1:1 with datebook sections (not Unmatched)
+        let section_index = match &slot.context {
+            SlotContext::Section { section_index } => *section_index,
+            _ => return None,
+        };
+        let today = jiff::Zoned::now().date();
+        let sections = generate_datebook_sections(config, today);
+        let ds = sections.get(section_index)?;
+        Some(format!(
+            "{:04}-{:02}-{:02}",
+            ds.range_start.date().year(),
+            ds.range_start.date().month(),
+            ds.range_start.date().day()
+        ))
+    }
+
     pub(crate) fn current_slot_sort_column(&self) -> Option<SlotSortColumn> {
         let slot = self.current_slot()?;
         self.slot_sort_column_for_board_index(slot, self.column_index)

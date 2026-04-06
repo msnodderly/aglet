@@ -3882,10 +3882,16 @@ impl App {
             })
             .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
 
-        self.input_panel = Some(input_panel::InputPanel::new_add_item(
-            &section_title,
-            &on_insert_assign,
-        ));
+        let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
+
+        // For datebook views, pre-fill the when date from the current section's
+        // date range so items are created in the focused time slot.
+        if let Some(date_str) = self.datebook_slot_date_string() {
+            panel.when_buffer = text_buffer::TextBuffer::new(date_str.clone());
+            panel.original_when = date_str;
+        }
+
+        self.input_panel = Some(panel);
         self.mode = Mode::InputPanel;
         self.status = "Add item: type text, Tab for note/categories, Esc to close".to_string();
     }
