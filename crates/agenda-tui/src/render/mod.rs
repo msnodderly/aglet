@@ -8513,6 +8513,29 @@ impl App {
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(frame, details_area, content_len, list_state.offset());
+
+            // Position the terminal cursor on the active inline text input.
+            if state.inline_input.is_some() {
+                if let Some(sel) = selected_line {
+                    let offset = list_state.offset();
+                    if sel >= offset {
+                        let visible_row = (sel - offset) as u16;
+                        // inner area: 1 for border
+                        let inner_y = details_area.y + 1 + visible_row;
+                        if inner_y < details_area.y + details_area.height.saturating_sub(1) {
+                            // Compute x: the inline text is after "◀ " prefix inside
+                            // the formatted row. Place cursor at the TextBuffer cursor.
+                            let cursor_col = state.inline_buf.cursor();
+                            // The text starts at: border(1) + padding(2) + label(pad=26) + "◀ "(2)
+                            let text_start = details_area.x + 1 + 2 + 26 + 2;
+                            let cursor_x = text_start + cursor_col as u16;
+                            let max_x =
+                                details_area.x + details_area.width.saturating_sub(2);
+                            frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                        }
+                    }
+                }
+            }
         }
 
         // ── Sections region ──────────────────────────────────────────────────
@@ -8661,6 +8684,41 @@ impl App {
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(frame, sections_area, content_len, list_state.offset());
+
+            // Position cursor for section title inline editing.
+            if inline_editing_section.is_some() {
+                if let Some(sel) = selected_line {
+                    let offset = list_state.offset();
+                    if sel >= offset {
+                        let visible_row = (sel - offset) as u16;
+                        let inner_y = sections_area.y + 1 + visible_row;
+                        if inner_y < sections_area.y + sections_area.height.saturating_sub(1) {
+                            let cursor_col = state.inline_buf.cursor();
+                            // Format: " {connector}(3) {cursor}(1) {idx}.(varies) {text}"
+                            // Approximate: prefix is ~10 chars + text
+                            let section_idx = inline_editing_section.unwrap();
+                            let idx_width = format!("{}.", section_idx + 1).len();
+                            let prefix_len = 1 + 3 + 1 + 1 + 1 + idx_width + 1; // " ├── ▸ N. "
+                            let text_start =
+                                sections_area.x + 1 + prefix_len as u16;
+                            let cursor_x = text_start + cursor_col as u16;
+                            let max_x =
+                                sections_area.x + sections_area.width.saturating_sub(2);
+                            frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                        }
+                    }
+                }
+            }
+            // Position cursor for sections filter in title bar.
+            if filter_editing {
+                let cursor_col = state.sections_filter_buf.cursor();
+                // Title: " VIEW: {name}{dirty}  /{filter}◀ "
+                let prefix_len = 1 + view_label.len() + dirty_marker.len() + 2 + 1; // " VIEW:...  /"
+                let cursor_x = sections_area.x + 1 + prefix_len as u16 + cursor_col as u16;
+                let max_x = sections_area.x + sections_area.width.saturating_sub(2);
+                let cursor_y = sections_area.y;
+                frame.set_cursor_position((cursor_x.min(max_x), cursor_y));
+            }
         }
 
         // ── Preview pane (optional) ─────────────────────────────────────────
@@ -9006,6 +9064,47 @@ impl App {
                         overlay_area,
                         &mut list_state,
                     );
+
+                    // Position cursor for alias inline editing inside the overlay.
+                    if is_alias_picker {
+                        if let Some(ViewEditInlineInput::CategoryAlias { category_id }) =
+                            &state.inline_input
+                        {
+                            // Find the row for this category in the filtered list.
+                            if let Some(row) = self
+                                .category_rows
+                                .iter()
+                                .find(|r| r.id == *category_id)
+                            {
+                                let vis_sel = selected_filtered_index;
+                                let offset = list_state.offset();
+                                if vis_sel >= offset {
+                                    let visible_row = (vis_sel - offset) as u16;
+                                    let inner_y = overlay_area.y + 1 + visible_row;
+                                    if inner_y
+                                        < overlay_area.y
+                                            + overlay_area.height.saturating_sub(1)
+                                    {
+                                        let indent_len = 2 * row.depth;
+                                        let name_len = row.name.len();
+                                        let prefix_len =
+                                            indent_len + name_len + "  alias: ".len();
+                                        let cursor_col = state.inline_buf.cursor();
+                                        let cursor_x = overlay_area.x
+                                            + 1
+                                            + prefix_len as u16
+                                            + cursor_col as u16;
+                                        let max_x = overlay_area.x
+                                            + overlay_area.width.saturating_sub(2);
+                                        frame.set_cursor_position((
+                                            cursor_x.min(max_x),
+                                            inner_y,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 ViewEditOverlay::BucketPicker { .. } => {
                     let options = when_bucket_options();
