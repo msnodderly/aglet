@@ -10,9 +10,9 @@ use super::{
     AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget, CategoryDirectEditAnchor,
     CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
     CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, DateConditionDraftKind,
-    DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext, OllamaModelPickerState,
-    SectionBorderMode, SlotSortDirection, SuggestionDecision, ViewAssignRow, ViewEditPaneFocus,
-    ViewEditRegion, WorkflowRolePickerOrigin,
+    DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext,
+    OllamaModelPickerState, SectionBorderMode, SlotSortDirection, SuggestionDecision,
+    ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
 };
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
@@ -3948,10 +3948,8 @@ fn category_manager_condition_cursor_position_tracks_date_value_input() {
         .expect("open date editor");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.field_focus = DateConditionField::Value;
-        edit.draft_date.value_input = text_buffer::TextBuffer::with_cursor(
-            "1990-11-12 09:00".to_string(),
-            7,
-        );
+        edit.draft_date.value_input =
+            text_buffer::TextBuffer::with_cursor("1990-11-12 09:00".to_string(), 7);
     }
 
     let main_area = Rect::new(0, 0, 120, 40);
@@ -4296,6 +4294,58 @@ fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
     assert_eq!(
         context_row_count, 1,
         "add-item context should stay in one fixed row even in narrow layouts"
+    );
+}
+
+#[test]
+fn add_item_render_hides_reserved_categories_in_modal_list() {
+    let when = Category::new("When".to_string());
+    let entry = Category::new("Entry".to_string());
+    let done = Category::new("Done".to_string());
+    let todo = Category::new("TODO".to_string());
+    let motorcycles = Category::new("Motorcycles".to_string());
+
+    let mut app = App {
+        mode: Mode::InputPanel,
+        categories: vec![when, entry, done, todo, motorcycles],
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Garage",
+            &HashSet::new(),
+        )),
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    if let Some(panel) = &mut app.input_panel {
+        panel.focus = input_panel::InputPanelFocus::Categories;
+        panel.category_cursor = 1;
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        !rendered.contains("When [reserved]"),
+        "rendered add-item list should hide reserved When: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Entry [reserved]"),
+        "rendered add-item list should hide reserved Entry: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Done [reserved]"),
+        "rendered add-item list should hide reserved Done: {rendered}"
+    );
+    assert!(
+        rendered.contains("TODO"),
+        "rendered add-item list should still show user categories: {rendered}"
+    );
+    assert!(
+        rendered.contains("Motorcycles"),
+        "rendered add-item list should still show later user categories: {rendered}"
     );
 }
 
@@ -8196,7 +8246,10 @@ fn category_manager_date_condition_impossible_range_is_flagged_and_blocked() {
         .expect("attempt save");
 
     let cat = store.get_category(category.id).expect("reload category");
-    assert!(cat.conditions.is_empty(), "impossible range should not save");
+    assert!(
+        cat.conditions.is_empty(),
+        "impossible range should not save"
+    );
     assert!(
         app.status.contains("Impossible range"),
         "status should explain blocked save: {}",
@@ -8392,7 +8445,7 @@ fn category_manager_date_condition_today_before_saves_as_same_day_range() {
 #[test]
 fn category_manager_date_condition_this_afternoon_saves_and_renders_as_shortcut() {
     use agenda_core::date_rules::render_date_condition;
-    use agenda_core::model::{Condition, DateMatcher, DateValueExpr, DateSource};
+    use agenda_core::model::{Condition, DateMatcher, DateSource, DateValueExpr};
     use jiff::civil::Time;
 
     let store = Store::open_memory().expect("memory store");
@@ -8442,7 +8495,10 @@ fn category_manager_date_condition_this_afternoon_saves_and_renders_as_shortcut(
                     through: DateValueExpr::Today,
                 }
             );
-            assert_eq!(render_date_condition(*source, matcher), "When this afternoon");
+            assert_eq!(
+                render_date_condition(*source, matcher),
+                "When this afternoon"
+            );
         }
         other => panic!("expected Date condition, got {other:?}"),
     }
@@ -20326,9 +20382,7 @@ fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
     app.handle_key(KeyCode::Esc, &agenda)
         .expect("trigger discard confirm");
     assert!(
-        app.input_panel
-            .as_ref()
-            .is_some_and(|p| p.discard_confirm),
+        app.input_panel.as_ref().is_some_and(|p| p.discard_confirm),
         "dirty edit panel should show discard confirm"
     );
     // y saves

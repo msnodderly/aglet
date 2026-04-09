@@ -389,36 +389,16 @@ impl App {
         }
     }
 
-    fn input_panel_category_filter_text(&self) -> Option<&str> {
-        self.input_panel.as_ref().and_then(|panel| {
-            if matches!(
-                panel.kind,
-                input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
-            ) {
-                Some(panel.category_filter.text())
-            } else {
-                None
-            }
-        })
-    }
-
-    pub(crate) fn input_panel_visible_category_row_indices(&self) -> Vec<usize> {
-        let query = self
-            .input_panel_category_filter_text()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
+    pub(crate) fn input_panel_visible_category_row_indices_for(
+        &self,
+        panel: &input_panel::InputPanel,
+    ) -> Vec<usize> {
+        let query = panel.category_filter.text().trim().to_ascii_lowercase();
         // Hide reserved categories in AddItem/EditItem panels
-        let hide_reserved = self
-            .input_panel
-            .as_ref()
-            .map(|p| {
-                matches!(
-                    p.kind,
-                    input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
-                )
-            })
-            .unwrap_or(false);
+        let hide_reserved = matches!(
+            panel.kind,
+            input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
+        );
         self.category_rows
             .iter()
             .enumerate()
@@ -432,9 +412,18 @@ impl App {
             .collect()
     }
 
-    pub(crate) fn input_panel_selected_category_row(&self) -> Option<InputPanelCategorySelection> {
-        let visible_indices = self.input_panel_visible_category_row_indices();
-        let panel = self.input_panel.as_ref()?;
+    pub(crate) fn input_panel_visible_category_row_indices(&self) -> Vec<usize> {
+        self.input_panel
+            .as_ref()
+            .map(|panel| self.input_panel_visible_category_row_indices_for(panel))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn input_panel_selected_category_row_for(
+        &self,
+        panel: &input_panel::InputPanel,
+    ) -> Option<InputPanelCategorySelection> {
+        let visible_indices = self.input_panel_visible_category_row_indices_for(panel);
         let suggestion_len = panel.pending_suggestions.len();
         let cursor = panel.category_cursor;
         // Suggestions occupy indices 0..suggestion_len; categories start at suggestion_len.
@@ -444,6 +433,12 @@ impl App {
         let row_index = *visible_indices.get(cursor - suggestion_len)?;
         let row = self.category_rows.get(row_index)?.clone();
         Some(InputPanelCategorySelection { row_index, row })
+    }
+
+    pub(crate) fn input_panel_selected_category_row(&self) -> Option<InputPanelCategorySelection> {
+        self.input_panel
+            .as_ref()
+            .and_then(|panel| self.input_panel_selected_category_row_for(panel))
     }
 
     fn clamp_input_panel_category_cursor(&mut self) {
@@ -4284,7 +4279,10 @@ impl App {
                 panel.when_buffer.set(normalized.clone());
                 let effective_rule = panel.parsed_recurrence_rule.as_ref();
                 let rule_display = effective_rule.map(|r| format!(" ({})", r.display()));
-                self.status = format!("When set to {normalized}{}", rule_display.unwrap_or_default());
+                self.status = format!(
+                    "When set to {normalized}{}",
+                    rule_display.unwrap_or_default()
+                );
                 Ok(true)
             }
             Ok(None) => {
@@ -4486,11 +4484,7 @@ impl App {
         }
 
         // Handle discard-confirm prompt before normal key routing.
-        if self
-            .input_panel
-            .as_ref()
-            .is_some_and(|p| p.discard_confirm)
-        {
+        if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
             return self.handle_input_panel_discard_confirm_key(code, agenda);
         }
 
@@ -5153,7 +5147,9 @@ impl App {
         ).into())
     }
 
-    fn parse_when_datetime_input(input: &str) -> TuiResult<Option<(DateTime, Option<RecurrenceRule>)>> {
+    fn parse_when_datetime_input(
+        input: &str,
+    ) -> TuiResult<Option<(DateTime, Option<RecurrenceRule>)>> {
         Self::parse_when_datetime_input_with_reference_date(input, jiff::Zoned::now().date())
     }
 
@@ -5340,7 +5336,8 @@ impl App {
                     return Ok(());
                 };
 
-                let (parsed_when, inline_rule) = match Self::parse_when_datetime_input(&input_text) {
+                let (parsed_when, inline_rule) = match Self::parse_when_datetime_input(&input_text)
+                {
                     Ok(Some((dt, rule))) => (Some(dt), rule),
                     Ok(None) => (None, None),
                     Err(err) => {
@@ -5358,10 +5355,7 @@ impl App {
                     Ok(_result) => {
                         // Apply recurrence rule if parsed from inline editor.
                         if inline_rule.is_some() || parsed_when.is_none() {
-                            let _ = agenda.set_item_recurrence_rule(
-                                target.item_id,
-                                inline_rule,
-                            );
+                            let _ = agenda.set_item_recurrence_rule(target.item_id, inline_rule);
                         }
                         self.refresh(agenda.store())?;
                         self.set_item_selection_by_id(target.item_id);
@@ -6803,6 +6797,42 @@ mod tests {
     }
 
     #[test]
+    fn detached_input_panel_helpers_still_hide_reserved_rows() {
+        let when = Category::new("When".to_string());
+        let entry = Category::new("Entry".to_string());
+        let done = Category::new("Done".to_string());
+        let todo = Category::new("TODO".to_string());
+        let motorcycles = Category::new("Motorcycles".to_string());
+
+        let mut app = App {
+            categories: vec![when, entry, done, todo.clone(), motorcycles.clone()],
+            ..App::default()
+        };
+        app.category_rows = build_category_rows(&app.categories);
+
+        let mut panel = input_panel::InputPanel::new_add_item("Test", &HashSet::new());
+        panel.focus = input_panel::InputPanelFocus::Categories;
+        panel.category_cursor = 1;
+
+        let visible_names: Vec<String> = app
+            .input_panel_visible_category_row_indices_for(&panel)
+            .into_iter()
+            .filter_map(|row_index| app.category_rows.get(row_index))
+            .map(|row| row.name.clone())
+            .collect();
+
+        assert_eq!(
+            visible_names,
+            vec!["TODO".to_string(), "Motorcycles".to_string()]
+        );
+
+        let selection = app
+            .input_panel_selected_category_row_for(&panel)
+            .expect("selection should resolve against non-reserved rows");
+        assert_eq!(selection.row.id, motorcycles.id);
+    }
+
+    #[test]
     fn ctrl_g_sets_pending_external_edit_for_text() {
         let mut app = App {
             input_panel: Some(input_panel::InputPanel::new_add_item(
@@ -6959,7 +6989,10 @@ mod tests {
             .expect("should return datetime");
 
         assert_eq!(parsed, expected);
-        assert!(rule.is_none(), "one-time date should have no recurrence rule");
+        assert!(
+            rule.is_none(),
+            "one-time date should have no recurrence rule"
+        );
     }
 
     #[test]

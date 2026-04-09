@@ -1,10 +1,10 @@
-use crate::*;
-use agenda_core::date_rules::render_date_source;
-use agenda_core::model::ConditionMatchMode;
 use crate::modes::category::{
     condition_match_mode_label, date_condition_draft_feedback, draft_match_label,
     draft_uses_range_fields, draft_uses_value_field, draft_value_label, DateDraftMessageSeverity,
 };
+use crate::*;
+use agenda_core::date_rules::render_date_source;
+use agenda_core::model::ConditionMatchMode;
 
 const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
 const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
@@ -1854,62 +1854,64 @@ impl App {
         let max_x = inner.x.saturating_add(inner.width.saturating_sub(1));
         let text_width = inner.width as usize;
 
-        let (line_offset, prefix, cursor_chars): (u16, String, u16) = match edit.draft_date.field_focus {
-            DateConditionField::Source => (
-                0u16,
-                "> Source:   ".to_string(),
-                render_date_source(edit.draft_date.source)
-                    .chars()
-                    .count()
-                    .min(u16::MAX as usize) as u16,
-            ),
-            DateConditionField::Match => {
-                let value = draft_match_label(edit.draft_date.kind);
-                (
-                    1u16,
-                    "> Match:    ".to_string(),
-                    value.chars().count().min(u16::MAX as usize) as u16,
-                )
-            }
-            DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
-                let prefix = format!("> {}:    ", draft_value_label(edit.draft_date.kind));
-                let available = text_width.saturating_sub(prefix.chars().count());
-                let (_, cursor) = clip_text_for_row(
-                    edit.draft_date.value_input.text(),
-                    edit.draft_date.value_input.cursor(),
-                    available,
-                    true,
-                );
-                (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
-            }
-            DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
-                let prefix = "> From:     ".to_string();
-                let available = text_width.saturating_sub(prefix.chars().count());
-                let (_, cursor) = clip_text_for_row(
-                    edit.draft_date.from_input.text(),
-                    edit.draft_date.from_input.cursor(),
-                    available,
-                    true,
-                );
-                (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
-            }
-            DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
-                let prefix = "> Through:  ".to_string();
-                let available = text_width.saturating_sub(prefix.chars().count());
-                let (_, cursor) = clip_text_for_row(
-                    edit.draft_date.through_input.text(),
-                    edit.draft_date.through_input.cursor(),
-                    available,
-                    true,
-                );
-                (3u16, prefix, cursor.min(u16::MAX as usize) as u16)
-            }
-            _ => return None,
-        };
+        let (line_offset, prefix, cursor_chars): (u16, String, u16) =
+            match edit.draft_date.field_focus {
+                DateConditionField::Source => (
+                    0u16,
+                    "> Source:   ".to_string(),
+                    render_date_source(edit.draft_date.source)
+                        .chars()
+                        .count()
+                        .min(u16::MAX as usize) as u16,
+                ),
+                DateConditionField::Match => {
+                    let value = draft_match_label(edit.draft_date.kind);
+                    (
+                        1u16,
+                        "> Match:    ".to_string(),
+                        value.chars().count().min(u16::MAX as usize) as u16,
+                    )
+                }
+                DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
+                    let prefix = format!("> {}:    ", draft_value_label(edit.draft_date.kind));
+                    let available = text_width.saturating_sub(prefix.chars().count());
+                    let (_, cursor) = clip_text_for_row(
+                        edit.draft_date.value_input.text(),
+                        edit.draft_date.value_input.cursor(),
+                        available,
+                        true,
+                    );
+                    (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
+                }
+                DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
+                    let prefix = "> From:     ".to_string();
+                    let available = text_width.saturating_sub(prefix.chars().count());
+                    let (_, cursor) = clip_text_for_row(
+                        edit.draft_date.from_input.text(),
+                        edit.draft_date.from_input.cursor(),
+                        available,
+                        true,
+                    );
+                    (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
+                }
+                DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
+                    let prefix = "> Through:  ".to_string();
+                    let available = text_width.saturating_sub(prefix.chars().count());
+                    let (_, cursor) = clip_text_for_row(
+                        edit.draft_date.through_input.text(),
+                        edit.draft_date.through_input.cursor(),
+                        available,
+                        true,
+                    );
+                    (3u16, prefix, cursor.min(u16::MAX as usize) as u16)
+                }
+                _ => return None,
+            };
 
         let prefix_len = prefix.chars().count().min(u16::MAX as usize) as u16;
         Some((
-            inner.x
+            inner
+                .x
                 .saturating_add(prefix_len)
                 .saturating_add(cursor_chars)
                 .min(max_x),
@@ -2035,7 +2037,7 @@ impl App {
                 } else {
                     regions.categories_inner?
                 };
-                let selected_row = self.input_panel_selected_category_row()?.row;
+                let selected_row = self.input_panel_selected_category_row_for(panel)?.row;
                 let is_assigned = panel.categories.contains(&selected_row.id);
                 let is_numeric =
                     selected_row.value_kind == agenda_core::model::CategoryValueKind::Numeric;
@@ -2287,9 +2289,7 @@ impl App {
                     EmptySections::Collapse if is_empty && has_any_non_empty => {
                         Constraint::Length(1)
                     }
-                    EmptySections::Hide if is_empty && has_any_non_empty => {
-                        Constraint::Length(0)
-                    }
+                    EmptySections::Hide if is_empty && has_any_non_empty => Constraint::Length(0),
                     _ => Constraint::Fill(1),
                 }
             })
@@ -2321,7 +2321,12 @@ impl App {
         let today_slot = self.datebook_today_slot_index();
 
         if self.is_horizontal_section_flow() {
-            self.render_horizontal_board_lanes(frame, &columns, &category_display_names, today_slot);
+            self.render_horizontal_board_lanes(
+                frame,
+                &columns,
+                &category_display_names,
+                today_slot,
+            );
             return;
         }
         for (slot_index, slot) in self.slots.iter().enumerate() {
@@ -4368,11 +4373,7 @@ impl App {
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
             Mode::InputPanel => {
                 // Discard-confirm prompt takes priority
-                if self
-                    .input_panel
-                    .as_ref()
-                    .is_some_and(|p| p.discard_confirm)
-                {
+                if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
                     vec![
                         ("y", "save & close"),
                         ("n", "discard"),
@@ -4467,11 +4468,7 @@ impl App {
                         .current_view()
                         .is_some_and(|v| v.datebook_config.is_some())
                     {
-                        hints.extend_from_slice(&[
-                            ("}", "fwd"),
-                            ("{", "back"),
-                            ("0", "today"),
-                        ]);
+                        hints.extend_from_slice(&[("}", "fwd"), ("{", "back"), ("0", "today")]);
                     }
                     hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
                 }
@@ -4729,15 +4726,9 @@ impl App {
                 let trimmed = panel.when_buffer.text().trim().replace(' ', "T");
                 if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
                     let next = rule.next_date(dt);
-                    let annotation = format!(
-                        "  \u{21BB} {} \u{2192} {}",
-                        rule.display(),
-                        next.date()
-                    );
-                    when_spans.push(Span::styled(
-                        annotation,
-                        Style::default().fg(Color::Cyan),
-                    ));
+                    let annotation =
+                        format!("  \u{21BB} {} \u{2192} {}", rule.display(), next.date());
+                    when_spans.push(Span::styled(annotation, Style::default().fg(Color::Cyan)));
                 }
             }
             frame.render_widget(Paragraph::new(Line::from(when_spans)), when_rect);
@@ -4797,7 +4788,7 @@ impl App {
             } else {
                 Style::default().fg(Color::Cyan)
             };
-            let visible_indices = self.input_panel_visible_category_row_indices();
+            let visible_indices = self.input_panel_visible_category_row_indices_for(panel);
             let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
             let cat_filter_rect = regions.categories_filter.unwrap_or(cat_inner);
             let cat_list_rect = if panel.category_filter_editing {
@@ -5716,10 +5707,7 @@ impl App {
                         )
                     }
                     GlobalSettingsRow::NoteGlyphs => {
-                        format!(
-                            "Note glyphs         < {} >",
-                            self.show_note_glyphs_label()
-                        )
+                        format!("Note glyphs         < {} >", self.show_note_glyphs_label())
                     }
                     GlobalSettingsRow::LiteralClassificationMode => {
                         format!(
@@ -6305,10 +6293,7 @@ impl App {
                             through_width,
                             edit.draft_date.field_focus == DateConditionField::Through,
                         );
-                        lines.push(Line::from(format!(
-                            "{}{}",
-                            from_prefix, from_visible
-                        )));
+                        lines.push(Line::from(format!("{}{}", from_prefix, from_visible)));
                         lines.push(Line::from(format!("{}{}", through_prefix, through_visible)));
                         if let Some(line) = lines.get_mut(2) {
                             *line = Line::from(vec![
@@ -6366,7 +6351,8 @@ impl App {
                         ]));
                     }
                     let helper_text = match edit.draft_date.kind {
-                        DateConditionDraftKind::TodayAfter | DateConditionDraftKind::TodayBefore => {
+                        DateConditionDraftKind::TodayAfter
+                        | DateConditionDraftKind::TodayBefore => {
                             "  Examples: 1pm, 1:00pm, 1:00pm today"
                         }
                         DateConditionDraftKind::ThisAfternoon => {
@@ -6381,12 +6367,13 @@ impl App {
                     for message in feedback.messages.iter().take(3) {
                         let style = match message.severity {
                             DateDraftMessageSeverity::Error => Style::default().fg(Color::LightRed),
-                            DateDraftMessageSeverity::Warning => {
-                                Style::default().fg(Color::Yellow)
-                            }
+                            DateDraftMessageSeverity::Warning => Style::default().fg(Color::Yellow),
                             DateDraftMessageSeverity::Info => Style::default().fg(Color::Green),
                         };
-                        lines.push(Line::from(Span::styled(format!("  {}", message.text), style)));
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", message.text),
+                            style,
+                        )));
                     }
 
                     frame.render_widget(
@@ -6394,9 +6381,7 @@ impl App {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .border_style(Style::default().fg(
-                                        CATEGORY_MANAGER_EDIT_FOCUS,
-                                    )),
+                                    .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
                             )
                             .wrap(Wrap { trim: false }),
                         chunks[1],
@@ -6413,8 +6398,7 @@ impl App {
                                 Style::default().fg(MUTED_TEXT_COLOR),
                             )),
                         ])
-                        .wrap(Wrap { trim: false })
-                        ,
+                        .wrap(Wrap { trim: false }),
                         chunks[2],
                     );
                     if let Some((x, y)) = self.category_manager_condition_cursor_position(area) {
@@ -6432,18 +6416,20 @@ impl App {
                         .filter_map(|(i, c)| match c {
                             Condition::Profile { criteria } => Some((
                                 i,
-                                format!("[Profile] {}", criteria.format_trigger(&|id| {
-                                    category_names
-                                        .get(&id)
-                                        .unwrap_or(&"(deleted)")
-                                        .to_string()
-                                })),
+                                format!(
+                                    "[Profile] {}",
+                                    criteria.format_trigger(&|id| {
+                                        category_names.get(&id).unwrap_or(&"(deleted)").to_string()
+                                    })
+                                ),
                             )),
                             Condition::Date { source, matcher } => Some((
                                 i,
                                 format!(
                                     "[Date] {}",
-                                    agenda_core::date_rules::render_date_condition(*source, matcher)
+                                    agenda_core::date_rules::render_date_condition(
+                                        *source, matcher
+                                    )
                                 ),
                             )),
                             _ => None,
@@ -6501,7 +6487,8 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(display_idx, (_actual_idx, summary))| {
-                        let label = format!("{}. {} -> {}", display_idx + 1, summary, category_name);
+                        let label =
+                            format!("{}. {} -> {}", display_idx + 1, summary, category_name);
                         ListItem::new(Line::from(label))
                     })
                     .collect()
@@ -6510,7 +6497,8 @@ impl App {
             let selected_row = if editable_conditions.is_empty() {
                 0
             } else {
-                edit.list_index.min(editable_conditions.len().saturating_sub(1))
+                edit.list_index
+                    .min(editable_conditions.len().saturating_sub(1))
             };
             let mut state = ListState::default().with_selected(Some(selected_row));
             frame.render_stateful_widget(
@@ -7447,27 +7435,23 @@ impl App {
                                     "  Mode: {}",
                                     condition_match_mode_label(cat.condition_match_mode)
                                 ))
-                                .chain(
-                                    cat.conditions
-                                    .iter()
-                                    .filter_map(|cond| match cond {
-                                        Condition::Profile { criteria } => Some(format!(
-                                            "  [Profile] {} -> {}",
-                                            criteria.format_trigger(&resolve),
-                                            row.name
-                                        )),
-                                        Condition::Date { source, matcher } => Some(format!(
-                                            "  [Date] {} -> {}",
-                                            agenda_core::date_rules::render_date_condition(
-                                                *source, matcher
-                                            ),
-                                            row.name
-                                        )),
-                                        _ => None,
-                                    })
-                                )
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
+                                .chain(cat.conditions.iter().filter_map(|cond| match cond {
+                                    Condition::Profile { criteria } => Some(format!(
+                                        "  [Profile] {} -> {}",
+                                        criteria.format_trigger(&resolve),
+                                        row.name
+                                    )),
+                                    Condition::Date { source, matcher } => Some(format!(
+                                        "  [Date] {} -> {}",
+                                        agenda_core::date_rules::render_date_condition(
+                                            *source, matcher
+                                        ),
+                                        row.name
+                                    )),
+                                    _ => None,
+                                }))
+                                .collect::<Vec<_>>()
+                                .join("\n")
                             })
                             .unwrap_or_default()
                     };
@@ -8092,9 +8076,8 @@ impl App {
                 // ── Name ──
                 let editing_view_name =
                     matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
-                let name_row_focused = details_focused
-                    && Self::view_details_on_name_row(state)
-                    && !editing_view_name;
+                let name_row_focused =
+                    details_focused && Self::view_details_on_name_row(state) && !editing_view_name;
                 let view_name_style = if editing_view_name || name_row_focused {
                     selected_line = Some(items.len());
                     sel_style
@@ -8386,11 +8369,8 @@ impl App {
                     state.inline_input,
                     Some(ViewEditInlineInput::UnmatchedLabel)
                 );
-                let unmatched_label_style = style_for_unmatched_field(
-                    6,
-                    &items,
-                    &mut selected_line,
-                );
+                let unmatched_label_style =
+                    style_for_unmatched_field(6, &items, &mut selected_line);
                 let unmatched_label_line = if editing_unmatched_label {
                     let label = format!("  {:<width$}◀ ", "Unmatched label", width = pad);
                     Line::from(inline_edit_spans(
@@ -8408,10 +8388,7 @@ impl App {
                         width = pad
                     ))
                 };
-                items.push(
-                    ListItem::new(unmatched_label_line)
-                        .style(unmatched_label_style),
-                );
+                items.push(ListItem::new(unmatched_label_line).style(unmatched_label_style));
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
                     state.inline_input,
@@ -8449,11 +8426,7 @@ impl App {
                     };
 
                 // ── Group 1: Identity ──
-                let title_field_style = style_for_section_field(
-                    0,
-                    &items,
-                    &mut selected_line,
-                );
+                let title_field_style = style_for_section_field(0, &items, &mut selected_line);
                 let title_line = if editing_title {
                     let label = format!("  {:<width$}◀ ", "Title", width = pad);
                     Line::from(inline_edit_spans(
@@ -8464,17 +8437,9 @@ impl App {
                         title_field_style,
                     ))
                 } else {
-                    Line::from(format!(
-                        "  {:<width$}{}",
-                        "Title",
-                        title_text,
-                        width = pad
-                    ))
+                    Line::from(format!("  {:<width$}{}", "Title", title_text, width = pad))
                 };
-                items.push(
-                    ListItem::new(title_line)
-                        .style(title_field_style),
-                );
+                items.push(ListItem::new(title_line).style(title_field_style));
 
                 let criteria_lines = summarize_query(&section.criteria);
                 let is_filter_selected = details_focused
@@ -8670,8 +8635,7 @@ impl App {
                             // The text starts at: border(1) + padding(2) + label(pad=26) + "◀ "(2)
                             let text_start = details_area.x + 1 + 2 + 26 + 2;
                             let cursor_x = text_start + cursor_col as u16;
-                            let max_x =
-                                details_area.x + details_area.width.saturating_sub(2);
+                            let max_x = details_area.x + details_area.width.saturating_sub(2);
                             frame.set_cursor_position((cursor_x.min(max_x), inner_y));
                         }
                     }
@@ -8697,9 +8661,7 @@ impl App {
             let dirty_marker = if state.dirty { " *" } else { "" };
             let view_label = format!("VIEW: {}", state.draft.name);
             let sections_title: Line<'_> = if filter_editing {
-                let prefix = format!(
-                    " {view_label}{dirty_marker}  /",
-                );
+                let prefix = format!(" {view_label}{dirty_marker}  /",);
                 Line::from(inline_edit_spans(
                     &prefix,
                     state.sections_filter_buf.text(),
@@ -8808,10 +8770,7 @@ impl App {
                         Style::default()
                     };
                     let line = if inline_editing_section == Some(i) {
-                        let prefix = format!(
-                            " {} {} {}. ",
-                            connector, cursor, i + 1,
-                        );
+                        let prefix = format!(" {} {} {}. ", connector, cursor, i + 1,);
                         Line::from(inline_edit_spans(
                             &prefix,
                             state.inline_buf.text(),
@@ -8822,7 +8781,10 @@ impl App {
                     } else {
                         Line::from(format!(
                             " {} {} {}. {}",
-                            connector, cursor, i + 1, section.title
+                            connector,
+                            cursor,
+                            i + 1,
+                            section.title
                         ))
                     };
                     items.push(ListItem::new(line).style(style));
@@ -8852,11 +8814,9 @@ impl App {
                             let section_idx = inline_editing_section.unwrap();
                             let idx_width = format!("{}.", section_idx + 1).len();
                             let prefix_len = 1 + 3 + 1 + 1 + 1 + idx_width + 1; // " ├── ▸ N. "
-                            let text_start =
-                                sections_area.x + 1 + prefix_len as u16;
+                            let text_start = sections_area.x + 1 + prefix_len as u16;
                             let cursor_x = text_start + cursor_col as u16;
-                            let max_x =
-                                sections_area.x + sections_area.width.saturating_sub(2);
+                            let max_x = sections_area.x + sections_area.width.saturating_sub(2);
                             frame.set_cursor_position((cursor_x.min(max_x), inner_y));
                         }
                     }
@@ -9161,22 +9121,18 @@ impl App {
                                     current_alias
                                 };
                                 if active_alias_edit {
-                                    let prefix = format!(
-                                        "{indent}{}  alias: ",
-                                        row.name
-                                    );
+                                    let prefix = format!("{indent}{}  alias: ", row.name);
                                     ListItem::new(Line::from(inline_edit_spans(
                                         &prefix,
                                         state.inline_buf.text(),
                                         state.inline_buf.cursor(),
                                         selected_style,
                                         selected_style,
-                                    ))).style(selected_style)
+                                    )))
+                                    .style(selected_style)
                                 } else {
-                                    let label = format!(
-                                        "{indent}{}  alias: {alias_text}",
-                                        row.name
-                                    );
+                                    let label =
+                                        format!("{indent}{}  alias: {alias_text}", row.name);
                                     ListItem::new(Line::from(label)).style(selected_style)
                                 }
                             } else {
@@ -9237,10 +9193,8 @@ impl App {
                             &state.inline_input
                         {
                             // Find the row for this category in the filtered list.
-                            if let Some(row) = self
-                                .category_rows
-                                .iter()
-                                .find(|r| r.id == *category_id)
+                            if let Some(row) =
+                                self.category_rows.iter().find(|r| r.id == *category_id)
                             {
                                 let vis_sel = selected_filtered_index;
                                 let offset = list_state.offset();
@@ -9248,24 +9202,19 @@ impl App {
                                     let visible_row = (vis_sel - offset) as u16;
                                     let inner_y = overlay_area.y + 1 + visible_row;
                                     if inner_y
-                                        < overlay_area.y
-                                            + overlay_area.height.saturating_sub(1)
+                                        < overlay_area.y + overlay_area.height.saturating_sub(1)
                                     {
                                         let indent_len = 2 * row.depth;
                                         let name_len = row.name.len();
-                                        let prefix_len =
-                                            indent_len + name_len + "  alias: ".len();
+                                        let prefix_len = indent_len + name_len + "  alias: ".len();
                                         let cursor_col = state.inline_buf.cursor();
                                         let cursor_x = overlay_area.x
                                             + 1
                                             + prefix_len as u16
                                             + cursor_col as u16;
-                                        let max_x = overlay_area.x
-                                            + overlay_area.width.saturating_sub(2);
-                                        frame.set_cursor_position((
-                                            cursor_x.min(max_x),
-                                            inner_y,
-                                        ));
+                                        let max_x =
+                                            overlay_area.x + overlay_area.width.saturating_sub(2);
+                                        frame.set_cursor_position((cursor_x.min(max_x), inner_y));
                                     }
                                 }
                             }
