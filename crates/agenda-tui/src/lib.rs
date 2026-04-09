@@ -435,6 +435,8 @@ struct App {
     horizontal_slot_scroll_offsets: RefCell<Vec<usize>>,
     slot_index: usize,
     item_index: usize,
+    /// Vertical scroll offset for the board: index of the first visible slot.
+    board_scroll_offset: usize,
     column_index: usize,
     normal_mode_prefix: Option<NormalModePrefix>,
     global_search_session: Option<GlobalSearchSession>,
@@ -513,6 +515,7 @@ impl Default for App {
             horizontal_slot_scroll_offsets: RefCell::new(Vec::new()),
             slot_index: 0,
             item_index: 0,
+            board_scroll_offset: 0,
             column_index: 0,
             normal_mode_prefix: None,
             global_search_session: None,

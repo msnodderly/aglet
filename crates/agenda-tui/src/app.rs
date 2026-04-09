@@ -361,6 +361,7 @@ impl App {
         self.clamp_horizontal_slot_item_indices();
         self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
+        self.board_scroll_offset = self.board_scroll_offset.min(self.slots.len().saturating_sub(1));
         // If Hide mode landed us on an empty slot, advance to the nearest non-empty.
         if self.effective_empty_sections() == EmptySections::Hide {
             self.skip_hidden_slots(1);
@@ -1782,6 +1783,7 @@ impl App {
         if self.active_view_name != next_view_name {
             self.session_hide_dependent_items_override = None;
             self.selected_item_ids.clear();
+            self.board_scroll_offset = 0;
         }
         self.view_index = next_index;
         self.picker_index = next_index;

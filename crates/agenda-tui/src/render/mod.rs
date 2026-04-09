@@ -545,6 +545,15 @@ impl App {
             (layout[1], layout[2])
         };
 
+        // Auto-scroll the board so the focused slot is visible.
+        let board_viewport_height = if self.show_preview {
+            // Preview splits main_area 60/40; board gets the top 60%.
+            main_area.height * 60 / 100
+        } else {
+            main_area.height
+        };
+        self.ensure_focused_slot_visible(board_viewport_height);
+
         self.render_main(frame, main_area);
 
         let footer = self.render_footer(footer_area.width);
@@ -2260,6 +2269,102 @@ impl App {
             .border_style(Style::default().fg(border_color))
     }
 
+    /// Estimate the number of terminal rows each slot needs for layout purposes.
+    /// Used to determine which slots fit in the visible viewport.
+    fn estimate_slot_heights(&self, empty_mode: EmptySections, has_any_non_empty: bool) -> Vec<u16> {
+        let border_rows: u16 = match self.section_border_mode {
+            SectionBorderMode::Full => 2,    // top + bottom border
+            SectionBorderMode::Compact => 1, // top border only
+        };
+        let header_row: u16 = 1; // column header row in Table widget
+
+        self.slots
+            .iter()
+            .map(|slot| {
+                let is_empty = slot.items.is_empty();
+                match empty_mode {
+                    EmptySections::Hide if is_empty && has_any_non_empty => 0,
+                    EmptySections::Collapse if is_empty && has_any_non_empty => 1,
+                    _ => {
+                        let item_rows = slot.items.len().max(1) as u16; // at least 1 for empty msg
+                        border_rows + header_row + item_rows
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Given pre-computed slot heights and a scroll offset, return the logical
+    /// slot indices that fit within `viewport_height` rows.
+    fn visible_slot_window(
+        heights: &[u16],
+        scroll_offset: usize,
+        viewport_height: u16,
+    ) -> Vec<usize> {
+        let mut remaining = viewport_height;
+        let mut visible = Vec::new();
+        for (i, &h) in heights.iter().enumerate().skip(scroll_offset) {
+            if h == 0 {
+                // Hidden slots don't consume space but are still logically present;
+                // skip them in the visible list.
+                continue;
+            }
+            if remaining == 0 {
+                break;
+            }
+            visible.push(i);
+            remaining = remaining.saturating_sub(h);
+        }
+        visible
+    }
+
+    /// Adjust `board_scroll_offset` so the focused slot (`self.slot_index`) is
+    /// within the visible window. Called from `draw()` before immutable rendering.
+    fn ensure_focused_slot_visible(&mut self, viewport_height: u16) {
+        if self.slots.is_empty() || self.is_horizontal_section_flow() {
+            return;
+        }
+        let empty_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let heights = self.estimate_slot_heights(empty_mode, has_any_non_empty);
+
+        // If the focused slot is hidden (height 0), no scroll adjustment needed.
+        if heights.get(self.slot_index).copied().unwrap_or(0) == 0 {
+            return;
+        }
+
+        // If focused slot is before the scroll offset, scroll up to it.
+        if self.slot_index < self.board_scroll_offset {
+            self.board_scroll_offset = self.slot_index;
+            return;
+        }
+
+        // Check if focused slot is within the current visible window.
+        let visible = Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
+        if visible.contains(&self.slot_index) {
+            return;
+        }
+
+        // Focused slot is below the visible window. Scroll forward until
+        // the focused slot fits as the last visible slot.
+        // Walk backward from the focused slot, accumulating heights until
+        // the viewport is full, to find the new scroll offset.
+        let mut remaining = viewport_height;
+        let mut new_offset = self.slot_index;
+        for i in (0..=self.slot_index).rev() {
+            let h = heights[i];
+            if h == 0 {
+                continue; // hidden slots don't consume space
+            }
+            if h > remaining {
+                break;
+            }
+            remaining -= h;
+            new_offset = i;
+        }
+        self.board_scroll_offset = new_offset;
+    }
+
     pub(crate) fn render_board_columns(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         if self.slots.is_empty() {
             frame.render_widget(
@@ -2276,33 +2381,6 @@ impl App {
 
         let empty_sections_mode = self.effective_empty_sections();
         let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
-        let constraints: Vec<Constraint> = self
-            .slots
-            .iter()
-            .map(|slot| {
-                let is_empty = slot.items.is_empty();
-                match empty_sections_mode {
-                    EmptySections::Show => {
-                        let slot_count = self.slots.len() as u16;
-                        Constraint::Percentage((100 / slot_count).max(1))
-                    }
-                    EmptySections::Collapse if is_empty && has_any_non_empty => {
-                        Constraint::Length(1)
-                    }
-                    EmptySections::Hide if is_empty && has_any_non_empty => Constraint::Length(0),
-                    _ => Constraint::Fill(1),
-                }
-            })
-            .collect();
-        let slot_direction = if self.is_horizontal_section_flow() {
-            Direction::Horizontal
-        } else {
-            Direction::Vertical
-        };
-        let columns = Layout::default()
-            .direction(slot_direction)
-            .constraints(constraints)
-            .split(area);
 
         let current_view = self.current_view().cloned();
         let mut category_display_names = category_name_map(&self.categories);
@@ -2321,6 +2399,31 @@ impl App {
         let today_slot = self.datebook_today_slot_index();
 
         if self.is_horizontal_section_flow() {
+            // Horizontal lanes: use original full-layout approach (no vertical scroll).
+            let constraints: Vec<Constraint> = self
+                .slots
+                .iter()
+                .map(|slot| {
+                    let is_empty = slot.items.is_empty();
+                    match empty_sections_mode {
+                        EmptySections::Show => {
+                            let slot_count = self.slots.len() as u16;
+                            Constraint::Percentage((100 / slot_count).max(1))
+                        }
+                        EmptySections::Collapse if is_empty && has_any_non_empty => {
+                            Constraint::Length(1)
+                        }
+                        EmptySections::Hide if is_empty && has_any_non_empty => {
+                            Constraint::Length(0)
+                        }
+                        _ => Constraint::Fill(1),
+                    }
+                })
+                .collect();
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(constraints)
+                .split(area);
             self.render_horizontal_board_lanes(
                 frame,
                 &columns,
@@ -2329,9 +2432,59 @@ impl App {
             );
             return;
         }
-        for (slot_index, slot) in self.slots.iter().enumerate() {
+
+        // ── Vertical board: windowed slot rendering ──────────────────────
+        let slot_heights = self.estimate_slot_heights(empty_sections_mode, has_any_non_empty);
+        let visible_slots = Self::visible_slot_window(
+            &slot_heights,
+            self.board_scroll_offset,
+            area.height,
+        );
+
+        if visible_slots.is_empty() {
+            frame.render_widget(
+                Paragraph::new(vec![Line::from("(no visible sections)")]).block(
+                    Block::default()
+                        .title("Board")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                ),
+                area,
+            );
+            return;
+        }
+
+        // Build constraints only for visible slots.
+        let constraints: Vec<Constraint> = visible_slots
+            .iter()
+            .map(|&si| {
+                let slot = &self.slots[si];
+                let is_empty = slot.items.is_empty();
+                match empty_sections_mode {
+                    EmptySections::Collapse if is_empty && has_any_non_empty => {
+                        Constraint::Length(1)
+                    }
+                    _ => Constraint::Fill(1),
+                }
+            })
+            .collect();
+        let columns = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
+
+        // Render viewport-level scrollbar if not all slots are visible.
+        let total_height: u16 = slot_heights.iter().sum();
+        if total_height > area.height {
+            let scroll_position = self.board_scroll_offset;
+            let content_len = self.slots.len();
+            Self::render_vertical_scrollbar(frame, area, content_len, scroll_position);
+        }
+
+        for (vis_idx, &slot_index) in visible_slots.iter().enumerate() {
+            let slot = &self.slots[slot_index];
             // Skip hidden slots (zero-height rect from constraint).
-            if columns[slot_index].height == 0 {
+            if columns[vis_idx].height == 0 {
                 continue;
             }
             // Render collapsed empty slots as a single dim header line.
@@ -2349,7 +2502,7 @@ impl App {
                     Color::DarkGray
                 };
                 let title = format!("{} (0)", slot.title);
-                let avail = columns[slot_index].width as usize;
+                let avail = columns[vis_idx].width as usize;
                 let pad_len = avail.saturating_sub(title.len() + 2);
                 let line = Line::from(vec![
                     Span::styled("─ ", Style::default().fg(border_color)),
@@ -2359,7 +2512,7 @@ impl App {
                         Style::default().fg(border_color),
                     ),
                 ]);
-                frame.render_widget(Paragraph::new(line), columns[slot_index]);
+                frame.render_widget(Paragraph::new(line), columns[vis_idx]);
                 continue;
             }
 
@@ -2400,7 +2553,7 @@ impl App {
                 Color::Blue
             };
             let slot_block = self.board_section_block(title.clone(), border_color);
-            let inner_width = slot_block.inner(columns[slot_index]).width;
+            let inner_width = slot_block.inner(columns[vis_idx]).width;
             let (slot_columns_owned, slot_item_column_index) =
                 match (&slot.context, current_view.as_ref()) {
                     (SlotContext::Section { section_index }, Some(view))
@@ -2839,7 +2992,7 @@ impl App {
                 };
 
                 // Split the slot area: table on top, optional 1-line summary footer.
-                let slot_area = columns[slot_index];
+                let slot_area = columns[vis_idx];
                 let (table_area, summary_area) = if summary_spans.is_some() && slot_area.height > 4
                 {
                     let split = Layout::default()
@@ -3039,7 +3192,7 @@ impl App {
                         })
                         .collect()
                 };
-                let mut state = Self::table_state_for(columns[slot_index], selected_row);
+                let mut state = Self::table_state_for(columns[vis_idx], selected_row);
                 let remembered_index = self
                     .horizontal_slot_item_indices
                     .get(slot_index)
@@ -3055,7 +3208,7 @@ impl App {
                     .min(slot.items.len().saturating_sub(1));
                 *state.offset_mut() = if is_selected_slot {
                     Self::stable_table_offset(
-                        columns[slot_index],
+                        columns[vis_idx],
                         selected_row,
                         remembered_scroll_offset,
                         slot.items.len(),
@@ -3067,7 +3220,7 @@ impl App {
                     Table::new(rows, constraints)
                         .column_spacing(BOARD_TABLE_COLUMN_SPACING)
                         .block(self.board_section_block_with_line(border_title, border_color)),
-                    columns[slot_index],
+                    columns[vis_idx],
                     &mut state,
                 );
                 if let Some(stored) = self
@@ -3079,7 +3232,7 @@ impl App {
                 }
                 Self::render_vertical_scrollbar(
                     frame,
-                    columns[slot_index],
+                    columns[vis_idx],
                     slot.items.len(),
                     state.offset(),
                 );

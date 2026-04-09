@@ -18770,7 +18770,9 @@ fn vertical_section_tab_keeps_section_scroll_offset_stable() {
     view.sections.push(ready_section);
     store.create_view(&view).expect("create view");
 
-    for idx in 0..10 {
+    // Use enough items to exceed the viewport even when the section gets the
+    // full board area (windowed rendering may give one section the whole viewport).
+    for idx in 0..20 {
         let item = Item::new(format!("Backlog item {idx:02}"));
         store.create_item(&item).expect("create backlog item");
         agenda
@@ -18790,7 +18792,7 @@ fn vertical_section_tab_keeps_section_scroll_offset_stable() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    for _ in 0..9 {
+    for _ in 0..19 {
         app.move_item_cursor(1);
     }
 
