@@ -3504,6 +3504,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                 anchor: anchor.into_model(),
                 date_source: date_source.into_model(),
                 browse_offset: 0,
+                ..Default::default()
             };
             if !config.is_valid() {
                 return Err(format!(

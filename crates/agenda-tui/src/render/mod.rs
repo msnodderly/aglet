@@ -2272,10 +2272,27 @@ impl App {
             return;
         }
 
-        let slot_count = self.slots.len() as u16;
-        let pct = (100 / slot_count).max(1);
-        let constraints: Vec<Constraint> = (0..self.slots.len())
-            .map(|_| Constraint::Percentage(pct))
+        let empty_sections_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let constraints: Vec<Constraint> = self
+            .slots
+            .iter()
+            .map(|slot| {
+                let is_empty = slot.items.is_empty();
+                match empty_sections_mode {
+                    EmptySections::Show => {
+                        let slot_count = self.slots.len() as u16;
+                        Constraint::Percentage((100 / slot_count).max(1))
+                    }
+                    EmptySections::Collapse if is_empty && has_any_non_empty => {
+                        Constraint::Length(1)
+                    }
+                    EmptySections::Hide if is_empty && has_any_non_empty => {
+                        Constraint::Length(0)
+                    }
+                    _ => Constraint::Fill(1),
+                }
+            })
             .collect();
         let slot_direction = if self.is_horizontal_section_flow() {
             Direction::Horizontal
@@ -2308,6 +2325,39 @@ impl App {
             return;
         }
         for (slot_index, slot) in self.slots.iter().enumerate() {
+            // Skip hidden slots (zero-height rect from constraint).
+            if columns[slot_index].height == 0 {
+                continue;
+            }
+            // Render collapsed empty slots as a single dim header line.
+            if slot.items.is_empty()
+                && empty_sections_mode == EmptySections::Collapse
+                && has_any_non_empty
+            {
+                let is_selected_slot = slot_index == self.slot_index;
+                let is_today_slot = today_slot == Some(slot_index);
+                let border_color = if is_selected_slot {
+                    Color::Cyan
+                } else if is_today_slot {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                let title = format!("{} (0)", slot.title);
+                let avail = columns[slot_index].width as usize;
+                let pad_len = avail.saturating_sub(title.len() + 2);
+                let line = Line::from(vec![
+                    Span::styled("─ ", Style::default().fg(border_color)),
+                    Span::styled(title, Style::default().fg(border_color)),
+                    Span::styled(
+                        " ─".to_string() + &"─".repeat(pad_len),
+                        Style::default().fg(border_color),
+                    ),
+                ]);
+                frame.render_widget(Paragraph::new(line), columns[slot_index]);
+                continue;
+            }
+
             let effective_display_mode = match (&slot.context, current_view.as_ref()) {
                 (SlotContext::Section { section_index }, Some(view))
                 | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
@@ -3039,9 +3089,35 @@ impl App {
         category_display_names: &HashMap<CategoryId, String>,
         today_slot: Option<usize>,
     ) {
-        let all_slots_empty = self.slots.iter().all(|slot| slot.items.is_empty());
+        let empty_sections_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let all_slots_empty = !has_any_non_empty;
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let slot_area = columns[slot_index];
+            // Skip hidden slots (zero-width rect).
+            if slot_area.width == 0 {
+                continue;
+            }
+            // Collapsed empty lane: render a thin vertical border.
+            if slot.items.is_empty()
+                && empty_sections_mode == EmptySections::Collapse
+                && has_any_non_empty
+            {
+                let is_selected = slot_index == self.slot_index;
+                let is_today = today_slot == Some(slot_index);
+                let color = if is_selected {
+                    Color::Cyan
+                } else if is_today {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                let block = Block::default()
+                    .borders(Borders::LEFT)
+                    .border_style(Style::default().fg(color));
+                frame.render_widget(block, slot_area);
+                continue;
+            }
             let is_selected_slot = slot_index == self.slot_index;
             let selected_row = if is_selected_slot && !slot.items.is_empty() {
                 Some(self.item_index.min(slot.items.len().saturating_sub(1)))
@@ -8105,6 +8181,7 @@ impl App {
                         ("Interval", config.interval.label().to_string()),
                         ("Anchor", config.anchor.label().to_string()),
                         ("Date source", config.date_source.label().to_string()),
+                        ("Empty sections", config.empty_sections.label().to_string()),
                     ];
                     for (fi, (label, value)) in datebook_fields.iter().enumerate() {
                         let is_selected = details_focused

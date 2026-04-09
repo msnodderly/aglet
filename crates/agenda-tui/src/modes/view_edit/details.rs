@@ -135,7 +135,7 @@ impl App {
         }
     }
 
-    pub(crate) const DATEBOOK_FIELD_COUNT: usize = 4; // Period, Interval, Anchor, DateSource
+    pub(crate) const DATEBOOK_FIELD_COUNT: usize = 5; // Period, Interval, Anchor, DateSource, EmptySections
 
     /// The Name row sits at flat index 0 before the criteria rows.
     const NAME_ROW_COUNT: usize = 1;
@@ -382,6 +382,7 @@ impl App {
                             1 => config.interval = config.interval.next(),
                             2 => config.anchor = config.anchor.next(),
                             3 => config.date_source = config.date_source.next(),
+                            4 => config.empty_sections = config.empty_sections.next(),
                             _ => {}
                         }
                         // Auto-fix invalid combos

@@ -883,6 +883,39 @@ impl DatebookAnchor {
     }
 }
 
+/// Controls how empty sections are displayed on the board.
+///
+/// Defined as a standalone enum so it can later be promoted to a view-level
+/// setting without restructuring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EmptySections {
+    /// All sections rendered with equal space (default).
+    #[default]
+    Show,
+    /// Empty sections collapse to a single header line.
+    Collapse,
+    /// Empty sections are hidden entirely.
+    Hide,
+}
+
+impl EmptySections {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Show => Self::Collapse,
+            Self::Collapse => Self::Hide,
+            Self::Hide => Self::Show,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Show => "Show all",
+            Self::Collapse => "Collapse",
+            Self::Hide => "Hide",
+        }
+    }
+}
+
 /// Configuration for a datebook (time-interval) view.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatebookConfig {
@@ -890,6 +923,9 @@ pub struct DatebookConfig {
     pub interval: DatebookInterval,
     pub anchor: DatebookAnchor,
     pub date_source: DateSource,
+    /// How to display empty time-slot sections.
+    #[serde(default)]
+    pub empty_sections: EmptySections,
     /// Signed offset: +1 = shift forward by one period, -1 backward.
     #[serde(default)]
     pub browse_offset: i32,
@@ -927,6 +963,7 @@ impl Default for DatebookConfig {
             interval: DatebookInterval::Daily,
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
+            empty_sections: EmptySections::default(),
             browse_offset: 0,
         }
     }

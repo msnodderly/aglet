@@ -1929,6 +1929,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         // 2026-04-06 is a Monday
         let reference = day(2026, 4, 6);
@@ -1951,6 +1952,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfMonth,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         // April 2026
         let reference = day(2026, 4, 15);
@@ -1968,6 +1970,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfQuarter,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         // Q2 2026
         let reference = day(2026, 5, 10);
@@ -1989,6 +1992,7 @@ mod tests {
             anchor: DatebookAnchor::Today,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         let reference = day(2026, 4, 6);
         let sections = generate_datebook_sections(&config, reference);
@@ -2006,6 +2010,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         let reference = day(2026, 4, 6); // Monday
 
@@ -2035,6 +2040,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         let mut view = View::new("Week".to_string());
         view.datebook_config = Some(config);
@@ -2079,6 +2085,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         let mut view = View::new("Week".to_string());
         view.datebook_config = Some(config);
@@ -2105,6 +2112,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfYear,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         let reference = day(2026, 6, 15);
         let sections = generate_datebook_sections(&config, reference);
@@ -2121,6 +2129,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfQuarter,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         // January -> Q1 starts Jan 1
         let (start, _) = compute_datebook_window(&config, day(2026, 1, 15));
@@ -2166,6 +2175,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfQuarter,
             date_source: DateSource::When,
             browse_offset: 0,
+            ..Default::default()
         };
         // Q1 2024 (leap year)
         let reference = day(2024, 2, 15);
