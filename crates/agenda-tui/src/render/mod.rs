@@ -102,6 +102,44 @@ fn clip_text_for_row(
     (out, cursor_visible)
 }
 
+/// Build spans for inline-edited text with a visible block cursor.
+/// `prefix` is rendered with `prefix_style`, the text around the cursor in `text_style`,
+/// and the cursor character itself with inverted fg/bg so it stands out against any background.
+fn inline_edit_spans<'a>(
+    prefix: &str,
+    text: &str,
+    cursor_pos: usize,
+    prefix_style: Style,
+    text_style: Style,
+) -> Vec<Span<'a>> {
+    let chars: Vec<char> = text.chars().collect();
+    let pos = cursor_pos.min(chars.len());
+    let before: String = chars[..pos].iter().collect();
+    let cursor_char: String = if pos < chars.len() {
+        chars[pos].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if pos < chars.len() {
+        chars[pos + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+    let cursor_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(prefix.to_string(), prefix_style)];
+    if !before.is_empty() {
+        spans.push(Span::styled(before, text_style));
+    }
+    spans.push(Span::styled(cursor_char, cursor_style));
+    if !after.is_empty() {
+        spans.push(Span::styled(after, text_style));
+    }
+    spans
+}
+
 fn board_column_offsets(widths: &[usize], spacing: usize) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(widths.len());
     let mut cursor = 0usize;
@@ -7981,26 +8019,30 @@ impl App {
                 let name_row_focused = details_focused
                     && Self::view_details_on_name_row(state)
                     && !editing_view_name;
-                let view_name_text = if editing_view_name {
-                    format!("◀ {}", state.inline_buf.text())
-                } else {
-                    state.draft.name.clone()
-                };
                 let view_name_style = if editing_view_name || name_row_focused {
                     selected_line = Some(items.len());
                     sel_style
                 } else {
                     Style::default()
                 };
-                items.push(
-                    ListItem::new(Line::from(format!(
+                let name_line = if editing_view_name {
+                    let label = format!("  {:<width$}◀ ", "Name", width = pad);
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        view_name_style,
+                        view_name_style,
+                    ))
+                } else {
+                    Line::from(format!(
                         "  {:<width$}{}",
                         "Name",
-                        view_name_text,
+                        state.draft.name,
                         width = pad
-                    )))
-                    .style(view_name_style),
-                );
+                    ))
+                };
+                items.push(ListItem::new(name_line).style(view_name_style));
 
                 // ── Separator ──
                 items.push(ListItem::new(Line::from(Span::styled(
@@ -8263,26 +8305,35 @@ impl App {
                     )),
                 );
 
-                let unmatched_label_text = if matches!(
+                let editing_unmatched_label = matches!(
                     state.inline_input,
                     Some(ViewEditInlineInput::UnmatchedLabel)
-                ) {
-                    format!("◀ {}", state.inline_buf.text())
+                );
+                let unmatched_label_style = style_for_unmatched_field(
+                    6,
+                    &items,
+                    &mut selected_line,
+                );
+                let unmatched_label_line = if editing_unmatched_label {
+                    let label = format!("  {:<width$}◀ ", "Unmatched label", width = pad);
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        unmatched_label_style,
+                        unmatched_label_style,
+                    ))
                 } else {
-                    format!("\"{}\"", state.draft.unmatched_label)
+                    Line::from(format!(
+                        "  {:<width$}\"{}\"",
+                        "Unmatched label",
+                        state.draft.unmatched_label,
+                        width = pad
+                    ))
                 };
                 items.push(
-                    ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
-                        "Unmatched label",
-                        unmatched_label_text,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        6,
-                        &items,
-                        &mut selected_line,
-                    )),
+                    ListItem::new(unmatched_label_line)
+                        .style(unmatched_label_style),
                 );
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
@@ -8321,18 +8372,31 @@ impl App {
                     };
 
                 // ── Group 1: Identity ──
-                items.push(
-                    ListItem::new(Line::from(format!(
+                let title_field_style = style_for_section_field(
+                    0,
+                    &items,
+                    &mut selected_line,
+                );
+                let title_line = if editing_title {
+                    let label = format!("  {:<width$}◀ ", "Title", width = pad);
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        title_field_style,
+                        title_field_style,
+                    ))
+                } else {
+                    Line::from(format!(
                         "  {:<width$}{}",
                         "Title",
                         title_text,
                         width = pad
-                    )))
-                    .style(style_for_section_field(
-                        0,
-                        &items,
-                        &mut selected_line,
-                    )),
+                    ))
+                };
+                items.push(
+                    ListItem::new(title_line)
+                        .style(title_field_style),
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
@@ -8555,18 +8619,24 @@ impl App {
             );
             let dirty_marker = if state.dirty { " *" } else { "" };
             let view_label = format!("VIEW: {}", state.draft.name);
-            let sections_title = if filter_editing {
-                format!(
-                    " {view_label}{dirty_marker}  /{}◀ ",
-                    state.sections_filter_buf.text()
-                )
+            let sections_title: Line<'_> = if filter_editing {
+                let prefix = format!(
+                    " {view_label}{dirty_marker}  /",
+                );
+                Line::from(inline_edit_spans(
+                    &prefix,
+                    state.sections_filter_buf.text(),
+                    state.sections_filter_buf.cursor(),
+                    Style::default(),
+                    Style::default(),
+                ))
             } else if filter_active {
-                format!(
+                Line::from(format!(
                     " {view_label}{dirty_marker}  /{} ",
                     state.sections_filter_buf.text()
-                )
+                ))
             } else {
-                format!(" {view_label}{dirty_marker} ")
+                Line::from(format!(" {view_label}{dirty_marker} "))
             };
             let block = Block::default()
                 .title(sections_title)
@@ -8650,18 +8720,6 @@ impl App {
                     } else {
                         " "
                     };
-                    let title = if inline_editing_section == Some(i) {
-                        format!(
-                            " {} {} {}. {} ◀",
-                            connector,
-                            cursor,
-                            i + 1,
-                            state.inline_buf.text()
-                        )
-                    } else {
-                        format!(" {} {} {}. {}", connector, cursor, i + 1, section.title)
-                    };
-
                     let style = if is_active_section && sections_pane_focused {
                         Style::default()
                             .fg(Color::Black)
@@ -8672,7 +8730,25 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    items.push(ListItem::new(Line::from(title)).style(style));
+                    let line = if inline_editing_section == Some(i) {
+                        let prefix = format!(
+                            " {} {} {}. ",
+                            connector, cursor, i + 1,
+                        );
+                        Line::from(inline_edit_spans(
+                            &prefix,
+                            state.inline_buf.text(),
+                            state.inline_buf.cursor(),
+                            style,
+                            style,
+                        ))
+                    } else {
+                        Line::from(format!(
+                            " {} {} {}. {}",
+                            connector, cursor, i + 1, section.title
+                        ))
+                    };
+                    items.push(ListItem::new(line).style(style));
                 }
             }
 
@@ -9007,12 +9083,25 @@ impl App {
                                 } else {
                                     current_alias
                                 };
-                                let edit_marker = if active_alias_edit { " ◀" } else { "" };
-                                let label = format!(
-                                    "{indent}{}  alias: {alias_text}{edit_marker}",
-                                    row.name
-                                );
-                                ListItem::new(Line::from(label)).style(selected_style)
+                                if active_alias_edit {
+                                    let prefix = format!(
+                                        "{indent}{}  alias: ",
+                                        row.name
+                                    );
+                                    ListItem::new(Line::from(inline_edit_spans(
+                                        &prefix,
+                                        state.inline_buf.text(),
+                                        state.inline_buf.cursor(),
+                                        selected_style,
+                                        selected_style,
+                                    ))).style(selected_style)
+                                } else {
+                                    let label = format!(
+                                        "{indent}{}  alias: {alias_text}",
+                                        row.name
+                                    );
+                                    ListItem::new(Line::from(label)).style(selected_style)
+                                }
                             } else {
                                 let checked = match target {
                                     CategoryEditTarget::ViewAliases => false,
